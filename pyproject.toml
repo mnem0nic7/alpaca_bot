@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "alpaca-bot"
+version = "0.1.0"
+description = "Python stock-trading bot scaffolding."
+requires-python = ">=3.11"
+dynamic = ["dependencies"]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.0"]
+
+[project.scripts]
+alpaca-bot-admin = "alpaca_bot.admin.cli:main"
+alpaca-bot-migrate = "alpaca_bot.storage.migrations:main"
+alpaca-bot-supervisor = "alpaca_bot.runtime.supervisor_cli:main"
+alpaca-bot-trader = "alpaca_bot.runtime.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = false
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["alpaca_bot*"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}

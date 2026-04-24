@@ -1,0 +1,433 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Callable
+
+from alpaca_bot.config import Settings
+from alpaca_bot.domain import OpenPosition
+from alpaca_bot.execution import (
+    AlpacaBroker,
+    AlpacaMarketDataAdapter,
+    AlpacaTradingStreamAdapter,
+    BrokerPosition,
+)
+from alpaca_bot.runtime.bootstrap import RuntimeContext, bootstrap_runtime, close_runtime
+from alpaca_bot.runtime.cli import _list_open_orders, _list_open_positions
+from alpaca_bot.runtime.cycle import run_cycle
+from alpaca_bot.runtime.cycle_intent_execution import execute_cycle_intents
+from alpaca_bot.runtime.order_dispatch import dispatch_pending_orders
+from alpaca_bot.runtime.startup_recovery import (
+    compose_startup_mismatch_detector,
+    recover_startup_state,
+)
+from alpaca_bot.runtime.trade_update_stream import attach_trade_update_stream
+from alpaca_bot.runtime.trader import TraderStartupReport, start_trader
+from alpaca_bot.storage import AuditEvent, PositionRecord, TradingStatusValue
+
+
+@dataclass(frozen=True)
+class SupervisorCycleReport:
+    entries_disabled: bool
+    cycle_result: object
+    dispatch_report: object
+
+
+@dataclass(frozen=True)
+class SupervisorLoopReport:
+    iterations: int
+    active_iterations: int
+    idle_iterations: int
+
+
+class RuntimeSupervisor:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        runtime: RuntimeContext,
+        broker: object,
+        market_data: object,
+        stream: object | None,
+        start_trader_fn: Callable[..., TraderStartupReport] | None = None,
+        cycle_runner: Callable[..., object] | None = None,
+        order_dispatcher: Callable[..., object] | None = None,
+        cycle_intent_executor: Callable[..., object] | None = None,
+        stream_attacher: Callable[..., object] | None = None,
+        close_runtime_fn: Callable[[RuntimeContext], None] | None = None,
+    ) -> None:
+        self.settings = settings
+        self.runtime = runtime
+        self.broker = broker
+        self.market_data = market_data
+        self.stream = stream
+        self._start_trader = start_trader_fn or start_trader
+        self._cycle_runner = cycle_runner or run_cycle
+        self._order_dispatcher = order_dispatcher or dispatch_pending_orders
+        self._cycle_intent_executor = cycle_intent_executor or execute_cycle_intents
+        self._stream_attacher = stream_attacher or attach_trade_update_stream
+        self._close_runtime = close_runtime_fn or close_runtime
+        self._stream_attached = False
+        self._closed = False
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
+        return cls(
+            settings=settings,
+            runtime=bootstrap_runtime(settings),
+            broker=AlpacaBroker.from_settings(settings),
+            market_data=AlpacaMarketDataAdapter.from_settings(settings),
+            stream=AlpacaTradingStreamAdapter.from_settings(settings),
+        )
+
+    def startup(
+        self,
+        *,
+        now: Callable[[], datetime] | None = None,
+        mismatch_detector=None,
+    ) -> TraderStartupReport:
+        timestamp = _resolve_now(now)
+        open_orders = list(_list_open_orders(self.broker))
+        open_positions = list(_list_open_positions(self.broker))
+        recovery_report = recover_startup_state(
+            settings=self.settings,
+            runtime=self.runtime,
+            broker_open_positions=open_positions,
+            broker_open_orders=open_orders,
+            now=timestamp,
+        )
+        report = self._start_trader(
+            self.settings,
+            broker_client=self.broker,
+            bootstrap=lambda _: self.runtime,
+            mismatch_detector=compose_startup_mismatch_detector(
+                recovery_report=recovery_report,
+                extra_detector=mismatch_detector,
+            ),
+            now=lambda: timestamp,
+        )
+        if self.stream is not None and not self._stream_attached:
+            self._stream_attacher(
+                settings=self.settings,
+                runtime=self.runtime,
+                stream=self.stream,
+                now=lambda: timestamp,
+            )
+            self._stream_attached = True
+        return report
+
+    def run_cycle_once(
+        self,
+        *,
+        now: Callable[[], datetime] | None = None,
+    ) -> SupervisorCycleReport:
+        if self._closed:
+            raise RuntimeError("Supervisor is closed")
+
+        timestamp = _resolve_now(now)
+        broker_open_orders = list(_list_open_orders(self.broker))
+        broker_open_positions = list(_list_open_positions(self.broker))
+        recovery_report = recover_startup_state(
+            settings=self.settings,
+            runtime=self.runtime,
+            broker_open_positions=broker_open_positions,
+            broker_open_orders=broker_open_orders,
+            now=timestamp,
+            audit_event_type=None,
+        )
+        if recovery_report.mismatches:
+            self.runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="runtime_reconciliation_detected",
+                    payload={
+                        "mismatch_count": len(recovery_report.mismatches),
+                        "mismatches": list(recovery_report.mismatches),
+                        "synced_position_count": recovery_report.synced_position_count,
+                        "synced_order_count": recovery_report.synced_order_count,
+                        "cleared_position_count": recovery_report.cleared_position_count,
+                        "cleared_order_count": recovery_report.cleared_order_count,
+                        "timestamp": timestamp.isoformat(),
+                    },
+                    created_at=timestamp,
+                )
+            )
+        account = self.broker.get_account()
+        session_date = _session_date(timestamp, self.settings)
+        status = self._effective_trading_status(session_date=session_date)
+        entries_disabled = (
+            status in {TradingStatusValue.CLOSE_ONLY, TradingStatusValue.HALTED}
+            or bool(recovery_report.mismatches)
+        )
+        open_positions = self._load_open_positions()
+        working_order_symbols = {order.symbol for order in broker_open_orders}
+        working_order_symbols.update(order.symbol for order in self._list_pending_submit_orders())
+        intraday_bars_by_symbol = self.market_data.get_stock_bars(
+            symbols=list(self.settings.symbols),
+            start=timestamp - timedelta(days=5),
+            end=timestamp,
+            timeframe_minutes=self.settings.entry_timeframe_minutes,
+        )
+        daily_bars_by_symbol = self.market_data.get_daily_bars(
+            symbols=list(self.settings.symbols),
+            start=timestamp - timedelta(days=max(self.settings.daily_sma_period * 3, 60)),
+            end=timestamp,
+        )
+        cycle_result = self._cycle_runner(
+            settings=self.settings,
+            runtime=self.runtime,
+            now=timestamp,
+            equity=account.equity,
+            intraday_bars_by_symbol=intraday_bars_by_symbol,
+            daily_bars_by_symbol=daily_bars_by_symbol,
+            open_positions=open_positions,
+            working_order_symbols=working_order_symbols,
+            traded_symbols_today=self._load_traded_symbols(session_date=session_date),
+            entries_disabled=entries_disabled,
+        )
+        if status is not TradingStatusValue.HALTED:
+            self._cycle_intent_executor(
+                settings=self.settings,
+                runtime=self.runtime,
+                broker=self.broker,
+                cycle_result=cycle_result,
+                now=timestamp,
+            )
+
+        dispatch_kwargs = {
+            "settings": self.settings,
+            "runtime": self.runtime,
+            "broker": self.broker,
+            "now": timestamp,
+        }
+        if status is TradingStatusValue.HALTED:
+            return SupervisorCycleReport(
+                entries_disabled=True,
+                cycle_result=cycle_result,
+                dispatch_report={"submitted_count": 0},
+            )
+        if entries_disabled:
+            dispatch_kwargs["allowed_intent_types"] = {"stop"}
+        dispatch_report = self._order_dispatcher(**dispatch_kwargs)
+        return SupervisorCycleReport(
+            entries_disabled=entries_disabled,
+            cycle_result=cycle_result,
+            dispatch_report=dispatch_report,
+        )
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        if self.stream is not None and hasattr(self.stream, "stop"):
+            self.stream.stop()
+        self._close_runtime(self.runtime)
+        self._closed = True
+
+    def run_forever(
+        self,
+        *,
+        should_stop: Callable[[], bool] | None = None,
+        sleep_fn: Callable[[float], None] | None = None,
+        poll_interval_seconds: float = 60.0,
+        max_iterations: int | None = None,
+        startup_now: Callable[[], datetime] | None = None,
+        cycle_now: Callable[[], datetime] | None = None,
+    ) -> SupervisorLoopReport:
+        iterations = 0
+        active_iterations = 0
+        idle_iterations = 0
+        sleeper = sleep_fn or (lambda _seconds: None)
+
+        try:
+            if startup_now is None:
+                self.startup()
+            else:
+                self.startup(now=startup_now)
+            while True:
+                if should_stop is not None and should_stop():
+                    break
+                if max_iterations is not None and iterations >= max_iterations:
+                    break
+
+                timestamp = _resolve_now(cycle_now)
+                if self._market_is_open():
+                    cycle_report = self.run_cycle_once(now=lambda: timestamp)
+                    active_iterations += 1
+                    self.runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="supervisor_cycle",
+                            payload={
+                                "entries_disabled": cycle_report.entries_disabled,
+                                "timestamp": timestamp.isoformat(),
+                            },
+                            created_at=timestamp,
+                        )
+                    )
+                else:
+                    idle_iterations += 1
+                    self.runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="supervisor_idle",
+                            payload={
+                                "reason": "market_closed",
+                                "timestamp": timestamp.isoformat(),
+                            },
+                            created_at=timestamp,
+                        )
+                    )
+                iterations += 1
+
+                if should_stop is not None and should_stop():
+                    break
+                if max_iterations is not None and iterations >= max_iterations:
+                    break
+                sleeper(poll_interval_seconds)
+        finally:
+            self.close()
+
+        return SupervisorLoopReport(
+            iterations=iterations,
+            active_iterations=active_iterations,
+            idle_iterations=idle_iterations,
+        )
+
+    def _sync_positions(
+        self,
+        *,
+        open_positions: list[BrokerPosition],
+        timestamp: datetime,
+    ) -> None:
+        if self.runtime.position_store is None:
+            raise RuntimeError("Runtime context is missing a position store")
+        existing_by_symbol = {
+            position.symbol: position
+            for position in self._load_position_records()
+        }
+        self.runtime.position_store.replace_all(
+            positions=[
+                _synced_position_record(
+                    settings=self.settings,
+                    position=position,
+                    existing=existing_by_symbol.get(position.symbol),
+                    timestamp=timestamp,
+                )
+                for position in open_positions
+            ],
+            trading_mode=self.settings.trading_mode,
+            strategy_version=self.settings.strategy_version,
+        )
+
+    def _load_open_positions(self) -> list[OpenPosition]:
+        return [
+            OpenPosition(
+                symbol=position.symbol,
+                entry_timestamp=position.opened_at,
+                entry_price=position.entry_price,
+                quantity=position.quantity,
+                breakout_level=position.initial_stop_price,
+                initial_stop_price=position.initial_stop_price,
+                stop_price=position.stop_price,
+                trailing_active=position.stop_price > position.initial_stop_price,
+                highest_price=position.entry_price,
+            )
+            for position in self._load_position_records()
+        ]
+
+    def _load_position_records(self) -> list[PositionRecord]:
+        if self.runtime.position_store is None or not hasattr(self.runtime.position_store, "list_all"):
+            return []
+        return self.runtime.position_store.list_all(
+            trading_mode=self.settings.trading_mode,
+            strategy_version=self.settings.strategy_version,
+        )
+
+    def _effective_trading_status(self, *, session_date: date) -> TradingStatusValue | None:
+        status = self._load_trading_status()
+        if status in {TradingStatusValue.CLOSE_ONLY, TradingStatusValue.HALTED}:
+            return status
+        if self.runtime.daily_session_state_store is not None and hasattr(
+            self.runtime.daily_session_state_store, "load"
+        ):
+            session_state = self.runtime.daily_session_state_store.load(
+                session_date=session_date,
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+            )
+            if session_state is not None and session_state.entries_disabled:
+                return TradingStatusValue.CLOSE_ONLY
+        return status
+
+    def _load_trading_status(self) -> TradingStatusValue | None:
+        if not hasattr(self.runtime.trading_status_store, "load"):
+            return None
+        status = self.runtime.trading_status_store.load(
+            trading_mode=self.settings.trading_mode,
+            strategy_version=self.settings.strategy_version,
+        )
+        return None if status is None else status.status
+
+    def _list_pending_submit_orders(self) -> list[object]:
+        if not hasattr(self.runtime.order_store, "list_pending_submit"):
+            return []
+        return self.runtime.order_store.list_pending_submit(
+            trading_mode=self.settings.trading_mode,
+            strategy_version=self.settings.strategy_version,
+        )
+
+    def _load_traded_symbols(self, *, session_date: date) -> set[tuple[str, date]]:
+        if not hasattr(self.runtime.order_store, "list_by_status"):
+            return set()
+        orders = self.runtime.order_store.list_by_status(
+            trading_mode=self.settings.trading_mode,
+            strategy_version=self.settings.strategy_version,
+            statuses=["filled", "partially_filled"],
+        )
+        traded_symbols: set[tuple[str, date]] = set()
+        for order in orders:
+            if getattr(order, "intent_type", None) != "entry":
+                continue
+            signal_timestamp = getattr(order, "signal_timestamp", None)
+            if signal_timestamp is None:
+                continue
+            if _session_date(signal_timestamp, self.settings) == session_date:
+                traded_symbols.add((order.symbol, session_date))
+        return traded_symbols
+
+    def _market_is_open(self) -> bool:
+        if hasattr(self.broker, "get_clock"):
+            return bool(self.broker.get_clock().is_open)
+        if hasattr(self.broker, "get_market_clock"):
+            return bool(self.broker.get_market_clock().is_open)
+        return True
+
+
+TraderSupervisor = RuntimeSupervisor
+
+
+def _resolve_now(now: Callable[[], datetime] | None) -> datetime:
+    if callable(now):
+        return now()
+    return datetime.now(timezone.utc)
+
+
+def _session_date(timestamp: datetime, settings: Settings) -> date:
+    return timestamp.astimezone(settings.market_timezone).date()
+
+
+def _synced_position_record(
+    *,
+    settings: Settings,
+    position: BrokerPosition,
+    existing: PositionRecord | None,
+    timestamp: datetime,
+) -> PositionRecord:
+    return PositionRecord(
+        symbol=position.symbol,
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        quantity=position.quantity,
+        entry_price=position.entry_price or 0.0,
+        stop_price=existing.stop_price if existing is not None else 0.0,
+        initial_stop_price=existing.initial_stop_price if existing is not None else 0.0,
+        opened_at=existing.opened_at if existing is not None else timestamp,
+        updated_at=timestamp,
+    )

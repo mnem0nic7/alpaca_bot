@@ -1,0 +1,2 @@
+ALTER TABLE orders
+ADD COLUMN IF NOT EXISTS initial_stop_price DOUBLE PRECISION;

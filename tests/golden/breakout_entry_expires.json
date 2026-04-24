@@ -1,0 +1,387 @@
+{
+  "name": "breakout_entry_expires",
+  "symbol": "AAPL",
+  "starting_equity": 100000,
+  "daily_bars": [
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-03-26T20:00:00+00:00",
+      "open": 89.5,
+      "high": 90.3,
+      "low": 89.0,
+      "close": 90,
+      "volume": 1000000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-03-27T20:00:00+00:00",
+      "open": 90.5,
+      "high": 91.3,
+      "low": 90.0,
+      "close": 91,
+      "volume": 1001000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-03-28T20:00:00+00:00",
+      "open": 91.5,
+      "high": 92.3,
+      "low": 91.0,
+      "close": 92,
+      "volume": 1002000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-03-29T20:00:00+00:00",
+      "open": 92.5,
+      "high": 93.3,
+      "low": 92.0,
+      "close": 93,
+      "volume": 1003000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-03-30T20:00:00+00:00",
+      "open": 93.5,
+      "high": 94.3,
+      "low": 93.0,
+      "close": 94,
+      "volume": 1004000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-03-31T20:00:00+00:00",
+      "open": 94.5,
+      "high": 95.3,
+      "low": 94.0,
+      "close": 95,
+      "volume": 1005000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-01T20:00:00+00:00",
+      "open": 95.5,
+      "high": 96.3,
+      "low": 95.0,
+      "close": 96,
+      "volume": 1006000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-02T20:00:00+00:00",
+      "open": 96.5,
+      "high": 97.3,
+      "low": 96.0,
+      "close": 97,
+      "volume": 1007000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-03T20:00:00+00:00",
+      "open": 97.5,
+      "high": 98.3,
+      "low": 97.0,
+      "close": 98,
+      "volume": 1008000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-04T20:00:00+00:00",
+      "open": 98.5,
+      "high": 99.3,
+      "low": 98.0,
+      "close": 99,
+      "volume": 1009000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-05T20:00:00+00:00",
+      "open": 99.5,
+      "high": 100.3,
+      "low": 99.0,
+      "close": 100,
+      "volume": 1010000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-06T20:00:00+00:00",
+      "open": 100.5,
+      "high": 101.3,
+      "low": 100.0,
+      "close": 101,
+      "volume": 1011000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-07T20:00:00+00:00",
+      "open": 101.5,
+      "high": 102.3,
+      "low": 101.0,
+      "close": 102,
+      "volume": 1012000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-08T20:00:00+00:00",
+      "open": 102.5,
+      "high": 103.3,
+      "low": 102.0,
+      "close": 103,
+      "volume": 1013000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-09T20:00:00+00:00",
+      "open": 103.5,
+      "high": 104.3,
+      "low": 103.0,
+      "close": 104,
+      "volume": 1014000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-10T20:00:00+00:00",
+      "open": 104.5,
+      "high": 105.3,
+      "low": 104.0,
+      "close": 105,
+      "volume": 1015000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-11T20:00:00+00:00",
+      "open": 105.5,
+      "high": 106.3,
+      "low": 105.0,
+      "close": 106,
+      "volume": 1016000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-12T20:00:00+00:00",
+      "open": 106.5,
+      "high": 107.3,
+      "low": 106.0,
+      "close": 107,
+      "volume": 1017000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-13T20:00:00+00:00",
+      "open": 107.5,
+      "high": 108.3,
+      "low": 107.0,
+      "close": 108,
+      "volume": 1018000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-14T20:00:00+00:00",
+      "open": 108.5,
+      "high": 109.3,
+      "low": 108.0,
+      "close": 109,
+      "volume": 1019000
+    }
+  ],
+  "intraday_bars": [
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T14:00:00+00:00",
+      "open": 108.2,
+      "high": 108.5,
+      "low": 108.05,
+      "close": 108.3,
+      "volume": 1000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T14:15:00+00:00",
+      "open": 108.28,
+      "high": 108.58,
+      "low": 108.13,
+      "close": 108.38,
+      "volume": 1010
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T14:30:00+00:00",
+      "open": 108.36,
+      "high": 108.66,
+      "low": 108.21,
+      "close": 108.46,
+      "volume": 1020
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T14:45:00+00:00",
+      "open": 108.44,
+      "high": 108.74,
+      "low": 108.29,
+      "close": 108.54,
+      "volume": 1030
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T15:00:00+00:00",
+      "open": 108.52,
+      "high": 108.82,
+      "low": 108.37,
+      "close": 108.62,
+      "volume": 1040
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T15:15:00+00:00",
+      "open": 108.6,
+      "high": 108.9,
+      "low": 108.45,
+      "close": 108.7,
+      "volume": 1050
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T15:30:00+00:00",
+      "open": 108.68,
+      "high": 108.98,
+      "low": 108.53,
+      "close": 108.78,
+      "volume": 1060
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T15:45:00+00:00",
+      "open": 108.76,
+      "high": 109.06,
+      "low": 108.61,
+      "close": 108.86,
+      "volume": 1070
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T16:00:00+00:00",
+      "open": 108.84,
+      "high": 109.14,
+      "low": 108.69,
+      "close": 108.94,
+      "volume": 1080
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T16:15:00+00:00",
+      "open": 108.92,
+      "high": 109.22,
+      "low": 108.77,
+      "close": 109.02,
+      "volume": 1090
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T16:30:00+00:00",
+      "open": 109.0,
+      "high": 109.3,
+      "low": 108.85,
+      "close": 109.1,
+      "volume": 1100
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T16:45:00+00:00",
+      "open": 109.08,
+      "high": 109.38,
+      "low": 108.93,
+      "close": 109.18,
+      "volume": 1110
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T17:00:00+00:00",
+      "open": 109.16,
+      "high": 109.46,
+      "low": 109.01,
+      "close": 109.26,
+      "volume": 1120
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T17:15:00+00:00",
+      "open": 109.24,
+      "high": 109.54,
+      "low": 109.09,
+      "close": 109.34,
+      "volume": 1130
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T17:30:00+00:00",
+      "open": 109.32,
+      "high": 109.62,
+      "low": 109.17,
+      "close": 109.42,
+      "volume": 1140
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T17:45:00+00:00",
+      "open": 109.4,
+      "high": 109.7,
+      "low": 109.25,
+      "close": 109.5,
+      "volume": 1150
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T18:00:00+00:00",
+      "open": 109.48,
+      "high": 109.78,
+      "low": 109.33,
+      "close": 109.58,
+      "volume": 1160
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T18:15:00+00:00",
+      "open": 109.56,
+      "high": 109.86,
+      "low": 109.41,
+      "close": 109.66,
+      "volume": 1170
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T18:30:00+00:00",
+      "open": 109.64,
+      "high": 109.94,
+      "low": 109.49,
+      "close": 109.74,
+      "volume": 1180
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T18:45:00+00:00",
+      "open": 109.55,
+      "high": 110.0,
+      "low": 109.35,
+      "close": 109.75,
+      "volume": 1190
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T19:00:00+00:00",
+      "open": 109.8,
+      "high": 111.0,
+      "low": 109.7,
+      "close": 110.8,
+      "volume": 2000
+    },
+    {
+      "symbol": "AAPL",
+      "timestamp": "2026-04-24T19:15:00+00:00",
+      "open": 110.85,
+      "high": 110.95,
+      "low": 110.4,
+      "close": 110.7,
+      "volume": 1200
+    }
+  ]
+}
