@@ -78,6 +78,15 @@ docker run --rm alpaca-bot:local alpaca-bot-web-hash-password
 
 Copy the printed value into `DASHBOARD_AUTH_PASSWORD_HASH`.
 
+To rotate the dashboard password later and immediately recreate the `web` container:
+
+```bash
+cd /srv/alpaca_bot/current
+./scripts/rotate_dashboard_password.sh /etc/alpaca_bot/alpaca-bot.env operator@example.com
+```
+
+That command updates the env file, writes the plaintext password to `/etc/alpaca_bot/dashboard_password.txt`, prints the new credentials once, and recreates the local dashboard container.
+
 ## First-time setup
 
 1. Check out the repo on the server.
@@ -178,4 +187,11 @@ Override mode or strategy version explicitly if needed:
 ```bash
 cd /srv/alpaca_bot/current
 ./scripts/admin.sh status --mode paper --strategy-version v1-breakout
+```
+
+Rotate the dashboard password:
+
+```bash
+cd /srv/alpaca_bot/current
+./scripts/rotate_dashboard_password.sh /etc/alpaca_bot/alpaca-bot.env operator@example.com
 ```
