@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import parse_qsl
 
 from fastapi import FastAPI, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from alpaca_bot.config import Settings
@@ -18,8 +19,11 @@ from alpaca_bot.storage import (
 )
 from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres
 from alpaca_bot.web.auth import (
+    authenticate_operator,
     auth_enabled,
+    clear_operator_session,
     current_operator,
+    set_operator_session,
 )
 from alpaca_bot.web.service import (
     load_dashboard_snapshot,
@@ -74,9 +78,10 @@ def create_app(
     def dashboard(request: Request) -> HTMLResponse:
         operator = current_operator(request, settings=app_settings)
         if auth_enabled(app_settings) and operator is None:
-            return Response(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                headers={"WWW-Authenticate": 'Basic realm="alpaca_bot"'},
+            return _render_login_page(
+                app,
+                request,
+                next_path=request.url.path,
             )
         try:
             snapshot, metrics = _load_dashboard_data(app)
@@ -104,9 +109,10 @@ def create_app(
     def metrics_page(request: Request) -> HTMLResponse:
         operator = current_operator(request, settings=app_settings)
         if auth_enabled(app_settings) and operator is None:
-            return Response(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                headers={"WWW-Authenticate": 'Basic realm="alpaca_bot"'},
+            return _render_login_page(
+                app,
+                request,
+                next_path=request.url.path,
             )
         try:
             _, metrics = _load_dashboard_data(app)
@@ -129,6 +135,48 @@ def create_app(
                 "operator_email": operator,
             },
         )
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_page(request: Request, next: str = "/") -> Response:
+        if not auth_enabled(app_settings):
+            return RedirectResponse(url=_local_path(next), status_code=status.HTTP_303_SEE_OTHER)
+        operator = current_operator(request, settings=app_settings)
+        if operator is not None:
+            return RedirectResponse(url=_local_path(next), status_code=status.HTTP_303_SEE_OTHER)
+        return _render_login_page(app, request, next_path=next)
+
+    @app.post("/login")
+    async def login(request: Request) -> Response:
+        fields = await _read_form_fields(request)
+        username = fields.get("username", "")
+        password = fields.get("password", "")
+        next_path = _local_path(fields.get("next"))
+
+        if not auth_enabled(app_settings):
+            return RedirectResponse(url=next_path, status_code=status.HTTP_303_SEE_OTHER)
+        if not authenticate_operator(
+            settings=app_settings,
+            username=username,
+            password=password,
+        ):
+            return _render_login_page(
+                app,
+                request,
+                next_path=next_path,
+                username=username,
+                error_message="Invalid username or password.",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        response = RedirectResponse(url=next_path, status_code=status.HTTP_303_SEE_OTHER)
+        set_operator_session(response, settings=app_settings, username=username)
+        return response
+
+    @app.post("/logout")
+    def logout() -> RedirectResponse:
+        response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+        clear_operator_session(response)
+        return response
 
     @app.get("/healthz")
     def healthz() -> JSONResponse:
@@ -246,3 +294,43 @@ def _format_price(value: float | None) -> str:
     if value is None:
         return "n/a"
     return f"${value:,.2f}"
+
+
+def _render_login_page(
+    app: FastAPI,
+    request: Request,
+    *,
+    next_path: str,
+    username: str = "",
+    error_message: str | None = None,
+    status_code: int = status.HTTP_200_OK,
+) -> HTMLResponse:
+    return app.state.templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={
+            "request": request,
+            "settings": app.state.settings,
+            "next_path": _local_path(next_path),
+            "username": username,
+            "error_message": error_message,
+        },
+        status_code=status_code,
+    )
+
+
+async def _read_form_fields(request: Request) -> dict[str, str]:
+    body = await request.body()
+    return {
+        key: value
+        for key, value in parse_qsl(
+            body.decode("utf-8"),
+            keep_blank_values=True,
+        )
+    }
+
+
+def _local_path(next_path: str | None) -> str:
+    if not next_path or not next_path.startswith("/") or next_path.startswith("//"):
+        return "/"
+    return next_path

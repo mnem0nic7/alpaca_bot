@@ -80,6 +80,8 @@ docker run --rm alpaca-bot:local alpaca-bot-web-hash-password
 
 Copy the printed value into `DASHBOARD_AUTH_PASSWORD_HASH`.
 
+When dashboard auth is enabled, browser visits to `/` and `/metrics` show a sign-in form. Scripted clients can still authenticate with an `Authorization: Basic ...` header.
+
 To rotate the dashboard password later and immediately recreate the `web` container:
 
 ```bash

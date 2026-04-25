@@ -299,7 +299,7 @@ def test_healthz_route_reports_stale_worker_when_last_event_is_old() -> None:
     assert response.json()["worker_status"] == "stale"
 
 
-def test_dashboard_requires_basic_auth_when_auth_enabled() -> None:
+def test_dashboard_renders_login_page_when_auth_enabled() -> None:
     app = create_app(
         settings=make_settings(
             DASHBOARD_AUTH_ENABLED="true",
@@ -315,8 +315,134 @@ def test_dashboard_requires_basic_auth_when_auth_enabled() -> None:
     with TestClient(app) as client:
         response = client.get("/")
 
+    assert response.status_code == 200
+    assert "Sign in" in response.text
+    assert 'action="/login"' in response.text
+
+
+def test_dashboard_login_sets_session_cookie_and_redirects() -> None:
+    now = datetime.now(timezone.utc)
+    connection = FakeConnection(responses=[])
+    settings = make_settings(
+        DASHBOARD_AUTH_ENABLED="true",
+        DASHBOARD_AUTH_USERNAME="operator@example.com",
+        DASHBOARD_AUTH_PASSWORD_HASH=hash_password(
+            "secret-password",
+            salt=bytes.fromhex("000102030405060708090a0b0c0d0e0f"),
+        ),
+    )
+    order = OrderRecord(
+        client_order_id="paper:v1:AAPL:entry",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="accepted",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version=settings.strategy_version,
+        created_at=now,
+        updated_at=now,
+        stop_price=109.9,
+        limit_price=111.1,
+        initial_stop_price=109.9,
+        broker_order_id="broker-entry",
+        signal_timestamp=now,
+    )
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([connection]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: TradingStatus(
+                trading_mode=TradingMode.PAPER,
+                strategy_version=settings.strategy_version,
+                status=TradingStatusValue.ENABLED,
+                kill_switch_enabled=False,
+                updated_at=now,
+            )
+        ),
+        daily_session_state_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: DailySessionState(
+                session_date=date(2026, 4, 25),
+                trading_mode=TradingMode.PAPER,
+                strategy_version=settings.strategy_version,
+                entries_disabled=False,
+                flatten_complete=False,
+                last_reconciled_at=now,
+                notes="ready",
+                updated_at=now,
+            )
+        ),
+        position_store_factory=lambda _connection: SimpleNamespace(
+            list_all=lambda **_kwargs: [
+                PositionRecord(
+                    symbol="AAPL",
+                    trading_mode=TradingMode.PAPER,
+                    strategy_version=settings.strategy_version,
+                    quantity=10,
+                    entry_price=110.5,
+                    stop_price=109.9,
+                    initial_stop_price=109.9,
+                    opened_at=now,
+                    updated_at=now,
+                )
+            ]
+        ),
+        order_store_factory=lambda _connection: SimpleNamespace(
+            list_by_status=lambda **_kwargs: [order],
+            list_recent=lambda **_kwargs: [order],
+            list_closed_trades=lambda **_kwargs: [],
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: None,
+            list_by_event_types=lambda **_kwargs: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        login_response = client.post(
+            "/login",
+            data={
+                "username": "operator@example.com",
+                "password": "secret-password",
+                "next": "/",
+            },
+            follow_redirects=False,
+        )
+        dashboard_response = client.get("/")
+
+    assert login_response.status_code == 303
+    assert login_response.headers["location"] == "/"
+    assert "set-cookie" in {key.lower() for key in login_response.headers.keys()}
+    assert dashboard_response.status_code == 200
+    assert "operator@example.com" in dashboard_response.text
+
+
+def test_dashboard_login_shows_error_for_invalid_credentials() -> None:
+    app = create_app(
+        settings=make_settings(
+            DASHBOARD_AUTH_ENABLED="true",
+            DASHBOARD_AUTH_USERNAME="operator@example.com",
+            DASHBOARD_AUTH_PASSWORD_HASH=hash_password(
+                "secret-password",
+                salt=bytes.fromhex("000102030405060708090a0b0c0d0e0f"),
+            ),
+        ),
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/login",
+            data={
+                "username": "operator@example.com",
+                "password": "wrong-password",
+                "next": "/",
+            },
+        )
+
     assert response.status_code == 401
-    assert response.headers["www-authenticate"] == 'Basic realm="alpaca_bot"'
+    assert "Invalid username or password" in response.text
 
 
 def test_dashboard_allows_access_with_valid_basic_auth() -> None:
@@ -534,7 +660,7 @@ def test_metrics_route_returns_200_without_auth() -> None:
     assert "Session P" in response.text  # "Session P&L Summary"
 
 
-def test_metrics_route_returns_401_when_auth_enabled_and_no_credentials() -> None:
+def test_metrics_route_renders_login_page_when_auth_enabled_and_no_credentials() -> None:
     settings = make_settings(
         DASHBOARD_AUTH_ENABLED="true",
         DASHBOARD_AUTH_USERNAME="operator@example.com",
@@ -546,8 +672,9 @@ def test_metrics_route_returns_401_when_auth_enabled_and_no_credentials() -> Non
     app = _make_metrics_app(settings=settings)
     with TestClient(app) as client:
         response = client.get("/metrics")
-    assert response.status_code == 401
-    assert "WWW-Authenticate" in response.headers
+    assert response.status_code == 200
+    assert "Sign in" in response.text
+    assert 'value="/metrics"' in response.text
 
 
 def test_metrics_route_returns_503_when_database_fails() -> None:

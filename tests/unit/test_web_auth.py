@@ -5,8 +5,11 @@ from types import SimpleNamespace
 
 from alpaca_bot.config import Settings
 from alpaca_bot.web.auth import (
+    _SESSION_COOKIE_NAME,
     _parse_basic_credentials,
     authenticate_operator,
+    build_operator_session_token,
+    current_operator,
     hash_password,
     verify_password,
 )
@@ -40,7 +43,11 @@ def make_settings(**overrides: str) -> Settings:
     return Settings.from_env(values)
 
 
-def make_request(authorization: str = "") -> SimpleNamespace:
+def make_request(
+    authorization: str = "",
+    *,
+    cookies: dict[str, str] | None = None,
+) -> SimpleNamespace:
     class Headers:
         def __init__(self, value: str) -> None:
             self._value = value
@@ -48,7 +55,7 @@ def make_request(authorization: str = "") -> SimpleNamespace:
         def get(self, key: str, default: str = "") -> str:
             return self._value if key == "authorization" else default
 
-    return SimpleNamespace(headers=Headers(authorization))
+    return SimpleNamespace(headers=Headers(authorization), cookies=cookies or {})
 
 
 def _basic_header(username: str, password: str) -> str:
@@ -214,3 +221,47 @@ def test_authenticate_operator_returns_false_on_wrong_password() -> None:
         authenticate_operator(settings=fake_settings, username="u@example.com", password="wrong")
         is False
     )
+
+
+def test_current_operator_returns_username_from_valid_session_cookie() -> None:
+    settings = make_settings(
+        DASHBOARD_AUTH_ENABLED="true",
+        DASHBOARD_AUTH_USERNAME="operator@example.com",
+        DASHBOARD_AUTH_PASSWORD_HASH=hash_password(
+            "secret-password",
+            salt=bytes.fromhex("000102030405060708090a0b0c0d0e0f"),
+        ),
+    )
+    token = build_operator_session_token(settings=settings, username="operator@example.com")
+
+    result = current_operator(
+        make_request(cookies={_SESSION_COOKIE_NAME: token}),
+        settings=settings,
+    )
+
+    assert result == "operator@example.com"
+
+
+def test_current_operator_returns_none_for_expired_session_cookie(monkeypatch) -> None:
+    settings = make_settings(
+        DASHBOARD_AUTH_ENABLED="true",
+        DASHBOARD_AUTH_USERNAME="operator@example.com",
+        DASHBOARD_AUTH_PASSWORD_HASH=hash_password(
+            "secret-password",
+            salt=bytes.fromhex("000102030405060708090a0b0c0d0e0f"),
+        ),
+    )
+    token = build_operator_session_token(
+        settings=settings,
+        username="operator@example.com",
+        now=1_700_000_000,
+    )
+
+    monkeypatch.setattr("alpaca_bot.web.auth.time.time", lambda: 1_700_000_000 + 86_400)
+
+    result = current_operator(
+        make_request(cookies={_SESSION_COOKIE_NAME: token}),
+        settings=settings,
+    )
+
+    assert result is None

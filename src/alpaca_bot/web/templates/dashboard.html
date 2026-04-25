@@ -123,6 +123,11 @@
             <p class="eyebrow">Operator</p>
             <p class="value mono">{{ operator_email }}</p>
           </div>
+          <form method="post" action="/logout" style="margin-top: 0.8rem;">
+            <button type="submit" style="border: 1px solid var(--line); border-radius: 999px; background: #f7f2e7; color: var(--ink); padding: 0.45rem 0.9rem; font: inherit; cursor: pointer;">
+              Sign out
+            </button>
+          </form>
         </section>
       {% endif %}
       {% if snapshot %}
