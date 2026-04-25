@@ -31,10 +31,10 @@ class Bar:
 
 
 @dataclass(frozen=True)
-class BreakoutSignal:
+class EntrySignal:
     symbol: str
     signal_bar: Bar
-    breakout_level: float
+    entry_level: float
     relative_volume: float
     stop_price: float
     limit_price: float
@@ -57,7 +57,7 @@ class WorkingEntryOrder:
     stop_price: float
     limit_price: float
     initial_stop_price: float
-    breakout_level: float
+    entry_level: float
     relative_volume: float
 
 
@@ -67,7 +67,7 @@ class OpenPosition:
     entry_timestamp: datetime
     entry_price: float
     quantity: int
-    breakout_level: float
+    entry_level: float
     initial_stop_price: float
     stop_price: float
     trailing_active: bool = False

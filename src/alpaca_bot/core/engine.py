@@ -56,11 +56,25 @@ def evaluate_cycle(
     working_order_symbols: set[str],
     traded_symbols_today: set[tuple[str, date]],
     entries_disabled: bool,
+    flatten_all: bool = False,
     signal_evaluator: StrategySignalEvaluator | None = None,
     session_state: "DailySessionState | None" = None,
 ) -> CycleResult:
     if signal_evaluator is None:
         signal_evaluator = evaluate_breakout_signal
+
+    if flatten_all:
+        intents = [
+            CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol=position.symbol,
+                timestamp=now,
+                reason="loss_limit_flatten",
+            )
+            for position in open_positions
+        ]
+        intents.sort(key=lambda intent: (intent.timestamp, intent.symbol, intent.intent_type.value))
+        return CycleResult(as_of=now, intents=intents)
 
     flatten_complete = (
         session_state is not None and session_state.flatten_complete
@@ -104,6 +118,11 @@ def evaluate_cycle(
     if not entries_disabled:
         available_slots = max(settings.max_open_positions - len(open_positions), 0)
         if available_slots > 0:
+            current_exposure = (
+                sum(p.entry_price * p.quantity for p in open_positions) / equity
+                if equity > 0
+                else 0.0
+            )
             entry_candidates: list[tuple[float, float, CycleIntent]] = []
             for symbol in settings.symbols:
                 if symbol in open_position_symbols or symbol in working_order_symbols:
@@ -137,7 +156,7 @@ def evaluate_cycle(
 
                 entry_candidates.append(
                     (
-                        round((signal.signal_bar.close / signal.breakout_level) - 1, 6),
+                        round((signal.signal_bar.close / signal.entry_level) - 1, 6),
                         round(signal.relative_volume, 6),
                         CycleIntent(
                             intent_type=CycleIntentType.ENTRY,
@@ -160,7 +179,22 @@ def evaluate_cycle(
             entry_candidates.sort(
                 key=lambda item: (-item[0], -item[1], item[2].symbol),
             )
-            intents.extend(candidate for *_rank, candidate in entry_candidates[:available_slots])
+            remaining_exposure = settings.max_portfolio_exposure_pct - current_exposure
+            selected: list[CycleIntent] = []
+            for *_rank, candidate in entry_candidates:
+                if len(selected) >= available_slots:
+                    break
+                candidate_exposure = (
+                    (candidate.stop_price or 0.0) * (candidate.quantity or 0) / equity
+                    if equity > 0
+                    else 0.0
+                )
+                if current_exposure + candidate_exposure > settings.max_portfolio_exposure_pct:
+                    remaining_exposure -= candidate_exposure
+                    continue
+                selected.append(candidate)
+                current_exposure += candidate_exposure
+            intents.extend(selected)
 
     intents.sort(key=lambda intent: (intent.timestamp, intent.symbol, intent.intent_type.value))
     return CycleResult(as_of=now, intents=intents)

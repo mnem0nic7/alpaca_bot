@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import date, datetime
 
 from alpaca_bot.config import Settings
-from alpaca_bot.domain.models import Bar, BreakoutSignal
+from alpaca_bot.domain.models import Bar, EntrySignal
 
 
 def is_entry_session_time(timestamp: datetime, settings: Settings) -> bool:
@@ -38,7 +38,7 @@ def evaluate_breakout_signal(
     signal_index: int,
     daily_bars: Sequence[Bar],
     settings: Settings,
-) -> BreakoutSignal | None:
+) -> EntrySignal | None:
     if symbol not in settings.symbols:
         return None
     if signal_index < settings.breakout_lookback_bars:
@@ -70,10 +70,10 @@ def evaluate_breakout_signal(
     limit_price = round(stop_price * (1 + settings.stop_limit_buffer_pct), 2)
     breakout_stop_buffer = max(0.01, breakout_level * settings.breakout_stop_buffer_pct)
     initial_stop_price = round(breakout_level - breakout_stop_buffer, 2)
-    return BreakoutSignal(
+    return EntrySignal(
         symbol=symbol,
         signal_bar=signal_bar,
-        breakout_level=breakout_level,
+        entry_level=breakout_level,
         relative_volume=relative_volume,
         stop_price=stop_price,
         limit_price=limit_price,

@@ -131,7 +131,7 @@ class ReplayRunner:
                         stop_price=intent.stop_price,  # type: ignore[arg-type]
                         limit_price=intent.limit_price,  # type: ignore[arg-type]
                         initial_stop_price=intent.initial_stop_price,  # type: ignore[arg-type]
-                        breakout_level=0.0,  # breakout_level not carried in CycleIntent
+                        entry_level=0.0,  # entry_level not carried in CycleIntent
                         relative_volume=0.0,  # relative_volume not carried in CycleIntent
                     )
                     events.append(
@@ -202,7 +202,7 @@ class ReplayRunner:
             entry_timestamp=bar.timestamp,
             entry_price=fill_price,
             quantity=quantity,
-            breakout_level=order.breakout_level,
+            entry_level=order.entry_level,
             initial_stop_price=order.initial_stop_price,
             stop_price=order.initial_stop_price,
             highest_price=fill_price,

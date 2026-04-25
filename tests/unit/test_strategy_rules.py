@@ -163,7 +163,7 @@ def test_breakout_uses_previous_twenty_completed_bars_only() -> None:
     )
 
     assert signal is not None
-    assert signal.breakout_level == 110.0
+    assert signal.entry_level == 110.0
 
 
 def test_breakout_rejected_before_entry_window() -> None:

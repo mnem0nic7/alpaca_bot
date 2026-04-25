@@ -17,7 +17,7 @@ from typing import Sequence
 from alpaca_bot.config import Settings
 from alpaca_bot.domain import Bar, OpenPosition
 from alpaca_bot.domain.enums import IntentType
-from alpaca_bot.domain.models import BreakoutSignal, ReplayScenario
+from alpaca_bot.domain.models import EntrySignal, ReplayScenario
 from alpaca_bot.replay import ReplayRunner
 
 
@@ -118,7 +118,7 @@ def test_runner_uses_custom_signal_evaluator_to_suppress_all_entries() -> None:
         signal_index: int,
         daily_bars: Sequence[Bar],
         settings: Settings,
-    ) -> BreakoutSignal | None:
+    ) -> EntrySignal | None:
         return None
 
     # Build bars that would normally trigger a breakout (the golden scenario bars)
@@ -167,12 +167,12 @@ def test_runner_uses_custom_signal_evaluator_to_force_entry() -> None:
         signal_index: int,
         daily_bars: Sequence[Bar],
         settings: Settings,
-    ) -> BreakoutSignal | None:
+    ) -> EntrySignal | None:
         signal_bar = intraday_bars[signal_index]
-        return BreakoutSignal(
+        return EntrySignal(
             symbol=symbol,
             signal_bar=signal_bar,
-            breakout_level=100.0,
+            entry_level=100.0,
             relative_volume=3.0,
             stop_price=FIXED_SIGNAL_STOP,
             limit_price=FIXED_SIGNAL_LIMIT,
@@ -405,7 +405,7 @@ def test_stop_hit_gap_down_uses_bar_open_as_exit_price() -> None:
         entry_timestamp=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
         entry_price=105.0,
         quantity=10,
-        breakout_level=104.0,
+        entry_level=104.0,
         initial_stop_price=STOP_PRICE,
         stop_price=STOP_PRICE,
         highest_price=105.0,
@@ -502,7 +502,7 @@ def test_entry_signal_on_last_bar_is_skipped_silently() -> None:
     to act as the execution bar. No exception should be raised.
     """
     from typing import Sequence
-    from alpaca_bot.domain.models import BreakoutSignal
+    from alpaca_bot.domain.models import EntrySignal
     from alpaca_bot.domain.enums import IntentType
 
     # We need enough bars so signal_index qualifies, then force a signal on the
@@ -534,14 +534,14 @@ def test_entry_signal_on_last_bar_is_skipped_silently() -> None:
         signal_index: int,
         daily_bars: Sequence[Bar],
         settings: Settings,
-    ) -> BreakoutSignal | None:
+    ) -> EntrySignal | None:
         bar = intraday_bars[signal_index]
         if bar.timestamp == last_signal_bar_timestamp:
             signal_count["n"] += 1
-            return BreakoutSignal(
+            return EntrySignal(
                 symbol=symbol,
                 signal_bar=bar,
-                breakout_level=100.0,
+                entry_level=100.0,
                 relative_volume=3.0,
                 stop_price=101.01,
                 limit_price=101.12,
@@ -591,7 +591,7 @@ def test_stale_working_entry_order_persists_without_crash_or_fill() -> None:
         stop_price=101.0,
         limit_price=101.25,
         initial_stop_price=99.5,
-        breakout_level=100.0,
+        entry_level=100.0,
         relative_volume=2.0,
     )
 

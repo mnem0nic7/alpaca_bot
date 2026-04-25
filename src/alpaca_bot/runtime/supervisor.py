@@ -36,6 +36,8 @@ from alpaca_bot.runtime.startup_recovery import (
 from alpaca_bot.runtime.trade_update_stream import attach_trade_update_stream
 from alpaca_bot.runtime.trader import TraderStartupReport, start_trader
 from alpaca_bot.storage import AuditEvent, DailySessionState, PositionRecord, TradingStatusValue
+from alpaca_bot.strategy import STRATEGY_REGISTRY, StrategySignalEvaluator
+from alpaca_bot.strategy.breakout import evaluate_breakout_signal as _default_evaluator
 
 
 @dataclass(frozen=True)
@@ -189,6 +191,11 @@ class RuntimeSupervisor:
         account = self.broker.get_account()
         session_date = _session_date(timestamp, self.settings)
 
+        # Load session state once and apply staleness check (Task 7).
+        session_state = self._load_session_state(session_date=session_date)
+        if session_state is not None and session_state.session_date != session_date:
+            session_state = None
+
         realized_pnl = self.runtime.order_store.daily_realized_pnl(
             trading_mode=self.settings.trading_mode,
             strategy_version=self.settings.strategy_version,
@@ -217,7 +224,9 @@ class RuntimeSupervisor:
                     ),
                 )
 
-        status = self._effective_trading_status(session_date=session_date)
+        status = self._effective_trading_status(
+            session_date=session_date, session_state=session_state
+        )
         entries_disabled = (
             status in {TradingStatusValue.CLOSE_ONLY, TradingStatusValue.HALTED}
             or bool(recovery_report.mismatches)
@@ -237,6 +246,7 @@ class RuntimeSupervisor:
             start=timestamp - timedelta(days=max(self.settings.daily_sma_period * 3, 60)),
             end=timestamp,
         )
+        signal_evaluator = self._resolve_signal_evaluator()
         cycle_result = self._cycle_runner(
             settings=self.settings,
             runtime=self.runtime,
@@ -248,6 +258,9 @@ class RuntimeSupervisor:
             working_order_symbols=working_order_symbols,
             traded_symbols_today=self._load_traded_symbols(session_date=session_date),
             entries_disabled=entries_disabled,
+            flatten_all=daily_loss_limit_breached,
+            session_state=session_state,
+            signal_evaluator=signal_evaluator,
         )
         if status is not TradingStatusValue.HALTED:
             self._cycle_intent_executor(
@@ -258,10 +271,10 @@ class RuntimeSupervisor:
                 now=timestamp,
             )
 
-        # Fix #4: If this cycle emitted eod_flatten EXIT intents, mark
+        # If this cycle emitted eod_flatten or loss_limit_flatten EXIT intents, mark
         # flatten_complete=True so future cycles don't re-issue duplicate orders.
         has_flatten_intents = any(
-            getattr(intent, "reason", None) == "eod_flatten"
+            getattr(intent, "reason", None) in {"eod_flatten", "loss_limit_flatten"}
             for intent in getattr(cycle_result, "intents", [])
         )
         if has_flatten_intents and self.runtime.daily_session_state_store is not None and hasattr(
@@ -480,7 +493,7 @@ class RuntimeSupervisor:
                 entry_timestamp=position.opened_at,
                 entry_price=position.entry_price,
                 quantity=position.quantity,
-                breakout_level=position.initial_stop_price,
+                entry_level=position.initial_stop_price,
                 initial_stop_price=position.initial_stop_price,
                 stop_price=position.stop_price,
                 trailing_active=position.stop_price > position.initial_stop_price,
@@ -497,20 +510,42 @@ class RuntimeSupervisor:
             strategy_version=self.settings.strategy_version,
         )
 
-    def _effective_trading_status(self, *, session_date: date) -> TradingStatusValue | None:
-        status = self._load_trading_status()
-        if status in {TradingStatusValue.CLOSE_ONLY, TradingStatusValue.HALTED}:
-            return status
-        if self.runtime.daily_session_state_store is not None and hasattr(
-            self.runtime.daily_session_state_store, "load"
-        ):
-            session_state = self.runtime.daily_session_state_store.load(
-                session_date=session_date,
+    def _resolve_signal_evaluator(self) -> StrategySignalEvaluator:
+        store = getattr(self.runtime, "strategy_flag_store", None)
+        if store is None:
+            return _default_evaluator
+        for name, evaluator in STRATEGY_REGISTRY.items():
+            flag = store.load(
+                strategy_name=name,
                 trading_mode=self.settings.trading_mode,
                 strategy_version=self.settings.strategy_version,
             )
-            if session_state is not None and session_state.entries_disabled:
-                return TradingStatusValue.CLOSE_ONLY
+            if flag is None or flag.enabled:
+                return evaluator
+        return lambda **_: None
+
+    def _load_session_state(self, *, session_date: date) -> DailySessionState | None:
+        if self.runtime.daily_session_state_store is None or not hasattr(
+            self.runtime.daily_session_state_store, "load"
+        ):
+            return None
+        return self.runtime.daily_session_state_store.load(
+            session_date=session_date,
+            trading_mode=self.settings.trading_mode,
+            strategy_version=self.settings.strategy_version,
+        )
+
+    def _effective_trading_status(
+        self,
+        *,
+        session_date: date,
+        session_state: DailySessionState | None = None,
+    ) -> TradingStatusValue | None:
+        status = self._load_trading_status()
+        if status in {TradingStatusValue.CLOSE_ONLY, TradingStatusValue.HALTED}:
+            return status
+        if session_state is not None and session_state.entries_disabled:
+            return TradingStatusValue.CLOSE_ONLY
         return status
 
     def _load_trading_status(self) -> TradingStatusValue | None:
