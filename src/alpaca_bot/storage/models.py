@@ -42,6 +42,7 @@ class OrderRecord:
     quantity: int
     trading_mode: TradingMode
     strategy_version: str
+    strategy_name: str = "breakout"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     stop_price: float | None = None
@@ -63,6 +64,7 @@ class PositionRecord:
     stop_price: float
     initial_stop_price: float
     opened_at: datetime
+    strategy_name: str = "breakout"
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -73,6 +75,16 @@ class DailySessionState:
     strategy_version: str
     entries_disabled: bool
     flatten_complete: bool
+    strategy_name: str = "breakout"
     last_reconciled_at: datetime | None = None
     notes: str | None = None
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class StrategyFlag:
+    strategy_name: str
+    trading_mode: TradingMode
+    strategy_version: str
+    enabled: bool
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

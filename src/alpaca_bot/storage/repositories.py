@@ -12,6 +12,7 @@ from alpaca_bot.storage.models import (
     DailySessionState,
     OrderRecord,
     PositionRecord,
+    StrategyFlag,
     TradingStatus,
     TradingStatusValue,
 )
@@ -190,7 +191,8 @@ _ORDER_SELECT_COLUMNS = """
     broker_order_id,
     signal_timestamp,
     fill_price,
-    filled_quantity
+    filled_quantity,
+    strategy_name
 """
 
 
@@ -213,6 +215,7 @@ def _row_to_order_record(row: Any) -> OrderRecord:
         signal_timestamp=row[14],
         fill_price=float(row[15]) if row[15] is not None else None,
         filled_quantity=int(row[16]) if row[16] is not None else None,
+        strategy_name=row[17] if row[17] is not None else "breakout",
     )
 
 
@@ -233,6 +236,7 @@ class OrderStore:
                 quantity,
                 trading_mode,
                 strategy_version,
+                strategy_name,
                 stop_price,
                 limit_price,
                 initial_stop_price,
@@ -243,7 +247,7 @@ class OrderStore:
                 created_at,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (client_order_id)
             DO UPDATE SET
                 status = EXCLUDED.status,
@@ -266,6 +270,7 @@ class OrderStore:
                 order.quantity,
                 order.trading_mode.value,
                 order.strategy_version,
+                order.strategy_name,
                 order.stop_price,
                 order.limit_price,
                 order.initial_stop_price,
@@ -306,10 +311,13 @@ class OrderStore:
         trading_mode: TradingMode,
         strategy_version: str,
         statuses: list[str],
+        strategy_name: str | None = None,
     ) -> list[OrderRecord]:
         if not statuses:
             return []
         placeholders = ", ".join(["%s"] * len(statuses))
+        strategy_clause = "AND strategy_name = %s" if strategy_name is not None else ""
+        strategy_params = (strategy_name,) if strategy_name is not None else ()
         rows = fetch_all(
             self._connection,
             f"""
@@ -318,9 +326,10 @@ class OrderStore:
             WHERE trading_mode = %s
               AND strategy_version = %s
               AND status IN ({placeholders})
+              {strategy_clause}
             ORDER BY created_at, client_order_id
             """,
-            (trading_mode.value, strategy_version, *statuses),
+            (trading_mode.value, strategy_version, *statuses, *strategy_params),
         )
         return [_row_to_order_record(row) for row in rows]
 
@@ -329,11 +338,13 @@ class OrderStore:
         *,
         trading_mode: TradingMode,
         strategy_version: str,
+        strategy_name: str | None = None,
     ) -> list[OrderRecord]:
         return self.list_by_status(
             trading_mode=trading_mode,
             strategy_version=strategy_version,
             statuses=["pending_submit"],
+            strategy_name=strategy_name,
         )
 
     def list_recent(
@@ -416,6 +427,7 @@ class OrderStore:
         trading_mode: TradingMode,
         strategy_version: str,
         session_date: date,
+        strategy_name: str | None = None,
     ) -> list[dict]:
         """Return one dict per closed round-trip trade for a session date.
 
@@ -423,17 +435,21 @@ class OrderStore:
         look up entry fill data without risking Cartesian-product duplicates.
         Rows where entry_fill or exit_fill is NULL are excluded.
         """
+        strategy_clause = "AND x.strategy_name = %s" if strategy_name is not None else ""
+        strategy_params = (strategy_name,) if strategy_name is not None else ()
         rows = fetch_all(
             self._connection,
-            """
+            f"""
             SELECT
                 x.symbol,
+                x.strategy_name,
                 (
                     SELECT e.fill_price
                     FROM orders e
                     WHERE e.symbol = x.symbol
                       AND e.trading_mode = x.trading_mode
                       AND e.strategy_version = x.strategy_version
+                      AND e.strategy_name = x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
                       AND DATE(e.updated_at AT TIME ZONE 'America/New_York') = %s
@@ -445,6 +461,7 @@ class OrderStore:
                     WHERE e.symbol = x.symbol
                       AND e.trading_mode = x.trading_mode
                       AND e.strategy_version = x.strategy_version
+                      AND e.strategy_name = x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
                       AND DATE(e.updated_at AT TIME ZONE 'America/New_York') = %s
@@ -456,6 +473,7 @@ class OrderStore:
                     WHERE e.symbol = x.symbol
                       AND e.trading_mode = x.trading_mode
                       AND e.strategy_version = x.strategy_version
+                      AND e.strategy_name = x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
                       AND DATE(e.updated_at AT TIME ZONE 'America/New_York') = %s
@@ -470,6 +488,7 @@ class OrderStore:
               AND x.intent_type IN ('stop', 'exit')
               AND x.fill_price IS NOT NULL
               AND DATE(x.updated_at AT TIME ZONE 'America/New_York') = %s
+              {strategy_clause}
             ORDER BY x.updated_at
             """,
             (
@@ -477,20 +496,22 @@ class OrderStore:
                 trading_mode.value,
                 strategy_version,
                 session_date,
+                *strategy_params,
             ),
         )
         return [
             {
                 "symbol": row[0],
-                "entry_fill": float(row[1]) if row[1] is not None else None,
-                "entry_limit": float(row[2]) if row[2] is not None else None,
-                "entry_time": row[3],
-                "exit_fill": float(row[4]) if row[4] is not None else None,
-                "exit_time": row[5],
-                "qty": int(row[6]),
+                "strategy_name": row[1],
+                "entry_fill": float(row[2]) if row[2] is not None else None,
+                "entry_limit": float(row[3]) if row[3] is not None else None,
+                "entry_time": row[4],
+                "exit_fill": float(row[5]) if row[5] is not None else None,
+                "exit_time": row[6],
+                "qty": int(row[7]),
             }
             for row in rows
-            if row[1] is not None and row[4] is not None
+            if row[2] is not None and row[5] is not None
         ]
 
 
@@ -506,14 +527,15 @@ class DailySessionStateStore:
                 session_date,
                 trading_mode,
                 strategy_version,
+                strategy_name,
                 entries_disabled,
                 flatten_complete,
                 last_reconciled_at,
                 notes,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (session_date, trading_mode, strategy_version)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (session_date, trading_mode, strategy_version, strategy_name)
             DO UPDATE SET
                 entries_disabled = EXCLUDED.entries_disabled,
                 flatten_complete = EXCLUDED.flatten_complete,
@@ -525,6 +547,7 @@ class DailySessionStateStore:
                 state.session_date,
                 state.trading_mode.value,
                 state.strategy_version,
+                state.strategy_name,
                 state.entries_disabled,
                 state.flatten_complete,
                 state.last_reconciled_at,
@@ -539,6 +562,7 @@ class DailySessionStateStore:
         session_date: Any,
         trading_mode: TradingMode,
         strategy_version: str,
+        strategy_name: str = "breakout",
     ) -> DailySessionState | None:
         row = fetch_one(
             self._connection,
@@ -547,6 +571,7 @@ class DailySessionStateStore:
                 session_date,
                 trading_mode,
                 strategy_version,
+                strategy_name,
                 entries_disabled,
                 flatten_complete,
                 last_reconciled_at,
@@ -554,8 +579,9 @@ class DailySessionStateStore:
                 updated_at
             FROM daily_session_state
             WHERE session_date = %s AND trading_mode = %s AND strategy_version = %s
+              AND strategy_name = %s
             """,
-            (session_date, trading_mode.value, strategy_version),
+            (session_date, trading_mode.value, strategy_version, strategy_name),
         )
         if row is None:
             return None
@@ -563,11 +589,12 @@ class DailySessionStateStore:
             session_date=row[0],
             trading_mode=TradingMode(row[1]),
             strategy_version=row[2],
-            entries_disabled=bool(row[3]),
-            flatten_complete=bool(row[4]),
-            last_reconciled_at=row[5],
-            notes=row[6],
-            updated_at=row[7],
+            strategy_name=row[3],
+            entries_disabled=bool(row[4]),
+            flatten_complete=bool(row[5]),
+            last_reconciled_at=row[6],
+            notes=row[7],
+            updated_at=row[8],
         )
 
 
@@ -583,6 +610,7 @@ class PositionStore:
                 symbol,
                 trading_mode,
                 strategy_version,
+                strategy_name,
                 quantity,
                 entry_price,
                 stop_price,
@@ -590,8 +618,8 @@ class PositionStore:
                 opened_at,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (symbol, trading_mode, strategy_version)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (symbol, trading_mode, strategy_version, strategy_name)
             DO UPDATE SET
                 quantity = EXCLUDED.quantity,
                 entry_price = EXCLUDED.entry_price,
@@ -604,6 +632,7 @@ class PositionStore:
                 position.symbol,
                 position.trading_mode.value,
                 position.strategy_version,
+                position.strategy_name,
                 position.quantity,
                 position.entry_price,
                 position.stop_price,
@@ -619,15 +648,20 @@ class PositionStore:
         positions: list[PositionRecord],
         trading_mode: TradingMode,
         strategy_version: str,
+        strategy_name: str | None = None,
     ) -> None:
-        execute(
-            self._connection,
-            """
-            DELETE FROM positions
-            WHERE trading_mode = %s AND strategy_version = %s
-            """,
-            (trading_mode.value, strategy_version),
-        )
+        if strategy_name is not None:
+            execute(
+                self._connection,
+                "DELETE FROM positions WHERE trading_mode = %s AND strategy_version = %s AND strategy_name = %s",
+                (trading_mode.value, strategy_version, strategy_name),
+            )
+        else:
+            execute(
+                self._connection,
+                "DELETE FROM positions WHERE trading_mode = %s AND strategy_version = %s",
+                (trading_mode.value, strategy_version),
+            )
         for position in positions:
             self.save(position)
 
@@ -637,14 +671,15 @@ class PositionStore:
         symbol: str,
         trading_mode: TradingMode,
         strategy_version: str,
+        strategy_name: str = "breakout",
     ) -> None:
         execute(
             self._connection,
             """
             DELETE FROM positions
-            WHERE symbol = %s AND trading_mode = %s AND strategy_version = %s
+            WHERE symbol = %s AND trading_mode = %s AND strategy_version = %s AND strategy_name = %s
             """,
-            (symbol, trading_mode.value, strategy_version),
+            (symbol, trading_mode.value, strategy_version, strategy_name),
         )
 
     def list_all(
@@ -652,14 +687,18 @@ class PositionStore:
         *,
         trading_mode: TradingMode,
         strategy_version: str,
+        strategy_name: str | None = None,
     ) -> list[PositionRecord]:
+        strategy_clause = "AND strategy_name = %s" if strategy_name is not None else ""
+        strategy_params = (strategy_name,) if strategy_name is not None else ()
         cursor = self._connection.cursor()
         cursor.execute(
-            """
+            f"""
             SELECT
                 symbol,
                 trading_mode,
                 strategy_version,
+                strategy_name,
                 quantity,
                 entry_price,
                 stop_price,
@@ -668,9 +707,10 @@ class PositionStore:
                 updated_at
             FROM positions
             WHERE trading_mode = %s AND strategy_version = %s
+              {strategy_clause}
             ORDER BY symbol
             """,
-            (trading_mode.value, strategy_version),
+            (trading_mode.value, strategy_version, *strategy_params),
         )
         rows = cursor.fetchall()
         return [
@@ -678,12 +718,13 @@ class PositionStore:
                 symbol=row[0],
                 trading_mode=TradingMode(row[1]),
                 strategy_version=row[2],
-                quantity=int(row[3]),
-                entry_price=float(row[4]),
-                stop_price=float(row[5]),
-                initial_stop_price=float(row[6]),
-                opened_at=row[7],
-                updated_at=row[8],
+                strategy_name=row[3],
+                quantity=int(row[4]),
+                entry_price=float(row[5]),
+                stop_price=float(row[6]),
+                initial_stop_price=float(row[7]),
+                opened_at=row[8],
+                updated_at=row[9],
             )
             for row in rows
         ]
@@ -760,6 +801,86 @@ class TuningResultStore:
             "sharpe_ratio": row[4],
             "created_at": row[5],
         }
+
+
+class StrategyFlagStore:
+    def __init__(self, connection: ConnectionProtocol) -> None:
+        self._connection = connection
+
+    def save(self, flag: StrategyFlag) -> None:
+        execute(
+            self._connection,
+            """
+            INSERT INTO strategy_flags (
+                strategy_name, trading_mode, strategy_version, enabled, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (strategy_name, trading_mode, strategy_version)
+            DO UPDATE SET
+                enabled = EXCLUDED.enabled,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (
+                flag.strategy_name,
+                flag.trading_mode.value,
+                flag.strategy_version,
+                flag.enabled,
+                flag.updated_at,
+            ),
+        )
+
+    def load(
+        self,
+        *,
+        strategy_name: str,
+        trading_mode: TradingMode,
+        strategy_version: str,
+    ) -> StrategyFlag | None:
+        row = fetch_one(
+            self._connection,
+            """
+            SELECT strategy_name, trading_mode, strategy_version, enabled, updated_at
+            FROM strategy_flags
+            WHERE strategy_name = %s AND trading_mode = %s AND strategy_version = %s
+            """,
+            (strategy_name, trading_mode.value, strategy_version),
+        )
+        if row is None:
+            return None
+        return StrategyFlag(
+            strategy_name=row[0],
+            trading_mode=TradingMode(row[1]),
+            strategy_version=row[2],
+            enabled=bool(row[3]),
+            updated_at=row[4],
+        )
+
+    def list_all(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+    ) -> list[StrategyFlag]:
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT strategy_name, trading_mode, strategy_version, enabled, updated_at
+            FROM strategy_flags
+            WHERE trading_mode = %s AND strategy_version = %s
+            ORDER BY strategy_name
+            """,
+            (trading_mode.value, strategy_version),
+        )
+        return [
+            StrategyFlag(
+                strategy_name=row[0],
+                trading_mode=TradingMode(row[1]),
+                strategy_version=row[2],
+                enabled=bool(row[3]),
+                updated_at=row[4],
+            )
+            for row in rows
+        ]
 
 
 def _load_json_payload(raw_payload: Any) -> dict[str, Any]:

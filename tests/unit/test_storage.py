@@ -199,6 +199,7 @@ def test_order_store_upserts_and_loads_record() -> None:
                 signal_timestamp,
                 155.50,  # fill_price
                 45,      # filled_quantity
+                "breakout",  # strategy_name
             )
         ]
     )
@@ -254,6 +255,7 @@ def test_order_store_lists_records_by_status() -> None:
                     signal_timestamp,
                     None,  # fill_price
                     None,  # filled_quantity
+                    "breakout",  # strategy_name
                 ),
                 (
                     "paper:v1:AAPL:2026-04-24T19:15:00Z:stop",
@@ -273,6 +275,7 @@ def test_order_store_lists_records_by_status() -> None:
                     signal_timestamp,
                     None,  # fill_price
                     None,  # filled_quantity
+                    "breakout",  # strategy_name
                 ),
             ]
         ]
@@ -315,6 +318,7 @@ def test_order_store_lists_recent_records() -> None:
                     signal_timestamp,
                     None,  # fill_price
                     None,  # filled_quantity
+                    "breakout",  # strategy_name
                 ),
                 (
                     "paper:v1:AAPL:2026-04-24T19:00:00Z:entry",
@@ -334,6 +338,7 @@ def test_order_store_lists_recent_records() -> None:
                     signal_timestamp,
                     None,  # fill_price
                     None,  # filled_quantity
+                    "breakout",  # strategy_name
                 ),
             ]
         ]
@@ -370,6 +375,7 @@ def test_daily_session_state_store_round_trip() -> None:
                 date(2026, 4, 24),
                 "paper",
                 "v1-breakout",
+                "breakout",
                 True,
                 False,
                 now,
@@ -400,6 +406,7 @@ def test_position_store_save_list_and_delete() -> None:
                     "AAPL",
                     "paper",
                     "v1-breakout",
+                    "breakout",
                     45,
                     111.02,
                     109.89,
