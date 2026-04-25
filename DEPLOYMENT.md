@@ -1,10 +1,11 @@
 # alpaca_bot Operator Deployment
 
-This repo currently deploys as a self-hosted Docker stack on one server: local `postgres` plus a single long-running worker container, `alpaca-bot-supervisor`. There is no dashboard or separate web service yet. Operational control is CLI-only through `alpaca-bot-admin`.
+This repo currently deploys as a self-hosted Docker stack on one server: local `postgres`, a long-running worker container `alpaca-bot-supervisor`, and a read-only local dashboard `alpaca-bot-web`. Operational control remains CLI-only through `alpaca-bot-admin`.
 
 ## Runtime shape
 
 - `alpaca-bot-supervisor` is the server process to keep running.
+- `alpaca-bot-web` is a read-only FastAPI dashboard bound to `127.0.0.1:18080`.
 - `postgres` is the local state store for orders, positions, audit events, and status.
 - `alpaca-bot-migrate` applies SQL migrations in `migrations/`.
 - `alpaca-bot-admin` is for operator actions such as `status`, `halt`, `close-only`, and `resume`.
@@ -81,7 +82,7 @@ cd /srv/alpaca_bot/current
 docker build -t alpaca-bot:local .
 ```
 
-5. Run the deploy helper, which builds the compose services, starts Postgres, applies migrations, and starts the supervisor if valid Alpaca credentials are present:
+5. Run the deploy helper, which builds the compose services, starts Postgres, applies migrations, starts the local read-only dashboard, and starts the supervisor if valid Alpaca credentials are present:
 
 ```bash
 cd /srv/alpaca_bot/current
@@ -110,6 +111,14 @@ If the worker does not start, inspect logs with Docker:
 ```bash
 docker compose -f deploy/compose.yaml logs --tail=200 supervisor
 ```
+
+To verify the local dashboard:
+
+```bash
+curl http://127.0.0.1:18080/healthz
+```
+
+The HTML overview page is available only on the server itself at `http://127.0.0.1:18080/`. Put Caddy in front of it later if you want remote access.
 
 If you only want to verify the local database is healthy:
 

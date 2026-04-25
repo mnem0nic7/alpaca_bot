@@ -95,6 +95,27 @@ class AuditEventStore:
             ),
         )
 
+    def list_recent(self, *, limit: int = 20) -> list[AuditEvent]:
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT event_type, symbol, payload, created_at
+            FROM audit_events
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        return [
+            AuditEvent(
+                event_type=row[0],
+                symbol=row[1],
+                payload=_load_json_payload(row[2]),
+                created_at=row[3],
+            )
+            for row in rows
+        ]
+
 
 class OrderStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
@@ -314,6 +335,61 @@ class OrderStore:
             statuses=["pending_submit"],
         )
 
+    def list_recent(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        limit: int = 20,
+    ) -> list[OrderRecord]:
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT
+                client_order_id,
+                symbol,
+                side,
+                intent_type,
+                status,
+                quantity,
+                trading_mode,
+                strategy_version,
+                created_at,
+                updated_at,
+                stop_price,
+                limit_price,
+                initial_stop_price,
+                broker_order_id,
+                signal_timestamp
+            FROM orders
+            WHERE trading_mode = %s
+              AND strategy_version = %s
+            ORDER BY created_at DESC, client_order_id DESC
+            LIMIT %s
+            """,
+            (trading_mode.value, strategy_version, limit),
+        )
+        return [
+            OrderRecord(
+                client_order_id=row[0],
+                symbol=row[1],
+                side=row[2],
+                intent_type=row[3],
+                status=row[4],
+                quantity=int(row[5]),
+                trading_mode=TradingMode(row[6]),
+                strategy_version=row[7],
+                created_at=row[8],
+                updated_at=row[9],
+                stop_price=row[10],
+                limit_price=row[11],
+                initial_stop_price=row[12],
+                broker_order_id=row[13],
+                signal_timestamp=row[14],
+            )
+            for row in rows
+        ]
+
 
 class DailySessionStateStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
@@ -508,3 +584,11 @@ class PositionStore:
             )
             for row in rows
         ]
+
+
+def _load_json_payload(raw_payload: Any) -> dict[str, Any]:
+    if isinstance(raw_payload, dict):
+        return raw_payload
+    if isinstance(raw_payload, str):
+        return json.loads(raw_payload)
+    return dict(raw_payload or {})

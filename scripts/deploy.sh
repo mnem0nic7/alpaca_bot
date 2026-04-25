@@ -51,9 +51,10 @@ require_var DATABASE_URL
 require_var TRADING_MODE
 require_var STRATEGY_VERSION
 
-docker compose -f "$COMPOSE_FILE" build supervisor migrate admin
+docker compose -f "$COMPOSE_FILE" build supervisor web migrate admin
 docker compose -f "$COMPOSE_FILE" up -d postgres
 docker compose -f "$COMPOSE_FILE" run --rm migrate
+docker compose -f "$COMPOSE_FILE" up -d --force-recreate web
 
 if credentials_ready; then
   docker compose -f "$COMPOSE_FILE" up -d --force-recreate supervisor

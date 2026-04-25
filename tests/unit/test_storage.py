@@ -131,6 +131,32 @@ def test_audit_event_store_appends_json_payload() -> None:
     assert connection.executed[0][1][2] == json.dumps(event.payload, sort_keys=True)
 
 
+def test_audit_event_store_lists_recent_events() -> None:
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+    connection = FakeConnection(
+        responses=[
+            [
+                ("supervisor_cycle", None, {"entries_disabled": False}, now),
+                (
+                    "trade_update_unmatched",
+                    "AAPL",
+                    json.dumps({"broker_order_id": "broker-123"}),
+                    now,
+                ),
+            ]
+        ]
+    )
+    store = AuditEventStore(connection)
+
+    events = store.list_recent(limit=2)
+
+    assert [(event.event_type, event.symbol) for event in events] == [
+        ("supervisor_cycle", None),
+        ("trade_update_unmatched", "AAPL"),
+    ]
+    assert events[1].payload == {"broker_order_id": "broker-123"}
+
+
 def test_order_store_upserts_and_loads_record() -> None:
     now = datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc)
     signal_timestamp = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
@@ -235,6 +261,63 @@ def test_order_store_lists_records_by_status() -> None:
     assert [order.client_order_id for order in orders] == [
         "paper:v1:AAPL:2026-04-24T19:00:00Z:entry",
         "paper:v1:AAPL:2026-04-24T19:15:00Z:stop",
+    ]
+
+
+def test_order_store_lists_recent_records() -> None:
+    now = datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc)
+    signal_timestamp = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    connection = FakeConnection(
+        responses=[
+            [
+                (
+                    "paper:v1:AAPL:2026-04-24T19:15:00Z:stop",
+                    "AAPL",
+                    "sell",
+                    "stop",
+                    "accepted",
+                    45,
+                    "paper",
+                    "v1-breakout",
+                    now,
+                    now,
+                    109.89,
+                    None,
+                    109.89,
+                    "broker-stop",
+                    signal_timestamp,
+                ),
+                (
+                    "paper:v1:AAPL:2026-04-24T19:00:00Z:entry",
+                    "AAPL",
+                    "buy",
+                    "entry",
+                    "filled",
+                    45,
+                    "paper",
+                    "v1-breakout",
+                    now,
+                    now,
+                    109.89,
+                    111.12,
+                    109.89,
+                    "broker-entry",
+                    signal_timestamp,
+                ),
+            ]
+        ]
+    )
+    store = OrderStore(connection)
+
+    orders = store.list_recent(
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        limit=2,
+    )
+
+    assert [order.client_order_id for order in orders] == [
+        "paper:v1:AAPL:2026-04-24T19:15:00Z:stop",
+        "paper:v1:AAPL:2026-04-24T19:00:00Z:entry",
     ]
 
 

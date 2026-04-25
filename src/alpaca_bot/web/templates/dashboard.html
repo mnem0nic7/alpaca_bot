@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>alpaca_bot dashboard</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3f0e8;
+        --panel: #fffdf8;
+        --line: #d8d2c5;
+        --ink: #1d2b2a;
+        --muted: #6a736e;
+        --accent: #1f6f78;
+        --warn: #8f3b2e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Iowan Old Style", "Palatino Linotype", serif;
+        background:
+          radial-gradient(circle at top right, rgba(31, 111, 120, 0.12), transparent 28rem),
+          linear-gradient(180deg, #f9f6ef 0%, var(--bg) 100%);
+        color: var(--ink);
+      }
+      main {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 2rem 1.25rem 3rem;
+      }
+      h1, h2 {
+        margin: 0;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+      }
+      p { margin: 0; }
+      .hero {
+        display: grid;
+        gap: 1rem;
+        grid-template-columns: 2fr 1fr;
+        margin-bottom: 1.5rem;
+      }
+      .panel {
+        background: rgba(255, 253, 248, 0.92);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 1.1rem 1.2rem;
+        box-shadow: 0 10px 30px rgba(29, 43, 42, 0.06);
+      }
+      .status-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.8rem 1rem;
+        margin-top: 1rem;
+      }
+      .eyebrow {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        color: var(--muted);
+        letter-spacing: 0.08em;
+      }
+      .value {
+        font-size: 1.05rem;
+        margin-top: 0.2rem;
+      }
+      .section-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+      }
+      .table-wrap { overflow-x: auto; }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.9rem;
+      }
+      th, td {
+        text-align: left;
+        padding: 0.55rem 0;
+        border-bottom: 1px solid rgba(216, 210, 197, 0.8);
+        vertical-align: top;
+        font-size: 0.95rem;
+      }
+      th {
+        color: var(--muted);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .pill {
+        display: inline-block;
+        padding: 0.2rem 0.55rem;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: #f7f2e7;
+        font-size: 0.82rem;
+      }
+      .warn { color: var(--warn); }
+      .muted { color: var(--muted); }
+      .mono { font-family: "SFMono-Regular", "Menlo", monospace; font-size: 0.88rem; }
+      ul.events {
+        list-style: none;
+        padding: 0;
+        margin: 0.9rem 0 0;
+      }
+      ul.events li {
+        padding: 0.75rem 0;
+        border-bottom: 1px solid rgba(216, 210, 197, 0.8);
+      }
+      @media (max-width: 900px) {
+        .hero, .section-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <div class="panel">
+          <p class="eyebrow">alpaca_bot</p>
+          <h1>Read-Only Runtime Dashboard</h1>
+          <p class="muted" style="margin-top: 0.55rem;">
+            Generated {{ format_timestamp(snapshot.generated_at) }} for
+            <span class="mono">{{ settings.trading_mode.value }}</span> /
+            <span class="mono">{{ settings.strategy_version }}</span>
+          </p>
+          <div class="status-grid">
+            <div>
+              <p class="eyebrow">Trading Status</p>
+              <p class="value">
+                {% if snapshot.trading_status %}
+                  <span class="pill">{{ snapshot.trading_status.status.value }}</span>
+                {% else %}
+                  <span class="pill">unknown</span>
+                {% endif %}
+              </p>
+            </div>
+            <div>
+              <p class="eyebrow">Kill Switch</p>
+              <p class="value">
+                {% if snapshot.trading_status and snapshot.trading_status.kill_switch_enabled %}
+                  <span class="warn">engaged</span>
+                {% else %}
+                  off
+                {% endif %}
+              </p>
+            </div>
+            <div>
+              <p class="eyebrow">Entries Disabled</p>
+              <p class="value">
+                {% if snapshot.session_state and snapshot.session_state.entries_disabled %}
+                  <span class="warn">yes</span>
+                {% else %}
+                  no
+                {% endif %}
+              </p>
+            </div>
+            <div>
+              <p class="eyebrow">Flatten Complete</p>
+              <p class="value">
+                {% if snapshot.session_state and snapshot.session_state.flatten_complete %}
+                  yes
+                {% else %}
+                  no
+                {% endif %}
+              </p>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <p class="eyebrow">Session</p>
+          <h2 style="margin-top: 0.2rem;">
+            {% if snapshot.session_state %}
+              {{ snapshot.session_state.session_date.isoformat() }}
+            {% else %}
+              no session row
+            {% endif %}
+          </h2>
+          <p class="muted" style="margin-top: 0.85rem;">
+            {% if snapshot.trading_status and snapshot.trading_status.status_reason %}
+              {{ snapshot.trading_status.status_reason }}
+            {% elif snapshot.session_state and snapshot.session_state.notes %}
+              {{ snapshot.session_state.notes }}
+            {% else %}
+              No operator note recorded.
+            {% endif %}
+          </p>
+          <p class="eyebrow" style="margin-top: 1rem;">Coverage</p>
+          <p class="value">{{ snapshot.positions|length }} open positions</p>
+          <p class="value">{{ snapshot.working_orders|length }} working orders</p>
+          <p class="value">{{ snapshot.recent_events|length }} recent events loaded</p>
+        </div>
+      </section>
+
+      <section class="section-grid">
+        <div class="panel">
+          <h2>Open Positions</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Qty</th>
+                  <th>Entry</th>
+                  <th>Stop</th>
+                  <th>Opened</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for position in snapshot.positions %}
+                  <tr>
+                    <td class="mono">{{ position.symbol }}</td>
+                    <td>{{ position.quantity }}</td>
+                    <td>{{ format_price(position.entry_price) }}</td>
+                    <td>{{ format_price(position.stop_price) }}</td>
+                    <td>{{ format_timestamp(position.opened_at) }}</td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="5" class="muted">No open positions.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Working Orders</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Intent</th>
+                  <th>Status</th>
+                  <th>Qty</th>
+                  <th>Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for order in snapshot.working_orders %}
+                  <tr>
+                    <td class="mono">{{ order.symbol }}</td>
+                    <td>{{ order.intent_type }}</td>
+                    <td>{{ order.status }}</td>
+                    <td>{{ order.quantity }}</td>
+                    <td>{{ format_timestamp(order.updated_at) }}</td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="5" class="muted">No working orders.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Recent Orders</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Intent</th>
+                  <th>Status</th>
+                  <th>Stop</th>
+                  <th>Limit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for order in snapshot.recent_orders %}
+                  <tr>
+                    <td class="mono">{{ order.symbol }}</td>
+                    <td>{{ order.intent_type }}</td>
+                    <td>{{ order.status }}</td>
+                    <td>{{ format_price(order.stop_price) }}</td>
+                    <td>{{ format_price(order.limit_price) }}</td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="5" class="muted">No recent orders.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Recent Events</h2>
+          <ul class="events">
+            {% for event in snapshot.recent_events %}
+              <li>
+                <div style="display: flex; justify-content: space-between; gap: 1rem;">
+                  <strong>{{ event.event_type }}</strong>
+                  <span class="muted">{{ format_timestamp(event.created_at) }}</span>
+                </div>
+                <p class="muted" style="margin-top: 0.35rem;">
+                  {% if event.symbol %}<span class="mono">{{ event.symbol }}</span> · {% endif %}
+                  <span class="mono">{{ event.payload }}</span>
+                </p>
+              </li>
+            {% else %}
+              <li class="muted">No recent events.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
