@@ -15,6 +15,10 @@ brainstorming → writing-plans → grill-me → refine → [repeat] → feature
 
 Each stage gates the next. Do not skip ahead.
 
+## Autonomous Execution Mandate
+
+**Run all six stages end-to-end without pausing for user input.** Do not stop between stages to report progress or seek approval. Only surface a question to the user if a decision requires information that cannot be discovered from the codebase, git history, or first-principles reasoning — and that scenario should be extremely rare.
+
 ## Stage 1 — Brainstorm
 
 **REQUIRED SUB-SKILL:** Use `superpowers:brainstorming`
@@ -35,7 +39,7 @@ After the plan is written, announce:
 
 > "Plan written. Now grilling it — I'll interview you relentlessly until every branch of the design tree is resolved."
 
-Then invoke `grill-me` against the plan. Ask questions one at a time, provide your recommended answer for each, and explore the codebase instead of asking when the answer is discoverable there.
+Then invoke `grill-me` against the plan. **Answer every question yourself** using codebase exploration, git history, and reasoning. Never surface a grill-me question to the user — if the answer requires judgment, make the call and record it in the plan. Explore the codebase in parallel (multiple grep/glob searches at once) to resolve questions faster.
 
 ### Domain-specific questions to prioritise for this codebase
 
@@ -88,7 +92,7 @@ If Stage 4 changed more than one task, run `grill-me` again on the revised plan.
 
 ## Stage 6 — Hand off
 
-Announce the plan is ready, then invoke:
+Announce the plan is ready and immediately invoke — do not wait for user confirmation:
 
 **REQUIRED SUB-SKILL:** Use `feature-dev:feature-dev`
 

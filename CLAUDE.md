@@ -157,6 +157,8 @@ Six roles cover all development work on this project. Planner and Feature Develo
 
 The Planner no longer invokes brainstorming and write-plan separately. `/plan-and-refine` is the single entry point.
 
+**The plan-and-refine → feature-dev pipeline is fully autonomous.** The agent runs all stages (brainstorm → write-plan → grill → refine → feature-dev) without stopping for user approval between steps. Every grill-me question is answered by the agent using the codebase — never delegated to the user. The only valid pause point is a genuine external dependency (missing credentials, blocked API access) that cannot be resolved from within the repo.
+
 ### Mandates
 
 **Tester:** Owns test coverage. All new logic in `core/`, `strategy/`, `risk/`, and `runtime/` must have a corresponding unit test using the project's DI pattern (fake callables, in-memory stores — no mocks). Run `pytest` before every commit. Consult the `/tdd` skill's companion docs for boundaries: `mocking.md` (never mock your own classes — use fakes instead), `tests.md` (test quality), `deep-modules.md` (module depth). The project's fake-callables pattern is the DI-at-system-boundaries approach described in `mocking.md`.
