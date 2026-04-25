@@ -69,7 +69,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    environment: *alpaca_bot_env
+    environment:
+      <<: *alpaca_bot_env
+      DASHBOARD_AUTH_ENABLED: ${DASHBOARD_AUTH_ENABLED:-false}
+      DASHBOARD_AUTH_USERNAME: ${DASHBOARD_AUTH_USERNAME:-}
+      DASHBOARD_AUTH_PASSWORD_HASH: ${DASHBOARD_AUTH_PASSWORD_HASH:-}
     ports:
       - "127.0.0.1:18080:8080"
 

@@ -18,6 +18,7 @@ alpaca-bot-migrate = "alpaca_bot.storage.migrations:main"
 alpaca-bot-supervisor = "alpaca_bot.runtime.supervisor_cli:main"
 alpaca-bot-trader = "alpaca_bot.runtime.cli:main"
 alpaca-bot-web = "alpaca_bot.web.cli:main"
+alpaca-bot-web-hash-password = "alpaca_bot.web.password_cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

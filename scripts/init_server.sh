@@ -3,9 +3,10 @@ set -euo pipefail
 
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 MODE="${2:-paper}"
+OPERATOR_USERNAME="${3:-operator@example.com}"
 
 if [[ "$MODE" != "paper" && "$MODE" != "live" ]]; then
-  echo "usage: $0 [env-file] [paper|live]" >&2
+  echo "usage: $0 [env-file] [paper|live] [dashboard-username]" >&2
   exit 1
 fi
 
@@ -62,9 +63,13 @@ ALPACA_PAPER_API_KEY=replace_me
 ALPACA_PAPER_SECRET_KEY=replace_me
 ALPACA_LIVE_API_KEY=replace_me
 ALPACA_LIVE_SECRET_KEY=replace_me
+
+DASHBOARD_AUTH_ENABLED=true
+DASHBOARD_AUTH_USERNAME=$OPERATOR_USERNAME
+DASHBOARD_AUTH_PASSWORD_HASH='replace_me'
 EOF
 
 chmod 600 "$ENV_FILE"
 echo "created $ENV_FILE"
 echo "fill in the Alpaca keys before starting the supervisor"
-
+echo "set DASHBOARD_AUTH_PASSWORD_HASH before exposing the dashboard"

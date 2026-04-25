@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from alpaca_bot.config import Settings
@@ -17,6 +17,10 @@ from alpaca_bot.storage import (
     TradingStatusStore,
 )
 from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres
+from alpaca_bot.web.auth import (
+    auth_enabled,
+    current_operator,
+)
 from alpaca_bot.web.service import load_dashboard_snapshot, load_health_snapshot
 
 
@@ -64,6 +68,12 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request) -> HTMLResponse:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return Response(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                headers={"WWW-Authenticate": 'Basic realm="alpaca_bot"'},
+            )
         try:
             snapshot = _load_snapshot(app)
         except Exception as exc:  # pragma: no cover - exercised via route test
@@ -81,6 +91,7 @@ def create_app(
                 "request": request,
                 "settings": app_settings,
                 "snapshot": snapshot,
+                "operator_email": operator,
             },
         )
 

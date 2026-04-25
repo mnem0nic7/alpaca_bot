@@ -74,6 +74,9 @@ class Settings:
     entry_window_end: time
     flatten_time: time
     market_timezone: ZoneInfo = ZoneInfo("America/New_York")
+    dashboard_auth_enabled: bool = False
+    dashboard_auth_username: str | None = None
+    dashboard_auth_password_hash: str | None = None
     alpaca_paper_api_key: str | None = None
     alpaca_paper_secret_key: str | None = None
     alpaca_live_api_key: str | None = None
@@ -116,6 +119,11 @@ class Settings:
                 "ENTRY_WINDOW_END", values.get("ENTRY_WINDOW_END", "15:30")
             ),
             flatten_time=_parse_time("FLATTEN_TIME", values.get("FLATTEN_TIME", "15:45")),
+            dashboard_auth_enabled=_parse_bool(
+                "DASHBOARD_AUTH_ENABLED", values.get("DASHBOARD_AUTH_ENABLED", "false")
+            ),
+            dashboard_auth_username=values.get("DASHBOARD_AUTH_USERNAME"),
+            dashboard_auth_password_hash=values.get("DASHBOARD_AUTH_PASSWORD_HASH"),
             alpaca_paper_api_key=values.get("ALPACA_PAPER_API_KEY"),
             alpaca_paper_secret_key=values.get("ALPACA_PAPER_SECRET_KEY"),
             alpaca_live_api_key=values.get("ALPACA_LIVE_API_KEY"),
@@ -154,6 +162,15 @@ class Settings:
             raise ValueError("ENTRY_TIMEFRAME_MINUTES must be 15 for this strategy")
         if self.max_open_positions < 1:
             raise ValueError("MAX_OPEN_POSITIONS must be at least 1")
+        if self.dashboard_auth_enabled:
+            if not self.dashboard_auth_username:
+                raise ValueError(
+                    "DASHBOARD_AUTH_USERNAME is required when DASHBOARD_AUTH_ENABLED=true"
+                )
+            if not self.dashboard_auth_password_hash:
+                raise ValueError(
+                    "DASHBOARD_AUTH_PASSWORD_HASH is required when DASHBOARD_AUTH_ENABLED=true"
+                )
 
 
 def _validate_positive_fraction(name: str, value: float) -> None:

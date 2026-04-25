@@ -6,6 +6,7 @@ This repo currently deploys as a self-hosted Docker stack on one server: local `
 
 - `alpaca-bot-supervisor` is the server process to keep running.
 - `alpaca-bot-web` is a read-only FastAPI dashboard bound to `127.0.0.1:18080`.
+- The dashboard supports optional HTTP Basic auth using a single pre-provisioned operator account from env.
 - `postgres` is the local state store for orders, positions, audit events, and status.
 - `alpaca-bot-migrate` applies SQL migrations in `migrations/`.
 - `alpaca-bot-admin` is for operator actions such as `status`, `halt`, `close-only`, and `resume`.
@@ -56,6 +57,10 @@ ALPACA_PAPER_SECRET_KEY=replace-me
 # For live mode, set:
 # ALPACA_LIVE_API_KEY=replace-me
 # ALPACA_LIVE_SECRET_KEY=replace-me
+
+DASHBOARD_AUTH_ENABLED=true
+DASHBOARD_AUTH_USERNAME=operator@example.com
+DASHBOARD_AUTH_PASSWORD_HASH='replace-me'
 ```
 
 Notes:
@@ -63,6 +68,15 @@ Notes:
 - `TRADING_MODE=paper` requires paper credentials.
 - `TRADING_MODE=live` requires `ENABLE_LIVE_TRADING=true` and live credentials.
 - `ENTRY_TIMEFRAME_MINUTES` must stay `15` for the current strategy implementation.
+- `DASHBOARD_AUTH_PASSWORD_HASH` should be generated with the built-in helper, not stored as plaintext.
+
+Generate the dashboard password hash after the image is built:
+
+```bash
+docker run --rm alpaca-bot:local alpaca-bot-web-hash-password
+```
+
+Copy the printed value into `DASHBOARD_AUTH_PASSWORD_HASH`.
 
 ## First-time setup
 
@@ -71,10 +85,10 @@ Notes:
 
 ```bash
 cd /srv/alpaca_bot/current
-./scripts/init_server.sh /etc/alpaca_bot/alpaca-bot.env paper
+./scripts/init_server.sh /etc/alpaca_bot/alpaca-bot.env paper operator@example.com
 ```
 
-3. Edit `/etc/alpaca_bot/alpaca-bot.env` and replace the placeholder Alpaca keys.
+3. Edit `/etc/alpaca_bot/alpaca-bot.env` and replace the placeholder Alpaca keys plus the dashboard auth hash.
 4. Build the runtime image:
 
 ```bash
@@ -119,6 +133,8 @@ curl http://127.0.0.1:18080/healthz
 ```
 
 The HTML overview page is available only on the server itself at `http://127.0.0.1:18080/`. Put Caddy in front of it later if you want remote access.
+
+This repo includes an example reverse-proxy config at [deploy/Caddyfile.example](/workspace/alpaca_bot/deploy/Caddyfile.example), but this host may already have another service bound to `:80/:443`. Do not take over the public edge without checking that first.
 
 If you only want to verify the local database is healthy:
 

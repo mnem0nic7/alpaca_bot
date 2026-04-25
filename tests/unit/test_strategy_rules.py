@@ -9,6 +9,7 @@ from alpaca_bot.strategy.breakout import (
     daily_trend_filter_passes,
     evaluate_breakout_signal,
 )
+from alpaca_bot.web.auth import hash_password
 
 
 def make_settings(**overrides: str) -> Settings:
@@ -106,6 +107,25 @@ def make_intraday_bars(
 def test_settings_require_explicit_live_gate() -> None:
     with pytest.raises(ValueError, match="ENABLE_LIVE_TRADING=true"):
         make_settings(TRADING_MODE="live", ENABLE_LIVE_TRADING="false")
+
+
+def test_settings_require_dashboard_auth_fields_when_enabled() -> None:
+    with pytest.raises(ValueError, match="DASHBOARD_AUTH_USERNAME"):
+        make_settings(DASHBOARD_AUTH_ENABLED="true")
+
+
+def test_settings_parse_dashboard_auth_configuration() -> None:
+    settings = make_settings(
+        DASHBOARD_AUTH_ENABLED="true",
+        DASHBOARD_AUTH_USERNAME="m7ga.77@gmail.com",
+        DASHBOARD_AUTH_PASSWORD_HASH=hash_password(
+            "secret-password",
+            salt=bytes.fromhex("000102030405060708090a0b0c0d0e0f"),
+        ),
+    )
+
+    assert settings.dashboard_auth_enabled is True
+    assert settings.dashboard_auth_username == "m7ga.77@gmail.com"
 
 
 def test_daily_trend_filter_requires_latest_close_above_sma() -> None:

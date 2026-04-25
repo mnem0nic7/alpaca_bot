@@ -117,6 +117,14 @@
   </head>
   <body>
     <main>
+      {% if operator_email %}
+        <section class="panel" style="margin-bottom: 1rem;">
+          <div>
+            <p class="eyebrow">Operator</p>
+            <p class="value mono">{{ operator_email }}</p>
+          </div>
+        </section>
+      {% endif %}
       <section class="hero">
         <div class="panel">
           <p class="eyebrow">alpaca_bot</p>
