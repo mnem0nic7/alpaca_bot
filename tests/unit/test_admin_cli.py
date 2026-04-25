@@ -202,3 +202,28 @@ def test_status_command_renders_current_status_text() -> None:
     assert "v1-breakout" in rendered
     assert "halted" in rendered
     assert "manual intervention" in rendered
+
+
+def test_main_uses_process_argv_when_invoked_as_console_script(monkeypatch) -> None:
+    now = datetime(2026, 4, 24, 20, 50, tzinfo=timezone.utc)
+    connection = object()
+    status_store = RecordingTradingStatusStore()
+    audit_store = RecordingAuditEventStore()
+    stdout = io.StringIO()
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["alpaca-bot-admin", "status", "--mode", "paper", "--strategy-version", "v1-breakout"],
+    )
+
+    exit_code = main(
+        None,
+        connect=lambda: connection,
+        trading_status_store_factory=StoreFactoryStub(status_store),
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        now=lambda: now,
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+    assert "status=unknown" in stdout.getvalue()

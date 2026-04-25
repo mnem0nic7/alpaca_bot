@@ -23,7 +23,7 @@ def main(
     supervisor_factory: Callable[[Settings], RuntimeSupervisor] | None = None,
     stdout: TextIO | None = None,
 ) -> int:
-    args = build_parser().parse_args(list(argv or []))
+    args = build_parser().parse_args(list(sys.argv[1:] if argv is None else argv))
     resolved_settings = settings or Settings.from_env()
     factory = supervisor_factory or RuntimeSupervisor.from_settings
     supervisor = factory(resolved_settings)

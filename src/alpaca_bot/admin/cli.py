@@ -195,6 +195,7 @@ def main(
     stdout: TextIO | None = None,
     settings: Settings | None = None,
 ) -> int:
+    parsed_argv = list(sys.argv[1:] if argv is None else argv)
     if settings is not None:
         resolved_settings = settings
     elif connect is not None:
@@ -203,7 +204,7 @@ def main(
         resolved_settings = Settings.from_env()
     connection = connect() if connect is not None else connect_postgres(resolved_settings.database_url)
     try:
-        args = build_parser(resolved_settings).parse_args(list(argv or []))
+        args = build_parser(resolved_settings).parse_args(parsed_argv)
         timestamp = now() if now is not None else datetime.now(timezone.utc)
         trading_mode = TradingMode(args.mode)
         strategy_version = args.strategy_version

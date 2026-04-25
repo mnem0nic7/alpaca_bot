@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from alpaca_bot.config import Settings
 from alpaca_bot.storage import (
@@ -12,11 +11,9 @@ from alpaca_bot.storage import (
     PostgresAdvisoryLock,
     PositionStore,
     TradingStatusStore,
+    resolve_migrations_path,
 )
 from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres
-
-
-DEFAULT_MIGRATIONS_PATH = Path(__file__).resolve().parents[3] / "migrations"
 
 
 @dataclass
@@ -40,7 +37,7 @@ def bootstrap_runtime(
     runtime_connection = connection or connect_postgres(settings.database_url)
     runner = MigrationRunner(
         connection=runtime_connection,
-        migrations_path=migrations_path or DEFAULT_MIGRATIONS_PATH,
+        migrations_path=resolve_migrations_path(migrations_path),
     )
     runner.apply_all()
 

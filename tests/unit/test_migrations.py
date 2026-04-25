@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-from alpaca_bot.storage.migrations import MigrationRunner, discover_migrations
+from alpaca_bot.storage.migrations import MigrationRunner, discover_migrations, resolve_migrations_path
 
 
 def normalize_sql(sql: str) -> str:
@@ -154,3 +154,13 @@ def test_migration_runner_noops_when_up_to_date(tmp_path: Path) -> None:
     assert normalize_sql(initial_sql) not in executed_sql
     assert normalize_sql(orders_sql) not in executed_sql
     assert not any("INSERT INTO schema_migrations" in sql for sql in executed_sql)
+
+
+def test_resolve_migrations_path_prefers_env_override(monkeypatch, tmp_path: Path) -> None:
+    custom_path = tmp_path / "custom-migrations"
+    custom_path.mkdir()
+    monkeypatch.setenv("ALPACA_BOT_MIGRATIONS_PATH", str(custom_path))
+
+    resolved = resolve_migrations_path()
+
+    assert resolved == custom_path

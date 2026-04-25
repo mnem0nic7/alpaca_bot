@@ -1,10 +1,11 @@
 # alpaca_bot Operator Deployment
 
-This repo currently deploys as a single long-running worker container: `alpaca-bot-supervisor`. There is no dashboard or separate web service yet. Operational control is CLI-only through `alpaca-bot-admin`.
+This repo currently deploys as a self-hosted Docker stack on one server: local `postgres` plus a single long-running worker container, `alpaca-bot-supervisor`. There is no dashboard or separate web service yet. Operational control is CLI-only through `alpaca-bot-admin`.
 
 ## Runtime shape
 
 - `alpaca-bot-supervisor` is the server process to keep running.
+- `postgres` is the local state store for orders, positions, audit events, and status.
 - `alpaca-bot-migrate` applies SQL migrations in `migrations/`.
 - `alpaca-bot-admin` is for operator actions such as `status`, `halt`, `close-only`, and `resume`.
 - `alpaca-bot-trader` exists as a one-shot startup/reconciliation entrypoint, but it is not the primary deployed service for the current runtime.
@@ -16,7 +17,7 @@ Use any equivalent layout you prefer, but keep the environment file outside the 
 - Repo checkout: `/srv/alpaca_bot/current`
 - Environment file: `/etc/alpaca_bot/alpaca-bot.env`
 
-The application reads settings from process environment variables. It does not load a repo-local `.env` file on its own, so your deploy tooling must load `/etc/alpaca_bot/alpaca-bot.env` before running commands. The checked-in Docker Compose stack lives at `deploy/compose.yaml`, and the checked-in helper scripts are `scripts/deploy.sh` and `scripts/admin.sh`.
+The application reads settings from process environment variables. It does not load a repo-local `.env` file on its own, so your deploy tooling must load `/etc/alpaca_bot/alpaca-bot.env` before running commands. The checked-in Docker Compose stack lives at `deploy/compose.yaml`, and the checked-in helper scripts are `scripts/init_server.sh`, `scripts/deploy.sh`, and `scripts/admin.sh`.
 
 ## Environment file
 
@@ -26,7 +27,10 @@ Example `/etc/alpaca_bot/alpaca-bot.env`:
 TRADING_MODE=paper
 ENABLE_LIVE_TRADING=false
 STRATEGY_VERSION=v1-breakout
-DATABASE_URL=postgresql://alpaca_bot:secret@127.0.0.1:5432/alpaca_bot
+POSTGRES_DB=alpaca_bot
+POSTGRES_USER=alpaca_bot
+POSTGRES_PASSWORD=replace-me
+DATABASE_URL=postgresql://alpaca_bot:replace-me@postgres:5432/alpaca_bot
 MARKET_DATA_FEED=sip
 SYMBOLS=AAPL,MSFT,SPY
 
@@ -62,15 +66,22 @@ Notes:
 ## First-time setup
 
 1. Check out the repo on the server.
-2. Create `/etc/alpaca_bot/alpaca-bot.env` with the runtime values.
-3. Build the runtime image:
+2. Generate the initial env file:
+
+```bash
+cd /srv/alpaca_bot/current
+./scripts/init_server.sh /etc/alpaca_bot/alpaca-bot.env paper
+```
+
+3. Edit `/etc/alpaca_bot/alpaca-bot.env` and replace the placeholder Alpaca keys.
+4. Build the runtime image:
 
 ```bash
 cd /srv/alpaca_bot/current
 docker build -t alpaca-bot:local .
 ```
 
-4. Run the deploy helper, which builds the compose services, applies migrations, and starts the supervisor:
+5. Run the deploy helper, which builds the compose services, starts Postgres, applies migrations, and starts the supervisor if valid Alpaca credentials are present:
 
 ```bash
 cd /srv/alpaca_bot/current
@@ -94,10 +105,17 @@ git checkout <target-revision>
 ./scripts/deploy.sh /etc/alpaca_bot/alpaca-bot.env
 ```
 
-If the service fails after restart, inspect logs with Docker:
+If the worker does not start, inspect logs with Docker:
 
 ```bash
 docker compose -f deploy/compose.yaml logs --tail=200 supervisor
+```
+
+If you only want to verify the local database is healthy:
+
+```bash
+docker compose -f deploy/compose.yaml ps postgres
+docker compose -f deploy/compose.yaml logs --tail=100 postgres
 ```
 
 ## Admin command examples

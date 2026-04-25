@@ -23,8 +23,31 @@ class Migration:
     sql: str
 
 
+def resolve_migrations_path(preferred: str | Path | None = None) -> Path:
+    candidates: list[Path] = []
+    if preferred is not None:
+        candidates.append(Path(preferred))
+
+    env_value = os.getenv("ALPACA_BOT_MIGRATIONS_PATH")
+    if env_value:
+        candidates.append(Path(env_value))
+
+    candidates.extend(
+        [
+            Path.cwd() / "migrations",
+            Path(__file__).resolve().parents[3] / "migrations",
+            Path("/app/migrations"),
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def discover_migrations(migrations_path: str | Path) -> list[Migration]:
-    path = Path(migrations_path)
+    path = resolve_migrations_path(migrations_path)
     migrations: list[Migration] = []
     for file in path.glob("*.sql"):
         if not file.is_file():
@@ -104,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--migrations-path",
-        default=str(Path(__file__).resolve().parents[3] / "migrations"),
+        default=str(resolve_migrations_path()),
     )
     args = parser.parse_args(argv)
     applied = apply_database_migrations(

@@ -1,4 +1,24 @@
+volumes:
+  postgres_data:
+
 services:
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    init: true
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
   supervisor:
     image: alpaca-bot:latest
     build:
@@ -7,10 +27,14 @@ services:
     restart: unless-stopped
     init: true
     command: ["alpaca-bot-supervisor"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment: &alpaca_bot_env
       TRADING_MODE: ${TRADING_MODE}
       ENABLE_LIVE_TRADING: ${ENABLE_LIVE_TRADING}
       STRATEGY_VERSION: ${STRATEGY_VERSION}
+      ALPACA_BOT_MIGRATIONS_PATH: /app/migrations
       DATABASE_URL: ${DATABASE_URL}
       MARKET_DATA_FEED: ${MARKET_DATA_FEED}
       SYMBOLS: ${SYMBOLS}
@@ -40,6 +64,9 @@ services:
       context: ..
       dockerfile: Dockerfile
     command: ["alpaca-bot-migrate"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment: *alpaca_bot_env
     profiles: ["ops"]
 
@@ -49,6 +76,8 @@ services:
       context: ..
       dockerfile: Dockerfile
     entrypoint: ["alpaca-bot-admin"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment: *alpaca_bot_env
     profiles: ["ops"]
-

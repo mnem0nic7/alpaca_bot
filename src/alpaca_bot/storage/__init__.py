@@ -1,5 +1,10 @@
 from alpaca_bot.storage.locks import PostgresAdvisoryLock, advisory_lock_key
-from alpaca_bot.storage.migrations import Migration, MigrationRunner, discover_migrations
+from alpaca_bot.storage.migrations import (
+    Migration,
+    MigrationRunner,
+    discover_migrations,
+    resolve_migrations_path,
+)
 from alpaca_bot.storage.models import (
     AuditEvent,
     DailySessionState,
@@ -29,6 +34,7 @@ __all__ = [
     "PositionRecord",
     "PositionStore",
     "PostgresAdvisoryLock",
+    "resolve_migrations_path",
     "TradingStatus",
     "TradingStatusStore",
     "TradingStatusValue",
