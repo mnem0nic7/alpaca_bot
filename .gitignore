@@ -24,3 +24,4 @@ pip-wheel-metadata/
 
 # Local environment files
 .env
+deploy/*.env

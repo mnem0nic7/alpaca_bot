@@ -1,0 +1,54 @@
+services:
+  supervisor:
+    image: alpaca-bot:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    command: ["alpaca-bot-supervisor"]
+    environment: &alpaca_bot_env
+      TRADING_MODE: ${TRADING_MODE}
+      ENABLE_LIVE_TRADING: ${ENABLE_LIVE_TRADING}
+      STRATEGY_VERSION: ${STRATEGY_VERSION}
+      DATABASE_URL: ${DATABASE_URL}
+      MARKET_DATA_FEED: ${MARKET_DATA_FEED}
+      SYMBOLS: ${SYMBOLS}
+      DAILY_SMA_PERIOD: ${DAILY_SMA_PERIOD}
+      BREAKOUT_LOOKBACK_BARS: ${BREAKOUT_LOOKBACK_BARS}
+      RELATIVE_VOLUME_LOOKBACK_BARS: ${RELATIVE_VOLUME_LOOKBACK_BARS}
+      RELATIVE_VOLUME_THRESHOLD: ${RELATIVE_VOLUME_THRESHOLD}
+      ENTRY_TIMEFRAME_MINUTES: ${ENTRY_TIMEFRAME_MINUTES}
+      RISK_PER_TRADE_PCT: ${RISK_PER_TRADE_PCT}
+      MAX_POSITION_PCT: ${MAX_POSITION_PCT}
+      MAX_OPEN_POSITIONS: ${MAX_OPEN_POSITIONS}
+      DAILY_LOSS_LIMIT_PCT: ${DAILY_LOSS_LIMIT_PCT}
+      STOP_LIMIT_BUFFER_PCT: ${STOP_LIMIT_BUFFER_PCT}
+      BREAKOUT_STOP_BUFFER_PCT: ${BREAKOUT_STOP_BUFFER_PCT}
+      ENTRY_STOP_PRICE_BUFFER: ${ENTRY_STOP_PRICE_BUFFER}
+      ENTRY_WINDOW_START: ${ENTRY_WINDOW_START}
+      ENTRY_WINDOW_END: ${ENTRY_WINDOW_END}
+      FLATTEN_TIME: ${FLATTEN_TIME}
+      ALPACA_PAPER_API_KEY: ${ALPACA_PAPER_API_KEY}
+      ALPACA_PAPER_SECRET_KEY: ${ALPACA_PAPER_SECRET_KEY}
+      ALPACA_LIVE_API_KEY: ${ALPACA_LIVE_API_KEY}
+      ALPACA_LIVE_SECRET_KEY: ${ALPACA_LIVE_SECRET_KEY}
+
+  migrate:
+    image: alpaca-bot:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["alpaca-bot-migrate"]
+    environment: *alpaca_bot_env
+    profiles: ["ops"]
+
+  admin:
+    image: alpaca-bot:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    entrypoint: ["alpaca-bot-admin"]
+    environment: *alpaca_bot_env
+    profiles: ["ops"]
+
