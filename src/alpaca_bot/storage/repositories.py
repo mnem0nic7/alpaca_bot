@@ -116,6 +116,30 @@ class AuditEventStore:
             for row in rows
         ]
 
+    def load_latest(self, *, event_types: list[str]) -> AuditEvent | None:
+        if not event_types:
+            return None
+        placeholders = ", ".join(["%s"] * len(event_types))
+        row = fetch_one(
+            self._connection,
+            f"""
+            SELECT event_type, symbol, payload, created_at
+            FROM audit_events
+            WHERE event_type IN ({placeholders})
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            tuple(event_types),
+        )
+        if row is None:
+            return None
+        return AuditEvent(
+            event_type=row[0],
+            symbol=row[1],
+            payload=_load_json_payload(row[2]),
+            created_at=row[3],
+        )
+
 
 class OrderStore:
     def __init__(self, connection: ConnectionProtocol) -> None:

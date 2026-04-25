@@ -175,6 +175,27 @@
                 {% endif %}
               </p>
             </div>
+            <div>
+              <p class="eyebrow">Worker Status</p>
+              <p class="value">
+                {% if snapshot.worker_health.status == "fresh" %}
+                  <span class="pill">{{ snapshot.worker_health.status }}</span>
+                {% else %}
+                  <span class="warn">{{ snapshot.worker_health.status }}</span>
+                {% endif %}
+              </p>
+            </div>
+            <div>
+              <p class="eyebrow">Last Worker Event</p>
+              <p class="value">
+                {% if snapshot.worker_health.last_event_at %}
+                  {{ snapshot.worker_health.last_event_type }} ·
+                  {{ format_timestamp(snapshot.worker_health.last_event_at) }}
+                {% else %}
+                  none recorded
+                {% endif %}
+              </p>
+            </div>
           </div>
         </div>
         <div class="panel">

@@ -98,7 +98,7 @@ def create_app(
     @app.get("/healthz")
     def healthz() -> JSONResponse:
         try:
-            trading_status = _load_health(app)
+            health_snapshot = _load_health(app)
         except Exception as exc:
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -111,10 +111,24 @@ def create_app(
                 "database": "ok",
                 "trading_mode": app_settings.trading_mode.value,
                 "strategy_version": app_settings.strategy_version,
-                "trading_status": None if trading_status is None else trading_status.status.value,
-                "kill_switch_enabled": (
-                    False if trading_status is None else trading_status.kill_switch_enabled
+                "trading_status": (
+                    None
+                    if health_snapshot.trading_status is None
+                    else health_snapshot.trading_status.status.value
                 ),
+                "kill_switch_enabled": (
+                    False
+                    if health_snapshot.trading_status is None
+                    else health_snapshot.trading_status.kill_switch_enabled
+                ),
+                "worker_status": health_snapshot.worker_health.status,
+                "worker_last_event_type": health_snapshot.worker_health.last_event_type,
+                "worker_last_event_at": (
+                    None
+                    if health_snapshot.worker_health.last_event_at is None
+                    else health_snapshot.worker_health.last_event_at.isoformat()
+                ),
+                "worker_age_seconds": health_snapshot.worker_health.age_seconds,
             }
         )
 
@@ -162,6 +176,10 @@ def _load_health(app: FastAPI):
             connection=connection,
             trading_status_store=_build_store(
                 app.state.trading_status_store_factory,
+                connection,
+            ),
+            audit_event_store=_build_store(
+                app.state.audit_event_store_factory,
                 connection,
             ),
         )

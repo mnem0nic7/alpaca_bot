@@ -157,6 +157,25 @@ def test_audit_event_store_lists_recent_events() -> None:
     assert events[1].payload == {"broker_order_id": "broker-123"}
 
 
+def test_audit_event_store_loads_latest_matching_event() -> None:
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+    connection = FakeConnection(
+        responses=[
+            ("supervisor_idle", None, {"reason": "market_closed"}, now),
+        ]
+    )
+    store = AuditEventStore(connection)
+
+    event = store.load_latest(event_types=["supervisor_cycle", "supervisor_idle"])
+
+    assert event == AuditEvent(
+        event_type="supervisor_idle",
+        symbol=None,
+        payload={"reason": "market_closed"},
+        created_at=now,
+    )
+
+
 def test_order_store_upserts_and_loads_record() -> None:
     now = datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc)
     signal_timestamp = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)

@@ -141,7 +141,7 @@ To verify the local dashboard:
 curl http://127.0.0.1:18080/healthz
 ```
 
-The HTML overview page is available only on the server itself at `http://127.0.0.1:18080/`. Put Caddy in front of it later if you want remote access.
+The health payload now includes worker freshness fields such as `worker_status`, `worker_last_event_type`, and `worker_last_event_at`, so you can distinguish “web is up” from “supervisor is actually alive.” The HTML overview page is available only on the server itself at `http://127.0.0.1:18080/`. Put Caddy in front of it later if you want remote access.
 
 This repo includes an example reverse-proxy config at [deploy/Caddyfile.example](/workspace/alpaca_bot/deploy/Caddyfile.example), but this host may already have another service bound to `:80/:443`. Do not take over the public edge without checking that first.
 

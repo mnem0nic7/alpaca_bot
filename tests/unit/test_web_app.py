@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from base64 import b64encode
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -93,7 +93,7 @@ def make_settings(**overrides: str) -> Settings:
 
 
 def test_dashboard_route_renders_runtime_snapshot() -> None:
-    now = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     connection = FakeConnection(responses=[])
     settings = make_settings()
     order = OrderRecord(
@@ -164,7 +164,13 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
                     payload={"entries_disabled": False},
                     created_at=now,
                 )
-            ]
+            ],
+            load_latest=lambda **_kwargs: SimpleNamespace(
+                event_type="supervisor_cycle",
+                symbol=None,
+                payload={"entries_disabled": False},
+                created_at=now,
+            ),
         ),
     )
 
@@ -176,13 +182,14 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "paper" in response.text
     assert "v1-breakout" in response.text
     assert "enabled" in response.text
+    assert "fresh" in response.text
     assert "AAPL" in response.text
     assert "supervisor_cycle" in response.text
     assert connection.closed is True
 
 
 def test_healthz_route_reports_runtime_status() -> None:
-    now = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     connection = FakeConnection(responses=[])
     settings = make_settings()
     app = create_app(
@@ -198,21 +205,34 @@ def test_healthz_route_reports_runtime_status() -> None:
                 updated_at=now,
             )
         ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: SimpleNamespace(
+                event_type="supervisor_idle",
+                symbol=None,
+                payload={"reason": "market_closed"},
+                created_at=now,
+            ),
+        ),
     )
 
     with TestClient(app) as client:
         response = client.get("/healthz")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "status": "ok",
-        "db": "ok",
-        "database": "ok",
-        "trading_mode": "paper",
-        "strategy_version": "v1-breakout",
-        "trading_status": "close_only",
-        "kill_switch_enabled": True,
-    }
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["db"] == "ok"
+    assert payload["database"] == "ok"
+    assert payload["trading_mode"] == "paper"
+    assert payload["strategy_version"] == "v1-breakout"
+    assert payload["trading_status"] == "close_only"
+    assert payload["kill_switch_enabled"] is True
+    assert payload["worker_status"] == "fresh"
+    assert payload["worker_last_event_type"] == "supervisor_idle"
+    assert payload["worker_last_event_at"] == now.isoformat()
+    assert isinstance(payload["worker_age_seconds"], int)
+    assert payload["worker_age_seconds"] >= 0
 
 
 def test_healthz_route_returns_503_when_database_fails() -> None:
@@ -229,6 +249,52 @@ def test_healthz_route_returns_503_when_database_fails() -> None:
 
     assert response.status_code == 503
     assert response.json() == {"status": "error", "reason": "db unavailable"}
+
+
+def test_healthz_route_reports_missing_worker_when_no_heartbeat_exists() -> None:
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: None,
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json()["worker_status"] == "missing"
+
+
+def test_healthz_route_reports_stale_worker_when_last_event_is_old() -> None:
+    stale_now = datetime.now(timezone.utc) - timedelta(minutes=10)
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: SimpleNamespace(
+                event_type="supervisor_idle",
+                symbol=None,
+                payload={"reason": "market_closed"},
+                created_at=stale_now,
+            ),
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json()["worker_status"] == "stale"
 
 
 def test_dashboard_requires_basic_auth_when_auth_enabled() -> None:
@@ -252,7 +318,7 @@ def test_dashboard_requires_basic_auth_when_auth_enabled() -> None:
 
 
 def test_dashboard_allows_access_with_valid_basic_auth() -> None:
-    now = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
     connection = FakeConnection(responses=[])
     settings = make_settings(
         DASHBOARD_AUTH_ENABLED="true",

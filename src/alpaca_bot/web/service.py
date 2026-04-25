@@ -27,6 +27,27 @@ WORKING_ORDER_STATUSES = [
     "replace_pending",
     "cancel_pending",
 ]
+WORKER_ACTIVITY_EVENT_TYPES = (
+    "supervisor_cycle",
+    "supervisor_idle",
+    "trader_startup_completed",
+)
+WORKER_STALE_AFTER_SECONDS = 180
+
+
+@dataclass(frozen=True)
+class WorkerHealth:
+    status: str
+    last_event_type: str | None
+    last_event_at: datetime | None
+    age_seconds: int | None
+    stale_after_seconds: int = WORKER_STALE_AFTER_SECONDS
+
+
+@dataclass(frozen=True)
+class HealthSnapshot:
+    trading_status: TradingStatus | None
+    worker_health: WorkerHealth
 
 
 @dataclass(frozen=True)
@@ -38,6 +59,7 @@ class DashboardSnapshot:
     working_orders: list[OrderRecord]
     recent_orders: list[OrderRecord]
     recent_events: list[AuditEvent]
+    worker_health: WorkerHealth
 
 
 def load_dashboard_snapshot(
@@ -58,6 +80,7 @@ def load_dashboard_snapshot(
     position_store = position_store or PositionStore(connection)
     order_store = order_store or OrderStore(connection)
     audit_event_store = audit_event_store or AuditEventStore(connection)
+    recent_events = audit_event_store.list_recent(limit=12)
 
     return DashboardSnapshot(
         generated_at=generated_at,
@@ -84,7 +107,12 @@ def load_dashboard_snapshot(
             strategy_version=settings.strategy_version,
             limit=10,
         ),
-        recent_events=audit_event_store.list_recent(limit=12),
+        recent_events=recent_events,
+        worker_health=_load_worker_health(
+            audit_event_store=audit_event_store,
+            recent_events=recent_events,
+            now=generated_at,
+        ),
     )
 
 
@@ -93,9 +121,58 @@ def load_health_snapshot(
     settings: Settings,
     connection: ConnectionProtocol,
     trading_status_store: TradingStatusStore | None = None,
-) -> TradingStatus | None:
+    audit_event_store: AuditEventStore | None = None,
+) -> HealthSnapshot:
     store = trading_status_store or TradingStatusStore(connection)
-    return store.load(
-        trading_mode=settings.trading_mode,
-        strategy_version=settings.strategy_version,
+    audit_event_store = audit_event_store or AuditEventStore(connection)
+    now = datetime.now(timezone.utc)
+    recent_events = audit_event_store.list_recent(limit=12)
+    return HealthSnapshot(
+        trading_status=store.load(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+        ),
+        worker_health=_load_worker_health(
+            audit_event_store=audit_event_store,
+            recent_events=recent_events,
+            now=now,
+        ),
+    )
+
+
+def _load_worker_health(
+    *,
+    audit_event_store: AuditEventStore,
+    recent_events: list[AuditEvent],
+    now: datetime,
+) -> WorkerHealth:
+    latest_loader = getattr(audit_event_store, "load_latest", None)
+    latest_event = (
+        latest_loader(event_types=list(WORKER_ACTIVITY_EVENT_TYPES))
+        if callable(latest_loader)
+        else None
+    )
+    if latest_event is None:
+        latest_event = next(
+            (
+                event
+                for event in recent_events
+                if event.event_type in WORKER_ACTIVITY_EVENT_TYPES
+            ),
+            None,
+        )
+    if latest_event is None:
+        return WorkerHealth(
+            status="missing",
+            last_event_type=None,
+            last_event_at=None,
+            age_seconds=None,
+        )
+
+    age_seconds = max(int((now - latest_event.created_at).total_seconds()), 0)
+    return WorkerHealth(
+        status="fresh" if age_seconds <= WORKER_STALE_AFTER_SECONDS else "stale",
+        last_event_type=latest_event.event_type,
+        last_event_at=latest_event.created_at,
+        age_seconds=age_seconds,
     )
