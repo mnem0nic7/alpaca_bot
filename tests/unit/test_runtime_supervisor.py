@@ -128,10 +128,16 @@ class RecordingAuditEventStore:
 
 
 class RecordingOrderStore:
-    def __init__(self, existing_orders: list[OrderRecord] | None = None) -> None:
+    def __init__(
+        self,
+        existing_orders: list[OrderRecord] | None = None,
+        *,
+        daily_pnl: float = 0.0,
+    ) -> None:
         self.existing_orders = list(existing_orders or [])
         self.saved: list[object] = []
         self.list_by_status_calls: list[dict[str, object]] = []
+        self._daily_pnl = daily_pnl
 
     def save(self, order: object) -> None:
         self.saved.append(order)
@@ -170,6 +176,15 @@ class RecordingOrderStore:
             statuses=["pending_submit"],
         )
 
+    def daily_realized_pnl(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        session_date: date,
+    ) -> float:
+        return self._daily_pnl
+
 
 def make_runtime_context(
     settings: Settings,
@@ -177,6 +192,7 @@ def make_runtime_context(
     trading_status_store: RecordingTradingStatusStore | None = None,
     position_store: RecordingPositionStore | None = None,
     order_store: RecordingOrderStore | None = None,
+    daily_session_state_store: RecordingDailySessionStateStore | None = None,
 ) -> RuntimeContext:
     return RuntimeContext(
         settings=settings,
@@ -186,7 +202,7 @@ def make_runtime_context(
         audit_event_store=RecordingAuditEventStore(),  # type: ignore[arg-type]
         order_store=order_store or RecordingOrderStore(),  # type: ignore[arg-type]
         position_store=position_store or RecordingPositionStore(),  # type: ignore[arg-type]
-        daily_session_state_store=RecordingDailySessionStateStore(),  # type: ignore[arg-type]
+        daily_session_state_store=daily_session_state_store or RecordingDailySessionStateStore(),  # type: ignore[arg-type]
     )
 
 
@@ -494,6 +510,7 @@ def test_runtime_supervisor_startup_runs_reconciliation_syncs_positions_and_atta
         market_data=market_data,
         stream=stream,
         close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
     )
 
     report = supervisor.startup(now=lambda: now)
@@ -522,8 +539,8 @@ def test_runtime_supervisor_startup_runs_reconciliation_syncs_positions_and_atta
                     strategy_version="v1-breakout",
                     quantity=10,
                     entry_price=189.25,
-                    stop_price=0.0,
-                    initial_stop_price=0.0,
+                    stop_price=189.06075,
+                    initial_stop_price=189.06075,
                     opened_at=now,
                     updated_at=now,
                 ),
@@ -533,8 +550,8 @@ def test_runtime_supervisor_startup_runs_reconciliation_syncs_positions_and_atta
                     strategy_version="v1-breakout",
                     quantity=5,
                     entry_price=421.10,
-                    stop_price=0.0,
-                    initial_stop_price=0.0,
+                    stop_price=420.6789,
+                    initial_stop_price=420.6789,
                     opened_at=now,
                     updated_at=now,
                 ),
@@ -590,6 +607,7 @@ def test_runtime_supervisor_close_stops_background_trade_update_stream() -> None
         market_data=market_data,
         stream=stream,
         close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
     )
 
     supervisor.startup(now=lambda: now)
@@ -618,6 +636,7 @@ def test_runtime_supervisor_audits_trade_update_stream_failures() -> None:
         market_data=market_data,
         stream=stream,
         close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
     )
 
     supervisor.startup(now=lambda: now)
@@ -732,6 +751,7 @@ def test_runtime_supervisor_run_cycle_once_gathers_runtime_inputs_and_dispatches
         market_data=market_data,
         stream=stream,
         close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
     )
 
     report = supervisor.run_cycle_once(now=lambda: now)
@@ -832,6 +852,7 @@ def test_runtime_supervisor_run_cycle_once_disables_entries_when_runtime_reconci
         market_data=market_data,
         stream=stream,
         close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
     )
 
     report = supervisor.run_cycle_once(now=lambda: now)
@@ -845,7 +866,7 @@ def test_runtime_supervisor_run_cycle_once_disables_entries_when_runtime_reconci
             "runtime": runtime,
             "broker": broker,
             "now": now,
-            "allowed_intent_types": {"stop"},
+            "allowed_intent_types": {"stop", "exit"},
         }
     ]
     assert runtime.order_store.saved[-1] == OrderRecord(
@@ -931,6 +952,7 @@ def test_runtime_supervisor_run_cycle_once_respects_trading_status_for_entries_d
         market_data=market_data,
         stream=stream,
         close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
     )
 
     supervisor.run_cycle_once(now=lambda: now)
@@ -955,6 +977,7 @@ def test_runtime_supervisor_run_forever_starts_once_loops_until_stop_and_sleeps(
         market_data=market_data,
         stream=stream,
         close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
     )
 
     startup_calls: list[object] = []
@@ -1009,6 +1032,7 @@ def test_runtime_supervisor_run_forever_skips_cycle_when_market_is_closed_and_au
         market_data=market_data,
         stream=stream,
         close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
     )
 
     report = supervisor.run_forever(
@@ -1059,6 +1083,7 @@ def test_runtime_supervisor_run_forever_runs_cycle_when_market_is_open_and_audit
         market_data=market_data,
         stream=stream,
         close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
     )
 
     monkeypatch.setattr(
@@ -1087,3 +1112,639 @@ def test_runtime_supervisor_run_forever_runs_cycle_when_market_is_open_and_audit
     assert report.idle_iterations == 0
     assert runtime.audit_event_store.appended[-1].event_type == "supervisor_cycle"
     assert runtime.audit_event_store.appended[-1].payload["entries_disabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# Fix #1: CLOSE_ONLY mode must allow "exit" intents through dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_supervisor_close_only_includes_exit_in_allowed_intent_types(
+    monkeypatch,
+) -> None:
+    """When trading status is CLOSE_ONLY, dispatch_pending_orders must receive
+    both 'stop' AND 'exit' in allowed_intent_types so EOD flatten orders are not
+    silently blocked."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc)
+    trading_status_store = RecordingTradingStatusStore(
+        loaded_status=make_trading_status(
+            settings, status=TradingStatusValue.CLOSE_ONLY, updated_at=now
+        )
+    )
+    runtime = make_runtime_context(
+        settings,
+        trading_status_store=trading_status_store,
+        position_store=RecordingPositionStore(),
+    )
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    stream = FakeStream()
+    dispatch_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: SimpleNamespace(intents=[]),
+    )
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0},
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    assert len(dispatch_calls) == 1
+    allowed = dispatch_calls[0]["allowed_intent_types"]
+    assert "stop" in allowed, f"'stop' missing from allowed_intent_types: {allowed}"
+    assert "exit" in allowed, f"'exit' missing from allowed_intent_types: {allowed}"
+
+
+# ---------------------------------------------------------------------------
+# Fix #4: flatten_complete flag — supervisor writes it after flatten cycle
+# ---------------------------------------------------------------------------
+
+
+def test_supervisor_writes_flatten_complete_after_flatten_cycle(
+    monkeypatch,
+) -> None:
+    """After a cycle that emits EXIT intents past flatten_time, the supervisor
+    must write flatten_complete=True to the DailySessionStateStore."""
+    from alpaca_bot.core.engine import CycleIntent, CycleIntentType, CycleResult
+
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    # 20:00 UTC = 16:00 ET — past the 15:45 flatten time
+    now = datetime(2026, 4, 24, 20, 0, tzinfo=timezone.utc)
+
+    session_state_store = RecordingDailySessionStateStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=RecordingPositionStore(),
+        daily_session_state_store=session_state_store,
+    )
+
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    stream = FakeStream()
+
+    # Simulate a cycle result that contains an EXIT intent (past flatten_time)
+    flatten_intent = CycleIntent(
+        intent_type=CycleIntentType.EXIT,
+        symbol="AAPL",
+        timestamp=now,
+        reason="eod_flatten",
+    )
+    fake_cycle_result = CycleResult(as_of=now, intents=[flatten_intent])
+
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: fake_cycle_result,
+    )
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        lambda **kwargs: {"submitted_count": 0},
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    assert len(session_state_store.saved) >= 1, (
+        "Expected DailySessionStateStore.save() to be called after a flatten cycle"
+    )
+    last_saved = session_state_store.saved[-1]
+    assert last_saved.flatten_complete is True, (
+        f"Expected flatten_complete=True, got {last_saved.flatten_complete}"
+    )
+    assert last_saved.session_date == now.astimezone(settings.market_timezone).date()
+    assert last_saved.trading_mode == settings.trading_mode
+    assert last_saved.strategy_version == settings.strategy_version
+
+
+# ---------------------------------------------------------------------------
+# Fix #8: Stream restart backoff — emits "stream_restart_failed" after N failures
+# ---------------------------------------------------------------------------
+
+
+def test_supervisor_emits_stream_restart_failed_after_consecutive_failures(
+    monkeypatch,
+) -> None:
+    """After 5 consecutive stream failures, the supervisor must emit a
+    'stream_restart_failed' audit event containing the attempt count.
+
+    We drive this by directly setting _stream_restart_attempts to 4 (one below
+    the threshold), provide a dead stream thread, and run one cycle — which
+    triggers attempt #5 and should emit the alert event.
+    """
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker(market_is_open=True)
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+
+    # Stream always raises immediately so every restart is a failure
+    stream = FakeStream(raise_on_run=RuntimeError("persistent stream failure"))
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    monkeypatch.setattr(
+        supervisor,
+        "startup",
+        lambda **kwargs: make_startup_report(),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "run_cycle_once",
+        lambda **kwargs: SupervisorCycleReport(
+            entries_disabled=False,
+            cycle_result=SimpleNamespace(intents=[]),
+            dispatch_report={"submitted_count": 0},
+        ),
+    )
+
+    # Pre-set state: 4 prior failures already counted.  A dead stream thread
+    # is in place so the watchdog will fire and increment to attempt 5.
+    supervisor._stream_restart_attempts = 4
+    supervisor._next_stream_restart_at = None  # allow restart immediately
+
+    dead_thread = threading.Thread(target=lambda: None, daemon=True)
+    dead_thread.start()
+    dead_thread.join()  # ensure it is no longer alive
+    supervisor._stream_thread = dead_thread  # watchdog checks is_alive()
+
+    # One iteration is enough: watchdog fires, attempt count becomes 5,
+    # stream_restart_failed event is emitted.
+    now_ts = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    supervisor.run_forever(
+        max_iterations=1,
+        sleep_fn=lambda _seconds: None,
+        cycle_now=lambda: now_ts,
+    )
+
+    failure_events = [
+        event
+        for event in runtime.audit_event_store.appended
+        if event.event_type == "stream_restart_failed"
+    ]
+    assert len(failure_events) >= 1, (
+        "Expected at least one 'stream_restart_failed' audit event after 5 "
+        f"consecutive stream failures. Got events: "
+        f"{[e.event_type for e in runtime.audit_event_store.appended]}"
+    )
+    assert failure_events[0].payload.get("attempt_count") >= 5, (
+        f"Expected attempt_count >= 5, got: {failure_events[0].payload}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 1: Postgres reconnect path is called when connection_checker returns False
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_supervisor_reconnects_when_connection_checker_returns_false(
+    monkeypatch,
+) -> None:
+    """When connection_checker returns False, run_cycle_once must call reconnect_fn
+    exactly once before proceeding with the cycle."""
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    runtime = make_runtime_context(settings, position_store=RecordingPositionStore())
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    stream = FakeStream()
+
+    reconnect_calls: list[object] = []
+
+    def recording_reconnect_fn(rt: object) -> None:
+        reconnect_calls.append(rt)
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(
+        module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0}
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: False,
+        reconnect_fn=recording_reconnect_fn,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    assert len(reconnect_calls) == 1, (
+        f"Expected reconnect_fn to be called exactly once; called {len(reconnect_calls)} time(s)"
+    )
+    assert reconnect_calls[0] is runtime, (
+        "Expected reconnect_fn to be called with the RuntimeContext"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 2: Stream restart backoff — no restart when _next_stream_restart_at is
+# in the future
+# ---------------------------------------------------------------------------
+
+
+def test_supervisor_stream_watchdog_does_not_restart_during_backoff_window(
+    monkeypatch,
+) -> None:
+    """When _next_stream_restart_at is in the future (backoff window active),
+    run_forever's watchdog must NOT start a new stream thread even though the
+    current stream thread is dead."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now_ts = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker(market_is_open=True)
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream()
+
+    stream_start_calls: list[object] = []
+
+    def recording_stream_attacher(**kwargs):
+        stream_start_calls.append(kwargs)
+        return object()
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        stream_attacher=recording_stream_attacher,
+    )
+
+    monkeypatch.setattr(
+        supervisor,
+        "startup",
+        lambda **kwargs: make_startup_report(),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "run_cycle_once",
+        lambda **kwargs: SupervisorCycleReport(
+            entries_disabled=False,
+            cycle_result=SimpleNamespace(intents=[]),
+            dispatch_report={"submitted_count": 0},
+        ),
+    )
+
+    # Plant a dead thread so the watchdog will inspect it.
+    dead_thread = threading.Thread(target=lambda: None, daemon=True)
+    dead_thread.start()
+    dead_thread.join()  # guaranteed not alive
+    supervisor._stream_thread = dead_thread
+
+    # Set backoff window 60 seconds into the future — restart should be skipped.
+    supervisor._next_stream_restart_at = now_ts + timedelta(seconds=60)
+    supervisor._stream_restart_attempts = 1  # prior attempt already counted
+
+    supervisor.run_forever(
+        max_iterations=1,
+        sleep_fn=lambda _seconds: None,
+        cycle_now=lambda: now_ts,
+    )
+
+    # The stream_attacher was injected but startup was monkeypatched, so
+    # stream_start_calls should remain empty (no restart during backoff).
+    # We also check that no "trade_update_stream_restarted" audit event was emitted.
+    restart_events = [
+        e
+        for e in runtime.audit_event_store.appended
+        if e.event_type == "trade_update_stream_restarted"
+    ]
+    assert len(restart_events) == 0, (
+        "Expected no stream restart during active backoff window, "
+        f"but got {len(restart_events)} restart event(s)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 3: flatten_complete negative case — normal cycle does NOT write
+# flatten_complete=True
+# ---------------------------------------------------------------------------
+
+
+def test_supervisor_does_not_write_flatten_complete_on_normal_cycle(
+    monkeypatch,
+) -> None:
+    """A cycle with no eod_flatten intents must NOT call
+    DailySessionStateStore.save() with flatten_complete=True."""
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    session_state_store = RecordingDailySessionStateStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=RecordingPositionStore(),
+        daily_session_state_store=session_state_store,
+    )
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    stream = FakeStream()
+
+    # Cycle result with no intents at all — definitely no eod_flatten.
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: SimpleNamespace(intents=[]),
+    )
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        lambda **kwargs: {"submitted_count": 0},
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    flatten_complete_saves = [
+        s for s in session_state_store.saved if s.flatten_complete is True
+    ]
+    assert len(flatten_complete_saves) == 0, (
+        "Expected DailySessionStateStore.save(flatten_complete=True) NOT to be called "
+        f"on a normal cycle, but it was called {len(flatten_complete_saves)} time(s)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 4: HALTED status — order dispatcher is never called
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_supervisor_halted_status_skips_order_dispatcher(
+    monkeypatch,
+) -> None:
+    """When trading status is HALTED, run_cycle_once() must return early without
+    invoking the order dispatcher."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc)
+    trading_status_store = RecordingTradingStatusStore(
+        loaded_status=make_trading_status(
+            settings, status=TradingStatusValue.HALTED, updated_at=now
+        )
+    )
+    runtime = make_runtime_context(
+        settings,
+        trading_status_store=trading_status_store,
+        position_store=RecordingPositionStore(),
+    )
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    stream = FakeStream()
+
+    dispatch_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: SimpleNamespace(intents=[]),
+    )
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0},
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        order_dispatcher=lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0},
+    )
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    assert isinstance(report, SupervisorCycleReport)
+    assert report.entries_disabled is True
+    assert len(dispatch_calls) == 0, (
+        f"Expected order dispatcher to never be called when HALTED, "
+        f"but it was called {len(dispatch_calls)} time(s)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 — Daily loss limit enforcement
+# ---------------------------------------------------------------------------
+
+def _make_minimal_supervisor(
+    module,
+    RuntimeSupervisor,
+    *,
+    settings,
+    order_store: RecordingOrderStore,
+    broker,
+    now: datetime,
+):
+    """Build a minimal RuntimeSupervisor with injected fakes for loss limit tests."""
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream()
+    runtime = make_runtime_context(settings, order_store=order_store)
+    monkeypatch_targets = []
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        cycle_intent_executor=lambda **kwargs: None,
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+    return supervisor, runtime
+
+
+def test_daily_loss_limit_disables_entries_and_emits_audit_event_when_breached(
+    monkeypatch,
+) -> None:
+    """When realized_pnl < -(daily_loss_limit_pct × equity), entries must be disabled
+    and a daily_loss_limit_breached audit event with correct payload must be appended."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = Settings.from_env(
+        {
+            "TRADING_MODE": "paper",
+            "ENABLE_LIVE_TRADING": "false",
+            "STRATEGY_VERSION": "v1-breakout",
+            "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+            "MARKET_DATA_FEED": "sip",
+            "SYMBOLS": "AAPL",
+            "DAILY_SMA_PERIOD": "20",
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "ENTRY_TIMEFRAME_MINUTES": "15",
+            "RISK_PER_TRADE_PCT": "0.0025",
+            "MAX_POSITION_PCT": "0.05",
+            "MAX_OPEN_POSITIONS": "3",
+            "DAILY_LOSS_LIMIT_PCT": "0.05",   # 5% of equity
+            "STOP_LIMIT_BUFFER_PCT": "0.001",
+            "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+            "ENTRY_STOP_PRICE_BUFFER": "0.01",
+            "ENTRY_WINDOW_START": "10:00",
+            "ENTRY_WINDOW_END": "15:30",
+            "FLATTEN_TIME": "15:45",
+        }
+    )
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    # equity=10_000, limit_pct=0.05 → limit=500; pnl=-600 → breached
+    order_store = RecordingOrderStore(daily_pnl=-600.0)
+    broker = FakeBroker(
+        account=BrokerAccount(equity=10_000.0, buying_power=20_000.0, trading_blocked=False)
+    )
+    supervisor, runtime = _make_minimal_supervisor(
+        module,
+        RuntimeSupervisor,
+        settings=settings,
+        order_store=order_store,
+        broker=broker,
+        now=now,
+    )
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    assert isinstance(report, SupervisorCycleReport)
+    assert report.entries_disabled is True
+
+    breach_events = [
+        e for e in runtime.audit_event_store.appended
+        if getattr(e, "event_type", None) == "daily_loss_limit_breached"
+    ]
+    assert len(breach_events) == 1, "Expected exactly one daily_loss_limit_breached audit event"
+    payload = breach_events[0].payload
+    assert payload["realized_pnl"] == -600.0
+    assert payload["limit"] == pytest.approx(500.0)
+
+
+def test_daily_loss_limit_allows_entries_when_not_breached(
+    monkeypatch,
+) -> None:
+    """When realized_pnl is within the daily loss limit, entries must NOT be disabled
+    and no daily_loss_limit_breached audit event must be emitted."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = Settings.from_env(
+        {
+            "TRADING_MODE": "paper",
+            "ENABLE_LIVE_TRADING": "false",
+            "STRATEGY_VERSION": "v1-breakout",
+            "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+            "MARKET_DATA_FEED": "sip",
+            "SYMBOLS": "AAPL",
+            "DAILY_SMA_PERIOD": "20",
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "ENTRY_TIMEFRAME_MINUTES": "15",
+            "RISK_PER_TRADE_PCT": "0.0025",
+            "MAX_POSITION_PCT": "0.05",
+            "MAX_OPEN_POSITIONS": "3",
+            "DAILY_LOSS_LIMIT_PCT": "0.05",
+            "STOP_LIMIT_BUFFER_PCT": "0.001",
+            "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+            "ENTRY_STOP_PRICE_BUFFER": "0.01",
+            "ENTRY_WINDOW_START": "10:00",
+            "ENTRY_WINDOW_END": "15:30",
+            "FLATTEN_TIME": "15:45",
+        }
+    )
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    # equity=10_000, limit_pct=0.05 → limit=500; pnl=-100 → well within limit
+    order_store = RecordingOrderStore(daily_pnl=-100.0)
+    broker = FakeBroker(
+        account=BrokerAccount(equity=10_000.0, buying_power=20_000.0, trading_blocked=False)
+    )
+    supervisor, runtime = _make_minimal_supervisor(
+        module,
+        RuntimeSupervisor,
+        settings=settings,
+        order_store=order_store,
+        broker=broker,
+        now=now,
+    )
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    breach_events = [
+        e for e in runtime.audit_event_store.appended
+        if getattr(e, "event_type", None) == "daily_loss_limit_breached"
+    ]
+    assert breach_events == [], "No breach event expected when PnL is within limit"

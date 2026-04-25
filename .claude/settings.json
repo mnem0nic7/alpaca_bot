@@ -1,0 +1,27 @@
+{
+  "autoCompactWindow": 150000,
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"\nimport json, sys\ntry:\n    data = json.load(sys.stdin)\n    path = data.get('tool_input', {}).get('file_path', '')\n    sensitive = ['/execution/', '/config/', '/admin/']\n    if any(p in path for p in sensitive):\n        print('SECURITY AUDITOR: Sensitive path modified (' + path + '). Run /security-review before completing this task.')\nexcept Exception:\n    pass\n\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'changed=$(git diff --name-only HEAD 2>/dev/null); py=$(echo \"$changed\" | grep -c \"\\.py$\" || true); if [ \"$py\" -gt 0 ]; then echo \"AGENT TEAM CHECKLIST:\"; echo \"  Reviewer: run /code-review:code-review (code was written this session)\"; echo \"  Completionist: run /superpowers:verification-before-completion before declaring done\"; fi'"
+          }
+        ]
+      }
+    ]
+  }
+}

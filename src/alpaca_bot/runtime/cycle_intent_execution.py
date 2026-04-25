@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol, Sequence
@@ -7,6 +8,8 @@ from typing import Any, Callable, Protocol, Sequence
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType
 from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord
+
+logger = logging.getLogger(__name__)
 
 
 ACTIVE_STOP_STATUSES = ("pending_submit", "new", "accepted", "submitted", "partially_filled")
@@ -242,9 +245,27 @@ def _execute_exit(
         return 0, 0
 
     canceled_stop_count = 0
+    position_already_gone = False
     for stop_order in _active_stop_orders(runtime, settings, symbol):
         if stop_order.broker_order_id:
-            broker.cancel_order(stop_order.broker_order_id)
+            try:
+                broker.cancel_order(stop_order.broker_order_id)
+            except Exception as exc:
+                exc_msg = str(exc).lower()
+                logger.warning(
+                    "cycle_intent_execution: cancel_order failed for %s broker_order_id=%s: %s",
+                    symbol,
+                    stop_order.broker_order_id,
+                    exc,
+                )
+                if any(
+                    phrase in exc_msg
+                    for phrase in ("not found", "already filled", "already canceled", "does not exist")
+                ):
+                    position_already_gone = True
+                    continue
+                # cancel failed for an unknown reason — skip DB update and exit submission
+                continue
         runtime.order_store.save(
             OrderRecord(
                 client_order_id=stop_order.client_order_id,
@@ -265,6 +286,9 @@ def _execute_exit(
             )
         )
         canceled_stop_count += 1
+
+    if position_already_gone:
+        return canceled_stop_count, 0
 
     client_order_id = _exit_client_order_id(
         settings=settings,

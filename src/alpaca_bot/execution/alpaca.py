@@ -1,11 +1,61 @@
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
-from datetime import date, datetime, time
-from typing import Any, Mapping, Protocol, Sequence
+from datetime import date, datetime
+from datetime import time as time_type
+from typing import Any, Callable, Mapping, Protocol, Sequence, TypeVar
+
+_logger = logging.getLogger(__name__)
 
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.domain import Bar
+
+_T = TypeVar("_T")
+
+_RETRY_WAIT_SECONDS = [1, 2]  # wait before attempt 2, then attempt 3
+_MAX_ATTEMPTS = 3
+
+
+def _is_transient_error(exc: BaseException) -> bool:
+    """Return True if *exc* looks like a rate-limit or transient network/server error."""
+    msg = str(exc).lower()
+    # Rate-limit signals
+    if any(token in msg for token in ("429", "rate", "too many")):
+        return True
+    # 5xx server errors
+    for code in ("500", "502", "503", "504"):
+        if code in msg:
+            return True
+    # Network-level errors
+    if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
+        return True
+    return False
+
+
+def _retry_with_backoff(fn: Callable[[], _T]) -> _T:
+    """Call *fn* and retry up to _MAX_ATTEMPTS times on transient errors.
+
+    - Retries on 429/rate-limit, 5xx, and connection-level errors.
+    - Re-raises immediately on any other exception (4xx that aren't 429,
+      ValueError, etc.).
+    - Waits 1 s before the second attempt and 2 s before the third.
+    """
+    last_exc: BaseException | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            return fn()
+        except Exception as exc:
+            if not _is_transient_error(exc):
+                raise
+            last_exc = exc
+            if attempt < len(_RETRY_WAIT_SECONDS):
+                wait = _RETRY_WAIT_SECONDS[attempt]
+                _logger.warning("Alpaca API transient error (attempt %d/%d), retrying in %ds: %s", attempt + 1, _MAX_ATTEMPTS, wait, exc)
+                time.sleep(wait)
+    assert last_exc is not None
+    raise last_exc
 
 
 class AlpacaCredentialsError(ValueError):
@@ -142,7 +192,7 @@ class AlpacaExecutionAdapter:
         return cls(trading_client=trading_client, settings=settings)
 
     def get_market_clock(self) -> MarketClock:
-        raw = self._trading.get_clock()
+        raw = _retry_with_backoff(self._trading.get_clock)
         return MarketClock(
             timestamp=_as_datetime(raw.timestamp),
             is_open=bool(raw.is_open),
@@ -189,7 +239,7 @@ class AlpacaExecutionAdapter:
         ]
 
     def list_positions(self) -> list[BrokerPosition]:
-        raw_positions = self._trading.get_all_positions()
+        raw_positions = _retry_with_backoff(self._trading.get_all_positions)
         return [
             BrokerPosition(
                 symbol=str(position.symbol).upper(),
@@ -205,7 +255,7 @@ class AlpacaExecutionAdapter:
         ]
 
     def get_account(self) -> BrokerAccount:
-        raw = self._trading.get_account()
+        raw = _retry_with_backoff(self._trading.get_account)
         return BrokerAccount(
             equity=float(raw.equity),
             buying_power=float(raw.buying_power),
@@ -231,7 +281,9 @@ class AlpacaExecutionAdapter:
             client_order_id=client_order_id,
             side="buy",
         )
-        return _parse_broker_order(self._trading.submit_order(request))
+        return _parse_broker_order(
+            _retry_with_backoff(lambda: self._trading.submit_order(request))
+        )
 
     def submit_stop_order(
         self,
@@ -250,7 +302,9 @@ class AlpacaExecutionAdapter:
             client_order_id=client_order_id,
             side="sell",
         )
-        return _parse_broker_order(self._trading.submit_order(request))
+        return _parse_broker_order(
+            _retry_with_backoff(lambda: self._trading.submit_order(request))
+        )
 
     def submit_market_exit(
         self,
@@ -267,7 +321,9 @@ class AlpacaExecutionAdapter:
             client_order_id=client_order_id,
             side="sell",
         )
-        return _parse_broker_order(self._trading.submit_order(request))
+        return _parse_broker_order(
+            _retry_with_backoff(lambda: self._trading.submit_order(request))
+        )
 
     def replace_order(
         self,
@@ -284,7 +340,11 @@ class AlpacaExecutionAdapter:
             stop_price=stop_price,
             client_order_id=client_order_id,
         )
-        return _parse_broker_order(self._trading.replace_order_by_id(order_id, request))
+        return _parse_broker_order(
+            _retry_with_backoff(
+                lambda: self._trading.replace_order_by_id(order_id, request)
+            )
+        )
 
     def cancel_order(self, order_id: str) -> None:
         self._trading.cancel_order_by_id(order_id)
@@ -329,12 +389,12 @@ def _as_date(value: Any) -> date:
 def _calendar_time(raw_date: Any, raw_time: Any) -> datetime:
     if isinstance(raw_time, datetime):
         return raw_time
-    if isinstance(raw_time, time):
+    if isinstance(raw_time, time_type):
         return datetime.combine(_as_date(raw_date), raw_time)
     if isinstance(raw_time, str):
         value = raw_time.strip()
         try:
-            parsed_time = time.fromisoformat(value)
+            parsed_time = time_type.fromisoformat(value)
             return datetime.combine(_as_date(raw_date), parsed_time)
         except ValueError:
             return _as_datetime(value)

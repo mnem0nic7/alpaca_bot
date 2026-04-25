@@ -6,6 +6,7 @@ from typing import Callable, Protocol, Sequence
 
 from alpaca_bot.config import Settings
 from alpaca_bot.execution import BrokerOrder, BrokerPosition
+from alpaca_bot.notifications import Notifier
 from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord
 
 
@@ -68,6 +69,7 @@ def recover_startup_state(
     broker_open_orders: Sequence[BrokerOrder],
     now: datetime | Callable[[], datetime] | None = None,
     audit_event_type: str | None = "startup_recovery_completed",
+    notifier: Notifier | None = None,
 ) -> StartupRecoveryReport:
     timestamp = _resolve_now(now)
     mismatches: list[str] = []
@@ -89,6 +91,26 @@ def recover_startup_state(
             and round(existing.entry_price, 4) != round(broker_position.entry_price, 4)
         ):
             mismatches.append(f"broker position differs locally: {broker_position.symbol}")
+
+        if existing is not None:
+            stop_price = existing.stop_price
+            initial_stop_price = existing.initial_stop_price
+        else:
+            resolved_entry_price = broker_position.entry_price
+            if resolved_entry_price is not None and resolved_entry_price != 0.0:
+                stop_price = resolved_entry_price * (1 - settings.breakout_stop_buffer_pct)
+                initial_stop_price = stop_price
+            else:
+                stop_price = 0.0
+                initial_stop_price = 0.0
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="startup_recovery_missing_entry_price",
+                        payload={"symbol": broker_position.symbol},
+                        created_at=timestamp,
+                    )
+                )
+
         synced_positions.append(
             PositionRecord(
                 symbol=broker_position.symbol,
@@ -98,8 +120,8 @@ def recover_startup_state(
                 entry_price=broker_position.entry_price
                 if broker_position.entry_price is not None
                 else (existing.entry_price if existing is not None else 0.0),
-                stop_price=existing.stop_price if existing is not None else 0.0,
-                initial_stop_price=existing.initial_stop_price if existing is not None else 0.0,
+                stop_price=stop_price,
+                initial_stop_price=initial_stop_price,
                 opened_at=existing.opened_at if existing is not None else timestamp,
                 updated_at=timestamp,
             )
@@ -209,6 +231,11 @@ def recover_startup_state(
         cleared_position_count=cleared_position_count,
         cleared_order_count=cleared_order_count,
     )
+    if report.mismatches and notifier is not None:
+        notifier.send(
+            subject="Startup mismatch detected",
+            body="\n".join(report.mismatches),
+        )
     if audit_event_type is not None:
         runtime.audit_event_store.append(
             AuditEvent(

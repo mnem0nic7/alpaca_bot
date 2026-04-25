@@ -47,13 +47,17 @@ def resolve_migrations_path(preferred: str | Path | None = None) -> Path:
 
 
 def discover_migrations(migrations_path: str | Path) -> list[Migration]:
+    # Forward migrations:  NNN_description.sql       — applied automatically
+    # Rollback migrations: NNN_description.down.sql  — applied manually on rollback
     path = resolve_migrations_path(migrations_path)
     migrations: list[Migration] = []
     for file in path.glob("*.sql"):
         if not file.is_file():
             continue
-        prefix, _, _ = file.stem.partition("_")
+        prefix, _, rest = file.stem.partition("_")
         if not prefix.isdigit():
+            continue
+        if rest.endswith(".down"):
             continue
         migrations.append(
             Migration(

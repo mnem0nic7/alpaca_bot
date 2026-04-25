@@ -6,6 +6,7 @@ import sys
 from typing import Callable, Sequence, TextIO
 
 from alpaca_bot.config import Settings, TradingMode
+from alpaca_bot.notifications import Notifier
 from alpaca_bot.storage import (
     AuditEvent,
     AuditEventStore,
@@ -46,6 +47,7 @@ def run_admin_command(
     settings: Settings,
     connection: ConnectionProtocol,
     now: datetime | None = None,
+    notifier: Notifier | None = None,
 ) -> str:
     args = build_parser(settings).parse_args(list(argv))
     timestamp = now or datetime.now(timezone.utc)
@@ -74,7 +76,7 @@ def run_admin_command(
         )
 
     if args.command == "halt":
-        return _write_status_change(
+        result = _write_status_change(
             connection=connection,
             settings=settings,
             status_store=status_store,
@@ -87,9 +89,15 @@ def run_admin_command(
             now=timestamp,
             kill_switch_enabled=True,
         )
+        if notifier is not None:
+            notifier.send(
+                subject="Trading halted",
+                body=f"mode={trading_mode.value} strategy={strategy_version} reason={args.reason}",
+            )
+        return result
 
     if args.command == "close-only":
-        return _write_status_change(
+        result = _write_status_change(
             connection=connection,
             settings=settings,
             status_store=status_store,
@@ -102,6 +110,12 @@ def run_admin_command(
             now=timestamp,
             kill_switch_enabled=False,
         )
+        if notifier is not None:
+            notifier.send(
+                subject="Trading set to close-only",
+                body=f"mode={trading_mode.value} strategy={strategy_version} reason={args.reason or '-'}",
+            )
+        return result
 
     if args.command == "resume":
         return _write_status_change(

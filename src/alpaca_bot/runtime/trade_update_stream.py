@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
 from alpaca_bot.config import Settings
+from alpaca_bot.notifications import Notifier
 from alpaca_bot.runtime.trade_updates import apply_trade_update
 from alpaca_bot.storage import AuditEvent
 
@@ -28,6 +29,7 @@ def attach_trade_update_stream(
     runtime: RuntimeProtocol,
     stream: TradeUpdateStreamProtocol,
     now: Callable[[], datetime] | None = None,
+    notifier: Notifier | None = None,
 ):
     async def handler(update: Any) -> None:
         timestamp = (now or (lambda: datetime.now(timezone.utc)))()
@@ -37,6 +39,7 @@ def attach_trade_update_stream(
                 runtime=runtime,  # type: ignore[arg-type]
                 update=update,
                 now=timestamp,
+                notifier=notifier,
             )
         except Exception as exc:
             runtime.audit_event_store.append(

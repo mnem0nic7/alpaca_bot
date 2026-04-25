@@ -215,3 +215,229 @@ def test_evaluate_cycle_emits_eod_exit_for_open_position_after_flatten_time() ->
     assert [intent.intent_type for intent in result.intents] == [CycleIntentType.EXIT]
     assert result.intents[0].symbol == "AAPL"
     assert result.intents[0].reason == "eod_flatten"
+
+
+def test_entries_disabled_still_produces_update_stop_for_profitable_position() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    latest_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=111.80,
+        high=112.40,
+        low=111.70,
+        close=112.10,
+        volume=2400,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=111.02,
+        quantity=45,
+        breakout_level=109.90,
+        initial_stop_price=109.89,
+        stop_price=109.89,
+        trailing_active=False,
+        highest_price=111.20,
+    )
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=latest_bar.timestamp,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": [latest_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    intent_types = [intent.intent_type for intent in result.intents]
+    assert CycleIntentType.UPDATE_STOP in intent_types
+    assert CycleIntentType.ENTRY not in intent_types
+    update_intent = next(i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP)
+    assert update_intent.symbol == "AAPL"
+    assert update_intent.stop_price == 111.70
+
+
+def test_entries_disabled_still_produces_exit_for_position_past_flatten_time() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    latest_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 20, 0, tzinfo=timezone.utc),
+        open=112.20,
+        high=112.50,
+        low=112.0,
+        close=112.30,
+        volume=1800,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=111.02,
+        quantity=45,
+        breakout_level=109.90,
+        initial_stop_price=109.89,
+        stop_price=111.70,
+        trailing_active=True,
+        highest_price=112.40,
+    )
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=latest_bar.timestamp,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": [latest_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    intent_types = [intent.intent_type for intent in result.intents]
+    assert CycleIntentType.EXIT in intent_types
+    assert CycleIntentType.ENTRY not in intent_types
+    exit_intent = next(i for i in result.intents if i.intent_type == CycleIntentType.EXIT)
+    assert exit_intent.symbol == "AAPL"
+    assert exit_intent.reason == "eod_flatten"
+
+
+def test_entries_disabled_produces_no_entry_intents_even_when_signals_exist() -> None:
+    _CycleIntentType, evaluate_cycle = load_engine_api()
+    CycleIntentType = _CycleIntentType
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    assert all(intent.intent_type != CycleIntentType.ENTRY for intent in result.intents)
+
+
+# ---------------------------------------------------------------------------
+# Fix #4: flatten_complete flag suppresses EXIT intents
+# ---------------------------------------------------------------------------
+
+
+def test_evaluate_cycle_emits_no_exits_when_flatten_already_complete() -> None:
+    """When session_state.flatten_complete is True, evaluate_cycle must not emit
+    any EXIT intents — prevents duplicate market orders when the trade stream
+    is down and the fill hasn't been recorded yet."""
+    from alpaca_bot.storage import DailySessionState
+    from alpaca_bot.config import TradingMode
+
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    # Past flatten_time (15:45 ET → 19:45 UTC; 20:00 UTC is well past it)
+    past_flatten = datetime(2026, 4, 24, 20, 0, tzinfo=timezone.utc)
+    latest_bar = Bar(
+        symbol="AAPL",
+        timestamp=past_flatten,
+        open=112.20,
+        high=112.50,
+        low=112.0,
+        close=112.30,
+        volume=1800,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=111.02,
+        quantity=45,
+        breakout_level=109.90,
+        initial_stop_price=109.89,
+        stop_price=111.70,
+        trailing_active=True,
+        highest_price=112.40,
+    )
+    session_state = DailySessionState(
+        session_date=date(2026, 4, 24),
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        entries_disabled=True,
+        flatten_complete=True,
+        updated_at=past_flatten,
+    )
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=past_flatten,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": [latest_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+        session_state=session_state,
+    )
+
+    exit_intents = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert exit_intents == [], (
+        f"Expected no EXIT intents when flatten_complete=True, got: {exit_intents}"
+    )
+
+
+def test_evaluate_cycle_emits_exits_when_flatten_not_complete() -> None:
+    """Control: when session_state.flatten_complete is False (default), EXIT
+    intents are still emitted past flatten_time."""
+    from alpaca_bot.storage import DailySessionState
+    from alpaca_bot.config import TradingMode
+
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    past_flatten = datetime(2026, 4, 24, 20, 0, tzinfo=timezone.utc)
+    latest_bar = Bar(
+        symbol="AAPL",
+        timestamp=past_flatten,
+        open=112.20,
+        high=112.50,
+        low=112.0,
+        close=112.30,
+        volume=1800,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=111.02,
+        quantity=45,
+        breakout_level=109.90,
+        initial_stop_price=109.89,
+        stop_price=111.70,
+        trailing_active=True,
+        highest_price=112.40,
+    )
+    session_state = DailySessionState(
+        session_date=date(2026, 4, 24),
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        entries_disabled=True,
+        flatten_complete=False,
+        updated_at=past_flatten,
+    )
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=past_flatten,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": [latest_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+        session_state=session_state,
+    )
+
+    exit_intents = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert len(exit_intents) == 1, (
+        f"Expected one EXIT intent when flatten_complete=False, got: {exit_intents}"
+    )

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import uuid as _uuid_module
+from datetime import date, datetime
 from typing import Any
 
 from alpaca_bot.config import TradingMode
@@ -140,6 +142,79 @@ class AuditEventStore:
             created_at=row[3],
         )
 
+    def list_by_event_types(
+        self,
+        *,
+        event_types: list[str],
+        limit: int = 20,
+    ) -> list[AuditEvent]:
+        if not event_types:
+            return []
+        placeholders = ", ".join(["%s"] * len(event_types))
+        rows = fetch_all(
+            self._connection,
+            f"""
+            SELECT event_type, symbol, payload, created_at
+            FROM audit_events
+            WHERE event_type IN ({placeholders})
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT %s
+            """,
+            (*event_types, limit),
+        )
+        return [
+            AuditEvent(
+                event_type=row[0],
+                symbol=row[1],
+                payload=_load_json_payload(row[2]),
+                created_at=row[3],
+            )
+            for row in rows
+        ]
+
+
+_ORDER_SELECT_COLUMNS = """
+    client_order_id,
+    symbol,
+    side,
+    intent_type,
+    status,
+    quantity,
+    trading_mode,
+    strategy_version,
+    created_at,
+    updated_at,
+    stop_price,
+    limit_price,
+    initial_stop_price,
+    broker_order_id,
+    signal_timestamp,
+    fill_price,
+    filled_quantity
+"""
+
+
+def _row_to_order_record(row: Any) -> OrderRecord:
+    return OrderRecord(
+        client_order_id=row[0],
+        symbol=row[1],
+        side=row[2],
+        intent_type=row[3],
+        status=row[4],
+        quantity=int(row[5]),
+        trading_mode=TradingMode(row[6]),
+        strategy_version=row[7],
+        created_at=row[8],
+        updated_at=row[9],
+        stop_price=float(row[10]) if row[10] is not None else None,
+        limit_price=float(row[11]) if row[11] is not None else None,
+        initial_stop_price=float(row[12]) if row[12] is not None else None,
+        broker_order_id=row[13],
+        signal_timestamp=row[14],
+        fill_price=float(row[15]) if row[15] is not None else None,
+        filled_quantity=int(row[16]) if row[16] is not None else None,
+    )
+
 
 class OrderStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
@@ -163,10 +238,12 @@ class OrderStore:
                 initial_stop_price,
                 broker_order_id,
                 signal_timestamp,
+                fill_price,
+                filled_quantity,
                 created_at,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (client_order_id)
             DO UPDATE SET
                 status = EXCLUDED.status,
@@ -176,6 +253,8 @@ class OrderStore:
                 initial_stop_price = EXCLUDED.initial_stop_price,
                 broker_order_id = EXCLUDED.broker_order_id,
                 signal_timestamp = EXCLUDED.signal_timestamp,
+                fill_price = EXCLUDED.fill_price,
+                filled_quantity = EXCLUDED.filled_quantity,
                 updated_at = EXCLUDED.updated_at
             """,
             (
@@ -192,6 +271,8 @@ class OrderStore:
                 order.initial_stop_price,
                 order.broker_order_id,
                 order.signal_timestamp,
+                order.fill_price,
+                order.filled_quantity,
                 order.created_at,
                 order.updated_at,
             ),
@@ -200,68 +281,16 @@ class OrderStore:
     def load(self, client_order_id: str) -> OrderRecord | None:
         row = fetch_one(
             self._connection,
-            """
-            SELECT
-                client_order_id,
-                symbol,
-                side,
-                intent_type,
-                status,
-                quantity,
-                trading_mode,
-                strategy_version,
-                created_at,
-                updated_at,
-                stop_price,
-                limit_price,
-                initial_stop_price,
-                broker_order_id,
-                signal_timestamp
-            FROM orders
-            WHERE client_order_id = %s
-            """,
+            f"SELECT {_ORDER_SELECT_COLUMNS} FROM orders WHERE client_order_id = %s",
             (client_order_id,),
         )
-        if row is None:
-            return None
-        return OrderRecord(
-            client_order_id=row[0],
-            symbol=row[1],
-            side=row[2],
-            intent_type=row[3],
-            status=row[4],
-            quantity=int(row[5]),
-            trading_mode=TradingMode(row[6]),
-            strategy_version=row[7],
-            created_at=row[8],
-            updated_at=row[9],
-            stop_price=row[10],
-            limit_price=row[11],
-            initial_stop_price=row[12],
-            broker_order_id=row[13],
-            signal_timestamp=row[14],
-        )
+        return _row_to_order_record(row) if row is not None else None
 
     def load_by_broker_order_id(self, broker_order_id: str) -> OrderRecord | None:
         row = fetch_one(
             self._connection,
-            """
-            SELECT
-                client_order_id,
-                symbol,
-                side,
-                intent_type,
-                status,
-                quantity,
-                trading_mode,
-                strategy_version,
-                created_at,
-                updated_at,
-                stop_price,
-                limit_price,
-                initial_stop_price,
-                broker_order_id,
-                signal_timestamp
+            f"""
+            SELECT {_ORDER_SELECT_COLUMNS}
             FROM orders
             WHERE broker_order_id = %s
             ORDER BY updated_at DESC
@@ -269,25 +298,7 @@ class OrderStore:
             """,
             (broker_order_id,),
         )
-        if row is None:
-            return None
-        return OrderRecord(
-            client_order_id=row[0],
-            symbol=row[1],
-            side=row[2],
-            intent_type=row[3],
-            status=row[4],
-            quantity=int(row[5]),
-            trading_mode=TradingMode(row[6]),
-            strategy_version=row[7],
-            created_at=row[8],
-            updated_at=row[9],
-            stop_price=row[10],
-            limit_price=row[11],
-            initial_stop_price=row[12],
-            broker_order_id=row[13],
-            signal_timestamp=row[14],
-        )
+        return _row_to_order_record(row) if row is not None else None
 
     def list_by_status(
         self,
@@ -302,22 +313,7 @@ class OrderStore:
         rows = fetch_all(
             self._connection,
             f"""
-            SELECT
-                client_order_id,
-                symbol,
-                side,
-                intent_type,
-                status,
-                quantity,
-                trading_mode,
-                strategy_version,
-                created_at,
-                updated_at,
-                stop_price,
-                limit_price,
-                initial_stop_price,
-                broker_order_id,
-                signal_timestamp
+            SELECT {_ORDER_SELECT_COLUMNS}
             FROM orders
             WHERE trading_mode = %s
               AND strategy_version = %s
@@ -326,26 +322,7 @@ class OrderStore:
             """,
             (trading_mode.value, strategy_version, *statuses),
         )
-        return [
-            OrderRecord(
-                client_order_id=row[0],
-                symbol=row[1],
-                side=row[2],
-                intent_type=row[3],
-                status=row[4],
-                quantity=int(row[5]),
-                trading_mode=TradingMode(row[6]),
-                strategy_version=row[7],
-                created_at=row[8],
-                updated_at=row[9],
-                stop_price=row[10],
-                limit_price=row[11],
-                initial_stop_price=row[12],
-                broker_order_id=row[13],
-                signal_timestamp=row[14],
-            )
-            for row in rows
-        ]
+        return [_row_to_order_record(row) for row in rows]
 
     def list_pending_submit(
         self,
@@ -368,23 +345,8 @@ class OrderStore:
     ) -> list[OrderRecord]:
         rows = fetch_all(
             self._connection,
-            """
-            SELECT
-                client_order_id,
-                symbol,
-                side,
-                intent_type,
-                status,
-                quantity,
-                trading_mode,
-                strategy_version,
-                created_at,
-                updated_at,
-                stop_price,
-                limit_price,
-                initial_stop_price,
-                broker_order_id,
-                signal_timestamp
+            f"""
+            SELECT {_ORDER_SELECT_COLUMNS}
             FROM orders
             WHERE trading_mode = %s
               AND strategy_version = %s
@@ -393,25 +355,142 @@ class OrderStore:
             """,
             (trading_mode.value, strategy_version, limit),
         )
-        return [
-            OrderRecord(
-                client_order_id=row[0],
-                symbol=row[1],
-                side=row[2],
-                intent_type=row[3],
-                status=row[4],
-                quantity=int(row[5]),
-                trading_mode=TradingMode(row[6]),
-                strategy_version=row[7],
-                created_at=row[8],
-                updated_at=row[9],
-                stop_price=row[10],
-                limit_price=row[11],
-                initial_stop_price=row[12],
-                broker_order_id=row[13],
-                signal_timestamp=row[14],
-            )
+        return [_row_to_order_record(row) for row in rows]
+
+    def daily_realized_pnl(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        session_date: date,
+    ) -> float:
+        """Return sum of closed-trade PnL for a session date.
+
+        For each exit/stop order with a fill price, looks up the most recent
+        filled entry for the same symbol via correlated subquery (safe even if
+        the one-trade-per-symbol invariant is ever violated).
+        Returns 0.0 when no completed round-trip trades exist.
+        """
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT
+                x.symbol,
+                (
+                    SELECT e.fill_price
+                    FROM orders e
+                    WHERE e.symbol = x.symbol
+                      AND e.trading_mode = x.trading_mode
+                      AND e.strategy_version = x.strategy_version
+                      AND e.intent_type = 'entry'
+                      AND e.fill_price IS NOT NULL
+                      AND DATE(e.updated_at AT TIME ZONE 'America/New_York') = %s
+                    ORDER BY e.updated_at DESC
+                    LIMIT 1
+                ) AS entry_fill,
+                x.fill_price AS exit_fill,
+                COALESCE(x.filled_quantity, x.quantity) AS qty
+            FROM orders x
+            WHERE x.trading_mode = %s
+              AND x.strategy_version = %s
+              AND x.intent_type IN ('stop', 'exit')
+              AND x.fill_price IS NOT NULL
+              AND DATE(x.updated_at AT TIME ZONE 'America/New_York') = %s
+            """,
+            (
+                session_date,
+                trading_mode.value,
+                strategy_version,
+                session_date,
+            ),
+        )
+        return sum(
+            (float(row[2]) - float(row[1])) * int(row[3])
             for row in rows
+            if row[1] is not None and row[2] is not None
+        )
+
+    def list_closed_trades(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        session_date: date,
+    ) -> list[dict]:
+        """Return one dict per closed round-trip trade for a session date.
+
+        Uses the same correlated-subquery pattern as daily_realized_pnl to
+        look up entry fill data without risking Cartesian-product duplicates.
+        Rows where entry_fill or exit_fill is NULL are excluded.
+        """
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT
+                x.symbol,
+                (
+                    SELECT e.fill_price
+                    FROM orders e
+                    WHERE e.symbol = x.symbol
+                      AND e.trading_mode = x.trading_mode
+                      AND e.strategy_version = x.strategy_version
+                      AND e.intent_type = 'entry'
+                      AND e.fill_price IS NOT NULL
+                      AND DATE(e.updated_at AT TIME ZONE 'America/New_York') = %s
+                    ORDER BY e.updated_at DESC LIMIT 1
+                ) AS entry_fill,
+                (
+                    SELECT e.limit_price
+                    FROM orders e
+                    WHERE e.symbol = x.symbol
+                      AND e.trading_mode = x.trading_mode
+                      AND e.strategy_version = x.strategy_version
+                      AND e.intent_type = 'entry'
+                      AND e.fill_price IS NOT NULL
+                      AND DATE(e.updated_at AT TIME ZONE 'America/New_York') = %s
+                    ORDER BY e.updated_at DESC LIMIT 1
+                ) AS entry_limit,
+                (
+                    SELECT e.updated_at
+                    FROM orders e
+                    WHERE e.symbol = x.symbol
+                      AND e.trading_mode = x.trading_mode
+                      AND e.strategy_version = x.strategy_version
+                      AND e.intent_type = 'entry'
+                      AND e.fill_price IS NOT NULL
+                      AND DATE(e.updated_at AT TIME ZONE 'America/New_York') = %s
+                    ORDER BY e.updated_at DESC LIMIT 1
+                ) AS entry_time,
+                x.fill_price AS exit_fill,
+                x.updated_at AS exit_time,
+                COALESCE(x.filled_quantity, x.quantity) AS qty
+            FROM orders x
+            WHERE x.trading_mode = %s
+              AND x.strategy_version = %s
+              AND x.intent_type IN ('stop', 'exit')
+              AND x.fill_price IS NOT NULL
+              AND DATE(x.updated_at AT TIME ZONE 'America/New_York') = %s
+            ORDER BY x.updated_at
+            """,
+            (
+                session_date, session_date, session_date,
+                trading_mode.value,
+                strategy_version,
+                session_date,
+            ),
+        )
+        return [
+            {
+                "symbol": row[0],
+                "entry_fill": float(row[1]) if row[1] is not None else None,
+                "entry_limit": float(row[2]) if row[2] is not None else None,
+                "entry_time": row[3],
+                "exit_fill": float(row[4]) if row[4] is not None else None,
+                "exit_time": row[5],
+                "qty": int(row[6]),
+            }
+            for row in rows
+            if row[1] is not None and row[4] is not None
         ]
 
 
@@ -608,6 +687,79 @@ class PositionStore:
             )
             for row in rows
         ]
+
+
+class TuningResultStore:
+    def __init__(self, connection: ConnectionProtocol) -> None:
+        self._connection = connection
+
+    def save_run(
+        self,
+        *,
+        scenario_name: str,
+        trading_mode: str,
+        candidates: list,  # list[TuningCandidate] — avoid circular import
+        created_at: datetime,
+        run_id: str | None = None,
+    ) -> str:
+        """Persist all candidates for one sweep run. Returns the run_id used."""
+        rid = run_id or str(_uuid_module.uuid4())
+        scored = [c for c in candidates if c.score is not None]
+        best_params = scored[0].params if scored else None
+
+        for candidate in candidates:
+            is_best = bool(best_params and candidate.params == best_params)
+            report = candidate.report
+            execute(
+                self._connection,
+                """
+                INSERT INTO tuning_results (
+                    run_id, created_at, scenario_name, trading_mode,
+                    params, score, total_trades, win_rate,
+                    mean_return_pct, max_drawdown_pct, sharpe_ratio, is_best
+                ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    rid,
+                    created_at,
+                    scenario_name,
+                    trading_mode,
+                    json.dumps(candidate.params),
+                    candidate.score,
+                    report.total_trades if report is not None else 0,
+                    report.win_rate if report is not None else None,
+                    report.mean_return_pct if report is not None else None,
+                    report.max_drawdown_pct if report is not None else None,
+                    report.sharpe_ratio if report is not None else None,
+                    is_best,
+                ),
+            )
+        return rid
+
+    def load_latest_best(self, *, trading_mode: str) -> dict | None:
+        """Return the most recent is_best=TRUE row as a plain dict, or None."""
+        row = fetch_one(
+            self._connection,
+            """
+            SELECT params, score, total_trades, win_rate, sharpe_ratio, created_at
+            FROM tuning_results
+            WHERE trading_mode = %s AND is_best = TRUE
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (trading_mode,),
+        )
+        if row is None:
+            return None
+        params = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+        return {
+            "params": params,
+            "score": row[1],
+            "total_trades": row[2],
+            "win_rate": row[3],
+            "sharpe_ratio": row[4],
+            "created_at": row[5],
+        }
 
 
 def _load_json_payload(raw_payload: Any) -> dict[str, Any]:

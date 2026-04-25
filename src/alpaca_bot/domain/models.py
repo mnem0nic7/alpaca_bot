@@ -97,3 +97,4 @@ class ReplayResult:
     events: list[ReplayEvent]
     final_position: OpenPosition | None
     traded_symbols: set[tuple[str, date]]
+    backtest_report: object | None = None  # BacktestReport; typed as object to avoid circular import

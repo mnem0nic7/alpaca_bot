@@ -49,6 +49,8 @@ class OrderRecord:
     initial_stop_price: float | None = None
     broker_order_id: str | None = None
     signal_timestamp: datetime | None = None
+    fill_price: float | None = None
+    filled_quantity: int | None = None
 
 
 @dataclass(frozen=True)

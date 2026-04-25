@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from alpaca_bot.config import Settings
 from alpaca_bot.storage import (
@@ -16,7 +16,10 @@ from alpaca_bot.storage import (
     TradingStatus,
     TradingStatusStore,
 )
+from alpaca_bot.storage.repositories import TuningResultStore
 from alpaca_bot.storage.db import ConnectionProtocol
+
+ADMIN_EVENT_TYPES = ["trading_status_changed"]
 
 WORKING_ORDER_STATUSES = [
     "pending_submit",
@@ -36,6 +39,18 @@ WORKER_STALE_AFTER_SECONDS = 180
 
 
 @dataclass(frozen=True)
+class TradeRecord:
+    symbol: str
+    entry_time: datetime | None
+    exit_time: datetime | None
+    entry_price: float
+    exit_price: float
+    quantity: int
+    pnl: float
+    slippage: float | None  # limit_price - fill_price; positive=favorable, negative=adverse
+
+
+@dataclass(frozen=True)
 class WorkerHealth:
     status: str
     last_event_type: str | None
@@ -48,6 +63,20 @@ class WorkerHealth:
 class HealthSnapshot:
     trading_status: TradingStatus | None
     worker_health: WorkerHealth
+
+
+@dataclass(frozen=True)
+class MetricsSnapshot:
+    generated_at: datetime
+    session_date: date
+    trades: list[TradeRecord]
+    total_pnl: float
+    win_rate: float | None
+    mean_return_pct: float | None
+    max_drawdown_pct: float | None
+    sharpe_ratio: float | None
+    admin_history: list[AuditEvent]
+    last_backtest: object | None = None  # BacktestReport; None until Phase 5 persists reports
 
 
 @dataclass(frozen=True)
@@ -138,6 +167,98 @@ def load_health_snapshot(
             now=now,
         ),
     )
+
+
+def load_metrics_snapshot(
+    *,
+    settings: Settings,
+    connection: ConnectionProtocol,
+    order_store: OrderStore | None = None,
+    audit_event_store: AuditEventStore | None = None,
+    tuning_result_store: TuningResultStore | None = None,
+    now: datetime | None = None,
+) -> MetricsSnapshot:
+    generated_at = now or datetime.now(timezone.utc)
+    session_date = generated_at.astimezone(settings.market_timezone).date()
+    order_store = order_store or OrderStore(connection)
+    audit_event_store = audit_event_store or AuditEventStore(connection)
+    tuning_store = tuning_result_store or TuningResultStore(connection)
+
+    raw_trades = order_store.list_closed_trades(
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        session_date=session_date,
+    )
+    trades = [_to_trade_record(t) for t in raw_trades]
+    admin_history = audit_event_store.list_by_event_types(
+        event_types=ADMIN_EVENT_TYPES,
+        limit=20,
+    )
+    last_tuning = tuning_store.load_latest_best(trading_mode=settings.trading_mode.value)
+    return MetricsSnapshot(
+        generated_at=generated_at,
+        session_date=session_date,
+        trades=trades,
+        total_pnl=sum(t.pnl for t in trades),
+        win_rate=_win_rate(trades),
+        mean_return_pct=_mean_return_pct(trades),
+        max_drawdown_pct=_max_drawdown_pct(trades),
+        sharpe_ratio=None,
+        admin_history=admin_history,
+        last_backtest=last_tuning,
+    )
+
+
+def _to_trade_record(row: dict) -> TradeRecord:
+    entry_fill = row["entry_fill"]
+    exit_fill = row["exit_fill"]
+    qty = row["qty"]
+    pnl = (exit_fill - entry_fill) * qty
+    slippage = (
+        row["entry_limit"] - entry_fill
+        if row.get("entry_limit") is not None
+        else None
+    )
+    return TradeRecord(
+        symbol=row["symbol"],
+        entry_time=row.get("entry_time"),
+        exit_time=row.get("exit_time"),
+        entry_price=entry_fill,
+        exit_price=exit_fill,
+        quantity=qty,
+        pnl=pnl,
+        slippage=slippage,
+    )
+
+
+def _win_rate(trades: list[TradeRecord]) -> float | None:
+    if not trades:
+        return None
+    return sum(1 for t in trades if t.pnl > 0) / len(trades)
+
+
+def _mean_return_pct(trades: list[TradeRecord]) -> float | None:
+    if not trades:
+        return None
+    returns = [t.pnl / (t.entry_price * t.quantity) for t in trades if t.entry_price > 0 and t.quantity > 0]
+    return sum(returns) / len(returns) if returns else None
+
+
+def _max_drawdown_pct(trades: list[TradeRecord]) -> float | None:
+    if not trades:
+        return None
+    cumulative = 0.0
+    peak = 0.0
+    max_dd = 0.0
+    for t in trades:
+        cumulative += t.pnl
+        if cumulative > peak:
+            peak = cumulative
+        if peak > 0:
+            dd = (peak - cumulative) / peak
+            if dd > max_dd:
+                max_dd = dd
+    return max_dd if peak > 0 else None
 
 
 def _load_worker_health(

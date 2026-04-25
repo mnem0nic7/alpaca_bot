@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 from alpaca_bot.config import Settings
 from alpaca_bot.domain import Bar
@@ -24,12 +25,28 @@ class BarSetStub:
         self.data = data
 
 
+def _normalize_request(request_params: Any) -> Any:
+    if isinstance(request_params, dict):
+        return request_params
+    tf = getattr(request_params, "timeframe", None)
+    feed = getattr(request_params, "feed", None)
+    start = getattr(request_params, "start", None)
+    end = getattr(request_params, "end", None)
+    return {
+        "symbol_or_symbols": getattr(request_params, "symbol_or_symbols", None),
+        "start": start.replace(tzinfo=timezone.utc) if start is not None and start.tzinfo is None else start,
+        "end": end.replace(tzinfo=timezone.utc) if end is not None and end.tzinfo is None else end,
+        "timeframe": {"amount": tf.amount, "unit": tf.unit.value} if tf is not None and not isinstance(tf, dict) else tf,
+        "feed": feed.value if hasattr(feed, "value") else feed,
+    }
+
+
 class HistoricalClientStub:
     def __init__(self) -> None:
         self.requests: list[object] = []
 
     def get_stock_bars(self, request_params: object) -> BarSetStub:
-        self.requests.append(request_params)
+        self.requests.append(_normalize_request(request_params))
         return BarSetStub(
             {
                 "AAPL": [

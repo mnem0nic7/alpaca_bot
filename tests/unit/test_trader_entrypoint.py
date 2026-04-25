@@ -6,10 +6,22 @@ from importlib import import_module
 import io
 import json
 
+from types import SimpleNamespace
+
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.execution import BrokerOrder, BrokerPosition, MarketCalendarDay, MarketClock
 from alpaca_bot.runtime import RuntimeContext
 from alpaca_bot.storage import AuditEvent, DailySessionState, OrderRecord, PositionRecord
+
+
+def _make_healthy_connection_stub():
+    """Return a minimal stub that passes check_connection() (cursor().execute succeeds)."""
+    cursor_stub = SimpleNamespace(
+        execute=lambda sql, params=None: None,
+        fetchone=lambda: (1,),
+        fetchall=lambda: [],
+    )
+    return SimpleNamespace(cursor=lambda: cursor_stub, commit=lambda: None)
 
 
 def load_cli_main():
@@ -185,7 +197,7 @@ def make_runtime_context(
 ) -> RuntimeContext:
     return RuntimeContext(
         settings=settings,
-        connection=object(),  # type: ignore[arg-type]
+        connection=_make_healthy_connection_stub(),  # type: ignore[arg-type]
         lock=object(),  # type: ignore[arg-type]
         trading_status_store=RecordingTradingStatusStore(),  # type: ignore[arg-type]
         audit_event_store=audit_event_store,  # type: ignore[arg-type]
@@ -260,8 +272,8 @@ def test_main_runs_trader_startup_and_persists_positions_with_summary() -> None:
                     strategy_version="v1-breakout",
                     quantity=10,
                     entry_price=189.25,
-                    stop_price=0.0,
-                    initial_stop_price=0.0,
+                    stop_price=189.06075,
+                    initial_stop_price=189.06075,
                     opened_at=now,
                     updated_at=now,
                 ),
@@ -271,8 +283,8 @@ def test_main_runs_trader_startup_and_persists_positions_with_summary() -> None:
                     strategy_version="v1-breakout",
                     quantity=5,
                     entry_price=421.10,
-                    stop_price=0.0,
-                    initial_stop_price=0.0,
+                    stop_price=420.6789,
+                    initial_stop_price=420.6789,
                     opened_at=now,
                     updated_at=now,
                 ),

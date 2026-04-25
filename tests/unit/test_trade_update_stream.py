@@ -116,6 +116,7 @@ def test_attach_trade_update_stream_registers_async_handler_and_applies_updates(
                 "timestamp": now.isoformat(),
             },
             "now": now,
+            "notifier": None,
         }
     ]
 

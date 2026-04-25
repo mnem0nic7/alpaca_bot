@@ -3,16 +3,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Mapping, Sequence
+from typing import TYPE_CHECKING, Mapping, Sequence
 
 from alpaca_bot.config import Settings
 from alpaca_bot.domain import Bar, OpenPosition
 from alpaca_bot.risk import calculate_position_size
+from alpaca_bot.strategy import StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import (
     evaluate_breakout_signal,
     is_past_flatten_time,
     session_day,
 )
+
+if TYPE_CHECKING:
+    from alpaca_bot.storage import DailySessionState
 
 
 class CycleIntentType(StrEnum):
@@ -52,7 +56,16 @@ def evaluate_cycle(
     working_order_symbols: set[str],
     traded_symbols_today: set[tuple[str, date]],
     entries_disabled: bool,
+    signal_evaluator: StrategySignalEvaluator | None = None,
+    session_state: "DailySessionState | None" = None,
 ) -> CycleResult:
+    if signal_evaluator is None:
+        signal_evaluator = evaluate_breakout_signal
+
+    flatten_complete = (
+        session_state is not None and session_state.flatten_complete
+    )
+
     intents: list[CycleIntent] = []
     open_position_symbols = {position.symbol for position in open_positions}
 
@@ -63,6 +76,9 @@ def evaluate_cycle(
         latest_bar = bars[-1]
 
         if is_past_flatten_time(latest_bar.timestamp, settings):
+            if flatten_complete:
+                # Flatten already happened this session — skip to avoid duplicate orders.
+                continue
             intents.append(
                 CycleIntent(
                     intent_type=CycleIntentType.EXIT,
@@ -100,7 +116,7 @@ def evaluate_cycle(
                 if (symbol, session_day(latest_bar.timestamp, settings)) in traded_symbols_today:
                     continue
 
-                signal = evaluate_breakout_signal(
+                signal = signal_evaluator(
                     symbol=symbol,
                     intraday_bars=bars,
                     signal_index=len(bars) - 1,

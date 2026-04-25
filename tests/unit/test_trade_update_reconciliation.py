@@ -152,6 +152,8 @@ def test_apply_trade_update_updates_entry_order_and_creates_position() -> None:
         initial_stop_price=109.89,
         broker_order_id="broker-entry-1",
         signal_timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        fill_price=111.02,
+        filled_quantity=45,
     )
     assert runtime.position_store.saved == [
         PositionRecord(
@@ -175,6 +177,8 @@ def test_apply_trade_update_updates_entry_order_and_creates_position() -> None:
                 "broker_order_id": "broker-entry-1",
                 "event": "fill",
                 "status": "filled",
+                "fill_price": 111.02,
+                "filled_quantity": 45,
                 "protective_stop_client_order_id": (
                     "v1-breakout:2026-04-24:AAPL:stop:2026-04-24T19:00:00+00:00"
                 ),
@@ -237,7 +241,8 @@ def test_apply_trade_update_falls_back_to_broker_order_id_for_partial_fill() -> 
         now=timestamp,
     )
 
-    assert runtime.order_store.load_calls == ["unknown-client-id"]
+    # _find_order tries client_order_id first, then broker_order_id
+    assert runtime.order_store.load_calls[0] == "unknown-client-id"
     assert runtime.order_store.load_by_broker_calls == ["broker-entry-1"]
     assert runtime.position_store.saved[-1] == PositionRecord(
         symbol="AAPL",
@@ -251,8 +256,12 @@ def test_apply_trade_update_falls_back_to_broker_order_id_for_partial_fill() -> 
         updated_at=timestamp,
     )
     assert report["position_updated"] is True
-    assert report["protective_stop_queued"] is False
-    assert report["protective_stop_client_order_id"] is None
+    # Bug A fix: partial fill must queue a protective stop immediately
+    assert report["protective_stop_queued"] is True
+    assert (
+        report["protective_stop_client_order_id"]
+        == "v1-breakout:2026-04-24:AAPL:stop:2026-04-24T19:00:00+00:00"
+    )
 
 
 def test_apply_trade_update_for_stop_order_updates_order_without_position_change() -> None:
@@ -420,6 +429,8 @@ def test_apply_trade_update_for_filled_entry_queues_pending_protective_stop_orde
             initial_stop_price=109.89,
             broker_order_id="broker-entry-1",
             signal_timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+            fill_price=111.02,
+            filled_quantity=45,
         ),
         OrderRecord(
             client_order_id="v1-breakout:2026-04-24:AAPL:stop:2026-04-24T19:00:00+00:00",
@@ -447,6 +458,8 @@ def test_apply_trade_update_for_filled_entry_queues_pending_protective_stop_orde
             "broker_order_id": "broker-entry-1",
             "event": "fill",
             "status": "filled",
+            "fill_price": 111.02,
+            "filled_quantity": 45,
             "protective_stop_client_order_id": (
                 "v1-breakout:2026-04-24:AAPL:stop:2026-04-24T19:00:00+00:00"
             ),
@@ -520,6 +533,8 @@ def test_apply_trade_update_for_filled_stop_removes_matching_position() -> None:
             initial_stop_price=109.89,
             broker_order_id="broker-stop-1",
             signal_timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+            fill_price=109.89,
+            filled_quantity=45,
         )
     ]
     assert runtime.position_store.saved == []
@@ -538,6 +553,8 @@ def test_apply_trade_update_for_filled_stop_removes_matching_position() -> None:
             "broker_order_id": "broker-stop-1",
             "event": "fill",
             "status": "filled",
+            "fill_price": 109.89,
+            "filled_quantity": 45,
             "position_cleared": True,
         },
         created_at=timestamp,

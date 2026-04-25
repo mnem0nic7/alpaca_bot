@@ -81,6 +81,13 @@ class Settings:
     alpaca_paper_secret_key: str | None = None
     alpaca_live_api_key: str | None = None
     alpaca_live_secret_key: str | None = None
+    slack_webhook_url: str | None = None
+    notify_email_from: str | None = None
+    notify_email_to: str | None = None
+    notify_smtp_host: str | None = None
+    notify_smtp_port: int = 587
+    notify_smtp_user: str | None = None
+    notify_smtp_password: str | None = None
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> "Settings":
@@ -128,6 +135,13 @@ class Settings:
             alpaca_paper_secret_key=values.get("ALPACA_PAPER_SECRET_KEY"),
             alpaca_live_api_key=values.get("ALPACA_LIVE_API_KEY"),
             alpaca_live_secret_key=values.get("ALPACA_LIVE_SECRET_KEY"),
+            slack_webhook_url=values.get("SLACK_WEBHOOK_URL"),
+            notify_email_from=values.get("NOTIFY_EMAIL_FROM"),
+            notify_email_to=values.get("NOTIFY_EMAIL_TO"),
+            notify_smtp_host=values.get("NOTIFY_SMTP_HOST"),
+            notify_smtp_port=int(values.get("NOTIFY_SMTP_PORT", "587")),
+            notify_smtp_user=values.get("NOTIFY_SMTP_USER"),
+            notify_smtp_password=values.get("NOTIFY_SMTP_PASSWORD"),
         )
         settings.validate()
         return settings
@@ -171,6 +185,18 @@ class Settings:
                 raise ValueError(
                     "DASHBOARD_AUTH_PASSWORD_HASH is required when DASHBOARD_AUTH_ENABLED=true"
                 )
+        if self.notify_email_from or self.notify_email_to:
+            for value, name in [
+                (self.notify_email_from, "NOTIFY_EMAIL_FROM"),
+                (self.notify_email_to, "NOTIFY_EMAIL_TO"),
+                (self.notify_smtp_host, "NOTIFY_SMTP_HOST"),
+                (self.notify_smtp_user, "NOTIFY_SMTP_USER"),
+                (self.notify_smtp_password, "NOTIFY_SMTP_PASSWORD"),
+            ]:
+                if not value:
+                    raise ValueError(
+                        f"{name} is required when any NOTIFY_EMAIL_* var is set"
+                    )
 
 
 def _validate_positive_fraction(name: str, value: float) -> None:

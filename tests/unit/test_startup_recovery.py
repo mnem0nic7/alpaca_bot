@@ -245,8 +245,8 @@ def test_recover_startup_state_syncs_broker_only_positions_and_orders() -> None:
                     strategy_version="v1-breakout",
                     quantity=10,
                     entry_price=189.25,
-                    stop_price=0.0,
-                    initial_stop_price=0.0,
+                    stop_price=189.25 * (1 - settings.breakout_stop_buffer_pct),
+                    initial_stop_price=189.25 * (1 - settings.breakout_stop_buffer_pct),
                     opened_at=now,
                     updated_at=now,
                 )
@@ -436,3 +436,79 @@ def test_runtime_supervisor_startup_passes_recovery_mismatches_into_start_trader
     assert captured["mismatch_detector"](runtime, report.session) == (
         "broker order missing locally: v1-breakout:2026-04-24:AAPL:entry:2026-04-24T19:00:00+00:00",
     )
+
+
+def test_broker_only_position_gets_conservative_stop_price() -> None:
+    """Broker-only position (no local record) should get a conservative stop derived from entry_price."""
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore()
+    audit_event_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+        audit_event_store=audit_event_store,
+    )
+
+    entry_price = 189.25
+    expected_stop = entry_price * (1 - settings.breakout_stop_buffer_pct)
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[
+            BrokerPosition(symbol="AAPL", quantity=10, entry_price=entry_price, market_value=1892.5)
+        ],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    assert len(position_store.replace_all_calls) == 1
+    synced_positions = position_store.replace_all_calls[0]["positions"]
+    assert len(synced_positions) == 1
+    synced = synced_positions[0]
+    assert synced.symbol == "AAPL"
+    assert synced.stop_price == expected_stop
+    assert synced.initial_stop_price == expected_stop
+
+
+def test_broker_only_position_with_no_entry_price_falls_back_to_zero_with_audit_event() -> None:
+    """Broker-only position with None entry_price falls back to stop_price=0.0 and logs a warning audit event."""
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore()
+    audit_event_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+        audit_event_store=audit_event_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[
+            BrokerPosition(symbol="TSLA", quantity=3, entry_price=None, market_value=900.0)
+        ],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    assert len(position_store.replace_all_calls) == 1
+    synced_positions = position_store.replace_all_calls[0]["positions"]
+    assert len(synced_positions) == 1
+    synced = synced_positions[0]
+    assert synced.symbol == "TSLA"
+    assert synced.stop_price == 0.0
+    assert synced.initial_stop_price == 0.0
+
+    warning_events = [
+        e for e in audit_event_store.appended
+        if e.event_type == "startup_recovery_missing_entry_price"
+    ]
+    assert len(warning_events) == 1
+    assert warning_events[0].payload["symbol"] == "TSLA"

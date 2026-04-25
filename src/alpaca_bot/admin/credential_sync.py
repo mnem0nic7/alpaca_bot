@@ -10,6 +10,10 @@ import sys
 import tempfile
 from typing import Mapping, Sequence, TextIO
 
+from alpaca_bot.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 ALPACA_SECRET_KEYS = (
     "ALPACA_PAPER_API_KEY",
@@ -59,16 +63,23 @@ def sync_credential_env_file(
 
     new_text = "\n".join(lines) + "\n"
     file_mode = stat.S_IMODE(path.stat().st_mode) or 0o600
-    with tempfile.NamedTemporaryFile(
-        "w",
-        encoding="utf-8",
-        dir=str(path.parent),
-        delete=False,
-    ) as handle:
-        handle.write(new_text)
-        temp_path = Path(handle.name)
-    os.chmod(temp_path, file_mode)
-    os.replace(temp_path, path)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            delete=False,
+        ) as handle:
+            handle.write(new_text)
+            temp_path = Path(handle.name)
+        os.chmod(temp_path, file_mode)
+        os.replace(temp_path, path)
+        temp_path = None  # ownership transferred; no cleanup needed
+    except Exception:
+        if temp_path is not None and os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
     return updated_keys
 
 
@@ -86,6 +97,7 @@ def main(
             environ=dict(os.environ if environ is None else environ),
         )
     except Exception as exc:
+        logger.error("credential-sync failed: %s", exc)
         print(f"credential-sync failed: {exc}", file=stderr or sys.stderr)
         return 1
 

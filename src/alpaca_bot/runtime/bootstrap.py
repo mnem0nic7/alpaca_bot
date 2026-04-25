@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from alpaca_bot.config import Settings
 from alpaca_bot.storage import (
@@ -13,7 +14,7 @@ from alpaca_bot.storage import (
     TradingStatusStore,
     resolve_migrations_path,
 )
-from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres
+from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres, connect_postgres_with_retry
 
 
 @dataclass
@@ -62,6 +63,35 @@ def bootstrap_runtime(
         position_store=PositionStore(runtime_connection),
         daily_session_state_store=DailySessionStateStore(runtime_connection),
     )
+
+
+def reconnect_runtime_connection(context: RuntimeContext) -> None:
+    """Replace the underlying Postgres connection in *context* and all stores.
+
+    Opens a new connection using :func:`connect_postgres_with_retry` (up to 3
+    attempts, 2 s apart) and splices it into every object that holds a
+    ``_connection`` attribute, as well as ``context.connection`` itself.
+
+    This is called by the supervisor when :func:`~alpaca_bot.storage.db.check_connection`
+    detects that the current connection is dead.
+    """
+    new_conn = connect_postgres_with_retry(context.settings.database_url)
+    # RuntimeContext is a plain (non-frozen) dataclass so direct assignment works.
+    context.connection = new_conn
+    # Rewire all stores that cache the connection.
+    for attr in (
+        "trading_status_store",
+        "audit_event_store",
+        "order_store",
+        "daily_session_state_store",
+        "position_store",
+    ):
+        store = getattr(context, attr, None)
+        if store is not None and hasattr(store, "_connection"):
+            store._connection = new_conn
+    # Rewire the advisory lock too.
+    if hasattr(context.lock, "_connection"):
+        context.lock._connection = new_conn
 
 
 def close_runtime(context: RuntimeContext) -> None:

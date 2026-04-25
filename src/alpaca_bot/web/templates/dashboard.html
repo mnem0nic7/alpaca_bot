@@ -125,6 +125,7 @@
           </div>
         </section>
       {% endif %}
+      {% if snapshot %}
       <section class="hero">
         <div class="panel">
           <p class="eyebrow">alpaca_bot</p>
@@ -334,6 +335,181 @@
           </ul>
         </div>
       </section>
+
+      {% if snapshot.positions %}
+        {% set today = metrics.session_date if metrics else none %}
+        {% for position in snapshot.positions %}
+          {% if today and position.opened_at %}
+            {% set age_days = (today - position.opened_at.date()).days %}
+            {% if age_days >= 2 %}
+              <section class="panel" style="margin-top: 1rem; border-color: var(--warn);">
+                <p class="warn">
+                  <strong>Position age warning:</strong>
+                  <span class="mono">{{ position.symbol }}</span> opened
+                  {{ age_days }} calendar day{{ "s" if age_days != 1 else "" }} ago
+                  ({{ format_timestamp(position.opened_at) }}).
+                  Consider reviewing for stale exposure.
+                </p>
+              </section>
+            {% endif %}
+          {% endif %}
+        {% endfor %}
+      {% endif %}
+      {% endif %}
+
+      {% if metrics %}
+      <section class="section-grid" style="margin-top: 1rem;">
+        <div class="panel">
+          <h2>Session P&amp;L Summary</h2>
+          <p class="eyebrow" style="margin-top: 0.8rem;">Date</p>
+          <p class="value mono">{{ metrics.session_date.isoformat() }}</p>
+          <div class="status-grid" style="margin-top: 0.8rem;">
+            <div>
+              <p class="eyebrow">Total P&amp;L</p>
+              <p class="value {% if metrics.total_pnl < 0 %}warn{% endif %}">
+                {{ format_price(metrics.total_pnl) }}
+              </p>
+            </div>
+            <div>
+              <p class="eyebrow">Trades</p>
+              <p class="value">{{ metrics.trades | length }}</p>
+            </div>
+            <div>
+              <p class="eyebrow">Win Rate</p>
+              <p class="value">
+                {% if metrics.win_rate is not none %}
+                  {{ "%.0f" | format(metrics.win_rate * 100) }}%
+                {% else %}
+                  n/a
+                {% endif %}
+              </p>
+            </div>
+            <div>
+              <p class="eyebrow">Mean Return</p>
+              <p class="value">
+                {% if metrics.mean_return_pct is not none %}
+                  {{ "%.2f" | format(metrics.mean_return_pct * 100) }}%
+                {% else %}
+                  n/a
+                {% endif %}
+              </p>
+            </div>
+            <div>
+              <p class="eyebrow">Max Drawdown</p>
+              <p class="value {% if metrics.max_drawdown_pct and metrics.max_drawdown_pct > 0.1 %}warn{% endif %}">
+                {% if metrics.max_drawdown_pct is not none %}
+                  {{ "%.2f" | format(metrics.max_drawdown_pct * 100) }}%
+                {% else %}
+                  n/a
+                {% endif %}
+              </p>
+            </div>
+            <div>
+              <p class="eyebrow">Sharpe</p>
+              <p class="value muted">n/a</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Trade Results</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Qty</th>
+                  <th>Entry</th>
+                  <th>Exit</th>
+                  <th>P&amp;L</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for trade in metrics.trades %}
+                  <tr>
+                    <td class="mono">{{ trade.symbol }}</td>
+                    <td>{{ trade.quantity }}</td>
+                    <td>{{ format_price(trade.entry_price) }}</td>
+                    <td>{{ format_price(trade.exit_price) }}</td>
+                    <td class="{% if trade.pnl < 0 %}warn{% endif %}">
+                      {{ format_price(trade.pnl) }}
+                    </td>
+                  </tr>
+                {% else %}
+                  <tr><td colspan="5" class="muted">No closed trades today.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Slippage</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Entry Slippage</th>
+                  <th>Direction</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for trade in metrics.trades %}
+                  {% if trade.slippage is not none %}
+                    <tr>
+                      <td class="mono">{{ trade.symbol }}</td>
+                      <td>{{ format_price(trade.slippage) }}</td>
+                      <td class="{% if trade.slippage < 0 %}warn{% else %}muted{% endif %}">
+                        {{ "favorable" if trade.slippage >= 0 else "adverse" }}
+                      </td>
+                    </tr>
+                  {% endif %}
+                {% else %}
+                  <tr><td colspan="3" class="muted">No slippage data.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>Last Backtest</h2>
+          {% if metrics.last_backtest %}
+            <table class="data-table">
+              <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+              <tbody>
+                <tr><td>Total trades</td><td>{{ metrics.last_backtest.total_trades }}</td></tr>
+                <tr><td>Win rate</td><td>{{ "%.0f" | format(metrics.last_backtest.win_rate * 100) if metrics.last_backtest.win_rate is not none else "—" }}%</td></tr>
+                <tr><td>Mean return</td><td>{{ "%.2f" | format(metrics.last_backtest.mean_return_pct * 100) if metrics.last_backtest.mean_return_pct is not none else "—" }}%</td></tr>
+                <tr><td>Max drawdown</td><td>{{ "%.2f" | format(metrics.last_backtest.max_drawdown_pct * 100) if metrics.last_backtest.max_drawdown_pct is not none else "—" }}%</td></tr>
+              </tbody>
+            </table>
+          {% else %}
+            <p class="muted">No backtest data.</p>
+          {% endif %}
+        </div>
+
+        <div class="panel">
+          <h2>Admin History</h2>
+          <ul class="events">
+            {% for event in metrics.admin_history %}
+              <li>
+                <div style="display: flex; justify-content: space-between; gap: 1rem;">
+                  <strong>{{ event.event_type }}</strong>
+                  <span class="muted">{{ format_timestamp(event.created_at) }}</span>
+                </div>
+                <p class="muted" style="margin-top: 0.35rem;">
+                  <span class="mono">{{ event.payload }}</span>
+                </p>
+              </li>
+            {% else %}
+              <li class="muted">No admin events recorded.</li>
+            {% endfor %}
+          </ul>
+        </div>
+      </section>
+      {% endif %}
     </main>
   </body>
 </html>

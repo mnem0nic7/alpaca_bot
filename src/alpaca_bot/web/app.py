@@ -21,7 +21,11 @@ from alpaca_bot.web.auth import (
     auth_enabled,
     current_operator,
 )
-from alpaca_bot.web.service import load_dashboard_snapshot, load_health_snapshot
+from alpaca_bot.web.service import (
+    load_dashboard_snapshot,
+    load_health_snapshot,
+    load_metrics_snapshot,
+)
 
 
 def create_app(
@@ -75,8 +79,8 @@ def create_app(
                 headers={"WWW-Authenticate": 'Basic realm="alpaca_bot"'},
             )
         try:
-            snapshot = _load_snapshot(app)
-        except Exception as exc:  # pragma: no cover - exercised via route test
+            snapshot, metrics = _load_dashboard_data(app)
+        except Exception as exc:
             return HTMLResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content=(
@@ -91,6 +95,37 @@ def create_app(
                 "request": request,
                 "settings": app_settings,
                 "snapshot": snapshot,
+                "metrics": metrics,
+                "operator_email": operator,
+            },
+        )
+
+    @app.get("/metrics", response_class=HTMLResponse)
+    def metrics_page(request: Request) -> HTMLResponse:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return Response(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                headers={"WWW-Authenticate": 'Basic realm="alpaca_bot"'},
+            )
+        try:
+            _, metrics = _load_dashboard_data(app)
+        except Exception as exc:
+            return HTMLResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content=(
+                    "<html><body><h1>alpaca_bot metrics unavailable</h1>"
+                    f"<p>{exc}</p></body></html>"
+                ),
+            )
+        return templates.TemplateResponse(
+            request=request,
+            name="dashboard.html",
+            context={
+                "request": request,
+                "settings": app_settings,
+                "snapshot": None,
+                "metrics": metrics,
                 "operator_email": operator,
             },
         )
@@ -135,10 +170,12 @@ def create_app(
     return app
 
 
-def _load_snapshot(app: FastAPI):
+def _load_dashboard_data(app: FastAPI) -> tuple:
     connection = app.state.connect_postgres(app.state.settings.database_url)
     try:
-        return load_dashboard_snapshot(
+        order_store = _build_store(app.state.order_store_factory, connection)
+        audit_event_store = _build_store(app.state.audit_event_store_factory, connection)
+        snapshot = load_dashboard_snapshot(
             settings=app.state.settings,
             connection=connection,
             trading_status_store=_build_store(
@@ -153,15 +190,16 @@ def _load_snapshot(app: FastAPI):
                 app.state.position_store_factory,
                 connection,
             ),
-            order_store=_build_store(
-                app.state.order_store_factory,
-                connection,
-            ),
-            audit_event_store=_build_store(
-                app.state.audit_event_store_factory,
-                connection,
-            ),
+            order_store=order_store,
+            audit_event_store=audit_event_store,
         )
+        metrics = load_metrics_snapshot(
+            settings=app.state.settings,
+            connection=connection,
+            order_store=order_store,
+            audit_event_store=audit_event_store,
+        )
+        return snapshot, metrics
     finally:
         close = getattr(connection, "close", None)
         if callable(close):

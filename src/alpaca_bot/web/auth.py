@@ -6,6 +6,10 @@ import hashlib
 import hmac
 import secrets
 
+_SCRYPT_MAX_N = 2**20  # 1M; legitimate value is 16384 (2**14)
+_SCRYPT_MAX_R = 64
+_SCRYPT_MAX_P = 64
+
 from fastapi import Request
 
 from alpaca_bot.config import Settings
@@ -63,14 +67,19 @@ def verify_password(*, password: str, encoded_hash: str) -> bool:
     try:
         salt = bytes.fromhex(salt_hex)
         expected_key = bytes.fromhex(key_hex)
+        n, r, p = int(n_value), int(r_value), int(p_value)
     except ValueError:
+        return False
+    if not (2 <= n <= _SCRYPT_MAX_N and (n & (n - 1)) == 0):
+        return False
+    if not (1 <= r <= _SCRYPT_MAX_R and 1 <= p <= _SCRYPT_MAX_P):
         return False
     derived_key = hashlib.scrypt(
         password.encode("utf-8"),
         salt=salt,
-        n=int(n_value),
-        r=int(r_value),
-        p=int(p_value),
+        n=n,
+        r=r,
+        p=p,
         dklen=len(expected_key),
     )
     return hmac.compare_digest(derived_key, expected_key)

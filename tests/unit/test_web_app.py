@@ -155,6 +155,7 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
         order_store_factory=lambda _connection: SimpleNamespace(
             list_by_status=lambda **_kwargs: [order],
             list_recent=lambda **_kwargs: [order],
+            list_closed_trades=lambda **_kwargs: [],
         ),
         audit_event_store_factory=lambda _connection: SimpleNamespace(
             list_recent=lambda **_kwargs: [
@@ -171,6 +172,7 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
                 payload={"entries_disabled": False},
                 created_at=now,
             ),
+            list_by_event_types=lambda **_kwargs: [],
         ),
     )
 
@@ -301,7 +303,7 @@ def test_dashboard_requires_basic_auth_when_auth_enabled() -> None:
     app = create_app(
         settings=make_settings(
             DASHBOARD_AUTH_ENABLED="true",
-            DASHBOARD_AUTH_USERNAME="m7ga.77@gmail.com",
+            DASHBOARD_AUTH_USERNAME="operator@example.com",
             DASHBOARD_AUTH_PASSWORD_HASH=hash_password(
                 "secret-password",
                 salt=bytes.fromhex("000102030405060708090a0b0c0d0e0f"),
@@ -322,7 +324,7 @@ def test_dashboard_allows_access_with_valid_basic_auth() -> None:
     connection = FakeConnection(responses=[])
     settings = make_settings(
         DASHBOARD_AUTH_ENABLED="true",
-        DASHBOARD_AUTH_USERNAME="m7ga.77@gmail.com",
+        DASHBOARD_AUTH_USERNAME="operator@example.com",
         DASHBOARD_AUTH_PASSWORD_HASH=hash_password(
             "secret-password",
             salt=bytes.fromhex("000102030405060708090a0b0c0d0e0f"),
@@ -347,7 +349,7 @@ def test_dashboard_allows_access_with_valid_basic_auth() -> None:
     )
     app = create_app(
         settings=settings,
-        connect_postgres_fn=ConnectionFactory([connection, connection]),
+        connect_postgres_fn=ConnectionFactory([connection]),
         trading_status_store_factory=lambda _connection: SimpleNamespace(
             load=lambda **_kwargs: TradingStatus(
                 trading_mode=TradingMode.PAPER,
@@ -387,9 +389,12 @@ def test_dashboard_allows_access_with_valid_basic_auth() -> None:
         order_store_factory=lambda _connection: SimpleNamespace(
             list_by_status=lambda **_kwargs: [order],
             list_recent=lambda **_kwargs: [order],
+            list_closed_trades=lambda **_kwargs: [],
         ),
         audit_event_store_factory=lambda _connection: SimpleNamespace(
-            list_recent=lambda **_kwargs: []
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: None,
+            list_by_event_types=lambda **_kwargs: [],
         ),
     )
 
@@ -398,9 +403,370 @@ def test_dashboard_allows_access_with_valid_basic_auth() -> None:
             "/",
             headers={
                 "Authorization": "Basic "
-                + b64encode(b"m7ga.77@gmail.com:secret-password").decode("ascii")
+                + b64encode(b"operator@example.com:secret-password").decode("ascii")
             },
         )
 
     assert dashboard_response.status_code == 200
-    assert "m7ga.77@gmail.com" in dashboard_response.text
+    assert "operator@example.com" in dashboard_response.text
+
+
+# ---------------------------------------------------------------------------
+# Format helpers
+# ---------------------------------------------------------------------------
+
+
+def test_format_timestamp_returns_na_for_none() -> None:
+    from alpaca_bot.web.app import _format_timestamp
+
+    result = _format_timestamp(None, settings=make_settings())
+
+    assert result == "n/a"
+
+
+def test_format_timestamp_converts_utc_to_market_timezone() -> None:
+    from alpaca_bot.web.app import _format_timestamp
+
+    utc_dt = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    result = _format_timestamp(utc_dt, settings=make_settings())
+
+    # America/New_York in April is EDT (UTC-4) → 10:30 ET
+    assert "10:30:00" in result
+    assert "EDT" in result
+
+
+def test_format_price_returns_na_for_none() -> None:
+    from alpaca_bot.web.app import _format_price
+
+    assert _format_price(None) == "n/a"
+
+
+def test_format_price_formats_with_dollar_sign_and_commas() -> None:
+    from alpaca_bot.web.app import _format_price
+
+    assert _format_price(1234.5) == "$1,234.50"
+    assert _format_price(0.99) == "$0.99"
+    assert _format_price(10_000.0) == "$10,000.00"
+
+
+# ---------------------------------------------------------------------------
+# _build_store
+# ---------------------------------------------------------------------------
+
+
+def test_build_store_calls_factory_with_connection() -> None:
+    from alpaca_bot.web.app import _build_store
+
+    received: list = []
+
+    def factory(conn: object) -> object:
+        received.append(conn)
+        return object()
+
+    sentinel = object()
+    _build_store(factory, sentinel)
+
+    assert received == [sentinel]
+
+
+def test_build_store_retries_without_args_on_type_error() -> None:
+    from alpaca_bot.web.app import _build_store
+
+    fallback = object()
+
+    def factory_no_args() -> object:
+        return fallback
+
+    result = _build_store(factory_no_args, object())
+
+    assert result is fallback
+
+
+def test_build_store_returns_non_callable_as_is() -> None:
+    from alpaca_bot.web.app import _build_store
+
+    sentinel = object()
+    result = _build_store(sentinel, object())
+
+    assert result is sentinel
+
+
+# ---------------------------------------------------------------------------
+# /metrics route (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def _make_metrics_app(settings=None, connect_fn=None):
+    """Create an app whose stores return minimal data for metrics tests."""
+    app_settings = settings or make_settings()
+    now = datetime.now(timezone.utc)
+
+    def _audit_store_factory(_conn):
+        return SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        )
+
+    def _order_store_factory(_conn):
+        return SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        )
+
+    return create_app(
+        settings=app_settings,
+        connect_postgres_fn=connect_fn or (lambda _: FakeConnection(responses=[])),
+        trading_status_store_factory=lambda _: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=lambda _: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=_order_store_factory,
+        audit_event_store_factory=_audit_store_factory,
+    )
+
+
+def test_metrics_route_returns_200_without_auth() -> None:
+    app = _make_metrics_app()
+    with TestClient(app) as client:
+        response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "Session P" in response.text  # "Session P&L Summary"
+
+
+def test_metrics_route_returns_401_when_auth_enabled_and_no_credentials() -> None:
+    settings = make_settings(
+        DASHBOARD_AUTH_ENABLED="true",
+        DASHBOARD_AUTH_USERNAME="operator@example.com",
+        DASHBOARD_AUTH_PASSWORD_HASH=hash_password(
+            "secret",
+            salt=bytes.fromhex("000102030405060708090a0b0c0d0e0f"),
+        ),
+    )
+    app = _make_metrics_app(settings=settings)
+    with TestClient(app) as client:
+        response = client.get("/metrics")
+    assert response.status_code == 401
+    assert "WWW-Authenticate" in response.headers
+
+
+def test_metrics_route_returns_503_when_database_fails() -> None:
+    def broken(_url: str):
+        raise RuntimeError("metrics db down")
+
+    app = _make_metrics_app(connect_fn=broken)
+    with TestClient(app) as client:
+        response = client.get("/metrics")
+    assert response.status_code == 503
+    assert "metrics db down" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Dashboard route — edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_returns_503_when_snapshot_load_fails() -> None:
+    def exploding_store(_connection: object) -> object:
+        raise RuntimeError("store unavailable")
+
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=exploding_store,
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 503
+    assert "alpaca_bot dashboard unavailable" in response.text
+    assert "store unavailable" in response.text
+
+
+def test_dashboard_renders_kill_switch_engaged_warning() -> None:
+    now = datetime.now(timezone.utc)
+    settings = make_settings()
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(
+            load=lambda **_: TradingStatus(
+                trading_mode=TradingMode.PAPER,
+                strategy_version=settings.strategy_version,
+                status=TradingStatusValue.CLOSE_ONLY,
+                kill_switch_enabled=True,
+                updated_at=now,
+            )
+        ),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [], list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [], load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "engaged" in response.text
+
+
+def test_dashboard_renders_entries_disabled_warning() -> None:
+    now = datetime.now(timezone.utc)
+    settings = make_settings()
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(
+            load=lambda **_: DailySessionState(
+                session_date=date(2026, 4, 25),
+                trading_mode=TradingMode.PAPER,
+                strategy_version=settings.strategy_version,
+                entries_disabled=True,
+                flatten_complete=False,
+                last_reconciled_at=now,
+                notes="loss limit hit",
+                updated_at=now,
+            )
+        ),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [], list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [], load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    # entries_disabled=True should render a warning "yes" on the dashboard
+    assert "loss limit hit" in response.text
+
+
+def test_dashboard_renders_empty_states_for_no_positions_or_orders() -> None:
+    now = datetime.now(timezone.utc)
+    settings = make_settings()
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [], list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [], load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "No open positions." in response.text
+    assert "No working orders." in response.text
+    assert "No recent orders." in response.text
+    assert "No recent events." in response.text
+
+
+def test_dashboard_renders_no_session_row_when_state_is_none() -> None:
+    settings = make_settings()
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [], list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [], load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert "no session row" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Healthz route — null trading status
+# ---------------------------------------------------------------------------
+
+
+def test_healthz_returns_null_trading_status_and_false_kill_switch_when_none() -> None:
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["trading_status"] is None
+    assert payload["kill_switch_enabled"] is False
+
+
+def test_healthz_returns_null_worker_event_fields_when_no_heartbeat() -> None:
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    payload = response.json()
+    assert payload["worker_last_event_type"] is None
+    assert payload["worker_last_event_at"] is None
+    assert payload["worker_age_seconds"] is None
+
+
+def test_healthz_closes_connection_after_health_load() -> None:
+    connection = FakeConnection(responses=[])
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=ConnectionFactory([connection]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+        ),
+    )
+
+    with TestClient(app) as client:
+        client.get("/healthz")
+
+    assert connection.closed is True

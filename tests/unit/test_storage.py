@@ -197,6 +197,8 @@ def test_order_store_upserts_and_loads_record() -> None:
                 109.89,
                 "broker-123",
                 signal_timestamp,
+                155.50,  # fill_price
+                45,      # filled_quantity
             )
         ]
     )
@@ -217,6 +219,8 @@ def test_order_store_upserts_and_loads_record() -> None:
         signal_timestamp=signal_timestamp,
         created_at=now,
         updated_at=now,
+        fill_price=155.50,
+        filled_quantity=45,
     )
 
     store.save(order)
@@ -248,6 +252,8 @@ def test_order_store_lists_records_by_status() -> None:
                     109.89,
                     None,
                     signal_timestamp,
+                    None,  # fill_price
+                    None,  # filled_quantity
                 ),
                 (
                     "paper:v1:AAPL:2026-04-24T19:15:00Z:stop",
@@ -265,6 +271,8 @@ def test_order_store_lists_records_by_status() -> None:
                     None,
                     None,
                     signal_timestamp,
+                    None,  # fill_price
+                    None,  # filled_quantity
                 ),
             ]
         ]
@@ -305,6 +313,8 @@ def test_order_store_lists_recent_records() -> None:
                     109.89,
                     "broker-stop",
                     signal_timestamp,
+                    None,  # fill_price
+                    None,  # filled_quantity
                 ),
                 (
                     "paper:v1:AAPL:2026-04-24T19:00:00Z:entry",
@@ -322,6 +332,8 @@ def test_order_store_lists_recent_records() -> None:
                     109.89,
                     "broker-entry",
                     signal_timestamp,
+                    None,  # fill_price
+                    None,  # filled_quantity
                 ),
             ]
         ]

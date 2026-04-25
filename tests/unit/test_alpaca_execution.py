@@ -12,7 +12,7 @@ from alpaca_bot.execution import (
     AlpacaExecutionAdapter,
     AlpacaCredentialsError,
 )
-from alpaca_bot.execution.alpaca import resolve_alpaca_credentials
+from alpaca_bot.execution.alpaca import _retry_with_backoff, resolve_alpaca_credentials
 
 
 @dataclass
@@ -101,11 +101,17 @@ class TradingClientStub:
         return self.clock
 
     def get_calendar(self, filters: object | None = None) -> list[CalendarStub]:
-        self.calendar_filters = filters
+        if hasattr(filters, "start") and hasattr(filters, "end"):
+            self.calendar_filters = {"start": filters.start, "end": filters.end}
+        else:
+            self.calendar_filters = filters
         return self.calendar
 
     def get_orders(self, filter: object | None = None) -> list[OrderStub]:
-        self.order_filter = filter
+        if hasattr(filter, "status"):
+            self.order_filter = {"status": str(filter.status.value if hasattr(filter.status, "value") else filter.status)}
+        else:
+            self.order_filter = filter
         return self.orders
 
     def get_all_positions(self) -> list[PositionStub]:
@@ -254,3 +260,203 @@ def test_execution_adapter_exposes_account_snapshot() -> None:
     assert account.equity == 100000.0
     assert account.buying_power == 97500.5
     assert account.trading_blocked is False
+
+
+# ---------------------------------------------------------------------------
+# _retry_with_backoff tests
+# ---------------------------------------------------------------------------
+
+
+def test_retry_succeeds_on_second_attempt_after_rate_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Function that raises a 429/rate-limit error once should succeed on retry."""
+    slept: list[float] = []
+    monkeypatch.setattr("alpaca_bot.execution.alpaca.time.sleep", lambda s: slept.append(s))
+
+    calls = 0
+
+    def flaky() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("HTTP 429 rate limit exceeded")
+        return "ok"
+
+    result = _retry_with_backoff(flaky)
+
+    assert result == "ok"
+    assert calls == 2
+    assert slept == [1]
+
+
+def test_retry_raises_immediately_on_non_transient_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-transient error (e.g. 422 validation) must not be retried."""
+    slept: list[float] = []
+    monkeypatch.setattr("alpaca_bot.execution.alpaca.time.sleep", lambda s: slept.append(s))
+
+    calls = 0
+
+    def bad_request() -> None:
+        nonlocal calls
+        calls += 1
+        raise ValueError("422 Unprocessable Entity — bad symbol")
+
+    with pytest.raises(ValueError, match="422"):
+        _retry_with_backoff(bad_request)
+
+    assert calls == 1
+    assert slept == []
+
+
+def test_retry_raises_after_all_attempts_exhausted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After 3 consecutive transient failures the original exception propagates."""
+    slept: list[float] = []
+    monkeypatch.setattr("alpaca_bot.execution.alpaca.time.sleep", lambda s: slept.append(s))
+
+    calls = 0
+
+    def always_fails() -> None:
+        nonlocal calls
+        calls += 1
+        raise ConnectionError("connection reset by peer")
+
+    with pytest.raises(ConnectionError, match="connection reset"):
+        _retry_with_backoff(always_fails)
+
+    assert calls == 3
+    assert slept == [1, 2]
+
+
+def test_submit_order_retries_on_transient_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """submit_stop_limit_entry must retry when the underlying client raises a 5xx error."""
+    slept: list[float] = []
+    monkeypatch.setattr("alpaca_bot.execution.alpaca.time.sleep", lambda s: slept.append(s))
+
+    @dataclass
+    class OrderStubLocal:
+        client_order_id: str
+        id: str
+        symbol: str
+        side: str
+        status: str
+        qty: str
+
+    calls = 0
+
+    class FlakyTradingClient:
+        def submit_order(self, order_data: Any) -> OrderStubLocal:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("500 Internal Server Error")
+            return OrderStubLocal(
+                client_order_id="paper:v1:AAPL:entry",
+                id="broker-1",
+                symbol="AAPL",
+                side="buy",
+                status="accepted",
+                qty="5",
+            )
+
+        # required by TradingClientProtocol but not exercised here
+        def get_account(self) -> Any: ...
+        def get_clock(self) -> Any: ...
+        def get_calendar(self, filters: Any = None) -> list[Any]: return []
+        def get_orders(self, filter: Any = None) -> list[Any]: return []
+        def get_all_positions(self) -> list[Any]: return []
+        def replace_order_by_id(self, order_id: str, order_data: Any) -> Any: ...
+        def cancel_order_by_id(self, order_id: str) -> None: ...
+
+    adapter = AlpacaExecutionAdapter(trading_client=FlakyTradingClient())
+
+    order = adapter.submit_stop_limit_entry(
+        symbol="AAPL",
+        qty=5,
+        stop_price=101.0,
+        limit_price=101.25,
+        client_order_id="paper:v1:AAPL:entry",
+    )
+
+    assert order.symbol == "AAPL"
+    assert order.status == "accepted"
+    assert calls == 2
+    assert slept == [1]
+
+
+def test_retry_succeeds_on_second_attempt_after_server_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 503 transient error should trigger a retry and eventually succeed."""
+    slept: list[float] = []
+    monkeypatch.setattr("alpaca_bot.execution.alpaca.time.sleep", lambda s: slept.append(s))
+
+    calls = 0
+
+    def flaky() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("503 Service Unavailable")
+        return "recovered"
+
+    result = _retry_with_backoff(flaky)
+
+    assert result == "recovered"
+    assert calls == 2
+    assert slept == [1]
+
+
+def test_retry_treats_too_many_requests_keyword_as_transient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """'too many requests' in the exception message must be treated as rate-limit."""
+    slept: list[float] = []
+    monkeypatch.setattr("alpaca_bot.execution.alpaca.time.sleep", lambda s: slept.append(s))
+
+    calls = 0
+
+    def flaky() -> str:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise Exception("too many requests, slow down")
+        return "finally"
+
+    result = _retry_with_backoff(flaky)
+
+    assert result == "finally"
+    assert calls == 3
+    assert slept == [1, 2]
+
+
+def test_keyboard_interrupt_propagates_immediately_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """KeyboardInterrupt must NOT be caught by _retry_with_backoff.
+
+    The retry loop uses ``except Exception`` which does not catch
+    KeyboardInterrupt (a BaseException subclass).  The interrupt must
+    propagate on the very first call and time.sleep must never be invoked.
+    """
+    slept: list[float] = []
+    monkeypatch.setattr("alpaca_bot.execution.alpaca.time.sleep", lambda s: slept.append(s))
+
+    calls = 0
+
+    def raises_keyboard_interrupt() -> None:
+        nonlocal calls
+        calls += 1
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        _retry_with_backoff(raises_keyboard_interrupt)
+
+    assert calls == 1, "fn should have been called exactly once before propagating"
+    assert slept == [], "time.sleep must never be called when KeyboardInterrupt fires"

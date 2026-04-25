@@ -1,0 +1,2 @@
+ALTER TABLE orders DROP COLUMN IF EXISTS fill_price;
+ALTER TABLE orders DROP COLUMN IF EXISTS filled_quantity;

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import secrets
 import shlex
@@ -74,8 +75,9 @@ def rotate_dashboard_password(
 
     env_file.write_text(updated_env, encoding="utf-8")
     password_file.parent.mkdir(parents=True, exist_ok=True)
-    password_file.write_text(f"{resolved_password}\n", encoding="utf-8")
-    password_file.chmod(0o600)
+    fd = os.open(str(password_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(f"{resolved_password}\n")
     return resolved_username, resolved_password
 
 
