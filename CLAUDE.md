@@ -41,6 +41,34 @@ alpaca-bot-web-hash-password
 
 The app reads config exclusively from environment variables — there is no `.env` autoload. See `DEPLOYMENT.md` for a complete env file template.
 
+## Production Environment
+
+**This workspace (`/workspace/alpaca_bot`) IS the production server.** Deploy by running the script directly — no SSH needed.
+
+```bash
+# Rotate dashboard password (interactive — run in terminal with !)
+! docker run --rm -it alpaca-bot:latest alpaca-bot-web-hash-password
+# Then update DASHBOARD_AUTH_PASSWORD_HASH in /etc/alpaca_bot/alpaca-bot.env and redeploy
+```
+
+**Credential name mismatch:** The project-root `.env` uses `ALPACA_PAPER_KEY` / `ALPACA_PAPER_SECRET`, but the system env file and `Settings` expect `ALPACA_PAPER_API_KEY` / `ALPACA_PAPER_SECRET_KEY`. When syncing, map the names explicitly.
+
+**Reverse proxy:** `campaign_tracker-caddy-1` handles TLS and routing. `alpaca.ai-al.site` → `web:8080`. Caddy config lives inside that container (`/etc/caddy/Caddyfile`).
+
+**GitHub Actions deploy** (`deploy.yml`) requires `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` secrets — without them it fails at the SSH step. Since this is the prod server, prefer running `./scripts/deploy.sh` directly.
+
+## Parallel Subagents
+
+**Always dispatch independent work as parallel subagents.** Do not run sequential agents when tasks have no data dependency between them.
+
+Examples of work to parallelize:
+- Planner + Reviewer launched together on separate concerns
+- Test run + lint/type-check in parallel
+- Multiple file explorations or grep searches
+- Code review + security audit after a commit
+
+Use a single message with multiple `Agent` tool calls. Sequential execution is only justified when output of one agent is required input for the next.
+
 ## Architecture
 
 ### Layers
