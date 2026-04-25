@@ -37,6 +37,7 @@ class CycleIntent:
     client_order_id: str | None = None
     reason: str | None = None
     signal_timestamp: datetime | None = None
+    strategy_name: str = "breakout"
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,7 @@ def evaluate_cycle(
     flatten_all: bool = False,
     signal_evaluator: StrategySignalEvaluator | None = None,
     session_state: "DailySessionState | None" = None,
+    strategy_name: str = "breakout",
 ) -> CycleResult:
     if signal_evaluator is None:
         signal_evaluator = evaluate_breakout_signal
@@ -70,6 +72,7 @@ def evaluate_cycle(
                 symbol=position.symbol,
                 timestamp=now,
                 reason="loss_limit_flatten",
+                strategy_name=strategy_name,
             )
             for position in open_positions
         ]
@@ -99,6 +102,7 @@ def evaluate_cycle(
                     symbol=position.symbol,
                     timestamp=latest_bar.timestamp,
                     reason="eod_flatten",
+                    strategy_name=strategy_name,
                 )
             )
             continue
@@ -112,6 +116,7 @@ def evaluate_cycle(
                         symbol=position.symbol,
                         timestamp=latest_bar.timestamp,
                         stop_price=new_stop,
+                        strategy_name=strategy_name,
                     )
                 )
 
@@ -170,8 +175,10 @@ def evaluate_cycle(
                                 settings=settings,
                                 symbol=symbol,
                                 signal_timestamp=signal.signal_bar.timestamp,
+                                strategy_name=strategy_name,
                             ),
                             signal_timestamp=signal.signal_bar.timestamp,
+                            strategy_name=strategy_name,
                         ),
                     )
                 )
@@ -205,8 +212,10 @@ def _client_order_id(
     settings: Settings,
     symbol: str,
     signal_timestamp: datetime,
+    strategy_name: str = "breakout",
 ) -> str:
     return (
+        f"{strategy_name}:"
         f"{settings.strategy_version}:"
         f"{signal_timestamp.date().isoformat()}:"
         f"{symbol}:entry:{signal_timestamp.isoformat()}"

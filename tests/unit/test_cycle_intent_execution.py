@@ -48,9 +48,13 @@ class RecordingOrderStore:
         trading_mode: TradingMode,
         strategy_version: str,
         statuses: list[str],
+        strategy_name: str | None = None,
     ) -> list[OrderRecord]:
         self.status_calls.append((trading_mode, strategy_version, tuple(statuses)))
-        return [order for order in self.orders if order.status in statuses]
+        orders = [order for order in self.orders if order.status in statuses]
+        if strategy_name is not None:
+            orders = [o for o in orders if o.strategy_name == strategy_name]
+        return orders
 
     def save(self, order: OrderRecord) -> None:
         self.saved.append(order)

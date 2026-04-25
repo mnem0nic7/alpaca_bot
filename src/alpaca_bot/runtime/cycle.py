@@ -6,7 +6,8 @@ from typing import Mapping, Protocol, Sequence
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType, CycleResult, evaluate_cycle
 from alpaca_bot.domain import Bar, OpenPosition
-from alpaca_bot.storage import AuditEvent, OrderRecord
+from alpaca_bot.storage import AuditEvent, DailySessionState, OrderRecord
+from alpaca_bot.strategy import StrategySignalEvaluator
 
 
 class OrderStoreProtocol(Protocol):
@@ -34,6 +35,10 @@ def run_cycle(
     working_order_symbols: set[str],
     traded_symbols_today: set[tuple[str, date]],
     entries_disabled: bool,
+    flatten_all: bool = False,
+    session_state: DailySessionState | None = None,
+    signal_evaluator: StrategySignalEvaluator | None = None,
+    strategy_name: str = "breakout",
 ) -> CycleResult:
     result = evaluate_cycle(
         settings=settings,
@@ -45,6 +50,10 @@ def run_cycle(
         working_order_symbols=working_order_symbols,
         traded_symbols_today=traded_symbols_today,
         entries_disabled=entries_disabled,
+        flatten_all=flatten_all,
+        session_state=session_state,
+        signal_evaluator=signal_evaluator,
+        strategy_name=strategy_name,
     )
 
     for intent in result.intents:
@@ -66,6 +75,7 @@ def run_cycle(
                 limit_price=intent.limit_price,
                 initial_stop_price=intent.initial_stop_price,
                 signal_timestamp=intent.signal_timestamp,
+                strategy_name=intent.strategy_name,
             )
         )
 

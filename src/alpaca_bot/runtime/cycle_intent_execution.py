@@ -24,6 +24,7 @@ class OrderStoreProtocol(Protocol):
         trading_mode,
         strategy_version: str,
         statuses: list[str],
+        strategy_name: str | None = None,
     ) -> list[OrderRecord]: ...
 
 
@@ -88,6 +89,7 @@ def execute_cycle_intents(
         symbol = getattr(intent, "symbol", None)
         if symbol is None:
             continue
+        strategy_name = getattr(intent, "strategy_name", "breakout")
 
         if intent_type is CycleIntentType.UPDATE_STOP:
             if positions_by_symbol is None:
@@ -99,8 +101,9 @@ def execute_cycle_intents(
                 symbol=symbol,
                 stop_price=getattr(intent, "stop_price", None),
                 intent_timestamp=getattr(intent, "timestamp", timestamp),
-                position=positions_by_symbol.get(symbol),
+                position=positions_by_symbol.get((symbol, strategy_name)),
                 now=timestamp,
+                strategy_name=strategy_name,
             )
             if action == "replaced":
                 replaced_stop_count += 1
@@ -116,8 +119,9 @@ def execute_cycle_intents(
                 symbol=symbol,
                 intent_timestamp=getattr(intent, "timestamp", timestamp),
                 reason=getattr(intent, "reason", None),
-                position=positions_by_symbol.get(symbol),
+                position=positions_by_symbol.get((symbol, strategy_name)),
                 now=timestamp,
+                strategy_name=strategy_name,
             )
             canceled_stop_count += canceled
             submitted_exit_count += submitted
@@ -140,11 +144,12 @@ def _execute_update_stop(
     intent_timestamp: datetime,
     position: PositionRecord | None,
     now: datetime,
+    strategy_name: str = "breakout",
 ) -> str | None:
     if position is None or stop_price is None:
         return None
 
-    active_stop = _latest_active_stop_order(runtime, settings, symbol)
+    active_stop = _latest_active_stop_order(runtime, settings, symbol, strategy_name=strategy_name)
     if active_stop is not None and active_stop.broker_order_id:
         broker_order = broker.replace_order(
             order_id=active_stop.broker_order_id,
@@ -167,6 +172,7 @@ def _execute_update_stop(
                 initial_stop_price=active_stop.initial_stop_price,
                 broker_order_id=broker_order.broker_order_id,
                 signal_timestamp=active_stop.signal_timestamp,
+                strategy_name=strategy_name,
             )
         )
         action = "replaced"
@@ -198,6 +204,7 @@ def _execute_update_stop(
                 initial_stop_price=position.initial_stop_price,
                 broker_order_id=broker_order.broker_order_id,
                 signal_timestamp=intent_timestamp,
+                strategy_name=strategy_name,
             )
         )
         action = "submitted"
@@ -213,6 +220,7 @@ def _execute_update_stop(
             initial_stop_price=position.initial_stop_price,
             opened_at=position.opened_at,
             updated_at=now,
+            strategy_name=strategy_name,
         )
     )
     runtime.audit_event_store.append(
@@ -240,13 +248,40 @@ def _execute_exit(
     reason: str | None,
     position: PositionRecord | None,
     now: datetime,
+    strategy_name: str = "breakout",
 ) -> tuple[int, int]:
     if position is None:
         return 0, 0
 
+    # Guard against duplicate EXIT dispatch: if an active exit order already
+    # exists for this symbol+strategy, skip to avoid a race where the next 60s cycle
+    # sees a stale Postgres position before the fill arrives via stream.
+    active_exit_orders = runtime.order_store.list_by_status(
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        statuses=list(ACTIVE_STOP_STATUSES),
+        strategy_name=strategy_name,
+    )
+    if any(
+        o.symbol == symbol and o.intent_type == "exit"
+        for o in active_exit_orders
+    ):
+        runtime.audit_event_store.append(
+            AuditEvent(
+                event_type="cycle_intent_skipped",
+                symbol=symbol,
+                payload={
+                    "intent_type": "exit",
+                    "reason": "active_exit_order_exists",
+                },
+                created_at=now,
+            )
+        )
+        return 0, 0
+
     canceled_stop_count = 0
     position_already_gone = False
-    for stop_order in _active_stop_orders(runtime, settings, symbol):
+    for stop_order in _active_stop_orders(runtime, settings, symbol, strategy_name=strategy_name):
         if stop_order.broker_order_id:
             try:
                 broker.cancel_order(stop_order.broker_order_id)
@@ -315,6 +350,7 @@ def _execute_exit(
             initial_stop_price=position.initial_stop_price,
             broker_order_id=broker_order.broker_order_id,
             signal_timestamp=intent_timestamp,
+            strategy_name=strategy_name,
         )
     )
     runtime.audit_event_store.append(
@@ -334,23 +370,27 @@ def _execute_exit(
     return canceled_stop_count, 1
 
 
-def _positions_by_symbol(runtime: RuntimeProtocol, settings: Settings) -> dict[str, PositionRecord]:
+def _positions_by_symbol(
+    runtime: RuntimeProtocol, settings: Settings
+) -> dict[tuple[str, str], PositionRecord]:
     positions = runtime.position_store.list_all(
         trading_mode=settings.trading_mode,
         strategy_version=settings.strategy_version,
     )
-    return {position.symbol: position for position in positions}
+    return {(position.symbol, position.strategy_name): position for position in positions}
 
 
 def _active_stop_orders(
     runtime: RuntimeProtocol,
     settings: Settings,
     symbol: str,
+    strategy_name: str | None = None,
 ) -> list[OrderRecord]:
     orders = runtime.order_store.list_by_status(
         trading_mode=settings.trading_mode,
         strategy_version=settings.strategy_version,
         statuses=list(ACTIVE_STOP_STATUSES),
+        strategy_name=strategy_name,
     )
     return [
         order
@@ -363,8 +403,9 @@ def _latest_active_stop_order(
     runtime: RuntimeProtocol,
     settings: Settings,
     symbol: str,
+    strategy_name: str | None = None,
 ) -> OrderRecord | None:
-    orders = _active_stop_orders(runtime, settings, symbol)
+    orders = _active_stop_orders(runtime, settings, symbol, strategy_name=strategy_name)
     if not orders:
         return None
     return max(orders, key=lambda order: (order.updated_at, order.created_at, order.client_order_id))
