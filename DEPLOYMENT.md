@@ -11,6 +11,7 @@ This repo currently deploys as a self-hosted Docker stack on one server: local `
 - `alpaca-bot-migrate` applies SQL migrations in `migrations/`.
 - `alpaca-bot-admin` is for operator actions such as `status`, `halt`, `close-only`, and `resume`.
 - `alpaca-bot-ops-check` validates deployed health from the Docker network against `/healthz`.
+- `alpaca-bot-sync-credentials` updates the server env file from CI-provided Alpaca secrets.
 - `alpaca-bot-trader` exists as a one-shot startup/reconciliation entrypoint, but it is not the primary deployed service for the current runtime.
 
 ## Recommended server layout
@@ -88,6 +89,15 @@ cd /srv/alpaca_bot/current
 
 That command updates the env file, writes the plaintext password to `/etc/alpaca_bot/dashboard_password.txt`, prints the new credentials once, and recreates the local dashboard container.
 
+To update just the Alpaca keys in the existing env file from process environment variables:
+
+```bash
+cd /srv/alpaca_bot/current
+ALPACA_PAPER_API_KEY=... \
+ALPACA_PAPER_SECRET_KEY=... \
+./scripts/sync_alpaca_credentials.sh /etc/alpaca_bot/alpaca-bot.env
+```
+
 ## First-time setup
 
 1. Check out the repo on the server.
@@ -118,6 +128,29 @@ The deploy helper now runs a post-deploy ops check automatically:
 - it always requires the local dashboard `/healthz` to report `status=ok` and `db=ok`
 - it requires `worker_status=fresh` only when the supervisor is expected to be running
 - if Alpaca credentials are still placeholders, deploy still succeeds for `postgres + web`, but the worker is explicitly allowed to remain missing
+
+## GitHub Actions deploy
+
+This repo now includes a manual workflow at `.github/workflows/deploy.yml`. It does not read secrets back from GitHub; instead, GitHub injects them into the job at deploy time and the workflow pushes them onto the server by running the checked-in credential-sync script before `./scripts/deploy.sh`.
+
+Required GitHub repository secrets:
+
+- `ALPACA_PAPER_API_KEY`
+- `ALPACA_PAPER_SECRET_KEY`
+- `DEPLOY_HOST`
+- `DEPLOY_USER`
+- `DEPLOY_SSH_KEY`
+
+Optional GitHub repository secrets:
+
+- `ALPACA_LIVE_API_KEY`
+- `ALPACA_LIVE_SECRET_KEY`
+- `DEPLOY_PORT`
+- `DEPLOY_HOST_FINGERPRINT`
+
+The workflow is `workflow_dispatch` only. That is intentional; deploys are manual until the trading runtime is fully proven and the market-hours safety policy is tighter.
+
+The remote deploy step also uses `flock /tmp/alpaca-bot-deploy.lock` so two workflow runs cannot modify the server env file and Docker stack at the same time.
 
 ## Deploy/update procedure
 

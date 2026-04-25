@@ -1,0 +1,51 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_path:
+        description: Remote repo checkout path on the server
+        required: true
+        default: /workspace/alpaca_bot
+      env_file:
+        description: Remote runtime env file path
+        required: true
+        default: /etc/alpaca_bot/alpaca-bot.env
+
+concurrency:
+  group: alpaca-bot-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to server over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ inputs.deploy_path }}
+          ENV_FILE: ${{ inputs.env_file }}
+          ALPACA_PAPER_API_KEY: ${{ secrets.ALPACA_PAPER_API_KEY }}
+          ALPACA_PAPER_SECRET_KEY: ${{ secrets.ALPACA_PAPER_SECRET_KEY }}
+          ALPACA_LIVE_API_KEY: ${{ secrets.ALPACA_LIVE_API_KEY }}
+          ALPACA_LIVE_SECRET_KEY: ${{ secrets.ALPACA_LIVE_SECRET_KEY }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || '22' }}
+          fingerprint: ${{ secrets.DEPLOY_HOST_FINGERPRINT }}
+          script_stop: true
+          envs: DEPLOY_PATH,ENV_FILE,ALPACA_PAPER_API_KEY,ALPACA_PAPER_SECRET_KEY,ALPACA_LIVE_API_KEY,ALPACA_LIVE_SECRET_KEY
+          script: |
+            set -euo pipefail
+            flock /tmp/alpaca-bot-deploy.lock bash -lc '
+              set -euo pipefail
+              cd "$DEPLOY_PATH"
+              git fetch origin main
+              git checkout main
+              git pull --ff-only origin main
+              chmod +x scripts/sync_alpaca_credentials.sh scripts/deploy.sh
+              ./scripts/sync_alpaca_credentials.sh "$ENV_FILE"
+              ./scripts/deploy.sh "$ENV_FILE"
+            '

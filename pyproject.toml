@@ -16,6 +16,7 @@ dev = ["pytest>=9.0"]
 alpaca-bot-admin = "alpaca_bot.admin.cli:main"
 alpaca-bot-migrate = "alpaca_bot.storage.migrations:main"
 alpaca-bot-ops-check = "alpaca_bot.admin.ops_check:main"
+alpaca-bot-sync-credentials = "alpaca_bot.admin.credential_sync:main"
 alpaca-bot-supervisor = "alpaca_bot.runtime.supervisor_cli:main"
 alpaca-bot-trader = "alpaca_bot.runtime.cli:main"
 alpaca-bot-web = "alpaca_bot.web.cli:main"
