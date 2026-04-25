@@ -58,8 +58,16 @@ docker compose -f "$COMPOSE_FILE" up -d --force-recreate web
 
 if credentials_ready; then
   docker compose -f "$COMPOSE_FILE" up -d --force-recreate supervisor
+  docker compose -f "$COMPOSE_FILE" run --rm --entrypoint alpaca-bot-ops-check admin \
+    --url http://web:8080/healthz \
+    --expect-worker \
+    --wait-seconds 60
 else
   docker compose -f "$COMPOSE_FILE" rm -sf supervisor >/dev/null 2>&1 || true
+  docker compose -f "$COMPOSE_FILE" run --rm --entrypoint alpaca-bot-ops-check admin \
+    --url http://web:8080/healthz \
+    --no-expect-worker \
+    --wait-seconds 30
   echo "Postgres is up and migrations are applied, but supervisor was not started because Alpaca credentials are missing or placeholders." >&2
 fi
 

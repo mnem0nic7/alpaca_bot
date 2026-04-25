@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from importlib import import_module
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -291,14 +292,29 @@ class FakeMarketData:
 
 
 class FakeStream:
-    def __init__(self) -> None:
+    def __init__(self, *, raise_on_run: Exception | None = None, block_until_stop: bool = False) -> None:
         self.handlers: list[object] = []
+        self.run_calls = 0
+        self.stop_calls = 0
+        self.run_started = threading.Event()
+        self._stop_requested = threading.Event()
+        self._raise_on_run = raise_on_run
+        self._block_until_stop = block_until_stop
 
     def subscribe_trade_updates(self, handler) -> None:
         self.handlers.append(handler)
 
+    def run(self) -> None:
+        self.run_calls += 1
+        self.run_started.set()
+        if self._raise_on_run is not None:
+            raise self._raise_on_run
+        if self._block_until_stop:
+            self._stop_requested.wait(timeout=1.0)
+
     def stop(self) -> None:
-        return None
+        self.stop_calls += 1
+        self._stop_requested.set()
 
 
 @dataclass(frozen=True)
@@ -533,6 +549,8 @@ def test_runtime_supervisor_startup_runs_reconciliation_syncs_positions_and_atta
     assert attach_calls[0]["stream"] is stream
     assert callable(attach_calls[0]["now"])
     assert attach_calls[0]["now"]() == now
+    assert stream.run_started.wait(timeout=1.0)
+    assert stream.run_calls == 1
     assert runtime.audit_event_store.appended[0] == AuditEvent(
         event_type="startup_recovery_completed",
         payload={
@@ -548,8 +566,77 @@ def test_runtime_supervisor_startup_runs_reconciliation_syncs_positions_and_atta
         },
         created_at=now,
     )
+    assert any(
+        event.event_type == "trade_update_stream_started"
+        for event in runtime.audit_event_store.appended
+    )
     assert broker.open_order_calls == 1
     assert broker.open_position_calls == 1
+
+
+def test_runtime_supervisor_close_stops_background_trade_update_stream() -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 5, tzinfo=timezone.utc)
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker()
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream(block_until_stop=True)
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+    )
+
+    supervisor.startup(now=lambda: now)
+    assert stream.run_started.wait(timeout=1.0)
+
+    supervisor.close()
+
+    assert stream.run_calls == 1
+    assert stream.stop_calls == 1
+    assert supervisor._closed is True
+
+
+def test_runtime_supervisor_audits_trade_update_stream_failures() -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 5, tzinfo=timezone.utc)
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker()
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream(raise_on_run=RuntimeError("stream boom"))
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+    )
+
+    supervisor.startup(now=lambda: now)
+    assert stream.run_started.wait(timeout=1.0)
+
+    for _ in range(100):
+        if any(
+            event.event_type == "trade_update_stream_failed"
+            for event in runtime.audit_event_store.appended
+        ):
+            break
+    else:
+        pytest.fail("Expected trade_update_stream_failed audit event")
+
+    assert any(
+        event.event_type == "trade_update_stream_failed"
+        and event.payload["error"] == "stream boom"
+        for event in runtime.audit_event_store.appended
+    )
 
 
 def test_runtime_supervisor_run_cycle_once_gathers_runtime_inputs_and_dispatches_orders(

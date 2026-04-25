@@ -10,6 +10,7 @@ This repo currently deploys as a self-hosted Docker stack on one server: local `
 - `postgres` is the local state store for orders, positions, audit events, and status.
 - `alpaca-bot-migrate` applies SQL migrations in `migrations/`.
 - `alpaca-bot-admin` is for operator actions such as `status`, `halt`, `close-only`, and `resume`.
+- `alpaca-bot-ops-check` validates deployed health from the Docker network against `/healthz`.
 - `alpaca-bot-trader` exists as a one-shot startup/reconciliation entrypoint, but it is not the primary deployed service for the current runtime.
 
 ## Recommended server layout
@@ -112,6 +113,12 @@ cd /srv/alpaca_bot/current
 ./scripts/deploy.sh /etc/alpaca_bot/alpaca-bot.env
 ```
 
+The deploy helper now runs a post-deploy ops check automatically:
+
+- it always requires the local dashboard `/healthz` to report `status=ok` and `db=ok`
+- it requires `worker_status=fresh` only when the supervisor is expected to be running
+- if Alpaca credentials are still placeholders, deploy still succeeds for `postgres + web`, but the worker is explicitly allowed to remain missing
+
 ## Deploy/update procedure
 
 Run this order on each deploy:
@@ -139,6 +146,20 @@ To verify the local dashboard:
 
 ```bash
 curl http://127.0.0.1:18080/healthz
+```
+
+To run the same health gate manually from the Docker network:
+
+```bash
+cd /srv/alpaca_bot/current
+./scripts/ops_check.sh --url http://web:8080/healthz --expect-worker
+```
+
+If the supervisor is intentionally absent because Alpaca credentials are not configured yet:
+
+```bash
+cd /srv/alpaca_bot/current
+./scripts/ops_check.sh --url http://web:8080/healthz --no-expect-worker
 ```
 
 The health payload now includes worker freshness fields such as `worker_status`, `worker_last_event_type`, and `worker_last_event_at`, so you can distinguish “web is up” from “supervisor is actually alive.” The HTML overview page is available only on the server itself at `http://127.0.0.1:18080/`. Put Caddy in front of it later if you want remote access.

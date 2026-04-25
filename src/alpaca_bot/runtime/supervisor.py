@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
+import threading
 from typing import Any, Callable
 
 from alpaca_bot.config import Settings
@@ -68,6 +69,7 @@ class RuntimeSupervisor:
         self._stream_attacher = stream_attacher or attach_trade_update_stream
         self._close_runtime = close_runtime_fn or close_runtime
         self._stream_attached = False
+        self._stream_thread: threading.Thread | None = None
         self._closed = False
 
     @classmethod
@@ -114,6 +116,7 @@ class RuntimeSupervisor:
                 now=lambda: timestamp,
             )
             self._stream_attached = True
+            self._start_stream_thread(now=lambda: timestamp)
         return report
 
     def run_cycle_once(
@@ -219,7 +222,10 @@ class RuntimeSupervisor:
             return
         if self.stream is not None and hasattr(self.stream, "stop"):
             self.stream.stop()
+        if self._stream_thread is not None and self._stream_thread.is_alive():
+            self._stream_thread.join(timeout=1.0)
         self._close_runtime(self.runtime)
+        self._stream_thread = None
         self._closed = True
 
     def run_forever(
@@ -398,6 +404,51 @@ class RuntimeSupervisor:
         if hasattr(self.broker, "get_market_clock"):
             return bool(self.broker.get_market_clock().is_open)
         return True
+
+    def _start_stream_thread(self, *, now: Callable[[], datetime]) -> None:
+        if self.stream is None or self._stream_thread is not None:
+            return
+
+        def runner() -> None:
+            timestamp = _resolve_now(now)
+            self.runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="trade_update_stream_started",
+                    payload={"timestamp": timestamp.isoformat()},
+                    created_at=timestamp,
+                )
+            )
+            try:
+                if not hasattr(self.stream, "run"):
+                    raise RuntimeError("Configured trade update stream does not expose run()")
+                self.stream.run()
+            except Exception as exc:
+                failure_at = _resolve_now(now)
+                self.runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="trade_update_stream_failed",
+                        payload={"error": str(exc)},
+                        created_at=failure_at,
+                    )
+                )
+            else:
+                stopped_at = _resolve_now(now)
+                self.runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="trade_update_stream_stopped",
+                        payload={"reason": "stream_exited"},
+                        created_at=stopped_at,
+                    )
+                )
+            finally:
+                self._stream_thread = None
+
+        self._stream_thread = threading.Thread(
+            target=runner,
+            name="alpaca-bot-trade-updates",
+            daemon=True,
+        )
+        self._stream_thread.start()
 
 
 TraderSupervisor = RuntimeSupervisor
