@@ -299,3 +299,170 @@ def test_cross_strategy_symbol_dedup_blocks_second_strategy_entry():
         assert "AAPL" in working_symbols, (
             f"Expected AAPL blocked in working_order_symbols for subsequent strategy, got {working_symbols}"
         )
+
+
+def test_prior_cycle_pending_submit_blocks_all_strategies() -> None:
+    """A pending_submit order for MSFT left from a prior cycle must appear in
+    working_order_symbols for EVERY strategy, not just the one that created it."""
+    from alpaca_bot.storage import OrderRecord
+    from alpaca_bot.config import TradingMode
+
+    received_working_symbols: list[set[str]] = []
+
+    flags = [
+        StrategyFlag(
+            strategy_name="breakout",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            enabled=True,
+            updated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        ),
+        StrategyFlag(
+            strategy_name="momentum",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            enabled=True,
+            updated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        ),
+    ]
+    runtime = _make_runtime(flags=flags)
+
+    def fake_load_flag(*, strategy_name, trading_mode, strategy_version):
+        for f in flags:
+            if f.strategy_name == strategy_name:
+                return f
+        return None
+
+    runtime.strategy_flag_store.load = fake_load_flag
+
+    pending_msft = SimpleNamespace(symbol="MSFT")
+    runtime.order_store = SimpleNamespace(
+        save=lambda _: None,
+        list_by_status=lambda **_: [],
+        list_pending_submit=lambda **_: [pending_msft],
+        daily_realized_pnl=lambda **_: 0.0,
+    )
+
+    settings = _make_settings(symbols=("AAPL", "MSFT"))
+
+    def fake_cycle_runner(**kwargs):
+        received_working_symbols.append(set(kwargs["working_order_symbols"]))
+        return SimpleNamespace(intents=[])
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=SimpleNamespace(
+            get_account=lambda: SimpleNamespace(equity=100_000.0),
+            get_open_orders=lambda: [],
+            get_open_positions=lambda: [],
+            get_clock=lambda: SimpleNamespace(is_open=True),
+        ),
+        market_data=SimpleNamespace(
+            get_stock_bars=lambda **_: {},
+            get_daily_bars=lambda **_: {},
+        ),
+        stream=None,
+        cycle_runner=fake_cycle_runner,
+        order_dispatcher=lambda **_: {"submitted_count": 0},
+        cycle_intent_executor=lambda **_: None,
+        close_runtime_fn=lambda _: None,
+        connection_checker=lambda _: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: datetime(2026, 1, 2, 16, 0, tzinfo=timezone.utc))
+
+    assert len(received_working_symbols) >= 2, "Expected at least 2 strategies to run"
+    for i, working_symbols in enumerate(received_working_symbols):
+        assert "MSFT" in working_symbols, (
+            f"Strategy #{i} should see MSFT blocked from prior pending_submit, got {working_symbols}"
+        )
+
+
+def test_same_cycle_entry_intent_blocks_subsequent_strategies() -> None:
+    """When Strategy A emits an ENTRY intent for NVDA in this cycle, Strategy B
+    (processed later in the same cycle) must see NVDA in its working_order_symbols."""
+    from alpaca_bot.core.engine import CycleIntent, CycleIntentType
+
+    received_working_symbols: list[set[str]] = []
+    call_count = 0
+
+    flags = [
+        StrategyFlag(
+            strategy_name="breakout",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            enabled=True,
+            updated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        ),
+        StrategyFlag(
+            strategy_name="momentum",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            enabled=True,
+            updated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        ),
+    ]
+    runtime = _make_runtime(flags=flags)
+
+    def fake_load_flag(*, strategy_name, trading_mode, strategy_version):
+        for f in flags:
+            if f.strategy_name == strategy_name:
+                return f
+        return None
+
+    runtime.strategy_flag_store.load = fake_load_flag
+
+    settings = _make_settings(symbols=("AAPL", "NVDA"))
+
+    def fake_cycle_runner(**kwargs):
+        nonlocal call_count
+        received_working_symbols.append(set(kwargs["working_order_symbols"]))
+        result_intents = []
+        if call_count == 0:
+            # First strategy (breakout) emits an ENTRY for NVDA.
+            result_intents = [
+                CycleIntent(
+                    intent_type=CycleIntentType.ENTRY,
+                    symbol="NVDA",
+                    strategy_name="breakout",
+                    client_order_id="v1:2026-01-02:NVDA:entry",
+                    timestamp=datetime(2026, 1, 2, 16, 0, tzinfo=timezone.utc),
+                    quantity=5,
+                    stop_price=490.0,
+                    limit_price=502.0,
+                    initial_stop_price=490.0,
+                )
+            ]
+        call_count += 1
+        return SimpleNamespace(intents=result_intents)
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=SimpleNamespace(
+            get_account=lambda: SimpleNamespace(equity=100_000.0),
+            get_open_orders=lambda: [],
+            get_open_positions=lambda: [],
+            get_clock=lambda: SimpleNamespace(is_open=True),
+        ),
+        market_data=SimpleNamespace(
+            get_stock_bars=lambda **_: {},
+            get_daily_bars=lambda **_: {},
+        ),
+        stream=None,
+        cycle_runner=fake_cycle_runner,
+        order_dispatcher=lambda **_: {"submitted_count": 0},
+        cycle_intent_executor=lambda **_: None,
+        close_runtime_fn=lambda _: None,
+        connection_checker=lambda _: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: datetime(2026, 1, 2, 16, 0, tzinfo=timezone.utc))
+
+    assert len(received_working_symbols) >= 2, "Expected at least 2 strategy cycles"
+    for i in range(1, len(received_working_symbols)):
+        assert "NVDA" in received_working_symbols[i], (
+            f"Strategy #{i} must see NVDA blocked after breakout emitted ENTRY for it, "
+            f"got {received_working_symbols[i]}"
+        )

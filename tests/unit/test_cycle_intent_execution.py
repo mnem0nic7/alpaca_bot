@@ -796,3 +796,76 @@ def test_execute_cycle_intents_emits_audit_event_when_position_already_gone() ->
     )
     assert skipped_event is not None, "Expected cycle_intent_executed event for position_already_gone"
     assert skipped_event.payload["action"] == "skipped_position_already_gone"
+
+
+def test_canceled_stop_preserves_non_default_strategy_name() -> None:
+    """strategy_name on a canceled stop OrderRecord must match the source stop order,
+    not silently default to 'breakout'. Regression guard for the momentum strategy path."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 50, tzinfo=timezone.utc)
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:2026-04-24T19:00:00+00:00",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-mom-1",
+        signal_timestamp=now,
+        strategy_name="momentum",
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=10,
+        entry_price=115.0,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+        strategy_name="momentum",
+    )
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+    )
+    broker = RecordingBroker()
+    cycle_result = CycleResult(
+        as_of=now,
+        intents=[
+            CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+                strategy_name="momentum",
+            )
+        ],
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=cycle_result,
+        now=now,
+    )
+
+    assert report.canceled_stop_count == 1
+    assert report.submitted_exit_count == 1
+    # The canceled stop record must carry strategy_name="momentum", not "breakout".
+    canceled_stop = runtime.order_store.saved[0]
+    assert canceled_stop.intent_type == "stop"
+    assert canceled_stop.status == "canceled"
+    assert canceled_stop.strategy_name == "momentum", (
+        f"Expected strategy_name='momentum' on canceled stop, got {canceled_stop.strategy_name!r}"
+    )

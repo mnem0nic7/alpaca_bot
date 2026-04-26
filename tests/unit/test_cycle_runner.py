@@ -198,3 +198,51 @@ def test_run_cycle_appends_summary_audit_event_for_empty_engine_result(monkeypat
     assert len(audit_store.appended) == 1
     assert audit_store.appended[0].payload["cycle_timestamp"] == now.isoformat()
     assert audit_store.appended[0].payload["action_count"] == 0
+
+
+def test_run_cycle_engine_entry_intent_produces_pending_submit_status(monkeypatch) -> None:
+    """When evaluate_cycle returns an ENTRY CycleIntent, run_cycle_engine must convert
+    it to an OrderRecord with status='pending_submit' so dispatch_pending_orders can find it."""
+    from alpaca_bot.core.engine import CycleIntent, CycleIntentType, CycleResult
+
+    module, _run_cycle = load_cycle_runner_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    entry_intent = CycleIntent(
+        intent_type=CycleIntentType.ENTRY,
+        symbol="AAPL",
+        timestamp=now,
+        client_order_id="v1-breakout:2026-04-24:AAPL:entry",
+        quantity=10,
+        stop_price=109.0,
+        limit_price=111.5,
+        initial_stop_price=109.0,
+    )
+
+    def fake_evaluate_cycle(**kwargs):
+        return CycleResult(as_of=now, intents=[entry_intent])
+
+    monkeypatch.setattr(module, "evaluate_cycle", fake_evaluate_cycle)
+
+    order_store = RecordingOrderStore()
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store)
+
+    # Call run_cycle_engine directly to exercise _to_storage_intent.
+    intents = module.run_cycle_engine(
+        settings,
+        runtime,
+        now,
+        {},
+        {},
+        [],
+        set(),
+        False,
+    )
+
+    assert len(intents) == 1
+    assert isinstance(intents[0], OrderRecord), "ENTRY intent must produce an OrderRecord"
+    assert intents[0].status == "pending_submit", (
+        f"Expected status='pending_submit', got {intents[0].status!r}"
+    )

@@ -309,7 +309,9 @@ class RuntimeSupervisor:
         entries_disabled_strategies: set[str] = set()
         # Track occupied slots globally across all strategies so no single
         # strategy can exceed the portfolio-wide max_open_positions cap.
-        global_occupied_slots = len(open_positions) + len(working_order_symbols)
+        global_occupied_slots = len(
+            {p.symbol for p in open_positions} | working_order_symbols
+        )
         # All symbols currently held across ALL strategies — used to prevent
         # Strategy B from entering a symbol already held by Strategy A.
         global_position_symbols = {p.symbol for p in open_positions}

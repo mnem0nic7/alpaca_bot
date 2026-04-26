@@ -169,6 +169,49 @@ def test_attach_trade_update_stream_audits_handler_failures(monkeypatch) -> None
     ]
 
 
+def test_attach_trade_update_stream_error_path_holds_store_lock(monkeypatch) -> None:
+    """When apply_trade_update raises, the audit append must happen under store_lock.
+    We verify lock discipline by tracking whether append is called while the lock is acquired."""
+    import threading
+
+    attach_trade_update_stream, _ = load_streaming_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 37, tzinfo=timezone.utc)
+
+    lock = threading.Lock()
+    lock_held_on_append: list[bool] = []
+
+    class LockTrackingAuditStore:
+        def append(self, event: AuditEvent) -> None:
+            # lock.locked() is True iff the lock is currently acquired by someone.
+            lock_held_on_append.append(lock.locked())
+
+    runtime = SimpleNamespace(
+        audit_event_store=LockTrackingAuditStore(),
+        store_lock=lock,
+    )
+    stream = RecordingStream()
+
+    def fake_apply_trade_update(**kwargs):
+        raise RuntimeError("network error")
+
+    monkeypatch.setattr(
+        "alpaca_bot.runtime.trade_update_stream.apply_trade_update",
+        fake_apply_trade_update,
+    )
+
+    handler = attach_trade_update_stream(
+        settings=settings,
+        runtime=runtime,
+        stream=stream,
+        now=lambda: now,
+    )
+    asyncio.run(handler({"event": "fill", "client_order_id": "cid-x", "symbol": "AAPL"}))
+
+    assert len(lock_held_on_append) == 1, "audit append must be called exactly once"
+    assert lock_held_on_append[0] is True, "store_lock must be held when appending error audit event"
+
+
 def test_run_trade_update_stream_registers_handler_and_starts_stream(monkeypatch) -> None:
     attach_trade_update_stream, run_trade_update_stream = load_streaming_api()
     settings = make_settings()
