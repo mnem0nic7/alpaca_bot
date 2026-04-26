@@ -88,11 +88,12 @@ class RecordingAuditEventStore:
 
 
 class RecordingBroker:
-    def __init__(self) -> None:
+    def __init__(self, *, cancel_raises: Exception | None = None) -> None:
         self.replace_calls: list[dict[str, object]] = []
         self.stop_calls: list[dict[str, object]] = []
         self.cancel_calls: list[str] = []
         self.exit_calls: list[dict[str, object]] = []
+        self._cancel_raises = cancel_raises
 
     def replace_order(self, **kwargs):
         self.replace_calls.append(dict(kwargs))
@@ -118,6 +119,8 @@ class RecordingBroker:
 
     def cancel_order(self, order_id: str) -> None:
         self.cancel_calls.append(order_id)
+        if self._cancel_raises is not None:
+            raise self._cancel_raises
 
     def submit_market_exit(self, **kwargs):
         self.exit_calls.append(dict(kwargs))
@@ -417,6 +420,76 @@ def test_execute_cycle_intents_cancels_active_stops_and_submits_exit_order() -> 
     ]
     assert report.canceled_stop_count == 1
     assert report.submitted_exit_count == 1
+
+
+def test_execute_cycle_intents_marks_stop_canceled_when_broker_reports_already_filled() -> None:
+    """When cancel_order raises 'already filled', the stop record must still be
+    saved as 'canceled' in DB so it doesn't resurface on subsequent cycles."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 50, tzinfo=timezone.utc)
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:2026-04-24T19:00:00+00:00",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-1",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+    )
+    broker = RecordingBroker(cancel_raises=Exception("order not found: already filled"))
+    cycle_result = CycleResult(
+        as_of=now,
+        intents=[
+            CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )
+        ],
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=cycle_result,
+        now=now,
+    )
+
+    # No exit submitted because position is already gone
+    assert broker.exit_calls == []
+    assert report.submitted_exit_count == 0
+    assert report.canceled_stop_count == 1
+
+    # The stop order MUST be marked canceled in DB so it doesn't resurface
+    assert len(runtime.order_store.saved) == 1
+    assert runtime.order_store.saved[0].client_order_id == active_stop.client_order_id
+    assert runtime.order_store.saved[0].status == "canceled"
 
 
 def test_execute_cycle_intents_acquires_store_lock_on_update_stop() -> None:

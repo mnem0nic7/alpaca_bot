@@ -313,7 +313,9 @@ def _execute_exit(
                     for phrase in ("not found", "already filled", "already canceled", "does not exist")
                 ):
                     position_already_gone = True
-                continue
+                    # Still record the cancellation in DB even if the broker order is already gone.
+                else:
+                    continue
         canceled_order_records.append(
             OrderRecord(
                 client_order_id=stop_order.client_order_id,
