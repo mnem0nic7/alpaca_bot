@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from alpaca_bot.domain.models import Bar
-from alpaca_bot.risk.atr import calculate_atr
+from alpaca_bot.risk.atr import calculate_atr, atr_stop_buffer
 
 
 def _bar(close: float, high: float | None = None, low: float | None = None) -> Bar:
@@ -28,9 +28,9 @@ def test_calculate_atr_returns_none_with_insufficient_bars():
 
 
 def test_calculate_atr_returns_none_when_exactly_period_bars():
-    # Need period+1 bars; exactly period bars is insufficient
-    bars = [_bar(100.0 + i) for i in range(3)]
-    assert calculate_atr(bars, period=3) is None
+    # period=4 requires 5 bars; exactly 4 bars is one short
+    bars = [_bar(100.0 + i) for i in range(4)]
+    assert calculate_atr(bars, period=4) is None
 
 
 def test_calculate_atr_basic():
@@ -80,3 +80,40 @@ def test_calculate_atr_returns_float_not_none_when_exactly_period_plus_one_bars(
     result = calculate_atr(bars, period=3)
     assert result is not None
     assert isinstance(result, float)
+
+
+# ── atr_stop_buffer tests ─────────────────────────────────────────────────────
+
+def _uniform_bars(n: int, tr: float = 2.0) -> list[Bar]:
+    """n bars each with a constant true range of `tr` (close=100, spread around it)."""
+    half = tr / 2
+    return [_bar(100.0, high=100.0 + half, low=100.0 - half) for _ in range(n)]
+
+
+def test_atr_stop_buffer_uses_atr_when_enough_bars():
+    # period=2, 3 bars → ATR computable; constant TR=2 so ATR=2.0
+    bars = _uniform_bars(n=3, tr=2.0)
+    result = atr_stop_buffer(bars, atr_period=2, atr_stop_multiplier=1.5, fallback_anchor=100.0, fallback_pct=0.001)
+    assert result == pytest.approx(3.0)  # 1.5 * 2.0
+
+
+def test_atr_stop_buffer_returns_fallback_when_insufficient_bars():
+    # period=10, only 3 bars → ATR returns None → fallback fires
+    bars = _uniform_bars(n=3, tr=2.0)
+    result = atr_stop_buffer(bars, atr_period=10, atr_stop_multiplier=1.5, fallback_anchor=100.0, fallback_pct=0.001)
+    assert result == pytest.approx(0.1)  # max(0.01, 100.0 * 0.001)
+
+
+def test_atr_stop_buffer_floors_at_min_buffer_on_atr_path():
+    # period=2, TR so tiny that atr * multiplier < 0.01 → floor fires
+    tiny_tr = 0.001
+    bars = _uniform_bars(n=3, tr=tiny_tr)
+    result = atr_stop_buffer(bars, atr_period=2, atr_stop_multiplier=1.5, fallback_anchor=100.0, fallback_pct=0.0)
+    assert result == pytest.approx(0.01)  # clamped to _MIN_BUFFER
+
+
+def test_atr_stop_buffer_floors_at_min_buffer_on_fallback_path():
+    # fallback_anchor * fallback_pct < 0.01 → floor fires
+    bars = _uniform_bars(n=2, tr=2.0)  # insufficient → fallback
+    result = atr_stop_buffer(bars, atr_period=10, atr_stop_multiplier=1.5, fallback_anchor=0.001, fallback_pct=0.001)
+    assert result == pytest.approx(0.01)

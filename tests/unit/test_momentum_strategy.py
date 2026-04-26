@@ -251,6 +251,31 @@ def test_settings_validates_ema_period():
         _make_settings(ema_period=1)
 
 
+def test_settings_has_atr_period():
+    settings = _make_settings(atr_period=5)
+    assert settings.atr_period == 5
+
+
+def test_settings_validates_atr_period_minimum():
+    with pytest.raises(ValueError, match="ATR_PERIOD"):
+        _make_settings(atr_period=1)
+
+
+def test_settings_has_atr_stop_multiplier():
+    settings = _make_settings(atr_stop_multiplier=2.0)
+    assert settings.atr_stop_multiplier == 2.0
+
+
+def test_settings_validates_atr_stop_multiplier_positive():
+    with pytest.raises(ValueError, match="ATR_STOP_MULTIPLIER"):
+        _make_settings(atr_stop_multiplier=0.0)
+
+
+def test_settings_validates_atr_stop_multiplier_upper_bound():
+    with pytest.raises(ValueError, match="ATR_STOP_MULTIPLIER"):
+        _make_settings(atr_stop_multiplier=10.1)
+
+
 def test_new_strategies_in_registry():
     from alpaca_bot.strategy import STRATEGY_REGISTRY
     assert "orb" in STRATEGY_REGISTRY
