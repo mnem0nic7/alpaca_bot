@@ -118,14 +118,17 @@ class RuntimeSupervisor:
         timestamp = _resolve_now(now)
         open_orders = list(_list_open_orders(self.broker))
         open_positions = list(_list_open_positions(self.broker))
-        recovery_report = recover_startup_state(
-            settings=self.settings,
-            runtime=self.runtime,
-            broker_open_positions=open_positions,
-            broker_open_orders=open_orders,
-            now=timestamp,
-            notifier=self._notifier,
-        )
+        _startup_lock = getattr(self.runtime, "store_lock", None)
+        _startup_lock_ctx = _startup_lock if _startup_lock is not None else contextlib.nullcontext()
+        with _startup_lock_ctx:
+            recovery_report = recover_startup_state(
+                settings=self.settings,
+                runtime=self.runtime,
+                broker_open_positions=open_positions,
+                broker_open_orders=open_orders,
+                now=timestamp,
+                notifier=self._notifier,
+            )
         report = self._start_trader(
             self.settings,
             broker_client=self.broker,
@@ -317,12 +320,11 @@ class RuntimeSupervisor:
                     p for p in open_positions
                     if getattr(p, "strategy_name", "breakout") == strategy_name
                 ]
-                strategy_working_symbols = self._working_symbols_for_strategy(
-                    strategy_name=strategy_name,
-                    broker_open_orders=broker_open_orders,
-                )
-                # Block entry into any symbol held by another strategy.
-                strategy_working_symbols = strategy_working_symbols | (
+                # Build from all-strategy working symbols so prior-cycle pending_submit
+                # orders from other strategies also block duplicate entries this cycle.
+                strategy_working_symbols = set(working_order_symbols)
+                # Also block symbols held by other strategies as positions.
+                strategy_working_symbols |= (
                     global_position_symbols - {p.symbol for p in strategy_positions}
                 )
                 strategy_traded_symbols = self._load_traded_symbols(
@@ -515,9 +517,10 @@ class RuntimeSupervisor:
                         continue
                     # Stream thread watchdog — restart dead stream thread with
                     # exponential backoff (cap 5 min) and alert after 5 failures.
+                    _stream_thread = self._stream_thread
                     if (
-                        self._stream_thread is not None
-                        and not self._stream_thread.is_alive()
+                        _stream_thread is not None
+                        and not _stream_thread.is_alive()
                     ):
                         self._stream_thread = None
                         # Respect backoff window before attempting restart

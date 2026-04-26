@@ -119,7 +119,7 @@ def _to_storage_intent(
             symbol=intent.symbol,
             side="buy",
             intent_type="entry",
-            status="pending",
+            status="pending_submit",
             quantity=intent.quantity or 0,
             trading_mode=settings.trading_mode,
             strategy_version=settings.strategy_version,

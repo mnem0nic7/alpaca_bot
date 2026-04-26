@@ -333,6 +333,7 @@ def _execute_exit(
                 initial_stop_price=stop_order.initial_stop_price,
                 broker_order_id=stop_order.broker_order_id,
                 signal_timestamp=stop_order.signal_timestamp,
+                strategy_name=stop_order.strategy_name,
             )
         )
 
