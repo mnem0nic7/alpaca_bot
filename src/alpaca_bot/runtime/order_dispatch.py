@@ -8,6 +8,7 @@ from typing import Callable, Protocol
 
 from alpaca_bot.config import Settings
 from alpaca_bot.execution import BrokerOrder
+from alpaca_bot.notifications import Notifier
 from alpaca_bot.storage import AuditEvent, OrderRecord
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,7 @@ def dispatch_pending_orders(
     now: datetime | Callable[[], datetime] | None = None,
     allowed_intent_types: set[str] | None = None,
     blocked_strategy_names: set[str] | None = None,
+    notifier: Notifier | None = None,
 ) -> OrderDispatchReport:
     timestamp = _resolve_now(now)
 
@@ -139,6 +141,18 @@ def dispatch_pending_orders(
                         signal_timestamp=order.signal_timestamp,
                     )
                 )
+            if notifier is not None:
+                try:
+                    notifier.send(
+                        subject=f"Order dispatch failed: {order.symbol} {order.intent_type}",
+                        body=(
+                            f"Failed to submit {order.intent_type} order for {order.symbol}.\n"
+                            f"client_order_id: {order.client_order_id}\n"
+                            f"Error: {exc}"
+                        ),
+                    )
+                except Exception:
+                    logger.exception("Notifier failed to send order dispatch failure alert")
             continue
         normalized_status = str(broker_order.status).lower()
         with lock_ctx:

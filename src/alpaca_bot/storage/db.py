@@ -21,6 +21,8 @@ class ConnectionProtocol(Protocol):
 
     def commit(self) -> None: ...
 
+    def rollback(self) -> None: ...
+
 
 def fetch_one(
     connection: ConnectionProtocol,

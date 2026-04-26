@@ -796,6 +796,7 @@ def test_runtime_supervisor_run_cycle_once_gathers_runtime_inputs_and_dispatches
             "broker": broker,
             "now": now,
             "blocked_strategy_names": set(),
+            "notifier": None,
         }
     ]
 
@@ -872,6 +873,7 @@ def test_runtime_supervisor_run_cycle_once_disables_entries_when_runtime_reconci
             "now": now,
             "allowed_intent_types": {"stop", "exit"},
             "blocked_strategy_names": set(import_module("alpaca_bot.strategy").STRATEGY_REGISTRY.keys()),
+            "notifier": None,
         }
     ]
     assert runtime.order_store.saved[-1] == OrderRecord(

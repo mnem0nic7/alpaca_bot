@@ -122,19 +122,20 @@ def test_single_loser_win_rate_is_zero() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_max_drawdown_none_when_all_losses() -> None:
-    """Peak equity never exceeds 0 → max_drawdown_pct is None."""
+def test_max_drawdown_loss_from_starting_equity() -> None:
+    """A single loss on a 100k account registers as a small but non-None drawdown."""
     events = [
         _fill(entry_price=150.0, quantity=10, t=_T0),
-        _stop_exit(exit_price=148.0, t=_T1),  # pnl = -20
+        _stop_exit(exit_price=148.0, t=_T1),  # pnl = -20; equity 100000→99980
     ]
     result = _make_result(events)
     report = build_backtest_report(result)
-    assert report.max_drawdown_pct is None
+    # drawdown = 20 / 100_000 = 0.0002
+    assert report.max_drawdown_pct == pytest.approx(20 / 100_000)
 
 
-def test_max_drawdown_zero_when_all_wins() -> None:
-    """Cumulative PnL never falls below peak → 0.0 drawdown."""
+def test_max_drawdown_none_when_all_wins() -> None:
+    """Equity only rises → peak never exceeded → no drawdown recorded."""
     events = [
         _fill(entry_price=150.0, quantity=10, t=_T0),
         _eod_exit(exit_price=155.0, t=_T1),  # pnl = +50
@@ -144,21 +145,21 @@ def test_max_drawdown_zero_when_all_wins() -> None:
     ]
     result = _make_result(events)
     report = build_backtest_report(result)
-    assert report.max_drawdown_pct == pytest.approx(0.0)
+    assert report.max_drawdown_pct is None
 
 
 def test_max_drawdown_correct_after_loss_following_gain() -> None:
-    """Peak = 50, then drops to 30 → drawdown = 20/50 = 0.4."""
+    """Gain then loss: drawdown is relative to absolute equity peak, not cumulative-PnL peak."""
     events = [
         _fill(entry_price=150.0, quantity=10, t=_T0),
-        _eod_exit(exit_price=155.0, t=_T1),  # pnl = +50 → cumul=50, peak=50
+        _eod_exit(exit_price=155.0, t=_T1),  # pnl = +50 → equity=100050, peak=100050
         ReplayEvent(event_type=IntentType.ENTRY_FILLED, symbol="AAPL", timestamp=_T1,
                     details={"entry_price": 155.0, "quantity": 10, "initial_stop_price": 152.0}),
-        _stop_exit(exit_price=153.0, t=_T2),  # pnl = -20 → cumul=30, drawdown=20/50
+        _stop_exit(exit_price=153.0, t=_T2),  # pnl = -20 → equity=100030, drawdown=20/100050
     ]
     result = _make_result(events)
     report = build_backtest_report(result)
-    assert report.max_drawdown_pct == pytest.approx(0.4)
+    assert report.max_drawdown_pct == pytest.approx(20 / 100_050)
 
 
 def test_sharpe_ratio_none_for_single_trade() -> None:

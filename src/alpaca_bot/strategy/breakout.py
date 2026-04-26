@@ -60,7 +60,7 @@ def evaluate_breakout_signal(
     ]
     breakout_level = max(bar.high for bar in lookback)
     average_volume = sum(bar.volume for bar in lookback) / len(lookback)
-    relative_volume = signal_bar.volume / average_volume
+    relative_volume = signal_bar.volume / average_volume if average_volume > 0 else 0.0
 
     if signal_bar.high <= breakout_level:
         return None

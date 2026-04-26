@@ -48,15 +48,16 @@ def build_backtest_report(result: ReplayResult) -> BacktestReport:
         )
 
     winners = sum(1 for t in trades if t.pnl > 0)
+    losers = sum(1 for t in trades if t.pnl < 0)
     win_rate = winners / total
     mean_return_pct = sum(t.return_pct for t in trades) / total
-    max_drawdown_pct = _compute_max_drawdown(trades)
+    max_drawdown_pct = _compute_max_drawdown(trades, result.scenario.starting_equity)
 
     return BacktestReport(
         trades=tuple(trades),
         total_trades=total,
         winning_trades=winners,
-        losing_trades=total - winners,
+        losing_trades=losers,
         win_rate=win_rate,
         mean_return_pct=mean_return_pct,
         max_drawdown_pct=max_drawdown_pct,
@@ -112,22 +113,21 @@ def _compute_sharpe(trades: list[ReplayTradeRecord]) -> float | None:
     return mean_r / std_r
 
 
-def _compute_max_drawdown(trades: list[ReplayTradeRecord]) -> float | None:
-    peak = 0.0
+def _compute_max_drawdown(
+    trades: list[ReplayTradeRecord], starting_equity: float
+) -> float | None:
+    # Drawdown is computed on absolute equity (starting_equity + cumulative PnL)
+    # so that a $700 loss after a $500 gain on a $100k base reports ~0.7%, not 140%.
+    equity = starting_equity
+    peak = starting_equity
     max_dd = 0.0
-    cumulative = 0.0
-    peak_reached = False
 
     for trade in trades:
-        cumulative += trade.pnl
-        if cumulative > peak:
-            peak = cumulative
-            peak_reached = True
-        drawdown = (peak - cumulative) / peak if peak > 0 else 0.0
+        equity += trade.pnl
+        if equity > peak:
+            peak = equity
+        drawdown = (peak - equity) / peak if peak > 0 else 0.0
         if drawdown > max_dd:
             max_dd = drawdown
 
-    if not peak_reached or peak <= 0:
-        return None
-
-    return max_dd
+    return max_dd if max_dd > 0 else None

@@ -436,6 +436,7 @@ class RuntimeSupervisor:
             "broker": self.broker,
             "now": timestamp,
             "blocked_strategy_names": entries_disabled_strategies,
+            "notifier": self._notifier,
         }
         if status is TradingStatusValue.HALTED:
             return SupervisorCycleReport(

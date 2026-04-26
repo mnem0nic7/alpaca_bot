@@ -89,6 +89,8 @@ class ReplayScenario:
 
     @property
     def session_date(self) -> date:
+        if not self.intraday_bars:
+            raise ValueError(f"ReplayScenario '{self.name}' has no intraday bars")
         return self.intraday_bars[0].timestamp.date()
 
 
