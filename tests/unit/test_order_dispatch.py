@@ -427,3 +427,40 @@ def test_dispatch_handles_naive_signal_timestamp_without_crashing() -> None:
     report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
     assert broker.entry_calls == []
     assert report["submitted_count"] == 0
+
+
+def test_dispatch_does_not_skip_naive_signal_timestamp_from_same_day() -> None:
+    """A naive signal_timestamp from the same session day (treated as UTC) must NOT be
+    skipped — only genuinely stale dates should be filtered."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    # now is 14:30 ET on 2026-04-25 (18:30 UTC)
+    now = datetime(2026, 4, 25, 18, 30, tzinfo=timezone.utc)
+    # Naive datetime from today's session (naive → assume UTC → 2026-04-25)
+    same_day_naive = datetime(2026, 4, 25, 14, 0)  # no tzinfo, same UTC date
+    entry = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:sameday",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=101.0,
+        limit_price=101.5,
+        initial_stop_price=99.5,
+        signal_timestamp=same_day_naive,
+    )
+    order_store = RecordingOrderStore([entry])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store)
+    broker = RecordingBroker()
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    # Same-day naive signal must be dispatched, not skipped
+    assert len(broker.entry_calls) == 1
+    assert report["submitted_count"] == 1

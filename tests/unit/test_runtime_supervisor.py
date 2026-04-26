@@ -1390,6 +1390,47 @@ def test_runtime_supervisor_reconnects_when_connection_checker_returns_false(
     )
 
 
+def test_postgres_reconnect_emits_audit_event(monkeypatch) -> None:
+    """When connection_checker returns False and reconnect succeeds, a
+    postgres_reconnected audit event must be appended to the audit store."""
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    runtime = make_runtime_context(settings, position_store=RecordingPositionStore())
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    stream = FakeStream()
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(
+        module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0}
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: False,
+        reconnect_fn=lambda _rt: None,  # no-op reconnect
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    reconnect_events = [
+        e for e in runtime.audit_event_store.appended
+        if getattr(e, "event_type", None) == "postgres_reconnected"
+    ]
+    assert len(reconnect_events) == 1, (
+        "Expected exactly one postgres_reconnected audit event after reconnect"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Test 2: Stream restart backoff — no restart when _next_stream_restart_at is
 # in the future
@@ -1928,3 +1969,99 @@ def test_equity_baseline_persisted_on_first_cycle_and_recovered_on_restart(
     assert supervisor._session_equity_baseline.get(session_date) == pytest.approx(10_000.0), (
         "After restart, equity baseline must be recovered from session store, not reset to current equity"
     )
+
+
+def test_equity_baseline_set_to_current_equity_when_no_persisted_row(
+    monkeypatch,
+) -> None:
+    """When no _equity row exists in the session store (e.g. fresh deploy), the
+    supervisor must set the baseline to the current broker equity and persist it."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    session_date = date(2026, 4, 25)
+
+    session_store = RecordingDailySessionStateStore()  # load always returns None
+    order_store = RecordingOrderStore(daily_pnl=0.0)
+    runtime = make_runtime_context(
+        settings, order_store=order_store, daily_session_state_store=session_store
+    )
+    broker = FakeBroker(
+        account=BrokerAccount(equity=12_500.0, buying_power=25_000.0, trading_blocked=False)
+    )
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        cycle_intent_executor=lambda **kwargs: None,
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    assert supervisor._session_equity_baseline.get(session_date) == pytest.approx(12_500.0)
+    baseline_rows = [s for s in session_store.saved if getattr(s, "strategy_name", None) == "_equity"]
+    assert len(baseline_rows) == 1
+    assert baseline_rows[0].equity_baseline == pytest.approx(12_500.0)
+
+
+def test_strategy_fan_out_continues_after_one_strategy_raises(monkeypatch) -> None:
+    """If one strategy's cycle_runner raises, run_cycle_once must continue running
+    the remaining strategies and emit a strategy_cycle_error audit event."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+
+    from alpaca_bot.strategy import STRATEGY_REGISTRY
+    strategy_names = list(STRATEGY_REGISTRY.keys())
+    assert len(strategy_names) >= 2, "Need at least 2 strategies for this test"
+
+    call_log: list[str] = []
+
+    def selective_cycle_runner(**kwargs):
+        name = kwargs.get("strategy_name", "")
+        call_log.append(name)
+        if name == strategy_names[0]:
+            raise RuntimeError("first strategy exploded")
+        return SimpleNamespace(intents=[])
+
+    order_store = RecordingOrderStore(daily_pnl=0.0)
+    runtime = make_runtime_context(settings, order_store=order_store)
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=selective_cycle_runner,
+        cycle_intent_executor=lambda **kwargs: None,
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    # All strategies must have been attempted
+    assert set(call_log) == set(strategy_names), (
+        f"Expected all strategies to be called; got {call_log}"
+    )
+    # A strategy_cycle_error audit event must be appended for the failing strategy
+    error_events = [
+        e for e in runtime.audit_event_store.appended
+        if getattr(e, "event_type", None) == "strategy_cycle_error"
+    ]
+    assert len(error_events) == 1
+    assert error_events[0].payload["strategy_name"] == strategy_names[0]
+    # The overall cycle must still return a report
+    assert isinstance(report, SupervisorCycleReport)

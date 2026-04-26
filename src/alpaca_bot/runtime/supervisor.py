@@ -300,92 +300,108 @@ class RuntimeSupervisor:
         global_occupied_slots = len(open_positions) + len(working_order_symbols)
 
         for strategy_name, evaluator in active_strategies:
-            strategy_positions = [
-                p for p in open_positions
-                if getattr(p, "strategy_name", "breakout") == strategy_name
-            ]
-            strategy_working_symbols = self._working_symbols_for_strategy(
-                strategy_name=strategy_name,
-                broker_open_orders=broker_open_orders,
-            )
-            strategy_traded_symbols = self._load_traded_symbols(
-                session_date=session_date,
-                strategy_name=strategy_name,
-            )
-            strategy_session_state = self._load_session_state(
-                session_date=session_date,
-                strategy_name=strategy_name,
-            )
-            if strategy_session_state is not None and strategy_session_state.session_date != session_date:
-                strategy_session_state = None
+            try:
+                strategy_positions = [
+                    p for p in open_positions
+                    if getattr(p, "strategy_name", "breakout") == strategy_name
+                ]
+                strategy_working_symbols = self._working_symbols_for_strategy(
+                    strategy_name=strategy_name,
+                    broker_open_orders=broker_open_orders,
+                )
+                strategy_traded_symbols = self._load_traded_symbols(
+                    session_date=session_date,
+                    strategy_name=strategy_name,
+                )
+                strategy_session_state = self._load_session_state(
+                    session_date=session_date,
+                    strategy_name=strategy_name,
+                )
+                if strategy_session_state is not None and strategy_session_state.session_date != session_date:
+                    strategy_session_state = None
 
-            strategy_entries_disabled = (
-                entries_disabled
-                or (strategy_session_state is not None and strategy_session_state.entries_disabled)
-            )
-            if strategy_entries_disabled:
-                entries_disabled_strategies.add(strategy_name)
+                strategy_entries_disabled = (
+                    entries_disabled
+                    or (strategy_session_state is not None and strategy_session_state.entries_disabled)
+                )
+                if strategy_entries_disabled:
+                    entries_disabled_strategies.add(strategy_name)
 
-            cycle_result = self._cycle_runner(
-                settings=self.settings,
-                runtime=self.runtime,
-                now=timestamp,
-                equity=account.equity,
-                intraday_bars_by_symbol=intraday_bars_by_symbol,
-                daily_bars_by_symbol=daily_bars_by_symbol,
-                open_positions=strategy_positions,
-                working_order_symbols=strategy_working_symbols,
-                traded_symbols_today=strategy_traded_symbols,
-                entries_disabled=strategy_entries_disabled,
-                flatten_all=daily_loss_limit_breached,
-                session_state=strategy_session_state,
-                signal_evaluator=evaluator,
-                strategy_name=strategy_name,
-                global_open_count=global_occupied_slots,
-            )
-            all_cycle_results.append((strategy_name, cycle_result))
-            # Consume slots taken by entries this strategy emitted so the next
-            # strategy sees the updated global count.
-            new_entry_count = sum(
-                1
-                for i in getattr(cycle_result, "intents", [])
-                if getattr(i, "intent_type", None) == CycleIntentType.ENTRY
-            )
-            global_occupied_slots += new_entry_count
+                cycle_result = self._cycle_runner(
+                    settings=self.settings,
+                    runtime=self.runtime,
+                    now=timestamp,
+                    equity=account.equity,
+                    intraday_bars_by_symbol=intraday_bars_by_symbol,
+                    daily_bars_by_symbol=daily_bars_by_symbol,
+                    open_positions=strategy_positions,
+                    working_order_symbols=strategy_working_symbols,
+                    traded_symbols_today=strategy_traded_symbols,
+                    entries_disabled=strategy_entries_disabled,
+                    flatten_all=daily_loss_limit_breached,
+                    session_state=strategy_session_state,
+                    signal_evaluator=evaluator,
+                    strategy_name=strategy_name,
+                    global_open_count=global_occupied_slots,
+                )
+                all_cycle_results.append((strategy_name, cycle_result))
+                # Consume slots taken by entries this strategy emitted so the next
+                # strategy sees the updated global count.
+                new_entry_count = sum(
+                    1
+                    for i in getattr(cycle_result, "intents", [])
+                    if getattr(i, "intent_type", None) == CycleIntentType.ENTRY
+                )
+                global_occupied_slots += new_entry_count
 
-            has_flatten_intents = any(
-                getattr(intent, "reason", None) in {"eod_flatten", "loss_limit_flatten"}
-                for intent in getattr(cycle_result, "intents", [])
-            )
-            if has_flatten_intents and self.runtime.daily_session_state_store is not None and hasattr(
-                self.runtime.daily_session_state_store, "save"
-            ):
-                self.runtime.daily_session_state_store.save(
-                    DailySessionState(
-                        session_date=session_date,
-                        trading_mode=self.settings.trading_mode,
-                        strategy_version=self.settings.strategy_version,
-                        strategy_name=strategy_name,
-                        entries_disabled=True,
-                        flatten_complete=True,
-                        updated_at=timestamp,
+                has_flatten_intents = any(
+                    getattr(intent, "reason", None) in {"eod_flatten", "loss_limit_flatten"}
+                    for intent in getattr(cycle_result, "intents", [])
+                )
+                if has_flatten_intents and self.runtime.daily_session_state_store is not None and hasattr(
+                    self.runtime.daily_session_state_store, "save"
+                ):
+                    self.runtime.daily_session_state_store.save(
+                        DailySessionState(
+                            session_date=session_date,
+                            trading_mode=self.settings.trading_mode,
+                            strategy_version=self.settings.strategy_version,
+                            strategy_name=strategy_name,
+                            entries_disabled=True,
+                            flatten_complete=True,
+                            updated_at=timestamp,
+                        )
+                    )
+
+                if status is not TradingStatusValue.HALTED:
+                    try:
+                        self._cycle_intent_executor(
+                            settings=self.settings,
+                            runtime=self.runtime,
+                            broker=self.broker,
+                            cycle_result=cycle_result,
+                            now=timestamp,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "execute_cycle_intents failed for strategy %s; continuing to dispatch",
+                            strategy_name,
+                        )
+            except Exception:
+                logger.exception(
+                    "Strategy cycle failed for %s; skipping to next strategy",
+                    strategy_name,
+                )
+                self.runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="strategy_cycle_error",
+                        payload={
+                            "strategy_name": strategy_name,
+                            "timestamp": timestamp.isoformat(),
+                        },
+                        created_at=timestamp,
                     )
                 )
-
-            if status is not TradingStatusValue.HALTED:
-                try:
-                    self._cycle_intent_executor(
-                        settings=self.settings,
-                        runtime=self.runtime,
-                        broker=self.broker,
-                        cycle_result=cycle_result,
-                        now=timestamp,
-                    )
-                except Exception:
-                    logger.exception(
-                        "execute_cycle_intents failed for strategy %s; continuing to dispatch",
-                        strategy_name,
-                    )
 
         from types import SimpleNamespace as _SN
         cycle_result = all_cycle_results[-1][1] if all_cycle_results else _SN(intents=[])

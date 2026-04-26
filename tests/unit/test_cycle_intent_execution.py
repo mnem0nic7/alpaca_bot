@@ -417,3 +417,85 @@ def test_execute_cycle_intents_cancels_active_stops_and_submits_exit_order() -> 
     ]
     assert report.canceled_stop_count == 1
     assert report.submitted_exit_count == 1
+
+
+def test_execute_cycle_intents_acquires_store_lock_on_update_stop() -> None:
+    """When runtime has a store_lock, position_store.save must be called while
+    the lock is held — verified via a recording context manager."""
+    import threading
+
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:lock-test",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-lock",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    lock_held_during_save: list[bool] = []
+    real_lock = threading.Lock()
+
+    class LockWatchingPositionStore(RecordingPositionStore):
+        def save(self, position):
+            # Record whether the lock is held when save() is called
+            lock_held_during_save.append(not real_lock.acquire(blocking=False))
+            if lock_held_during_save[-1]:
+                pass  # lock was held — correct
+            else:
+                real_lock.release()  # we acquired it just to check; release it
+            super().save(position)
+
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=LockWatchingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        store_lock=real_lock,
+    )
+    broker = RecordingBroker()
+    cycle_result = CycleResult(
+        as_of=now,
+        intents=[
+            CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="AAPL",
+                timestamp=now,
+                stop_price=111.7,
+            )
+        ],
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=cycle_result,
+        now=now,
+    )
+
+    assert lock_held_during_save, "position_store.save was never called"
+    assert all(lock_held_during_save), (
+        "store_lock must be held for every position_store.save call during UPDATE_STOP"
+    )
