@@ -75,7 +75,10 @@ def dispatch_pending_orders(
         # Skip entry orders whose signal is from a prior trading day — they are
         # stale and would enter at today's price against yesterday's signal.
         if order.intent_type == "entry" and order.signal_timestamp is not None:
-            signal_date_et = order.signal_timestamp.astimezone(settings.market_timezone).date()
+            sig_ts = order.signal_timestamp
+            if sig_ts.tzinfo is None:
+                sig_ts = sig_ts.replace(tzinfo=timezone.utc)
+            signal_date_et = sig_ts.astimezone(settings.market_timezone).date()
             if signal_date_et < session_date_et:
                 logger.warning(
                     "order_dispatch: skipping stale entry order for %s (signal date %s, today %s)",

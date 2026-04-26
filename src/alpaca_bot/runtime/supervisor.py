@@ -164,6 +164,14 @@ class RuntimeSupervisor:
             )
             self._reconnect(self.runtime)
             logger.info("Postgres connection re-established.")
+            reconnect_ts = _resolve_now(now)
+            self.runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="postgres_reconnected",
+                    payload={"timestamp": reconnect_ts.isoformat()},
+                    created_at=reconnect_ts,
+                )
+            )
 
         timestamp = _resolve_now(now)
         broker_open_orders = list(_list_open_orders(self.broker))
@@ -207,8 +215,27 @@ class RuntimeSupervisor:
         )
         # Snapshot equity once per session day so the daily loss limit is always
         # computed against start-of-day capital, not the current (post-loss) value.
+        # On mid-day restart the in-memory dict is empty, so we recover the
+        # baseline from Postgres (written on the first cycle of the day).
         if session_date not in self._session_equity_baseline:
-            self._session_equity_baseline[session_date] = account.equity
+            persisted = self._load_session_state(session_date=session_date, strategy_name="_equity")
+            if persisted is not None and persisted.equity_baseline is not None:
+                self._session_equity_baseline[session_date] = persisted.equity_baseline
+            else:
+                self._session_equity_baseline[session_date] = account.equity
+                if self.runtime.daily_session_state_store is not None:
+                    self.runtime.daily_session_state_store.save(
+                        DailySessionState(
+                            session_date=session_date,
+                            trading_mode=self.settings.trading_mode,
+                            strategy_version=self.settings.strategy_version,
+                            strategy_name="_equity",
+                            entries_disabled=False,
+                            flatten_complete=False,
+                            equity_baseline=account.equity,
+                            updated_at=timestamp,
+                        )
+                    )
         baseline_equity = self._session_equity_baseline[session_date]
         loss_limit = self.settings.daily_loss_limit_pct * baseline_equity
         daily_loss_limit_breached = realized_pnl < -loss_limit

@@ -393,3 +393,37 @@ def test_dispatch_skips_entry_orders_with_stale_signal_date() -> None:
     assert broker.entry_calls == []
     assert order_store.saved == []
     assert report["submitted_count"] == 0
+
+
+def test_dispatch_handles_naive_signal_timestamp_without_crashing() -> None:
+    """A naive signal_timestamp (no tzinfo) must not raise ValueError."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 25, 18, 30, tzinfo=timezone.utc)
+    # Naive datetime — as might come from Bar.from_dict without timezone info
+    naive_signal = datetime(2026, 4, 24, 19, 0)  # no tzinfo
+    stale_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:naive",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=101.0,
+        limit_price=101.5,
+        initial_stop_price=99.5,
+        signal_timestamp=naive_signal,
+    )
+    order_store = RecordingOrderStore([stale_entry])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store)
+    broker = RecordingBroker()
+
+    # Must not raise — naive timestamp is treated as UTC, so stale date is detected
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+    assert broker.entry_calls == []
+    assert report["submitted_count"] == 0

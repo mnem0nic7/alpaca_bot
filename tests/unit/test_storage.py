@@ -380,6 +380,7 @@ def test_daily_session_state_store_round_trip() -> None:
                 False,
                 now,
                 "reconciliation pending",
+                None,  # equity_baseline
                 now,
             )
         ]

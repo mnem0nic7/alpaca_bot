@@ -1834,3 +1834,97 @@ def test_run_cycle_once_continues_after_all_strategy_intent_executors_raise(monk
 
     assert report is not None, "run_cycle_once must return a report even when all executors raise"
     assert len(dispatch_calls) >= 1, "dispatch_pending_orders must still be called after executor failures"
+
+
+def test_equity_baseline_persisted_on_first_cycle_and_recovered_on_restart(
+    monkeypatch,
+) -> None:
+    """On the first cycle of a session day the supervisor must persist equity_baseline to
+    DailySessionStateStore. On subsequent cycles (simulating a mid-day restart with an
+    empty in-memory dict), it must load the persisted value instead of resetting to the
+    current (post-loss) equity so the daily-loss-limit calculation is always anchored to
+    start-of-day capital."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = Settings.from_env(
+        {
+            "TRADING_MODE": "paper",
+            "ENABLE_LIVE_TRADING": "false",
+            "STRATEGY_VERSION": "v1-breakout",
+            "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+            "MARKET_DATA_FEED": "sip",
+            "SYMBOLS": "AAPL",
+            "DAILY_SMA_PERIOD": "20",
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "ENTRY_TIMEFRAME_MINUTES": "15",
+            "RISK_PER_TRADE_PCT": "0.0025",
+            "MAX_POSITION_PCT": "0.05",
+            "MAX_OPEN_POSITIONS": "3",
+            "DAILY_LOSS_LIMIT_PCT": "0.05",
+            "STOP_LIMIT_BUFFER_PCT": "0.001",
+            "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+            "ENTRY_STOP_PRICE_BUFFER": "0.01",
+            "ENTRY_WINDOW_START": "10:00",
+            "ENTRY_WINDOW_END": "15:30",
+            "FLATTEN_TIME": "15:45",
+        }
+    )
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    session_date = date(2026, 4, 25)
+
+    # Session state store that remembers the saved baseline row
+    class BaselineCapturingSessionStore(RecordingDailySessionStateStore):
+        def load(self, *, session_date, trading_mode, strategy_version, strategy_name="breakout"):
+            if strategy_name == "_equity":
+                # Return the saved baseline so the second cycle uses it
+                for saved in self.saved:
+                    if getattr(saved, "strategy_name", None) == "_equity":
+                        return saved
+            return None
+
+    session_store = BaselineCapturingSessionStore()
+    order_store = RecordingOrderStore(daily_pnl=0.0)
+    runtime = make_runtime_context(
+        settings, order_store=order_store, daily_session_state_store=session_store
+    )
+    # First cycle: equity = 10_000 (morning, no loss yet)
+    broker_first = FakeBroker(
+        account=BrokerAccount(equity=10_000.0, buying_power=20_000.0, trading_blocked=False)
+    )
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker_first,
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        cycle_intent_executor=lambda **kwargs: None,
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    # Baseline must have been saved to the store
+    baseline_rows = [s for s in session_store.saved if getattr(s, "strategy_name", None) == "_equity"]
+    assert len(baseline_rows) == 1, "Expected one equity_baseline row saved after first cycle"
+    assert baseline_rows[0].equity_baseline == pytest.approx(10_000.0)
+
+    # Simulate a mid-day restart: clear in-memory baseline, switch to post-loss equity
+    supervisor._session_equity_baseline.clear()
+    broker_second = FakeBroker(
+        account=BrokerAccount(equity=9_000.0, buying_power=18_000.0, trading_blocked=False)
+    )
+    supervisor.broker = broker_second
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    # The in-memory baseline must be recovered from the store (10_000), not reset to 9_000
+    assert supervisor._session_equity_baseline.get(session_date) == pytest.approx(10_000.0), (
+        "After restart, equity baseline must be recovered from session store, not reset to current equity"
+    )

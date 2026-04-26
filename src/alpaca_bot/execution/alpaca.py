@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -27,7 +28,6 @@ def _is_transient_error(exc: BaseException) -> bool:
     # 5xx server errors — require the code to appear as a standalone HTTP status
     # token (e.g. "500 internal server error", "status=502") not as a bare
     # substring that could match dollar amounts or other numbers.
-    import re
     if re.search(r"\b(500|502|503|504)\b", msg):
         return True
     # Network-level errors

@@ -78,6 +78,7 @@ class DailySessionState:
     strategy_name: str = "breakout"
     last_reconciled_at: datetime | None = None
     notes: str | None = None
+    equity_baseline: float | None = None
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 

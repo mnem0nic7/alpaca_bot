@@ -532,15 +532,17 @@ class DailySessionStateStore:
                 flatten_complete,
                 last_reconciled_at,
                 notes,
+                equity_baseline,
                 updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (session_date, trading_mode, strategy_version, strategy_name)
             DO UPDATE SET
                 entries_disabled = EXCLUDED.entries_disabled,
                 flatten_complete = EXCLUDED.flatten_complete,
                 last_reconciled_at = EXCLUDED.last_reconciled_at,
                 notes = EXCLUDED.notes,
+                equity_baseline = COALESCE(EXCLUDED.equity_baseline, daily_session_state.equity_baseline),
                 updated_at = EXCLUDED.updated_at
             """,
             (
@@ -552,6 +554,7 @@ class DailySessionStateStore:
                 state.flatten_complete,
                 state.last_reconciled_at,
                 state.notes,
+                state.equity_baseline,
                 state.updated_at,
             ),
         )
@@ -576,6 +579,7 @@ class DailySessionStateStore:
                 flatten_complete,
                 last_reconciled_at,
                 notes,
+                equity_baseline,
                 updated_at
             FROM daily_session_state
             WHERE session_date = %s AND trading_mode = %s AND strategy_version = %s
@@ -594,7 +598,8 @@ class DailySessionStateStore:
             flatten_complete=bool(row[5]),
             last_reconciled_at=row[6],
             notes=row[7],
-            updated_at=row[8],
+            equity_baseline=float(row[8]) if row[8] is not None else None,
+            updated_at=row[9],
         )
 
 
