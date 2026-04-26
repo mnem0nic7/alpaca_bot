@@ -84,6 +84,9 @@ def execute_cycle_intents(
     submitted_exit_count = 0
     canceled_stop_count = 0
 
+    store_lock = getattr(runtime, "store_lock", None)
+    lock_ctx = store_lock if store_lock is not None else contextlib.nullcontext()
+
     intents = list(getattr(cycle_result, "intents", []) or [])
     for intent in intents:
         intent_type = getattr(intent, "intent_type", None)
@@ -94,7 +97,8 @@ def execute_cycle_intents(
 
         if intent_type is CycleIntentType.UPDATE_STOP:
             if positions_by_symbol is None:
-                positions_by_symbol = _positions_by_symbol(runtime, settings)
+                with lock_ctx:
+                    positions_by_symbol = _positions_by_symbol(runtime, settings)
             action = _execute_update_stop(
                 settings=settings,
                 runtime=runtime,
@@ -105,6 +109,7 @@ def execute_cycle_intents(
                 position=positions_by_symbol.get((symbol, strategy_name)),
                 now=timestamp,
                 strategy_name=strategy_name,
+                lock_ctx=lock_ctx,
             )
             if action == "replaced":
                 replaced_stop_count += 1
@@ -112,7 +117,8 @@ def execute_cycle_intents(
                 submitted_stop_count += 1
         elif intent_type is CycleIntentType.EXIT:
             if positions_by_symbol is None:
-                positions_by_symbol = _positions_by_symbol(runtime, settings)
+                with lock_ctx:
+                    positions_by_symbol = _positions_by_symbol(runtime, settings)
             canceled, submitted = _execute_exit(
                 settings=settings,
                 runtime=runtime,
@@ -123,6 +129,7 @@ def execute_cycle_intents(
                 position=positions_by_symbol.get((symbol, strategy_name)),
                 now=timestamp,
                 strategy_name=strategy_name,
+                lock_ctx=lock_ctx,
             )
             canceled_stop_count += canceled
             submitted_exit_count += submitted
@@ -146,35 +153,41 @@ def _execute_update_stop(
     position: PositionRecord | None,
     now: datetime,
     strategy_name: str = "breakout",
+    lock_ctx: Any = None,
 ) -> str | None:
     if position is None or stop_price is None:
         return None
 
-    active_stop = _latest_active_stop_order(runtime, settings, symbol, strategy_name=strategy_name)
+    if lock_ctx is None:
+        lock_ctx = contextlib.nullcontext()
+
+    # Read active stop under lock — same psycopg2 connection as stream thread.
+    with lock_ctx:
+        active_stop = _latest_active_stop_order(runtime, settings, symbol, strategy_name=strategy_name)
+
+    # Broker calls happen outside the lock to avoid blocking the stream thread.
     if active_stop is not None and active_stop.broker_order_id:
         broker_order = broker.replace_order(
             order_id=active_stop.broker_order_id,
             stop_price=stop_price,
             client_order_id=active_stop.client_order_id,
         )
-        runtime.order_store.save(
-            OrderRecord(
-                client_order_id=active_stop.client_order_id,
-                symbol=symbol,
-                side=active_stop.side,
-                intent_type="stop",
-                status=str(broker_order.status).lower(),
-                quantity=active_stop.quantity,
-                trading_mode=active_stop.trading_mode,
-                strategy_version=active_stop.strategy_version,
-                created_at=active_stop.created_at,
-                updated_at=now,
-                stop_price=stop_price,
-                initial_stop_price=active_stop.initial_stop_price,
-                broker_order_id=broker_order.broker_order_id,
-                signal_timestamp=active_stop.signal_timestamp,
-                strategy_name=strategy_name,
-            )
+        updated_order = OrderRecord(
+            client_order_id=active_stop.client_order_id,
+            symbol=symbol,
+            side=active_stop.side,
+            intent_type="stop",
+            status=str(broker_order.status).lower(),
+            quantity=active_stop.quantity,
+            trading_mode=active_stop.trading_mode,
+            strategy_version=active_stop.strategy_version,
+            created_at=active_stop.created_at,
+            updated_at=now,
+            stop_price=stop_price,
+            initial_stop_price=active_stop.initial_stop_price,
+            broker_order_id=broker_order.broker_order_id,
+            signal_timestamp=active_stop.signal_timestamp,
+            strategy_name=strategy_name,
         )
         action = "replaced"
     else:
@@ -189,31 +202,28 @@ def _execute_update_stop(
             stop_price=stop_price,
             client_order_id=client_order_id,
         )
-        runtime.order_store.save(
-            OrderRecord(
-                client_order_id=client_order_id,
-                symbol=symbol,
-                side="sell",
-                intent_type="stop",
-                status=str(broker_order.status).lower(),
-                quantity=position.quantity,
-                trading_mode=settings.trading_mode,
-                strategy_version=settings.strategy_version,
-                created_at=now,
-                updated_at=now,
-                stop_price=stop_price,
-                initial_stop_price=position.initial_stop_price,
-                broker_order_id=broker_order.broker_order_id,
-                signal_timestamp=intent_timestamp,
-                strategy_name=strategy_name,
-            )
+        updated_order = OrderRecord(
+            client_order_id=client_order_id,
+            symbol=symbol,
+            side="sell",
+            intent_type="stop",
+            status=str(broker_order.status).lower(),
+            quantity=position.quantity,
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+            created_at=now,
+            updated_at=now,
+            stop_price=stop_price,
+            initial_stop_price=position.initial_stop_price,
+            broker_order_id=broker_order.broker_order_id,
+            signal_timestamp=intent_timestamp,
+            strategy_name=strategy_name,
         )
         action = "submitted"
 
-    # Acquire store_lock if present so this write does not race with the
-    # trade update stream thread, which also holds the lock when deleting positions.
-    store_lock = getattr(runtime, "store_lock", None)
-    with store_lock if store_lock is not None else contextlib.nullcontext():
+    # All store writes under lock — serializes with the trade-update stream thread.
+    with lock_ctx:
+        runtime.order_store.save(updated_order)
         runtime.position_store.save(
             PositionRecord(
                 symbol=position.symbol,
@@ -228,18 +238,18 @@ def _execute_update_stop(
                 strategy_name=strategy_name,
             )
         )
-    runtime.audit_event_store.append(
-        AuditEvent(
-            event_type="cycle_intent_executed",
-            symbol=symbol,
-            payload={
-                "intent_type": "update_stop",
-                "action": action,
-                "stop_price": stop_price,
-            },
-            created_at=now,
+        runtime.audit_event_store.append(
+            AuditEvent(
+                event_type="cycle_intent_executed",
+                symbol=symbol,
+                payload={
+                    "intent_type": "update_stop",
+                    "action": action,
+                    "stop_price": stop_price,
+                },
+                created_at=now,
+            )
         )
-    )
     return action
 
 
@@ -254,39 +264,39 @@ def _execute_exit(
     position: PositionRecord | None,
     now: datetime,
     strategy_name: str = "breakout",
+    lock_ctx: Any = None,
 ) -> tuple[int, int]:
     if position is None:
         return 0, 0
 
-    # Guard against duplicate EXIT dispatch: if an active exit order already
-    # exists for this symbol+strategy, skip to avoid a race where the next 60s cycle
-    # sees a stale Postgres position before the fill arrives via stream.
-    active_exit_orders = runtime.order_store.list_by_status(
-        trading_mode=settings.trading_mode,
-        strategy_version=settings.strategy_version,
-        statuses=list(ACTIVE_STOP_STATUSES),
-        strategy_name=strategy_name,
-    )
-    if any(
-        o.symbol == symbol and o.intent_type == "exit"
-        for o in active_exit_orders
-    ):
-        runtime.audit_event_store.append(
-            AuditEvent(
-                event_type="cycle_intent_skipped",
-                symbol=symbol,
-                payload={
-                    "intent_type": "exit",
-                    "reason": "active_exit_order_exists",
-                },
-                created_at=now,
-            )
-        )
-        return 0, 0
+    if lock_ctx is None:
+        lock_ctx = contextlib.nullcontext()
 
-    canceled_stop_count = 0
+    # Guard against duplicate EXIT dispatch — read under lock.
+    with lock_ctx:
+        active_exit_orders = runtime.order_store.list_by_status(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+            statuses=list(ACTIVE_STOP_STATUSES),
+            strategy_name=strategy_name,
+        )
+        if any(o.symbol == symbol and o.intent_type == "exit" for o in active_exit_orders):
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="cycle_intent_skipped",
+                    symbol=symbol,
+                    payload={"intent_type": "exit", "reason": "active_exit_order_exists"},
+                    created_at=now,
+                )
+            )
+            return 0, 0
+
+        stop_orders = _active_stop_orders(runtime, settings, symbol, strategy_name=strategy_name)
+
+    # Cancel broker stops outside the lock; collect which ones succeeded.
+    canceled_order_records: list[OrderRecord] = []
     position_already_gone = False
-    for stop_order in _active_stop_orders(runtime, settings, symbol, strategy_name=strategy_name):
+    for stop_order in stop_orders:
         if stop_order.broker_order_id:
             try:
                 broker.cancel_order(stop_order.broker_order_id)
@@ -303,10 +313,8 @@ def _execute_exit(
                     for phrase in ("not found", "already filled", "already canceled", "does not exist")
                 ):
                     position_already_gone = True
-                    continue
-                # cancel failed for an unknown reason — skip DB update and exit submission
                 continue
-        runtime.order_store.save(
+        canceled_order_records.append(
             OrderRecord(
                 client_order_id=stop_order.client_order_id,
                 symbol=stop_order.symbol,
@@ -325,9 +333,13 @@ def _execute_exit(
                 signal_timestamp=stop_order.signal_timestamp,
             )
         )
-        canceled_stop_count += 1
+
+    canceled_stop_count = len(canceled_order_records)
 
     if position_already_gone:
+        with lock_ctx:
+            for record in canceled_order_records:
+                runtime.order_store.save(record)
         return canceled_stop_count, 0
 
     client_order_id = _exit_client_order_id(
@@ -335,43 +347,49 @@ def _execute_exit(
         symbol=symbol,
         timestamp=intent_timestamp,
     )
+    # Submit exit outside the lock.
     broker_order = broker.submit_market_exit(
         symbol=symbol,
         quantity=position.quantity,
         client_order_id=client_order_id,
     )
-    runtime.order_store.save(
-        OrderRecord(
-            client_order_id=client_order_id,
-            symbol=symbol,
-            side="sell",
-            intent_type="exit",
-            status=str(broker_order.status).lower(),
-            quantity=position.quantity,
-            trading_mode=settings.trading_mode,
-            strategy_version=settings.strategy_version,
-            created_at=now,
-            updated_at=now,
-            initial_stop_price=position.initial_stop_price,
-            broker_order_id=broker_order.broker_order_id,
-            signal_timestamp=intent_timestamp,
-            strategy_name=strategy_name,
+
+    # Write all results under lock.
+    with lock_ctx:
+        for record in canceled_order_records:
+            runtime.order_store.save(record)
+        runtime.order_store.save(
+            OrderRecord(
+                client_order_id=client_order_id,
+                symbol=symbol,
+                side="sell",
+                intent_type="exit",
+                status=str(broker_order.status).lower(),
+                quantity=position.quantity,
+                trading_mode=settings.trading_mode,
+                strategy_version=settings.strategy_version,
+                created_at=now,
+                updated_at=now,
+                initial_stop_price=position.initial_stop_price,
+                broker_order_id=broker_order.broker_order_id,
+                signal_timestamp=intent_timestamp,
+                strategy_name=strategy_name,
+            )
         )
-    )
-    runtime.audit_event_store.append(
-        AuditEvent(
-            event_type="cycle_intent_executed",
-            symbol=symbol,
-            payload={
-                "intent_type": "exit",
-                "action": "submitted",
-                "reason": reason,
-                "canceled_stop_count": canceled_stop_count,
-                "client_order_id": client_order_id,
-            },
-            created_at=now,
+        runtime.audit_event_store.append(
+            AuditEvent(
+                event_type="cycle_intent_executed",
+                symbol=symbol,
+                payload={
+                    "intent_type": "exit",
+                    "action": "submitted",
+                    "reason": reason,
+                    "canceled_stop_count": canceled_stop_count,
+                    "client_order_id": client_order_id,
+                },
+                created_at=now,
+            )
         )
-    )
     return canceled_stop_count, 1
 
 
