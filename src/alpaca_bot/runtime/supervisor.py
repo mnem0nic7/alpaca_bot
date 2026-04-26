@@ -169,14 +169,14 @@ class RuntimeSupervisor:
             with _reconnect_lock if _reconnect_lock is not None else contextlib.nullcontext():
                 self._reconnect(self.runtime)
                 logger.info("Postgres connection re-established.")
-                reconnect_ts = _resolve_now(now)
-                self.runtime.audit_event_store.append(
-                    AuditEvent(
-                        event_type="postgres_reconnected",
-                        payload={"timestamp": reconnect_ts.isoformat()},
-                        created_at=reconnect_ts,
-                    )
+            reconnect_ts = _resolve_now(now)
+            self._append_audit(
+                AuditEvent(
+                    event_type="postgres_reconnected",
+                    payload={"timestamp": reconnect_ts.isoformat()},
+                    created_at=reconnect_ts,
                 )
+            )
 
         timestamp = _resolve_now(now)
         broker_open_orders = list(_list_open_orders(self.broker))
@@ -307,6 +307,9 @@ class RuntimeSupervisor:
         # Track occupied slots globally across all strategies so no single
         # strategy can exceed the portfolio-wide max_open_positions cap.
         global_occupied_slots = len(open_positions) + len(working_order_symbols)
+        # All symbols currently held across ALL strategies — used to prevent
+        # Strategy B from entering a symbol already held by Strategy A.
+        global_position_symbols = {p.symbol for p in open_positions}
 
         for strategy_name, evaluator in active_strategies:
             try:
@@ -317,6 +320,10 @@ class RuntimeSupervisor:
                 strategy_working_symbols = self._working_symbols_for_strategy(
                     strategy_name=strategy_name,
                     broker_open_orders=broker_open_orders,
+                )
+                # Block entry into any symbol held by another strategy.
+                strategy_working_symbols = strategy_working_symbols | (
+                    global_position_symbols - {p.symbol for p in strategy_positions}
                 )
                 strategy_traded_symbols = self._load_traded_symbols(
                     session_date=session_date,
@@ -354,14 +361,14 @@ class RuntimeSupervisor:
                     global_open_count=global_occupied_slots,
                 )
                 all_cycle_results.append((strategy_name, cycle_result))
-                # Consume slots taken by entries this strategy emitted so the next
-                # strategy sees the updated global count.
-                new_entry_count = sum(
-                    1
-                    for i in getattr(cycle_result, "intents", [])
+                # Consume slots and symbols taken by entries this strategy emitted so
+                # subsequent strategies see the updated global state.
+                new_entry_intents = [
+                    i for i in getattr(cycle_result, "intents", [])
                     if getattr(i, "intent_type", None) == CycleIntentType.ENTRY
-                )
-                global_occupied_slots += new_entry_count
+                ]
+                global_occupied_slots += len(new_entry_intents)
+                global_position_symbols.update(i.symbol for i in new_entry_intents)
 
                 has_flatten_intents = any(
                     getattr(intent, "reason", None) in {"eod_flatten", "loss_limit_flatten"}

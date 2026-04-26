@@ -3,10 +3,10 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS strategy_name TEXT NOT NULL DEFAULT 
 
 -- Add strategy_name to positions and change PK
 ALTER TABLE positions ADD COLUMN IF NOT EXISTS strategy_name TEXT NOT NULL DEFAULT 'breakout';
-ALTER TABLE positions DROP CONSTRAINT positions_pkey;
+ALTER TABLE positions DROP CONSTRAINT IF EXISTS positions_pkey;
 ALTER TABLE positions ADD PRIMARY KEY (symbol, trading_mode, strategy_version, strategy_name);
 
 -- Add strategy_name to daily_session_state and change PK
 ALTER TABLE daily_session_state ADD COLUMN IF NOT EXISTS strategy_name TEXT NOT NULL DEFAULT 'breakout';
-ALTER TABLE daily_session_state DROP CONSTRAINT daily_session_state_pkey;
+ALTER TABLE daily_session_state DROP CONSTRAINT IF EXISTS daily_session_state_pkey;
 ALTER TABLE daily_session_state ADD PRIMARY KEY (session_date, trading_mode, strategy_version, strategy_name);
