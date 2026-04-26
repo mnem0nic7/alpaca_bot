@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -209,20 +210,24 @@ def _execute_update_stop(
         )
         action = "submitted"
 
-    runtime.position_store.save(
-        PositionRecord(
-            symbol=position.symbol,
-            trading_mode=position.trading_mode,
-            strategy_version=position.strategy_version,
-            quantity=position.quantity,
-            entry_price=position.entry_price,
-            stop_price=stop_price,
-            initial_stop_price=position.initial_stop_price,
-            opened_at=position.opened_at,
-            updated_at=now,
-            strategy_name=strategy_name,
+    # Acquire store_lock if present so this write does not race with the
+    # trade update stream thread, which also holds the lock when deleting positions.
+    store_lock = getattr(runtime, "store_lock", None)
+    with store_lock if store_lock is not None else contextlib.nullcontext():
+        runtime.position_store.save(
+            PositionRecord(
+                symbol=position.symbol,
+                trading_mode=position.trading_mode,
+                strategy_version=position.strategy_version,
+                quantity=position.quantity,
+                entry_price=position.entry_price,
+                stop_price=stop_price,
+                initial_stop_price=position.initial_stop_price,
+                opened_at=position.opened_at,
+                updated_at=now,
+                strategy_name=strategy_name,
+            )
         )
-    )
     runtime.audit_event_store.append(
         AuditEvent(
             event_type="cycle_intent_executed",

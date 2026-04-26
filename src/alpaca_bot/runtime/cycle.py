@@ -39,6 +39,7 @@ def run_cycle(
     session_state: DailySessionState | None = None,
     signal_evaluator: StrategySignalEvaluator | None = None,
     strategy_name: str = "breakout",
+    global_open_count: int | None = None,
 ) -> CycleResult:
     result = evaluate_cycle(
         settings=settings,
@@ -54,6 +55,7 @@ def run_cycle(
         session_state=session_state,
         signal_evaluator=signal_evaluator,
         strategy_name=strategy_name,
+        global_open_count=global_open_count,
     )
 
     for intent in result.intents:

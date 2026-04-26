@@ -26,6 +26,7 @@ from alpaca_bot.runtime.bootstrap import (
 )
 from alpaca_bot.storage.db import check_connection
 from alpaca_bot.runtime.cli import _list_open_orders, _list_open_positions
+from alpaca_bot.core.engine import CycleIntentType
 from alpaca_bot.runtime.cycle import run_cycle
 from alpaca_bot.runtime.cycle_intent_execution import execute_cycle_intents
 from alpaca_bot.runtime.order_dispatch import dispatch_pending_orders
@@ -92,6 +93,9 @@ class RuntimeSupervisor:
         self._closed = False
         self._stream_restart_attempts: int = 0
         self._next_stream_restart_at: datetime | None = None
+        self._consecutive_cycle_failures: int = 0
+        # Keyed by session_date (ET); populated on the first cycle of each day.
+        self._session_equity_baseline: dict[date, float] = {}
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
@@ -201,7 +205,12 @@ class RuntimeSupervisor:
             strategy_version=self.settings.strategy_version,
             session_date=session_date,
         )
-        loss_limit = self.settings.daily_loss_limit_pct * account.equity
+        # Snapshot equity once per session day so the daily loss limit is always
+        # computed against start-of-day capital, not the current (post-loss) value.
+        if session_date not in self._session_equity_baseline:
+            self._session_equity_baseline[session_date] = account.equity
+        baseline_equity = self._session_equity_baseline[session_date]
+        loss_limit = self.settings.daily_loss_limit_pct * baseline_equity
         daily_loss_limit_breached = realized_pnl < -loss_limit
         if daily_loss_limit_breached:
             self.runtime.audit_event_store.append(
@@ -259,6 +268,9 @@ class RuntimeSupervisor:
         active_strategies = self._resolve_active_strategies()
         all_cycle_results: list[tuple[str, object]] = []
         entries_disabled_strategies: set[str] = set()
+        # Track occupied slots globally across all strategies so no single
+        # strategy can exceed the portfolio-wide max_open_positions cap.
+        global_occupied_slots = len(open_positions) + len(working_order_symbols)
 
         for strategy_name, evaluator in active_strategies:
             strategy_positions = [
@@ -302,8 +314,17 @@ class RuntimeSupervisor:
                 session_state=strategy_session_state,
                 signal_evaluator=evaluator,
                 strategy_name=strategy_name,
+                global_open_count=global_occupied_slots,
             )
             all_cycle_results.append((strategy_name, cycle_result))
+            # Consume slots taken by entries this strategy emitted so the next
+            # strategy sees the updated global count.
+            new_entry_count = sum(
+                1
+                for i in getattr(cycle_result, "intents", [])
+                if getattr(i, "intent_type", None) == CycleIntentType.ENTRY
+            )
+            global_occupied_slots += new_entry_count
 
             has_flatten_intents = any(
                 getattr(intent, "reason", None) in {"eod_flatten", "loss_limit_flatten"}
@@ -405,20 +426,33 @@ class RuntimeSupervisor:
                 if self._market_is_open():
                     try:
                         cycle_report = self.run_cycle_once(now=lambda: timestamp)
+                        self._consecutive_cycle_failures = 0
                     except Exception as exc:
-                        logger.warning(
-                            "Supervisor cycle error: %s", exc, exc_info=True
-                        )
+                        self._consecutive_cycle_failures += 1
+                        log_fn = logger.error if self._consecutive_cycle_failures >= 5 else logger.warning
+                        log_fn("Supervisor cycle error: %s", exc, exc_info=True)
                         self.runtime.audit_event_store.append(
                             AuditEvent(
                                 event_type="supervisor_cycle_error",
                                 payload={
                                     "error": str(exc),
                                     "timestamp": timestamp.isoformat(),
+                                    "consecutive_failures": self._consecutive_cycle_failures,
                                 },
                                 created_at=timestamp,
                             )
                         )
+                        if self._consecutive_cycle_failures >= 5 and self._notifier is not None:
+                            try:
+                                self._notifier.send(
+                                    subject="Supervisor cycle failing repeatedly",
+                                    body=(
+                                        f"{self._consecutive_cycle_failures} consecutive cycle failures. "
+                                        f"Last error: {exc}"
+                                    ),
+                                )
+                            except Exception:
+                                logger.exception("Notifier failed to send cycle failure alert")
                         iterations += 1
                         sleeper(poll_interval_seconds)
                         continue

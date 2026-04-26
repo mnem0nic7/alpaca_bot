@@ -61,6 +61,7 @@ def evaluate_cycle(
     signal_evaluator: StrategySignalEvaluator | None = None,
     session_state: "DailySessionState | None" = None,
     strategy_name: str = "breakout",
+    global_open_count: int | None = None,
 ) -> CycleResult:
     if signal_evaluator is None:
         signal_evaluator = evaluate_breakout_signal
@@ -121,9 +122,13 @@ def evaluate_cycle(
                 )
 
     if not entries_disabled:
-        available_slots = max(
-            settings.max_open_positions - len(open_positions) - len(working_order_symbols), 0
-        )
+        if global_open_count is not None:
+            # Caller has pre-computed the total occupied slots across ALL strategies.
+            available_slots = max(settings.max_open_positions - global_open_count, 0)
+        else:
+            available_slots = max(
+                settings.max_open_positions - len(open_positions) - len(working_order_symbols), 0
+            )
         if available_slots > 0:
             current_exposure = (
                 sum(p.entry_price * p.quantity for p in open_positions) / equity

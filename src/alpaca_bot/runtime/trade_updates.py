@@ -175,13 +175,16 @@ def _apply_trade_update_locked(
                 and slippage < -(settings.notify_slippage_threshold_pct * fill_price)
             ):
                 slippage_msg = f"  \u26a0 Adverse slippage: {slippage:.3f}"
-            notifier.send(
-                subject=f"Fill: {matched_order.symbol} {qty}@{fill_price}",
-                body=(
-                    f"{matched_order.symbol}: {qty} shares filled at {fill_price}"
-                    f"{slippage_msg}"
-                ),
-            )
+            try:
+                notifier.send(
+                    subject=f"Fill: {matched_order.symbol} {qty}@{fill_price}",
+                    body=(
+                        f"{matched_order.symbol}: {qty} shares filled at {fill_price}"
+                        f"{slippage_msg}"
+                    ),
+                )
+            except Exception:
+                logger.exception("Notifier failed to send entry fill alert for %s", matched_order.symbol)
         if matched_order.initial_stop_price is not None:
             protective_stop_client_order_id = _protective_stop_client_order_id(
                 matched_order.client_order_id
@@ -247,13 +250,16 @@ def _apply_trade_update_locked(
         if notifier is not None:
             fill_price = normalized.filled_avg_price
             qty = normalized.filled_qty
-            notifier.send(
-                subject=f"Position closed: {matched_order.symbol}",
-                body=(
-                    f"{matched_order.intent_type.upper()} fill on {matched_order.symbol}: "
-                    f"{qty} shares @ {fill_price}"
-                ),
-            )
+            try:
+                notifier.send(
+                    subject=f"Position closed: {matched_order.symbol}",
+                    body=(
+                        f"{matched_order.intent_type.upper()} fill on {matched_order.symbol}: "
+                        f"{qty} shares @ {fill_price}"
+                    ),
+                )
+            except Exception:
+                logger.exception("Notifier failed to send exit fill alert for %s", matched_order.symbol)
     elif (
         matched_order.intent_type == "entry"
         and normalized.status in {"cancelled", "expired"}

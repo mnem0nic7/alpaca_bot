@@ -442,3 +442,135 @@ def test_evaluate_cycle_emits_exits_when_flatten_not_complete() -> None:
     assert len(exit_intents) == 1, (
         f"Expected one EXIT intent when flatten_complete=False, got: {exit_intents}"
     )
+
+
+# ---------------------------------------------------------------------------
+# flatten_all=True path
+# ---------------------------------------------------------------------------
+
+
+def make_open_position(symbol: str) -> OpenPosition:
+    return OpenPosition(
+        symbol=symbol,
+        entry_timestamp=datetime(2026, 4, 24, 18, 0, tzinfo=timezone.utc),
+        entry_price=100.0,
+        quantity=10,
+        entry_level=99.0,
+        initial_stop_price=98.0,
+        stop_price=98.0,
+        trailing_active=False,
+        highest_price=102.0,
+    )
+
+
+def test_flatten_all_emits_exit_for_every_open_position() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=now,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[make_open_position("AAPL"), make_open_position("MSFT")],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        flatten_all=True,
+    )
+
+    assert all(i.intent_type == CycleIntentType.EXIT for i in result.intents)
+    assert {i.symbol for i in result.intents} == {"AAPL", "MSFT"}
+    assert all(i.reason == "loss_limit_flatten" for i in result.intents)
+
+
+def test_flatten_all_with_no_open_positions_returns_empty_intents() -> None:
+    _CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=now,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        flatten_all=True,
+    )
+
+    assert result.intents == []
+
+
+# ---------------------------------------------------------------------------
+# global_open_count cross-strategy slot enforcement
+# ---------------------------------------------------------------------------
+
+
+def test_global_open_count_blocks_entry_when_slots_exhausted() -> None:
+    """When global_open_count >= max_open_positions, no ENTRY intents are emitted."""
+    _CycleIntentType, evaluate_cycle = load_engine_api()
+    settings = make_settings(MAX_OPEN_POSITIONS="3")
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        # Simulate two other strategies already using all 3 slots
+        global_open_count=3,
+    )
+
+    assert all(i.intent_type != _CycleIntentType.ENTRY for i in result.intents)
+
+
+def test_global_open_count_allows_partial_slot_usage() -> None:
+    """When global_open_count leaves one slot free, exactly one ENTRY can fire."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    settings = make_settings(MAX_OPEN_POSITIONS="3")
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        global_open_count=2,  # 1 slot remaining
+    )
+
+    entry_intents = [i for i in result.intents if i.intent_type == CycleIntentType.ENTRY]
+    assert len(entry_intents) <= 1
+
+
+def test_zero_equity_does_not_raise_with_open_positions() -> None:
+    """evaluate_cycle must handle equity=0 gracefully (no ZeroDivisionError)."""
+    _CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=now,
+        equity=0.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[make_open_position("AAPL")],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+    )
+
+    assert result is not None

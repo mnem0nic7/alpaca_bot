@@ -195,3 +195,36 @@ def test_position_size_respects_risk_and_notional_caps() -> None:
     )
 
     assert quantity == 45
+
+
+def test_position_size_raises_when_stop_price_at_or_above_entry() -> None:
+    with pytest.raises(ValueError, match="stop_price must be below entry_price"):
+        calculate_position_size(
+            equity=100000,
+            entry_price=100.0,
+            stop_price=100.0,
+            settings=make_settings(),
+        )
+
+    with pytest.raises(ValueError, match="stop_price must be below entry_price"):
+        calculate_position_size(
+            equity=100000,
+            entry_price=100.0,
+            stop_price=101.0,
+            settings=make_settings(),
+        )
+
+
+def test_position_size_notional_cap_is_binding_when_risk_quantity_exceeds_it() -> None:
+    # equity=$10000, max_position_pct=5% → max_notional=$500
+    # entry_price=$100, stop_price=$99 → risk_per_share=$1
+    # risk_per_trade_pct=2.5% → risk_budget=$250 → risk_qty=250
+    # notional cap: floor(500/100) = 5 → capped at 5
+    quantity = calculate_position_size(
+        equity=10000,
+        entry_price=100.0,
+        stop_price=99.0,
+        settings=make_settings(RISK_PER_TRADE_PCT="0.025", MAX_POSITION_PCT="0.05"),
+    )
+
+    assert quantity == 5

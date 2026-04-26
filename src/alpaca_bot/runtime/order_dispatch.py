@@ -61,6 +61,7 @@ def dispatch_pending_orders(
     timestamp = _resolve_now(now)
     pending_orders = _list_pending_submit_orders(runtime, settings)
 
+    session_date_et = timestamp.astimezone(settings.market_timezone).date()
     submitted_count = 0
     for order in pending_orders:
         if allowed_intent_types is not None and order.intent_type not in allowed_intent_types:
@@ -71,6 +72,18 @@ def dispatch_pending_orders(
             and getattr(order, "strategy_name", "breakout") in blocked_strategy_names
         ):
             continue
+        # Skip entry orders whose signal is from a prior trading day — they are
+        # stale and would enter at today's price against yesterday's signal.
+        if order.intent_type == "entry" and order.signal_timestamp is not None:
+            signal_date_et = order.signal_timestamp.astimezone(settings.market_timezone).date()
+            if signal_date_et < session_date_et:
+                logger.warning(
+                    "order_dispatch: skipping stale entry order for %s (signal date %s, today %s)",
+                    order.symbol,
+                    signal_date_et,
+                    session_date_et,
+                )
+                continue
         try:
             broker_order = _submit_order(order=order, broker=broker)
         except Exception as exc:

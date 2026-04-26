@@ -22,12 +22,14 @@ def _is_transient_error(exc: BaseException) -> bool:
     """Return True if *exc* looks like a rate-limit or transient network/server error."""
     msg = str(exc).lower()
     # Rate-limit signals
-    if any(token in msg for token in ("429", "rate", "too many")):
+    if any(token in msg for token in ("429", "rate limit", "too many")):
         return True
-    # 5xx server errors
-    for code in ("500", "502", "503", "504"):
-        if code in msg:
-            return True
+    # 5xx server errors — require the code to appear as a standalone HTTP status
+    # token (e.g. "500 internal server error", "status=502") not as a bare
+    # substring that could match dollar amounts or other numbers.
+    import re
+    if re.search(r"\b(500|502|503|504)\b", msg):
+        return True
     # Network-level errors
     if isinstance(exc, (ConnectionError, TimeoutError, OSError)):
         return True
