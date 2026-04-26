@@ -114,7 +114,7 @@ def test_evaluate_cycle_emits_entry_intent_for_valid_breakout() -> None:
 
     assert [intent.intent_type for intent in result.intents] == [CycleIntentType.ENTRY]
     assert result.intents[0].symbol == "AAPL"
-    assert result.intents[0].quantity == 45
+    assert result.intents[0].quantity == 44
     assert result.intents[0].stop_price == 111.01
     assert result.intents[0].limit_price == 111.12
     assert result.intents[0].initial_stop_price == 109.89

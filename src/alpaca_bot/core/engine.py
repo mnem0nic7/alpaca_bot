@@ -154,7 +154,7 @@ def evaluate_cycle(
 
                 quantity = calculate_position_size(
                     equity=equity,
-                    entry_price=signal.stop_price,
+                    entry_price=signal.limit_price,
                     stop_price=signal.initial_stop_price,
                     settings=settings,
                 )

@@ -193,9 +193,13 @@ def create_app(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content={"status": "error", "reason": str(exc)},
             )
+        worker_stale = health_snapshot.worker_health.status == "stale"
+        http_status = (
+            status.HTTP_503_SERVICE_UNAVAILABLE if worker_stale else status.HTTP_200_OK
+        )
         return JSONResponse(
             {
-                "status": "ok",
+                "status": "stale" if worker_stale else "ok",
                 "db": "ok",
                 "database": "ok",
                 "trading_mode": app_settings.trading_mode.value,
@@ -218,7 +222,8 @@ def create_app(
                     else health_snapshot.worker_health.last_event_at.isoformat()
                 ),
                 "worker_age_seconds": health_snapshot.worker_health.age_seconds,
-            }
+            },
+            status_code=http_status,
         )
 
     @app.post("/strategies/{strategy_name}/toggle")

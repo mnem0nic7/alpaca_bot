@@ -295,8 +295,9 @@ def test_healthz_route_reports_stale_worker_when_last_event_is_old() -> None:
     with TestClient(app) as client:
         response = client.get("/healthz")
 
-    assert response.status_code == 200
+    assert response.status_code == 503
     assert response.json()["worker_status"] == "stale"
+    assert response.json()["status"] == "stale"
 
 
 def test_dashboard_renders_login_page_when_auth_enabled() -> None:

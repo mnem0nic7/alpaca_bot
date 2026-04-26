@@ -93,9 +93,14 @@ def reconnect_runtime_connection(context: RuntimeContext) -> None:
         store = getattr(context, attr, None)
         if store is not None and hasattr(store, "_connection"):
             store._connection = new_conn
-    # Rewire the advisory lock too.
+    # Rewire the advisory lock and re-acquire it on the fresh connection.
     if hasattr(context.lock, "_connection"):
         context.lock._connection = new_conn
+    if not context.lock.try_acquire():
+        raise RuntimeError(
+            "Could not re-acquire singleton trader lock after reconnect for "
+            f"{context.settings.trading_mode.value}/{context.settings.strategy_version}"
+        )
 
 
 def close_runtime(context: RuntimeContext) -> None:

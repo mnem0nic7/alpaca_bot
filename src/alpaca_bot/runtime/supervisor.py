@@ -244,6 +244,9 @@ class RuntimeSupervisor:
             end=timestamp,
             timeframe_minutes=self.settings.entry_timeframe_minutes,
         )
+        daily_bars_end = datetime.combine(session_date, datetime.min.time()).replace(
+            tzinfo=self.settings.market_timezone
+        )
         daily_bars_by_symbol = self.market_data.get_daily_bars(
             symbols=list(self.settings.symbols),
             start=timestamp - timedelta(days=max(
@@ -251,7 +254,7 @@ class RuntimeSupervisor:
                 60,
                 self.settings.high_watermark_lookback_days + 10,
             )),
-            end=timestamp,
+            end=daily_bars_end,
         )
         active_strategies = self._resolve_active_strategies()
         all_cycle_results: list[tuple[str, object]] = []
@@ -322,13 +325,19 @@ class RuntimeSupervisor:
                 )
 
             if status is not TradingStatusValue.HALTED:
-                self._cycle_intent_executor(
-                    settings=self.settings,
-                    runtime=self.runtime,
-                    broker=self.broker,
-                    cycle_result=cycle_result,
-                    now=timestamp,
-                )
+                try:
+                    self._cycle_intent_executor(
+                        settings=self.settings,
+                        runtime=self.runtime,
+                        broker=self.broker,
+                        cycle_result=cycle_result,
+                        now=timestamp,
+                    )
+                except Exception:
+                    logger.exception(
+                        "execute_cycle_intents failed for strategy %s; continuing to dispatch",
+                        strategy_name,
+                    )
 
         from types import SimpleNamespace as _SN
         cycle_result = all_cycle_results[-1][1] if all_cycle_results else _SN(intents=[])
@@ -456,14 +465,17 @@ class RuntimeSupervisor:
                                     )
                                 )
                                 if self._notifier is not None:
-                                    self._notifier.send(
-                                        subject="Trade stream restart failed",
-                                        body=(
-                                            f"Stream has failed to restart after "
-                                            f"{self._stream_restart_attempts} attempts. "
-                                            f"Fill events may be missed."
-                                        ),
-                                    )
+                                    try:
+                                        self._notifier.send(
+                                            subject="Trade stream restart failed",
+                                            body=(
+                                                f"Stream has failed to restart after "
+                                                f"{self._stream_restart_attempts} attempts. "
+                                                f"Fill events may be missed."
+                                            ),
+                                        )
+                                    except Exception:
+                                        logger.exception("Notifier failed to send stream restart alert")
                     active_iterations += 1
                     self.runtime.audit_event_store.append(
                         AuditEvent(
