@@ -56,6 +56,7 @@ def dispatch_pending_orders(
     broker: BrokerProtocol,
     now: datetime | Callable[[], datetime] | None = None,
     allowed_intent_types: set[str] | None = None,
+    blocked_strategy_names: set[str] | None = None,
 ) -> OrderDispatchReport:
     timestamp = _resolve_now(now)
     pending_orders = _list_pending_submit_orders(runtime, settings)
@@ -63,6 +64,12 @@ def dispatch_pending_orders(
     submitted_count = 0
     for order in pending_orders:
         if allowed_intent_types is not None and order.intent_type not in allowed_intent_types:
+            continue
+        if (
+            blocked_strategy_names is not None
+            and order.intent_type == "entry"
+            and getattr(order, "strategy_name", "breakout") in blocked_strategy_names
+        ):
             continue
         try:
             broker_order = _submit_order(order=order, broker=broker)

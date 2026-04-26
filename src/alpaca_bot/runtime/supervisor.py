@@ -246,56 +246,92 @@ class RuntimeSupervisor:
             start=timestamp - timedelta(days=max(self.settings.daily_sma_period * 3, 60)),
             end=timestamp,
         )
-        signal_evaluator = self._resolve_signal_evaluator()
-        cycle_result = self._cycle_runner(
-            settings=self.settings,
-            runtime=self.runtime,
-            now=timestamp,
-            equity=account.equity,
-            intraday_bars_by_symbol=intraday_bars_by_symbol,
-            daily_bars_by_symbol=daily_bars_by_symbol,
-            open_positions=open_positions,
-            working_order_symbols=working_order_symbols,
-            traded_symbols_today=self._load_traded_symbols(session_date=session_date),
-            entries_disabled=entries_disabled,
-            flatten_all=daily_loss_limit_breached,
-            session_state=session_state,
-            signal_evaluator=signal_evaluator,
-        )
-        if status is not TradingStatusValue.HALTED:
-            self._cycle_intent_executor(
+        active_strategies = self._resolve_active_strategies()
+        all_cycle_results: list[tuple[str, object]] = []
+        entries_disabled_strategies: set[str] = set()
+
+        for strategy_name, evaluator in active_strategies:
+            strategy_positions = [
+                p for p in open_positions
+                if getattr(p, "strategy_name", "breakout") == strategy_name
+            ]
+            strategy_working_symbols = self._working_symbols_for_strategy(
+                strategy_name=strategy_name,
+                broker_open_orders=broker_open_orders,
+            )
+            strategy_traded_symbols = self._load_traded_symbols(
+                session_date=session_date,
+                strategy_name=strategy_name,
+            )
+            strategy_session_state = self._load_session_state(
+                session_date=session_date,
+                strategy_name=strategy_name,
+            )
+            if strategy_session_state is not None and strategy_session_state.session_date != session_date:
+                strategy_session_state = None
+
+            strategy_entries_disabled = (
+                entries_disabled
+                or (strategy_session_state is not None and strategy_session_state.entries_disabled)
+            )
+            if strategy_entries_disabled:
+                entries_disabled_strategies.add(strategy_name)
+
+            cycle_result = self._cycle_runner(
                 settings=self.settings,
                 runtime=self.runtime,
-                broker=self.broker,
-                cycle_result=cycle_result,
                 now=timestamp,
+                equity=account.equity,
+                intraday_bars_by_symbol=intraday_bars_by_symbol,
+                daily_bars_by_symbol=daily_bars_by_symbol,
+                open_positions=strategy_positions,
+                working_order_symbols=strategy_working_symbols,
+                traded_symbols_today=strategy_traded_symbols,
+                entries_disabled=strategy_entries_disabled,
+                flatten_all=daily_loss_limit_breached,
+                session_state=strategy_session_state,
+                signal_evaluator=evaluator,
+                strategy_name=strategy_name,
             )
+            all_cycle_results.append((strategy_name, cycle_result))
 
-        # If this cycle emitted eod_flatten or loss_limit_flatten EXIT intents, mark
-        # flatten_complete=True so future cycles don't re-issue duplicate orders.
-        has_flatten_intents = any(
-            getattr(intent, "reason", None) in {"eod_flatten", "loss_limit_flatten"}
-            for intent in getattr(cycle_result, "intents", [])
-        )
-        if has_flatten_intents and self.runtime.daily_session_state_store is not None and hasattr(
-            self.runtime.daily_session_state_store, "save"
-        ):
-            self.runtime.daily_session_state_store.save(
-                DailySessionState(
-                    session_date=session_date,
-                    trading_mode=self.settings.trading_mode,
-                    strategy_version=self.settings.strategy_version,
-                    entries_disabled=True,
-                    flatten_complete=True,
-                    updated_at=timestamp,
-                )
+            has_flatten_intents = any(
+                getattr(intent, "reason", None) in {"eod_flatten", "loss_limit_flatten"}
+                for intent in getattr(cycle_result, "intents", [])
             )
+            if has_flatten_intents and self.runtime.daily_session_state_store is not None and hasattr(
+                self.runtime.daily_session_state_store, "save"
+            ):
+                self.runtime.daily_session_state_store.save(
+                    DailySessionState(
+                        session_date=session_date,
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                        strategy_name=strategy_name,
+                        entries_disabled=True,
+                        flatten_complete=True,
+                        updated_at=timestamp,
+                    )
+                )
+
+            if status is not TradingStatusValue.HALTED:
+                self._cycle_intent_executor(
+                    settings=self.settings,
+                    runtime=self.runtime,
+                    broker=self.broker,
+                    cycle_result=cycle_result,
+                    now=timestamp,
+                )
+
+        from types import SimpleNamespace as _SN
+        cycle_result = all_cycle_results[-1][1] if all_cycle_results else _SN(intents=[])
 
         dispatch_kwargs = {
             "settings": self.settings,
             "runtime": self.runtime,
             "broker": self.broker,
             "now": timestamp,
+            "blocked_strategy_names": entries_disabled_strategies,
         }
         if status is TradingStatusValue.HALTED:
             return SupervisorCycleReport(
@@ -498,6 +534,7 @@ class RuntimeSupervisor:
                 stop_price=position.stop_price,
                 trailing_active=position.stop_price > position.initial_stop_price,
                 highest_price=position.entry_price,
+                strategy_name=getattr(position, "strategy_name", "breakout"),
             )
             for position in self._load_position_records()
         ]
@@ -510,21 +547,52 @@ class RuntimeSupervisor:
             strategy_version=self.settings.strategy_version,
         )
 
-    def _resolve_signal_evaluator(self) -> StrategySignalEvaluator:
+    def _resolve_active_strategies(self) -> list[tuple[str, StrategySignalEvaluator]]:
+        """Return (strategy_name, evaluator) for every enabled strategy."""
         store = getattr(self.runtime, "strategy_flag_store", None)
-        if store is None:
-            return _default_evaluator
+        active = []
         for name, evaluator in STRATEGY_REGISTRY.items():
-            flag = store.load(
-                strategy_name=name,
+            if store is not None:
+                flag = store.load(
+                    strategy_name=name,
+                    trading_mode=self.settings.trading_mode,
+                    strategy_version=self.settings.strategy_version,
+                )
+                if flag is not None and not flag.enabled:
+                    continue
+            active.append((name, evaluator))
+        return active
+
+    def _working_symbols_for_strategy(
+        self,
+        *,
+        strategy_name: str,
+        broker_open_orders: list,
+    ) -> set[str]:
+        symbols: set[str] = set()
+        if hasattr(self.runtime.order_store, "list_by_status"):
+            for order in self.runtime.order_store.list_by_status(
                 trading_mode=self.settings.trading_mode,
                 strategy_version=self.settings.strategy_version,
-            )
-            if flag is None or flag.enabled:
-                return evaluator
-        return lambda **_: None
+                statuses=["pending_submit"],
+                strategy_name=strategy_name,
+            ):
+                symbols.add(order.symbol)
+        for order in broker_open_orders:
+            cid = getattr(order, "client_order_id", "") or ""
+            first_segment = cid.split(":")[0] if cid else ""
+            # Orders whose prefix isn't a known strategy are attributed to "breakout"
+            inferred = first_segment if first_segment in STRATEGY_REGISTRY else "breakout"
+            if inferred == strategy_name:
+                symbols.add(getattr(order, "symbol", ""))
+        return symbols
 
-    def _load_session_state(self, *, session_date: date) -> DailySessionState | None:
+    def _load_session_state(
+        self,
+        *,
+        session_date: date,
+        strategy_name: str = "breakout",
+    ) -> DailySessionState | None:
         if self.runtime.daily_session_state_store is None or not hasattr(
             self.runtime.daily_session_state_store, "load"
         ):
@@ -533,6 +601,7 @@ class RuntimeSupervisor:
             session_date=session_date,
             trading_mode=self.settings.trading_mode,
             strategy_version=self.settings.strategy_version,
+            strategy_name=strategy_name,
         )
 
     def _effective_trading_status(
@@ -565,13 +634,19 @@ class RuntimeSupervisor:
             strategy_version=self.settings.strategy_version,
         )
 
-    def _load_traded_symbols(self, *, session_date: date) -> set[tuple[str, date]]:
+    def _load_traded_symbols(
+        self,
+        *,
+        session_date: date,
+        strategy_name: str = "breakout",
+    ) -> set[tuple[str, date]]:
         if not hasattr(self.runtime.order_store, "list_by_status"):
             return set()
         orders = self.runtime.order_store.list_by_status(
             trading_mode=self.settings.trading_mode,
             strategy_version=self.settings.strategy_version,
             statuses=["filled", "partially_filled"],
+            strategy_name=strategy_name,
         )
         traded_symbols: set[tuple[str, date]] = set()
         for order in orders:

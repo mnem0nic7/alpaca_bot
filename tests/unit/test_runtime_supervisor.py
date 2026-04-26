@@ -80,8 +80,9 @@ class RecordingDailySessionStateStore:
         session_date: date,
         trading_mode: TradingMode,
         strategy_version: str,
+        strategy_name: str = "breakout",
     ) -> DailySessionState | None:
-        del session_date, trading_mode, strategy_version
+        del session_date, trading_mode, strategy_version, strategy_name
         return None
 
     def save(self, state: DailySessionState) -> None:
@@ -148,6 +149,7 @@ class RecordingOrderStore:
         trading_mode: TradingMode,
         strategy_version: str,
         statuses: list[str],
+        strategy_name: str | None = None,
     ) -> list[OrderRecord]:
         self.list_by_status_calls.append(
             {
@@ -792,6 +794,7 @@ def test_runtime_supervisor_run_cycle_once_gathers_runtime_inputs_and_dispatches
             "runtime": runtime,
             "broker": broker,
             "now": now,
+            "blocked_strategy_names": set(),
         }
     ]
 
@@ -867,6 +870,7 @@ def test_runtime_supervisor_run_cycle_once_disables_entries_when_runtime_reconci
             "broker": broker,
             "now": now,
             "allowed_intent_types": {"stop", "exit"},
+            "blocked_strategy_names": {"breakout"},
         }
     ]
     assert runtime.order_store.saved[-1] == OrderRecord(
