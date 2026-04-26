@@ -24,6 +24,8 @@ alpaca-bot-web-hash-password = "alpaca_bot.web.password_cli:main"
 alpaca-bot-web-rotate-password = "alpaca_bot.web.password_rotate_cli:main"
 alpaca-bot-backtest = "alpaca_bot.replay.cli:main"
 alpaca-bot-evolve = "alpaca_bot.tuning.cli:main"
+alpaca-bot-backfill = "alpaca_bot.backfill.cli:main"
+alpaca-bot-sweep    = "alpaca_bot.tuning.sweep_cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
