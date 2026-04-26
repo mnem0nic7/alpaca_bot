@@ -76,6 +76,9 @@ class Settings:
     max_portfolio_exposure_pct: float = 0.15
     notify_slippage_threshold_pct: float = 0.005
     prior_day_high_lookback_bars: int = 1
+    orb_opening_bars: int = 2
+    high_watermark_lookback_days: int = 252
+    ema_period: int = 9
     market_timezone: ZoneInfo = ZoneInfo("America/New_York")
     dashboard_auth_enabled: bool = False
     dashboard_auth_username: str | None = None
@@ -127,6 +130,9 @@ class Settings:
                 values.get("NOTIFY_SLIPPAGE_THRESHOLD_PCT", "0.005")
             ),
             prior_day_high_lookback_bars=int(values.get("PRIOR_DAY_HIGH_LOOKBACK_BARS", "1")),
+            orb_opening_bars=int(values.get("ORB_OPENING_BARS", "2")),
+            high_watermark_lookback_days=int(values.get("HIGH_WATERMARK_LOOKBACK_DAYS", "252")),
+            ema_period=int(values.get("EMA_PERIOD", "9")),
             stop_limit_buffer_pct=float(values.get("STOP_LIMIT_BUFFER_PCT", "0.001")),
             breakout_stop_buffer_pct=float(
                 values.get("BREAKOUT_STOP_BUFFER_PCT", "0.001")
@@ -192,6 +198,12 @@ class Settings:
             raise ValueError("RELATIVE_VOLUME_THRESHOLD must be greater than 1.0")
         if self.prior_day_high_lookback_bars < 1:
             raise ValueError("PRIOR_DAY_HIGH_LOOKBACK_BARS must be at least 1")
+        if self.orb_opening_bars < 1:
+            raise ValueError("ORB_OPENING_BARS must be at least 1")
+        if self.high_watermark_lookback_days < 5:
+            raise ValueError("HIGH_WATERMARK_LOOKBACK_DAYS must be at least 5")
+        if self.ema_period < 2:
+            raise ValueError("EMA_PERIOD must be at least 2")
         if self.max_open_positions < 1:
             raise ValueError("MAX_OPEN_POSITIONS must be at least 1")
         if self.dashboard_auth_enabled:

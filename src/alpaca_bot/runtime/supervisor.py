@@ -243,7 +243,11 @@ class RuntimeSupervisor:
         )
         daily_bars_by_symbol = self.market_data.get_daily_bars(
             symbols=list(self.settings.symbols),
-            start=timestamp - timedelta(days=max(self.settings.daily_sma_period * 3, 60)),
+            start=timestamp - timedelta(days=max(
+                self.settings.daily_sma_period * 3,
+                60,
+                self.settings.high_watermark_lookback_days + 10,
+            )),
             end=timestamp,
         )
         active_strategies = self._resolve_active_strategies()

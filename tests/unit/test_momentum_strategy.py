@@ -219,3 +219,40 @@ def test_settings_no_longer_requires_15_minute_timeframe():
 def test_momentum_in_strategy_registry():
     from alpaca_bot.strategy import STRATEGY_REGISTRY
     assert "momentum" in STRATEGY_REGISTRY
+
+
+def test_settings_has_orb_opening_bars():
+    settings = _make_settings(orb_opening_bars=4)
+    assert settings.orb_opening_bars == 4
+
+
+def test_settings_validates_orb_opening_bars():
+    with pytest.raises(ValueError, match="ORB_OPENING_BARS"):
+        _make_settings(orb_opening_bars=0)
+
+
+def test_settings_has_high_watermark_lookback_days():
+    settings = _make_settings(high_watermark_lookback_days=100)
+    assert settings.high_watermark_lookback_days == 100
+
+
+def test_settings_validates_high_watermark_lookback_days():
+    with pytest.raises(ValueError, match="HIGH_WATERMARK_LOOKBACK_DAYS"):
+        _make_settings(high_watermark_lookback_days=4)
+
+
+def test_settings_has_ema_period():
+    settings = _make_settings(ema_period=21)
+    assert settings.ema_period == 21
+
+
+def test_settings_validates_ema_period():
+    with pytest.raises(ValueError, match="EMA_PERIOD"):
+        _make_settings(ema_period=1)
+
+
+def test_new_strategies_in_registry():
+    from alpaca_bot.strategy import STRATEGY_REGISTRY
+    assert "orb" in STRATEGY_REGISTRY
+    assert "high_watermark" in STRATEGY_REGISTRY
+    assert "ema_pullback" in STRATEGY_REGISTRY

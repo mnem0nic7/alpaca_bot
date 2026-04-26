@@ -61,7 +61,6 @@ class BackfillFetcher:
             }
             path = output_dir / f"{symbol}_{days}d.json"
             path.write_text(json.dumps(payload, indent=2))
-            logger.info("Wrote %s (%d intraday, %d daily bars)", path, len(intraday), len(daily))
             results.append((path, len(intraday), len(daily)))
 
         return results

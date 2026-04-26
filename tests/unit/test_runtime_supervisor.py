@@ -772,7 +772,8 @@ def test_runtime_supervisor_run_cycle_once_gathers_runtime_inputs_and_dispatches
     assert tuple(market_data.stock_bar_calls[0]["symbols"]) == ("AAPL", "MSFT", "SPY")
     assert market_data.stock_bar_calls[0]["timeframe_minutes"] == 15
     assert tuple(market_data.daily_bar_calls[0]["symbols"]) == ("AAPL", "MSFT", "SPY")
-    assert len(cycle_calls) == 2
+    from alpaca_bot.strategy import STRATEGY_REGISTRY
+    assert len(cycle_calls) == len(STRATEGY_REGISTRY)
     assert cycle_calls[0]["settings"] == settings
     assert cycle_calls[0]["runtime"] is runtime
     assert cycle_calls[0]["now"] == now
@@ -870,7 +871,7 @@ def test_runtime_supervisor_run_cycle_once_disables_entries_when_runtime_reconci
             "broker": broker,
             "now": now,
             "allowed_intent_types": {"stop", "exit"},
-            "blocked_strategy_names": {"breakout", "momentum"},
+            "blocked_strategy_names": {"breakout", "momentum", "orb", "high_watermark", "ema_pullback"},
         }
     ]
     assert runtime.order_store.saved[-1] == OrderRecord(
