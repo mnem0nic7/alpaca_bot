@@ -572,3 +572,227 @@ def test_execute_cycle_intents_acquires_store_lock_on_update_stop() -> None:
     assert all(lock_held_during_save), (
         "store_lock must be held for every position_store.save call during UPDATE_STOP"
     )
+
+
+def test_execute_cycle_intents_acquires_store_lock_on_order_store_save_during_update_stop() -> None:
+    """order_store.save must also be called while store_lock is held during UPDATE_STOP."""
+    import threading
+
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:lock-order-test",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-lock-order",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    lock_held_during_save: list[bool] = []
+    real_lock = threading.Lock()
+
+    class LockWatchingOrderStore(RecordingOrderStore):
+        def save(self, order):
+            lock_held_during_save.append(not real_lock.acquire(blocking=False))
+            if not lock_held_during_save[-1]:
+                real_lock.release()
+            super().save(order)
+
+    runtime = SimpleNamespace(
+        order_store=LockWatchingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        store_lock=real_lock,
+    )
+    broker = RecordingBroker()
+    cycle_result = CycleResult(
+        as_of=now,
+        intents=[
+            CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="AAPL",
+                timestamp=now,
+                stop_price=111.7,
+            )
+        ],
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=cycle_result,
+        now=now,
+    )
+
+    assert lock_held_during_save, "order_store.save was never called"
+    assert all(lock_held_during_save), (
+        "store_lock must be held for every order_store.save call during UPDATE_STOP"
+    )
+
+
+def test_execute_cycle_intents_acquires_store_lock_on_order_store_save_during_exit() -> None:
+    """order_store.save must be called while store_lock is held during EXIT intent."""
+    import threading
+
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 50, tzinfo=timezone.utc)
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:lock-exit-test",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-exit-lock",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    lock_held_during_save: list[bool] = []
+    real_lock = threading.Lock()
+
+    class LockWatchingOrderStore(RecordingOrderStore):
+        def save(self, order):
+            lock_held_during_save.append(not real_lock.acquire(blocking=False))
+            if not lock_held_during_save[-1]:
+                real_lock.release()
+            super().save(order)
+
+    runtime = SimpleNamespace(
+        order_store=LockWatchingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        store_lock=real_lock,
+    )
+    broker = RecordingBroker()
+    cycle_result = CycleResult(
+        as_of=now,
+        intents=[
+            CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )
+        ],
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=cycle_result,
+        now=now,
+    )
+
+    assert lock_held_during_save, "order_store.save was never called during EXIT"
+    assert all(lock_held_during_save), (
+        "store_lock must be held for every order_store.save call during EXIT"
+    )
+
+
+def test_execute_cycle_intents_emits_audit_event_when_position_already_gone() -> None:
+    """When broker reports position already gone, an AuditEvent must still be appended."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 50, tzinfo=timezone.utc)
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:already-gone-audit-test",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-gone",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+    )
+    broker = RecordingBroker(cancel_raises=Exception("not found: already filled"))
+    cycle_result = CycleResult(
+        as_of=now,
+        intents=[
+            CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )
+        ],
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=cycle_result,
+        now=now,
+    )
+
+    audit_events = runtime.audit_event_store.appended
+    # An audit event must be emitted even on the position_already_gone early-return path.
+    assert len(audit_events) >= 1, "No AuditEvent was appended for position_already_gone exit"
+    skipped_event = next(
+        (e for e in audit_events if e.event_type == "cycle_intent_executed"), None
+    )
+    assert skipped_event is not None, "Expected cycle_intent_executed event for position_already_gone"
+    assert skipped_event.payload["action"] == "skipped_position_already_gone"

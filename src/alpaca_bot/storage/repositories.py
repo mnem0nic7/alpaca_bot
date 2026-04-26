@@ -393,6 +393,7 @@ class OrderStore:
                     WHERE e.symbol = x.symbol
                       AND e.trading_mode = x.trading_mode
                       AND e.strategy_version = x.strategy_version
+                      AND e.strategy_name = x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
                       AND DATE(e.updated_at AT TIME ZONE 'America/New_York') = %s

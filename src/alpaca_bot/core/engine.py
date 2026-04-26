@@ -157,6 +157,8 @@ def evaluate_cycle(
                 if signal is None:
                     continue
 
+                if signal.initial_stop_price >= signal.limit_price:
+                    continue
                 quantity = calculate_position_size(
                     equity=equity,
                     entry_price=signal.limit_price,

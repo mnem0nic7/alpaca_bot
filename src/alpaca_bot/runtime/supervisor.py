@@ -181,30 +181,33 @@ class RuntimeSupervisor:
         timestamp = _resolve_now(now)
         broker_open_orders = list(_list_open_orders(self.broker))
         broker_open_positions = list(_list_open_positions(self.broker))
-        recovery_report = recover_startup_state(
-            settings=self.settings,
-            runtime=self.runtime,
-            broker_open_positions=broker_open_positions,
-            broker_open_orders=broker_open_orders,
-            now=timestamp,
-            audit_event_type=None,
-        )
-        if recovery_report.mismatches:
-            self.runtime.audit_event_store.append(
-                AuditEvent(
-                    event_type="runtime_reconciliation_detected",
-                    payload={
-                        "mismatch_count": len(recovery_report.mismatches),
-                        "mismatches": list(recovery_report.mismatches),
-                        "synced_position_count": recovery_report.synced_position_count,
-                        "synced_order_count": recovery_report.synced_order_count,
-                        "cleared_position_count": recovery_report.cleared_position_count,
-                        "cleared_order_count": recovery_report.cleared_order_count,
-                        "timestamp": timestamp.isoformat(),
-                    },
-                    created_at=timestamp,
-                )
+        _rec_lock = getattr(self.runtime, "store_lock", None)
+        _rec_lock_ctx = _rec_lock if _rec_lock is not None else contextlib.nullcontext()
+        with _rec_lock_ctx:
+            recovery_report = recover_startup_state(
+                settings=self.settings,
+                runtime=self.runtime,
+                broker_open_positions=broker_open_positions,
+                broker_open_orders=broker_open_orders,
+                now=timestamp,
+                audit_event_type=None,
             )
+            if recovery_report.mismatches:
+                self.runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="runtime_reconciliation_detected",
+                        payload={
+                            "mismatch_count": len(recovery_report.mismatches),
+                            "mismatches": list(recovery_report.mismatches),
+                            "synced_position_count": recovery_report.synced_position_count,
+                            "synced_order_count": recovery_report.synced_order_count,
+                            "cleared_position_count": recovery_report.cleared_position_count,
+                            "cleared_order_count": recovery_report.cleared_order_count,
+                            "timestamp": timestamp.isoformat(),
+                        },
+                        created_at=timestamp,
+                    )
+                )
         account = self.broker.get_account()
         session_date = _session_date(timestamp, self.settings)
 

@@ -342,6 +342,19 @@ def _execute_exit(
         with lock_ctx:
             for record in canceled_order_records:
                 runtime.order_store.save(record)
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="cycle_intent_executed",
+                    symbol=symbol,
+                    payload={
+                        "intent_type": "exit",
+                        "action": "skipped_position_already_gone",
+                        "reason": reason,
+                        "canceled_stop_count": canceled_stop_count,
+                    },
+                    created_at=now,
+                )
+            )
         return canceled_stop_count, 0
 
     client_order_id = _exit_client_order_id(
