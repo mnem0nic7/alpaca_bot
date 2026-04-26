@@ -66,6 +66,7 @@ def make_snapshot_stores(*, events=None, latest=None):
         position_store=SimpleNamespace(list_all=lambda **_: []),
         order_store=SimpleNamespace(list_by_status=lambda **_: [], list_recent=lambda **_: []),
         audit_event_store=make_audit_store(events=events, latest=latest),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
     )
 
 
@@ -105,6 +106,7 @@ def test_load_dashboard_snapshot_session_date_uses_market_timezone() -> None:
         position_store=SimpleNamespace(list_all=lambda **_: []),
         order_store=SimpleNamespace(list_by_status=lambda **_: [], list_recent=lambda **_: []),
         audit_event_store=make_audit_store(),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
     )
 
     assert captured == [date(2026, 4, 24)]
@@ -128,6 +130,7 @@ def test_load_dashboard_snapshot_passes_trading_mode_and_strategy_to_stores() ->
         position_store=SimpleNamespace(list_all=lambda **_: []),
         order_store=SimpleNamespace(list_by_status=lambda **_: [], list_recent=lambda **_: []),
         audit_event_store=make_audit_store(),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
     )
 
     assert captured_kwargs[0]["trading_mode"] == settings.trading_mode
@@ -152,6 +155,7 @@ def test_load_dashboard_snapshot_requests_12_recent_events() -> None:
             list_recent=recording_list_recent,
             load_latest=lambda **_: None,
         ),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
     )
 
     assert limits == [12]
@@ -492,7 +496,7 @@ def test_load_metrics_snapshot_passes_admin_event_types() -> None:
         tuning_result_store=SimpleNamespace(load_latest_best=lambda **_: None),
     )
 
-    assert captured_types == [["trading_status_changed"]]
+    assert captured_types == [["trading_status_changed", "strategy_flag_changed"]]
 
 
 # ---------------------------------------------------------------------------
@@ -502,10 +506,11 @@ def test_load_metrics_snapshot_passes_admin_event_types() -> None:
 from alpaca_bot.web.service import TradeRecord
 
 
-def _trade(*, symbol="AAPL", entry=100.0, exit=110.0, qty=10, slippage=None):
+def _trade(*, symbol="AAPL", entry=100.0, exit=110.0, qty=10, slippage=None, strategy_name="breakout"):
     pnl = (exit - entry) * qty
     return TradeRecord(
         symbol=symbol,
+        strategy_name=strategy_name,
         entry_time=None,
         exit_time=None,
         entry_price=entry,
@@ -563,3 +568,66 @@ def test_max_drawdown_pct_with_recovery():
         _trade(entry=200, exit=150, qty=1),    # pnl= -50, cumulative=50
     ]
     assert _max_drawdown_pct(trades) == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+# trades_by_strategy (Task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_metrics_snapshot_has_trades_by_strategy():
+    from alpaca_bot.web.service import MetricsSnapshot
+    fields = {name for name in MetricsSnapshot.__dataclass_fields__}
+    assert "trades_by_strategy" in fields
+
+
+def test_load_metrics_snapshot_groups_by_strategy():
+    raw_trades = [
+        {
+            "symbol": "AAPL",
+            "strategy_name": "breakout",
+            "entry_fill": 150.0,
+            "entry_limit": 150.1,
+            "entry_time": datetime(2026, 1, 2, 10, tzinfo=timezone.utc),
+            "exit_fill": 155.0,
+            "exit_time": datetime(2026, 1, 2, 14, tzinfo=timezone.utc),
+            "qty": 10,
+        },
+        {
+            "symbol": "TSLA",
+            "strategy_name": "momentum",
+            "entry_fill": 200.0,
+            "entry_limit": 200.2,
+            "entry_time": datetime(2026, 1, 2, 10, tzinfo=timezone.utc),
+            "exit_fill": 210.0,
+            "exit_time": datetime(2026, 1, 2, 14, tzinfo=timezone.utc),
+            "qty": 5,
+        },
+    ]
+
+    settings = make_settings()
+    snapshot = load_metrics_snapshot(
+        settings=settings,
+        connection=SimpleNamespace(),
+        order_store=SimpleNamespace(
+            list_closed_trades=lambda **_: raw_trades,
+        ),
+        audit_event_store=SimpleNamespace(
+            list_by_event_types=lambda **_: [],
+        ),
+        tuning_result_store=SimpleNamespace(
+            load_latest_best=lambda **_: None,
+        ),
+    )
+
+    assert "breakout" in snapshot.trades_by_strategy
+    assert "momentum" in snapshot.trades_by_strategy
+    assert len(snapshot.trades_by_strategy["breakout"]) == 1
+    assert len(snapshot.trades_by_strategy["momentum"]) == 1
+    assert len(snapshot.trades) == 2
+
+
+def test_trade_record_has_strategy_name():
+    from alpaca_bot.web.service import TradeRecord
+    fields = {name for name in TradeRecord.__dataclass_fields__}
+    assert "strategy_name" in fields

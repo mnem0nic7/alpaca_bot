@@ -13,13 +13,16 @@ from alpaca_bot.storage import (
     OrderStore,
     PositionRecord,
     PositionStore,
+    StrategyFlag,
+    StrategyFlagStore,
     TradingStatus,
     TradingStatusStore,
 )
 from alpaca_bot.storage.repositories import TuningResultStore
 from alpaca_bot.storage.db import ConnectionProtocol
+from alpaca_bot.strategy import STRATEGY_REGISTRY
 
-ADMIN_EVENT_TYPES = ["trading_status_changed"]
+ADMIN_EVENT_TYPES = ["trading_status_changed", "strategy_flag_changed"]
 
 WORKING_ORDER_STATUSES = [
     "pending_submit",
@@ -41,6 +44,7 @@ WORKER_STALE_AFTER_SECONDS = 180
 @dataclass(frozen=True)
 class TradeRecord:
     symbol: str
+    strategy_name: str
     entry_time: datetime | None
     exit_time: datetime | None
     entry_price: float
@@ -70,6 +74,7 @@ class MetricsSnapshot:
     generated_at: datetime
     session_date: date
     trades: list[TradeRecord]
+    trades_by_strategy: dict[str, list[TradeRecord]]
     total_pnl: float
     win_rate: float | None
     mean_return_pct: float | None
@@ -89,6 +94,7 @@ class DashboardSnapshot:
     recent_orders: list[OrderRecord]
     recent_events: list[AuditEvent]
     worker_health: WorkerHealth
+    strategy_flags: list[tuple[str, StrategyFlag | None]]
 
 
 def load_dashboard_snapshot(
@@ -100,6 +106,7 @@ def load_dashboard_snapshot(
     position_store: PositionStore | None = None,
     order_store: OrderStore | None = None,
     audit_event_store: AuditEventStore | None = None,
+    strategy_flag_store: StrategyFlagStore | None = None,
     now: datetime | None = None,
 ) -> DashboardSnapshot:
     generated_at = now or datetime.now(timezone.utc)
@@ -109,7 +116,17 @@ def load_dashboard_snapshot(
     position_store = position_store or PositionStore(connection)
     order_store = order_store or OrderStore(connection)
     audit_event_store = audit_event_store or AuditEventStore(connection)
+    strategy_flag_store = strategy_flag_store or StrategyFlagStore(connection)
     recent_events = audit_event_store.list_recent(limit=12)
+
+    flags_by_name = {
+        f.strategy_name: f
+        for f in strategy_flag_store.list_all(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+        )
+    }
+    strategy_flags = [(name, flags_by_name.get(name)) for name in STRATEGY_REGISTRY]
 
     return DashboardSnapshot(
         generated_at=generated_at,
@@ -142,6 +159,7 @@ def load_dashboard_snapshot(
             recent_events=recent_events,
             now=generated_at,
         ),
+        strategy_flags=strategy_flags,
     )
 
 
@@ -190,6 +208,9 @@ def load_metrics_snapshot(
         session_date=session_date,
     )
     trades = [_to_trade_record(t) for t in raw_trades]
+    trades_by_strategy: dict[str, list[TradeRecord]] = {}
+    for trade in trades:
+        trades_by_strategy.setdefault(trade.strategy_name, []).append(trade)
     admin_history = audit_event_store.list_by_event_types(
         event_types=ADMIN_EVENT_TYPES,
         limit=20,
@@ -199,11 +220,12 @@ def load_metrics_snapshot(
         generated_at=generated_at,
         session_date=session_date,
         trades=trades,
+        trades_by_strategy=trades_by_strategy,
         total_pnl=sum(t.pnl for t in trades),
         win_rate=_win_rate(trades),
         mean_return_pct=_mean_return_pct(trades),
         max_drawdown_pct=_max_drawdown_pct(trades),
-        sharpe_ratio=None,
+        sharpe_ratio=_compute_sharpe_from_trade_records(trades),
         admin_history=admin_history,
         last_backtest=last_tuning,
     )
@@ -221,6 +243,7 @@ def _to_trade_record(row: dict) -> TradeRecord:
     )
     return TradeRecord(
         symbol=row["symbol"],
+        strategy_name=row.get("strategy_name", "breakout"),
         entry_time=row.get("entry_time"),
         exit_time=row.get("exit_time"),
         entry_price=entry_fill,
@@ -229,6 +252,22 @@ def _to_trade_record(row: dict) -> TradeRecord:
         pnl=pnl,
         slippage=slippage,
     )
+
+
+def _compute_sharpe_from_trade_records(trades: list[TradeRecord]) -> float | None:
+    returns = [
+        t.pnl / (t.entry_price * t.quantity)
+        for t in trades
+        if t.entry_price > 0 and t.quantity > 0
+    ]
+    if len(returns) < 2:
+        return None
+    mean_r = sum(returns) / len(returns)
+    variance = sum((r - mean_r) ** 2 for r in returns) / (len(returns) - 1)
+    std_r = variance ** 0.5
+    if std_r == 0.0:
+        return None
+    return mean_r / std_r
 
 
 def _win_rate(trades: list[TradeRecord]) -> float | None:

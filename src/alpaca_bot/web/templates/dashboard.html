@@ -117,6 +117,11 @@
   </head>
   <body>
     <main>
+      {% if settings.trading_mode.value == "live" %}
+        <div style="background: #c0392b; color: #fff; text-align: center; padding: 0.6rem 1rem; font-weight: 700; letter-spacing: 0.05em; margin-bottom: 1rem;">
+          &#9888; LIVE TRADING ACTIVE &mdash; real capital at risk
+        </div>
+      {% endif %}
       {% if operator_email %}
         <section class="panel" style="margin-bottom: 1rem;">
           <div>
@@ -229,6 +234,28 @@
         </div>
       </section>
 
+      <div class="panel" style="margin-bottom: 1rem;">
+        <h2>Strategies</h2>
+        {% for name, flag in snapshot.strategy_flags %}
+          <form method="post" action="/strategies/{{ name }}/toggle"
+                style="margin-bottom: 0.6rem;">
+            <div style="display: flex; align-items: center; gap: 1rem;">
+              <span class="mono" style="min-width: 8rem;">{{ name }}</span>
+              {% set is_enabled = (flag is none or flag.enabled) %}
+              <span class="{{ '' if is_enabled else 'warn' }}">
+                {{ "Enabled" if is_enabled else "Disabled" }}
+              </span>
+              <button type="submit"
+                      style="border: 1px solid var(--line); border-radius: 999px;
+                             background: #f7f2e7; color: var(--ink);
+                             padding: 0.35rem 0.8rem; font: inherit; cursor: pointer;">
+                {{ "Disable" if is_enabled else "Enable" }}
+              </button>
+            </div>
+          </form>
+        {% endfor %}
+      </div>
+
       <section class="section-grid">
         <div class="panel">
           <h2>Open Positions</h2>
@@ -237,6 +264,7 @@
               <thead>
                 <tr>
                   <th>Symbol</th>
+                  <th>Strategy</th>
                   <th>Qty</th>
                   <th>Entry</th>
                   <th>Stop</th>
@@ -247,13 +275,14 @@
                 {% for position in snapshot.positions %}
                   <tr>
                     <td class="mono">{{ position.symbol }}</td>
+                    <td>{{ position.strategy_name }}</td>
                     <td>{{ position.quantity }}</td>
                     <td>{{ format_price(position.entry_price) }}</td>
                     <td>{{ format_price(position.stop_price) }}</td>
                     <td>{{ format_timestamp(position.opened_at) }}</td>
                   </tr>
                 {% else %}
-                  <tr><td colspan="5" class="muted">No open positions.</td></tr>
+                  <tr><td colspan="6" class="muted">No open positions.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
@@ -411,7 +440,9 @@
             </div>
             <div>
               <p class="eyebrow">Sharpe</p>
-              <p class="value muted">n/a</p>
+              <p class="value {% if metrics.sharpe_ratio is none %}muted{% endif %}">
+                {{ "%.2f" | format(metrics.sharpe_ratio) if metrics.sharpe_ratio is not none else "n/a" }}
+              </p>
             </div>
           </div>
         </div>
@@ -427,6 +458,7 @@
                   <th>Entry</th>
                   <th>Exit</th>
                   <th>P&amp;L</th>
+                  <th>Slippage</th>
                 </tr>
               </thead>
               <tbody>
@@ -439,39 +471,12 @@
                     <td class="{% if trade.pnl < 0 %}warn{% endif %}">
                       {{ format_price(trade.pnl) }}
                     </td>
+                    <td class="{% if trade.slippage is not none %}{% if trade.slippage < 0 %}warn{% else %}muted{% endif %}{% else %}muted{% endif %}">
+                      {{ format_price(trade.slippage) if trade.slippage is not none else "&mdash;" }}
+                    </td>
                   </tr>
                 {% else %}
-                  <tr><td colspan="5" class="muted">No closed trades today.</td></tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="panel">
-          <h2>Slippage</h2>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Entry Slippage</th>
-                  <th>Direction</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for trade in metrics.trades %}
-                  {% if trade.slippage is not none %}
-                    <tr>
-                      <td class="mono">{{ trade.symbol }}</td>
-                      <td>{{ format_price(trade.slippage) }}</td>
-                      <td class="{% if trade.slippage < 0 %}warn{% else %}muted{% endif %}">
-                        {{ "favorable" if trade.slippage >= 0 else "adverse" }}
-                      </td>
-                    </tr>
-                  {% endif %}
-                {% else %}
-                  <tr><td colspan="3" class="muted">No slippage data.</td></tr>
+                  <tr><td colspan="6" class="muted">No closed trades today.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
