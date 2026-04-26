@@ -756,6 +756,7 @@ def _synced_position_record(
         symbol=position.symbol,
         trading_mode=settings.trading_mode,
         strategy_version=settings.strategy_version,
+        strategy_name=existing.strategy_name if existing is not None else "breakout",
         quantity=position.quantity,
         entry_price=position.entry_price or 0.0,
         stop_price=existing.stop_price if existing is not None else 0.0,

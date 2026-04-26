@@ -129,6 +129,7 @@
             <p class="value mono">{{ operator_email }}</p>
           </div>
           <form method="post" action="/logout" style="margin-top: 0.8rem;">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'logout') }}">
             <button type="submit" style="border: 1px solid var(--line); border-radius: 999px; background: #f7f2e7; color: var(--ink); padding: 0.45rem 0.9rem; font: inherit; cursor: pointer;">
               Sign out
             </button>
@@ -239,6 +240,7 @@
         {% for name, flag in snapshot.strategy_flags %}
           <form method="post" action="/strategies/{{ name }}/toggle"
                 style="margin-bottom: 0.6rem;">
+            <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'toggle') }}">
             <div style="display: flex; align-items: center; gap: 1rem;">
               <span class="mono" style="min-width: 8rem;">{{ name }}</span>
               {% set is_enabled = (flag is none or flag.enabled) %}

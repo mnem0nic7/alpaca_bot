@@ -196,5 +196,25 @@ def _parse_session_operator(request: Request, *, settings: Settings) -> str | No
     return configured_username
 
 
+def csrf_token_for_session(request: Request, *, settings: Settings, action: str = "form") -> str:
+    cookies = getattr(request, "cookies", {}) or {}
+    session_cookie = cookies.get(_SESSION_COOKIE_NAME, "")
+    configured_hash = settings.dashboard_auth_password_hash or ""
+    key = configured_hash.encode("utf-8") or b"no-auth"
+    message = f"{session_cookie}\n{action}".encode("utf-8")
+    return hmac.HMAC(key, message, hashlib.sha256).hexdigest()
+
+
+def validate_csrf_token(
+    request: Request,
+    token: str,
+    *,
+    settings: Settings,
+    action: str = "form",
+) -> bool:
+    expected = csrf_token_for_session(request, settings=settings, action=action)
+    return hmac.compare_digest(token, expected)
+
+
 def _normalize_username(value: str) -> str:
     return value.strip().lower()

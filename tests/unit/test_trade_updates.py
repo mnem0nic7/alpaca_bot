@@ -713,3 +713,38 @@ class TestFillPricePersistence:
         stop_orders = [o for o in runtime.order_store.saved if o.intent_type == "stop"]
         assert len(stop_orders) == 1
         assert stop_orders[0].strategy_name == "orb"
+
+
+def test_final_fill_updates_pending_stop_quantity_to_match_actual_fill() -> None:
+    """When a partial fill creates a pending_submit stop, the final fill event must
+    update the stop quantity to the actual filled quantity so the protective stop
+    covers the correct number of shares."""
+    entry_order = _make_entry_order(quantity=10, initial_stop_price=109.50)
+    stop_id = _expected_stop_order_id(entry_order.client_order_id)
+    existing_stop = OrderRecord(
+        client_order_id=stop_id,
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=7,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        created_at=NOW,
+        updated_at=NOW,
+        stop_price=109.50,
+        initial_stop_price=109.50,
+        signal_timestamp=NOW,
+    )
+    runtime = _make_runtime(orders=[entry_order, existing_stop])
+
+    update = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+    _apply(runtime, update)
+
+    stop_saves = [o for o in runtime.order_store.saved if o.intent_type == "stop"]
+    assert len(stop_saves) == 1, f"Expected 1 stop update, got {stop_saves}"
+    assert stop_saves[0].quantity == 10, (
+        f"Expected stop quantity updated to 10 (final filled qty), got {stop_saves[0].quantity}"
+    )
+    assert stop_saves[0].status == "pending_submit"

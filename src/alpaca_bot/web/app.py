@@ -26,8 +26,10 @@ from alpaca_bot.web.auth import (
     authenticate_operator,
     auth_enabled,
     clear_operator_session,
+    csrf_token_for_session,
     current_operator,
     set_operator_session,
+    validate_csrf_token,
 )
 from alpaca_bot.web.service import (
     load_dashboard_snapshot,
@@ -64,6 +66,11 @@ def create_app(
         settings=app_settings,
     )
     templates.env.globals["format_price"] = _format_price
+    templates.env.globals["csrf_token_for"] = lambda request, action: csrf_token_for_session(
+        request,
+        settings=app_settings,
+        action=action,
+    )
 
     app = FastAPI(title="alpaca_bot dashboard")
     app.state.settings = app_settings
@@ -179,7 +186,13 @@ def create_app(
         return response
 
     @app.post("/logout")
-    def logout() -> RedirectResponse:
+    async def logout(request: Request) -> Response:
+        fields = await _read_form_fields(request)
+        token = fields.get("_csrf_token", "")
+        if auth_enabled(app_settings) and not validate_csrf_token(
+            request, token, settings=app_settings, action="logout"
+        ):
+            return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
         response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
         clear_operator_session(response)
         return response
@@ -227,10 +240,16 @@ def create_app(
         )
 
     @app.post("/strategies/{strategy_name}/toggle")
-    def toggle_strategy(strategy_name: str, request: Request) -> Response:
+    async def toggle_strategy(strategy_name: str, request: Request) -> Response:
         operator = current_operator(request, settings=app_settings)
         if auth_enabled(app_settings) and operator is None:
             return RedirectResponse(url="/login?next=/", status_code=status.HTTP_303_SEE_OTHER)
+        fields = await _read_form_fields(request)
+        token = fields.get("_csrf_token", "")
+        if auth_enabled(app_settings) and not validate_csrf_token(
+            request, token, settings=app_settings, action="toggle"
+        ):
+            return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
         if strategy_name not in STRATEGY_REGISTRY:
             return HTMLResponse(
                 status_code=status.HTTP_404_NOT_FOUND,

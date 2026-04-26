@@ -182,6 +182,32 @@ def apply_trade_update(
                 )
                 protective_stop_queued = True
             else:
+                if (
+                    normalized.status == "filled"
+                    and existing_stop.status == "pending_submit"
+                    and normalized.filled_qty is not None
+                    and existing_stop.quantity != normalized.filled_qty
+                ):
+                    runtime.order_store.save(
+                        OrderRecord(
+                            client_order_id=existing_stop.client_order_id,
+                            symbol=existing_stop.symbol,
+                            side=existing_stop.side,
+                            intent_type=existing_stop.intent_type,
+                            status=existing_stop.status,
+                            quantity=normalized.filled_qty,
+                            trading_mode=existing_stop.trading_mode,
+                            strategy_version=existing_stop.strategy_version,
+                            strategy_name=existing_stop.strategy_name,
+                            created_at=existing_stop.created_at,
+                            updated_at=timestamp,
+                            stop_price=existing_stop.stop_price,
+                            limit_price=existing_stop.limit_price,
+                            initial_stop_price=existing_stop.initial_stop_price,
+                            broker_order_id=existing_stop.broker_order_id,
+                            signal_timestamp=existing_stop.signal_timestamp,
+                        )
+                    )
                 protective_stop_client_order_id = None
     elif matched_order.intent_type in {"stop", "exit"} and normalized.status == "filled":
         runtime.position_store.delete(
