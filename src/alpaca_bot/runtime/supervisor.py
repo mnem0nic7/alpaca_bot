@@ -216,13 +216,16 @@ class RuntimeSupervisor:
                 )
             )
             if self._notifier is not None:
-                self._notifier.send(
-                    subject="Daily loss limit breached",
-                    body=(
-                        f"Realized PnL {realized_pnl:.2f} exceeded limit "
-                        f"{-loss_limit:.2f}. Entries disabled for the session."
-                    ),
-                )
+                try:
+                    self._notifier.send(
+                        subject="Daily loss limit breached",
+                        body=(
+                            f"Realized PnL {realized_pnl:.2f} exceeded limit "
+                            f"{-loss_limit:.2f}. Entries disabled for the session."
+                        ),
+                    )
+                except Exception:
+                    logger.exception("Notifier failed to send daily loss limit alert")
 
         status = self._effective_trading_status(
             session_date=session_date, session_state=session_state

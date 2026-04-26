@@ -685,7 +685,8 @@ def test_metrics_route_returns_503_when_database_fails() -> None:
     with TestClient(app) as client:
         response = client.get("/metrics")
     assert response.status_code == 503
-    assert "metrics db down" in response.text
+    assert "metrics unavailable" in response.text
+    assert "metrics db down" not in response.text
 
 
 # ---------------------------------------------------------------------------
@@ -708,7 +709,8 @@ def test_dashboard_returns_503_when_snapshot_load_fails() -> None:
 
     assert response.status_code == 503
     assert "alpaca_bot dashboard unavailable" in response.text
-    assert "store unavailable" in response.text
+    assert "store unavailable" not in response.text
+    assert "Service temporarily unavailable" in response.text
 
 
 def test_dashboard_renders_kill_switch_engaged_warning() -> None:

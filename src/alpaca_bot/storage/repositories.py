@@ -655,15 +655,56 @@ class PositionStore:
                 self._connection,
                 "DELETE FROM positions WHERE trading_mode = %s AND strategy_version = %s AND strategy_name = %s",
                 (trading_mode.value, strategy_version, strategy_name),
+                commit=False,
             )
         else:
             execute(
                 self._connection,
                 "DELETE FROM positions WHERE trading_mode = %s AND strategy_version = %s",
                 (trading_mode.value, strategy_version),
+                commit=False,
             )
         for position in positions:
-            self.save(position)
+            execute(
+                self._connection,
+                """
+                INSERT INTO positions (
+                    symbol,
+                    trading_mode,
+                    strategy_version,
+                    strategy_name,
+                    quantity,
+                    entry_price,
+                    stop_price,
+                    initial_stop_price,
+                    opened_at,
+                    updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (symbol, trading_mode, strategy_version, strategy_name)
+                DO UPDATE SET
+                    quantity = EXCLUDED.quantity,
+                    entry_price = EXCLUDED.entry_price,
+                    stop_price = EXCLUDED.stop_price,
+                    initial_stop_price = EXCLUDED.initial_stop_price,
+                    opened_at = EXCLUDED.opened_at,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (
+                    position.symbol,
+                    position.trading_mode.value,
+                    position.strategy_version,
+                    position.strategy_name,
+                    position.quantity,
+                    position.entry_price,
+                    position.stop_price,
+                    position.initial_stop_price,
+                    position.opened_at,
+                    position.updated_at,
+                ),
+                commit=False,
+            )
+        self._connection.commit()
 
     def delete(
         self,

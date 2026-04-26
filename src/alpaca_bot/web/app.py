@@ -91,12 +91,12 @@ def create_app(
             )
         try:
             snapshot, metrics = _load_dashboard_data(app)
-        except Exception as exc:
+        except Exception:
             return HTMLResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content=(
                     "<html><body><h1>alpaca_bot dashboard unavailable</h1>"
-                    f"<p>{exc}</p></body></html>"
+                    "<p>Service temporarily unavailable.</p></body></html>"
                 ),
             )
         return templates.TemplateResponse(
@@ -122,12 +122,12 @@ def create_app(
             )
         try:
             _, metrics = _load_dashboard_data(app)
-        except Exception as exc:
+        except Exception:
             return HTMLResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 content=(
                     "<html><body><h1>alpaca_bot metrics unavailable</h1>"
-                    f"<p>{exc}</p></body></html>"
+                    "<p>Service temporarily unavailable.</p></body></html>"
                 ),
             )
         return templates.TemplateResponse(

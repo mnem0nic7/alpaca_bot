@@ -121,7 +121,9 @@ def evaluate_cycle(
                 )
 
     if not entries_disabled:
-        available_slots = max(settings.max_open_positions - len(open_positions), 0)
+        available_slots = max(
+            settings.max_open_positions - len(open_positions) - len(working_order_symbols), 0
+        )
         if available_slots > 0:
             current_exposure = (
                 sum(p.entry_price * p.quantity for p in open_positions) / equity
@@ -186,18 +188,16 @@ def evaluate_cycle(
             entry_candidates.sort(
                 key=lambda item: (-item[0], -item[1], item[2].symbol),
             )
-            remaining_exposure = settings.max_portfolio_exposure_pct - current_exposure
             selected: list[CycleIntent] = []
             for *_rank, candidate in entry_candidates:
                 if len(selected) >= available_slots:
                     break
                 candidate_exposure = (
-                    (candidate.stop_price or 0.0) * (candidate.quantity or 0) / equity
+                    (candidate.limit_price or 0.0) * (candidate.quantity or 0) / equity
                     if equity > 0
                     else 0.0
                 )
                 if current_exposure + candidate_exposure > settings.max_portfolio_exposure_pct:
-                    remaining_exposure -= candidate_exposure
                     continue
                 selected.append(candidate)
                 current_exposure += candidate_exposure

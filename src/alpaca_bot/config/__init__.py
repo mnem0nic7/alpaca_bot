@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import time
 from enum import StrEnum
 import os
@@ -55,7 +55,7 @@ class Settings:
     trading_mode: TradingMode
     enable_live_trading: bool
     strategy_version: str
-    database_url: str
+    database_url: str = field(repr=False)
     market_data_feed: MarketDataFeed
     symbols: tuple[str, ...]
     daily_sma_period: int
@@ -84,18 +84,18 @@ class Settings:
     market_timezone: ZoneInfo = ZoneInfo("America/New_York")
     dashboard_auth_enabled: bool = False
     dashboard_auth_username: str | None = None
-    dashboard_auth_password_hash: str | None = None
-    alpaca_paper_api_key: str | None = None
-    alpaca_paper_secret_key: str | None = None
-    alpaca_live_api_key: str | None = None
-    alpaca_live_secret_key: str | None = None
-    slack_webhook_url: str | None = None
+    dashboard_auth_password_hash: str | None = field(default=None, repr=False)
+    alpaca_paper_api_key: str | None = field(default=None, repr=False)
+    alpaca_paper_secret_key: str | None = field(default=None, repr=False)
+    alpaca_live_api_key: str | None = field(default=None, repr=False)
+    alpaca_live_secret_key: str | None = field(default=None, repr=False)
+    slack_webhook_url: str | None = field(default=None, repr=False)
     notify_email_from: str | None = None
     notify_email_to: str | None = None
     notify_smtp_host: str | None = None
     notify_smtp_port: int = 587
     notify_smtp_user: str | None = None
-    notify_smtp_password: str | None = None
+    notify_smtp_password: str | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.validate()

@@ -83,7 +83,12 @@ def set_operator_session(
 
 
 def clear_operator_session(response: Response) -> None:
-    response.delete_cookie(_SESSION_COOKIE_NAME)
+    response.delete_cookie(
+        _SESSION_COOKIE_NAME,
+        httponly=True,
+        samesite="lax",
+        secure=True,
+    )
 
 
 def authenticate_operator(

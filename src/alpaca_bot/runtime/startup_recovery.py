@@ -70,6 +70,7 @@ def recover_startup_state(
     now: datetime | Callable[[], datetime] | None = None,
     audit_event_type: str | None = "startup_recovery_completed",
     notifier: Notifier | None = None,
+    default_strategy_name: str = "breakout",
 ) -> StartupRecoveryReport:
     timestamp = _resolve_now(now)
     mismatches: list[str] = []
@@ -108,7 +109,7 @@ def recover_startup_state(
                     symbol=broker_position.symbol,
                     trading_mode=settings.trading_mode,
                     strategy_version=settings.strategy_version,
-                    strategy_name="breakout",
+                    strategy_name=default_strategy_name,
                     quantity=broker_position.quantity,
                     entry_price=broker_position.entry_price if broker_position.entry_price is not None else 0.0,
                     stop_price=stop_price,

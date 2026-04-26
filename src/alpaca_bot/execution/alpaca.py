@@ -446,7 +446,7 @@ class AlpacaMarketDataAdapter:
             timeframe_minutes=timeframe_minutes,
             settings=self._settings if self._settings is not None else _fallback_settings(),
         )
-        raw = self._historical.get_stock_bars(request)
+        raw = _retry_with_backoff(lambda: self._historical.get_stock_bars(request))
         return _parse_barset(raw)
 
     def get_daily_bars(
@@ -463,7 +463,7 @@ class AlpacaMarketDataAdapter:
             timeframe_minutes=None,
             settings=self._settings if self._settings is not None else _fallback_settings(),
         )
-        raw = self._historical.get_stock_bars(request)
+        raw = _retry_with_backoff(lambda: self._historical.get_stock_bars(request))
         return _parse_barset(raw)
 
     @staticmethod
