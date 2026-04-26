@@ -22,7 +22,7 @@ class TradingStatusStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
         self._connection = connection
 
-    def save(self, status: TradingStatus) -> None:
+    def save(self, status: TradingStatus, *, commit: bool = True) -> None:
         execute(
             self._connection,
             """
@@ -50,6 +50,7 @@ class TradingStatusStore:
                 status.status_reason,
                 status.updated_at,
             ),
+            commit=commit,
         )
 
     def load(self, *, trading_mode: TradingMode, strategy_version: str) -> TradingStatus | None:
@@ -78,7 +79,7 @@ class AuditEventStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
         self._connection = connection
 
-    def append(self, event: AuditEvent) -> None:
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None:
         execute(
             self._connection,
             """
@@ -96,6 +97,7 @@ class AuditEventStore:
                 json.dumps(event.payload, sort_keys=True),
                 event.created_at,
             ),
+            commit=commit,
         )
 
     def list_recent(self, *, limit: int = 20) -> list[AuditEvent]:

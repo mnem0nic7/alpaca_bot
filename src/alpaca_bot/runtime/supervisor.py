@@ -249,7 +249,7 @@ class RuntimeSupervisor:
         loss_limit = self.settings.daily_loss_limit_pct * baseline_equity
         daily_loss_limit_breached = realized_pnl < -loss_limit
         if daily_loss_limit_breached:
-            self.runtime.audit_event_store.append(
+            self._append_audit(
                 AuditEvent(
                     event_type="daily_loss_limit_breached",
                     payload={
@@ -399,7 +399,7 @@ class RuntimeSupervisor:
                     "Strategy cycle failed for %s; skipping to next strategy",
                     strategy_name,
                 )
-                self.runtime.audit_event_store.append(
+                self._append_audit(
                     AuditEvent(
                         event_type="strategy_cycle_error",
                         payload={
@@ -481,7 +481,7 @@ class RuntimeSupervisor:
                         self._consecutive_cycle_failures += 1
                         log_fn = logger.error if self._consecutive_cycle_failures >= 5 else logger.warning
                         log_fn("Supervisor cycle error: %s", exc, exc_info=True)
-                        self.runtime.audit_event_store.append(
+                        self._append_audit(
                             AuditEvent(
                                 event_type="supervisor_cycle_error",
                                 payload={
@@ -527,7 +527,7 @@ class RuntimeSupervisor:
                                 seconds=backoff_seconds
                             )
                             self._start_stream_thread(now=lambda: timestamp)
-                            self.runtime.audit_event_store.append(
+                            self._append_audit(
                                 AuditEvent(
                                     event_type="trade_update_stream_restarted",
                                     payload={
@@ -538,7 +538,7 @@ class RuntimeSupervisor:
                                 )
                             )
                             if self._stream_restart_attempts >= 5:
-                                self.runtime.audit_event_store.append(
+                                self._append_audit(
                                     AuditEvent(
                                         event_type="stream_restart_failed",
                                         payload={
@@ -561,7 +561,7 @@ class RuntimeSupervisor:
                                     except Exception:
                                         logger.exception("Notifier failed to send stream restart alert")
                     active_iterations += 1
-                    self.runtime.audit_event_store.append(
+                    self._append_audit(
                         AuditEvent(
                             event_type="supervisor_cycle",
                             payload={
@@ -573,7 +573,7 @@ class RuntimeSupervisor:
                     )
                 else:
                     idle_iterations += 1
-                    self.runtime.audit_event_store.append(
+                    self._append_audit(
                         AuditEvent(
                             event_type="supervisor_idle",
                             payload={
@@ -730,6 +730,12 @@ class RuntimeSupervisor:
         store_lock = getattr(self.runtime, "store_lock", None)
         with store_lock if store_lock is not None else contextlib.nullcontext():
             self.runtime.daily_session_state_store.save(state)
+
+    def _append_audit(self, event: AuditEvent) -> None:
+        """Append an AuditEvent while holding store_lock to prevent races with the stream thread."""
+        store_lock = getattr(self.runtime, "store_lock", None)
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            self.runtime.audit_event_store.append(event)
 
     def _effective_trading_status(
         self,

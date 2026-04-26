@@ -149,7 +149,7 @@ def _write_status_change(
     now: datetime,
     kill_switch_enabled: bool,
 ) -> str:
-    del connection, settings
+    del settings
     status = TradingStatus(
         trading_mode=trading_mode,
         strategy_version=strategy_version,
@@ -158,7 +158,9 @@ def _write_status_change(
         status_reason=reason,
         updated_at=now,
     )
-    status_store.save(status)
+    # Write status and audit event atomically so a crash between the two cannot
+    # leave trading_status changed with no corresponding audit trail.
+    status_store.save(status, commit=False)
     event_store.append(
         AuditEvent(
             event_type="trading_status_changed",
@@ -170,8 +172,10 @@ def _write_status_change(
                 reason=reason,
             ),
             created_at=now,
-        )
+        ),
+        commit=False,
     )
+    connection.commit()
     return (
         f"mode={trading_mode.value} "
         f"strategy={strategy_version} "
