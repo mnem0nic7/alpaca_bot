@@ -1796,6 +1796,143 @@ def test_daily_loss_limit_allows_entries_when_not_breached(
     assert breach_events == [], "No breach event expected when PnL is within limit"
 
 
+def test_daily_loss_limit_breach_fires_notifier(monkeypatch) -> None:
+    """When the daily loss limit is breached, the injected notifier must receive a send() call."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = Settings.from_env(
+        {
+            "TRADING_MODE": "paper",
+            "ENABLE_LIVE_TRADING": "false",
+            "STRATEGY_VERSION": "v1-breakout",
+            "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+            "MARKET_DATA_FEED": "sip",
+            "SYMBOLS": "AAPL",
+            "DAILY_SMA_PERIOD": "20",
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "ENTRY_TIMEFRAME_MINUTES": "15",
+            "RISK_PER_TRADE_PCT": "0.0025",
+            "MAX_POSITION_PCT": "0.05",
+            "MAX_OPEN_POSITIONS": "3",
+            "DAILY_LOSS_LIMIT_PCT": "0.05",
+            "STOP_LIMIT_BUFFER_PCT": "0.001",
+            "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+            "ENTRY_STOP_PRICE_BUFFER": "0.01",
+            "ENTRY_WINDOW_START": "10:00",
+            "ENTRY_WINDOW_END": "15:30",
+            "FLATTEN_TIME": "15:45",
+        }
+    )
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    order_store = RecordingOrderStore(daily_pnl=-600.0)
+    broker = FakeBroker(
+        account=BrokerAccount(equity=10_000.0, buying_power=20_000.0, trading_blocked=False)
+    )
+
+    notifier_calls: list[tuple[str, str]] = []
+
+    class _RecordingNotifier:
+        def send(self, subject: str, body: str) -> None:
+            notifier_calls.append((subject, body))
+
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream()
+    runtime = make_runtime_context(settings, order_store=order_store)
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        notifier=_RecordingNotifier(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        cycle_intent_executor=lambda **kwargs: None,
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    assert len(notifier_calls) == 1, "Expected exactly one notifier call on breach"
+    subject, body = notifier_calls[0]
+    assert "loss" in subject.lower()
+    assert "-600" in body or "600" in body
+
+
+def test_daily_loss_limit_no_breach_does_not_fire_notifier(monkeypatch) -> None:
+    """When the daily loss limit is not breached, notifier must not be called."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = Settings.from_env(
+        {
+            "TRADING_MODE": "paper",
+            "ENABLE_LIVE_TRADING": "false",
+            "STRATEGY_VERSION": "v1-breakout",
+            "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+            "MARKET_DATA_FEED": "sip",
+            "SYMBOLS": "AAPL",
+            "DAILY_SMA_PERIOD": "20",
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "ENTRY_TIMEFRAME_MINUTES": "15",
+            "RISK_PER_TRADE_PCT": "0.0025",
+            "MAX_POSITION_PCT": "0.05",
+            "MAX_OPEN_POSITIONS": "3",
+            "DAILY_LOSS_LIMIT_PCT": "0.05",
+            "STOP_LIMIT_BUFFER_PCT": "0.001",
+            "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+            "ENTRY_STOP_PRICE_BUFFER": "0.01",
+            "ENTRY_WINDOW_START": "10:00",
+            "ENTRY_WINDOW_END": "15:30",
+            "FLATTEN_TIME": "15:45",
+        }
+    )
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    order_store = RecordingOrderStore(daily_pnl=-100.0)
+    broker = FakeBroker(
+        account=BrokerAccount(equity=10_000.0, buying_power=20_000.0, trading_blocked=False)
+    )
+
+    notifier_calls: list[tuple[str, str]] = []
+
+    class _RecordingNotifier:
+        def send(self, subject: str, body: str) -> None:
+            notifier_calls.append((subject, body))
+
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream()
+    runtime = make_runtime_context(settings, order_store=order_store)
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        notifier=_RecordingNotifier(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        cycle_intent_executor=lambda **kwargs: None,
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    assert notifier_calls == [], "Notifier must not fire when PnL is within limit"
+
+
 def test_supervisor_passes_midnight_of_session_date_as_daily_bars_end(monkeypatch) -> None:
     """get_daily_bars must receive end=midnight-of-session-date (ET) to avoid including
     today's in-progress bar, which would corrupt signal calculations for all 5 strategies."""

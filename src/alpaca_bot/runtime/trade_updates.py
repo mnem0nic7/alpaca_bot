@@ -109,8 +109,10 @@ def _apply_trade_update_locked(
                     "status": normalized.status,
                 },
                 created_at=timestamp,
-            )
+            ),
+            commit=False,
         )
+        runtime.connection.commit()
         return {
             "matched_order_id": None,
             "status": normalized.status,

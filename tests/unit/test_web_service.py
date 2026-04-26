@@ -470,14 +470,31 @@ def test_load_metrics_snapshot_all_loss_drawdown_is_none() -> None:
     assert metrics.max_drawdown_pct is None
 
 
-def test_load_metrics_snapshot_sharpe_ratio_is_always_none() -> None:
-    """Sharpe ratio is deferred to a future phase — always None."""
+def test_load_metrics_snapshot_sharpe_ratio_is_none_for_fewer_than_two_trades() -> None:
+    """Sharpe requires ≥2 trades with variance; zero or one trade returns None."""
     metrics = load_metrics_snapshot(
         settings=make_settings(),
         connection=SimpleNamespace(),
         **make_metrics_stores(),
     )
     assert metrics.sharpe_ratio is None
+
+
+def test_load_metrics_snapshot_sharpe_ratio_computed_for_multiple_trades() -> None:
+    """Sharpe is computed as mean_return / std_return for two or more trades."""
+    now = datetime(2026, 4, 25, 15, 0, tzinfo=timezone.utc)
+    trades = [
+        {"symbol": "AAPL", "entry_fill": 100.0, "entry_limit": None, "entry_time": now, "exit_fill": 110.0, "exit_time": now, "qty": 10},
+        {"symbol": "AAPL", "entry_fill": 100.0, "entry_limit": None, "entry_time": now, "exit_fill": 90.0, "exit_time": now, "qty": 10},
+    ]
+    metrics = load_metrics_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=now,
+        **make_metrics_stores(trades=trades),
+    )
+    # returns: [+10%, -10%] → mean=0, std≈0.141 → sharpe=0.0
+    assert metrics.sharpe_ratio == pytest.approx(0.0)
 
 
 def test_load_metrics_snapshot_passes_admin_event_types() -> None:

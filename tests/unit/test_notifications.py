@@ -448,3 +448,61 @@ class TestAdminCliNotifier:
             notifier=None,
             now=datetime(2026, 4, 25, 15, 0, tzinfo=timezone.utc),
         )
+
+
+# ---------------------------------------------------------------------------
+# build_notifier factory
+# ---------------------------------------------------------------------------
+
+
+class TestBuildNotifier:
+    from types import SimpleNamespace as _NS
+
+    def _settings(self, **kwargs: object) -> object:
+        from types import SimpleNamespace
+        return SimpleNamespace(**kwargs)
+
+    def test_no_channels_returns_log_only(self):
+        from alpaca_bot.notifications.factory import build_notifier
+
+        notifier = build_notifier(self._settings())
+        assert notifier is LOG_ONLY
+
+    def test_slack_only_returns_slack_notifier(self):
+        from alpaca_bot.notifications.factory import build_notifier
+        from alpaca_bot.notifications.slack import SlackNotifier
+
+        notifier = build_notifier(self._settings(slack_webhook_url="https://hooks.slack.com/x"))
+        assert isinstance(notifier, SlackNotifier)
+
+    def test_email_only_returns_email_notifier(self):
+        from alpaca_bot.notifications.factory import build_notifier
+        from alpaca_bot.notifications.email import EmailNotifier
+
+        notifier = build_notifier(
+            self._settings(
+                notify_smtp_host="smtp.example.com",
+                notify_smtp_port=587,
+                notify_smtp_user="user",
+                notify_smtp_password="pass",
+                notify_email_from="bot@example.com",
+                notify_email_to="op@example.com",
+            )
+        )
+        assert isinstance(notifier, EmailNotifier)
+
+    def test_both_channels_returns_composite(self):
+        from alpaca_bot.notifications.factory import build_notifier
+
+        notifier = build_notifier(
+            self._settings(
+                slack_webhook_url="https://hooks.slack.com/x",
+                notify_smtp_host="smtp.example.com",
+                notify_smtp_port=587,
+                notify_smtp_user="user",
+                notify_smtp_password="pass",
+                notify_email_from="bot@example.com",
+                notify_email_to="op@example.com",
+            )
+        )
+        assert isinstance(notifier, CompositeNotifier)

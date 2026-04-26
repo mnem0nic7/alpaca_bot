@@ -109,7 +109,7 @@ def evaluate_cycle(
             continue
 
         if latest_bar.high >= position.entry_price + position.risk_per_share:
-            new_stop = round(max(position.stop_price, latest_bar.low), 2)
+            new_stop = round(max(position.stop_price, position.entry_price, latest_bar.low), 2)
             if new_stop > position.stop_price:
                 intents.append(
                     CycleIntent(

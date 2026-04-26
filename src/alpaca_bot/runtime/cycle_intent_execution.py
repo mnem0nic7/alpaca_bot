@@ -230,6 +230,15 @@ def _execute_update_stop(
 
     # All store writes under lock — serializes with the trade-update stream thread.
     with lock_ctx:
+        # Re-check: position may have been filled/closed while the broker call was in-flight.
+        current_positions = _positions_by_symbol(runtime, settings)
+        if (symbol, strategy_name) not in current_positions:
+            logger.warning(
+                "Position for %s/%s disappeared during broker stop update; skipping write",
+                symbol,
+                strategy_name,
+            )
+            return None
         runtime.order_store.save(updated_order)
         runtime.position_store.save(
             PositionRecord(
@@ -380,6 +389,15 @@ def _execute_exit(
 
     # Write all results under lock.
     with lock_ctx:
+        # Re-check: position may have been filled/closed while broker calls were in-flight.
+        current_positions = _positions_by_symbol(runtime, settings)
+        if (symbol, strategy_name) not in current_positions:
+            logger.warning(
+                "Position for %s/%s disappeared during broker exit; skipping write",
+                symbol,
+                strategy_name,
+            )
+            return canceled_stop_count, 0
         for record in canceled_order_records:
             runtime.order_store.save(record)
         runtime.order_store.save(
