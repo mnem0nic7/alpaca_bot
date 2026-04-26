@@ -42,6 +42,8 @@ def evaluate_breakout_signal(
 ) -> EntrySignal | None:
     if symbol not in settings.symbols:
         return None
+    if not intraday_bars or signal_index < 0 or signal_index >= len(intraday_bars):
+        return None
     if signal_index < settings.breakout_lookback_bars:
         return None
 

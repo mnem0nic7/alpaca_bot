@@ -225,7 +225,7 @@ class OrderStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
         self._connection = connection
 
-    def save(self, order: OrderRecord) -> None:
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None:
         execute(
             self._connection,
             """
@@ -283,6 +283,7 @@ class OrderStore:
                 order.created_at,
                 order.updated_at,
             ),
+            commit=commit,
         )
 
     def load(self, client_order_id: str) -> OrderRecord | None:
@@ -526,7 +527,7 @@ class DailySessionStateStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
         self._connection = connection
 
-    def save(self, state: DailySessionState) -> None:
+    def save(self, state: DailySessionState, *, commit: bool = True) -> None:
         execute(
             self._connection,
             """
@@ -564,6 +565,7 @@ class DailySessionStateStore:
                 state.equity_baseline,
                 state.updated_at,
             ),
+            commit=commit,
         )
 
     def load(
@@ -614,7 +616,7 @@ class PositionStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
         self._connection = connection
 
-    def save(self, position: PositionRecord) -> None:
+    def save(self, position: PositionRecord, *, commit: bool = True) -> None:
         execute(
             self._connection,
             """
@@ -652,6 +654,7 @@ class PositionStore:
                 position.opened_at,
                 position.updated_at,
             ),
+            commit=commit,
         )
 
     def replace_all(
@@ -732,6 +735,7 @@ class PositionStore:
         trading_mode: TradingMode,
         strategy_version: str,
         strategy_name: str = "breakout",
+        commit: bool = True,
     ) -> None:
         execute(
             self._connection,
@@ -740,6 +744,7 @@ class PositionStore:
             WHERE symbol = %s AND trading_mode = %s AND strategy_version = %s AND strategy_name = %s
             """,
             (symbol, trading_mode.value, strategy_version, strategy_name),
+            commit=commit,
         )
 
     def list_all(

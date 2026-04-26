@@ -94,7 +94,7 @@ class RecordingOrderStore:
                 return o
         return None
 
-    def save(self, order: OrderRecord) -> None:
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None:
         self._orders[order.client_order_id] = order
         self.saved.append(order)
 
@@ -106,10 +106,10 @@ class RecordingPositionStore:
         self.saved: list[PositionRecord] = []
         self.deleted: list[dict] = []
 
-    def save(self, position: PositionRecord) -> None:
+    def save(self, position: PositionRecord, *, commit: bool = True) -> None:
         self.saved.append(position)
 
-    def delete(self, *, symbol: str, trading_mode, strategy_version: str, strategy_name: str = "breakout") -> None:
+    def delete(self, *, symbol: str, trading_mode, strategy_version: str, strategy_name: str = "breakout", commit: bool = True) -> None:
         self.deleted.append(
             {"symbol": symbol, "trading_mode": trading_mode, "strategy_version": strategy_version, "strategy_name": strategy_name}
         )
@@ -119,7 +119,7 @@ class RecordingAuditEventStore:
     def __init__(self) -> None:
         self.appended: list[AuditEvent] = []
 
-    def append(self, event: AuditEvent) -> None:
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None:
         self.appended.append(event)
 
 
@@ -131,6 +131,7 @@ def _make_runtime(
         order_store=RecordingOrderStore(orders=orders),
         position_store=RecordingPositionStore(),
         audit_event_store=RecordingAuditEventStore(),
+        connection=SimpleNamespace(commit=lambda: None),
     )
 
 
@@ -435,10 +436,10 @@ class TestPositionStoreSaveRaises:
         """
 
         class RaisingPositionStore:
-            def save(self, position):
+            def save(self, position, *, commit: bool = True):
                 raise RuntimeError("db write failed")
 
-            def delete(self, *, symbol, trading_mode, strategy_version):
+            def delete(self, *, symbol, trading_mode, strategy_version, strategy_name="breakout", commit: bool = True):
                 pass
 
         entry_order = _make_entry_order(quantity=10)
@@ -447,6 +448,7 @@ class TestPositionStoreSaveRaises:
             order_store=RecordingOrderStore(orders=[entry_order]),
             position_store=RaisingPositionStore(),
             audit_event_store=RecordingAuditEventStore(),
+            connection=SimpleNamespace(commit=lambda: None),
         )
 
         update = _make_trade_update(
@@ -514,10 +516,10 @@ class TestPositionStoreDeleteRaises:
         """
 
         class RaisingDeletePositionStore:
-            def save(self, position):
+            def save(self, position, *, commit: bool = True):
                 pass
 
-            def delete(self, *, symbol, trading_mode, strategy_version, strategy_name="breakout"):
+            def delete(self, *, symbol, trading_mode, strategy_version, strategy_name="breakout", commit: bool = True):
                 raise RuntimeError("db delete failed")
 
         entry_order = _make_entry_order(quantity=10)
@@ -526,6 +528,7 @@ class TestPositionStoreDeleteRaises:
             order_store=RecordingOrderStore(orders=[entry_order]),
             position_store=RaisingDeletePositionStore(),
             audit_event_store=RecordingAuditEventStore(),
+            connection=SimpleNamespace(commit=lambda: None),
         )
 
         update = _make_trade_update(

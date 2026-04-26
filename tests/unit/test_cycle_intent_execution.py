@@ -297,7 +297,7 @@ def test_execute_cycle_intents_submits_new_stop_when_no_active_stop_exists() -> 
             "symbol": "AAPL",
             "quantity": 25,
             "stop_price": 111.5,
-            "client_order_id": "v1-breakout:2026-04-24:AAPL:stop:2026-04-24T19:35:00+00:00",
+            "client_order_id": "v1-breakout:breakout:2026-04-24:AAPL:stop:2026-04-24T19:35:00+00:00",
         }
     ]
     assert runtime.order_store.saved[0].intent_type == "stop"
@@ -368,7 +368,7 @@ def test_execute_cycle_intents_cancels_active_stops_and_submits_exit_order() -> 
         {
             "symbol": "AAPL",
             "quantity": 25,
-            "client_order_id": "v1-breakout:2026-04-24:AAPL:exit:2026-04-24T19:45:00+00:00",
+            "client_order_id": "v1-breakout:breakout:2026-04-24:AAPL:exit:2026-04-24T19:45:00+00:00",
         }
     ]
     assert runtime.order_store.saved == [
@@ -389,7 +389,7 @@ def test_execute_cycle_intents_cancels_active_stops_and_submits_exit_order() -> 
             signal_timestamp=now,
         ),
         OrderRecord(
-            client_order_id="v1-breakout:2026-04-24:AAPL:exit:2026-04-24T19:45:00+00:00",
+            client_order_id="v1-breakout:breakout:2026-04-24:AAPL:exit:2026-04-24T19:45:00+00:00",
             symbol="AAPL",
             side="sell",
             intent_type="exit",
@@ -413,7 +413,7 @@ def test_execute_cycle_intents_cancels_active_stops_and_submits_exit_order() -> 
                 "action": "submitted",
                 "reason": "eod_flatten",
                 "canceled_stop_count": 1,
-                "client_order_id": "v1-breakout:2026-04-24:AAPL:exit:2026-04-24T19:45:00+00:00",
+                "client_order_id": "v1-breakout:breakout:2026-04-24:AAPL:exit:2026-04-24T19:45:00+00:00",
             },
             created_at=now,
         )

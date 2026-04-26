@@ -168,60 +168,65 @@ def _execute_update_stop(
         active_stop = _latest_active_stop_order(runtime, settings, symbol, strategy_name=strategy_name)
 
     # Broker calls happen outside the lock to avoid blocking the stream thread.
-    if active_stop is not None and active_stop.broker_order_id:
-        broker_order = broker.replace_order(
-            order_id=active_stop.broker_order_id,
-            stop_price=stop_price,
-            client_order_id=active_stop.client_order_id,
-        )
-        updated_order = OrderRecord(
-            client_order_id=active_stop.client_order_id,
-            symbol=symbol,
-            side=active_stop.side,
-            intent_type="stop",
-            status=str(broker_order.status).lower(),
-            quantity=active_stop.quantity,
-            trading_mode=active_stop.trading_mode,
-            strategy_version=active_stop.strategy_version,
-            created_at=active_stop.created_at,
-            updated_at=now,
-            stop_price=stop_price,
-            initial_stop_price=active_stop.initial_stop_price,
-            broker_order_id=broker_order.broker_order_id,
-            signal_timestamp=active_stop.signal_timestamp,
-            strategy_name=strategy_name,
-        )
-        action = "replaced"
-    else:
-        client_order_id = _stop_client_order_id(
-            settings=settings,
-            symbol=symbol,
-            timestamp=intent_timestamp,
-        )
-        broker_order = broker.submit_stop_order(
-            symbol=symbol,
-            quantity=position.quantity,
-            stop_price=stop_price,
-            client_order_id=client_order_id,
-        )
-        updated_order = OrderRecord(
-            client_order_id=client_order_id,
-            symbol=symbol,
-            side="sell",
-            intent_type="stop",
-            status=str(broker_order.status).lower(),
-            quantity=position.quantity,
-            trading_mode=settings.trading_mode,
-            strategy_version=settings.strategy_version,
-            created_at=now,
-            updated_at=now,
-            stop_price=stop_price,
-            initial_stop_price=position.initial_stop_price,
-            broker_order_id=broker_order.broker_order_id,
-            signal_timestamp=intent_timestamp,
-            strategy_name=strategy_name,
-        )
-        action = "submitted"
+    try:
+        if active_stop is not None and active_stop.broker_order_id:
+            broker_order = broker.replace_order(
+                order_id=active_stop.broker_order_id,
+                stop_price=stop_price,
+                client_order_id=active_stop.client_order_id,
+            )
+            updated_order = OrderRecord(
+                client_order_id=active_stop.client_order_id,
+                symbol=symbol,
+                side=active_stop.side,
+                intent_type="stop",
+                status=str(broker_order.status).lower(),
+                quantity=active_stop.quantity,
+                trading_mode=active_stop.trading_mode,
+                strategy_version=active_stop.strategy_version,
+                created_at=active_stop.created_at,
+                updated_at=now,
+                stop_price=stop_price,
+                initial_stop_price=active_stop.initial_stop_price,
+                broker_order_id=broker_order.broker_order_id,
+                signal_timestamp=active_stop.signal_timestamp,
+                strategy_name=strategy_name,
+            )
+            action = "replaced"
+        else:
+            client_order_id = _stop_client_order_id(
+                settings=settings,
+                symbol=symbol,
+                timestamp=intent_timestamp,
+                strategy_name=strategy_name,
+            )
+            broker_order = broker.submit_stop_order(
+                symbol=symbol,
+                quantity=position.quantity,
+                stop_price=stop_price,
+                client_order_id=client_order_id,
+            )
+            updated_order = OrderRecord(
+                client_order_id=client_order_id,
+                symbol=symbol,
+                side="sell",
+                intent_type="stop",
+                status=str(broker_order.status).lower(),
+                quantity=position.quantity,
+                trading_mode=settings.trading_mode,
+                strategy_version=settings.strategy_version,
+                created_at=now,
+                updated_at=now,
+                stop_price=stop_price,
+                initial_stop_price=position.initial_stop_price,
+                broker_order_id=broker_order.broker_order_id,
+                signal_timestamp=intent_timestamp,
+                strategy_name=strategy_name,
+            )
+            action = "submitted"
+    except Exception:
+        logger.exception("Broker call failed for update_stop on %s; skipping", symbol)
+        return None
 
     # All store writes under lock — serializes with the trade-update stream thread.
     with lock_ctx:
@@ -364,6 +369,7 @@ def _execute_exit(
         settings=settings,
         symbol=symbol,
         timestamp=intent_timestamp,
+        strategy_name=strategy_name,
     )
     # Submit exit outside the lock.
     broker_order = broker.submit_market_exit(
@@ -457,9 +463,11 @@ def _stop_client_order_id(
     settings: Settings,
     symbol: str,
     timestamp: datetime,
+    strategy_name: str = "breakout",
 ) -> str:
     return (
         f"{settings.strategy_version}:"
+        f"{strategy_name}:"
         f"{timestamp.date().isoformat()}:"
         f"{symbol}:stop:{timestamp.isoformat()}"
     )
@@ -470,9 +478,11 @@ def _exit_client_order_id(
     settings: Settings,
     symbol: str,
     timestamp: datetime,
+    strategy_name: str = "breakout",
 ) -> str:
     return (
         f"{settings.strategy_version}:"
+        f"{strategy_name}:"
         f"{timestamp.date().isoformat()}:"
         f"{symbol}:exit:{timestamp.isoformat()}"
     )

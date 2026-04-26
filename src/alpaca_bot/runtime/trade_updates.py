@@ -29,13 +29,14 @@ class PositionStoreProtocol(Protocol):
 
 
 class AuditEventStoreProtocol(Protocol):
-    def append(self, event: AuditEvent) -> None: ...
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None: ...
 
 
 class RuntimeProtocol(Protocol):
     order_store: OrderStoreProtocol
     position_store: PositionStoreProtocol
     audit_event_store: AuditEventStoreProtocol
+    connection: Any
 
 
 @dataclass(frozen=True)
@@ -144,7 +145,7 @@ def _apply_trade_update_locked(
             else matched_order.filled_quantity
         ),
     )
-    runtime.order_store.save(saved_order)
+    runtime.order_store.save(saved_order, commit=False)
 
     position_updated = False
     protective_stop_queued = False
@@ -168,7 +169,8 @@ def _apply_trade_update_locked(
                 initial_stop_price=initial_stop_price,
                 opened_at=normalized.timestamp,
                 updated_at=timestamp,
-            )
+            ),
+            commit=False,
         )
         position_updated = True
         fill_price = normalized.filled_avg_price
@@ -212,7 +214,8 @@ def _apply_trade_update_locked(
                         stop_price=matched_order.initial_stop_price,
                         initial_stop_price=matched_order.initial_stop_price,
                         signal_timestamp=matched_order.signal_timestamp,
-                    )
+                    ),
+                    commit=False,
                 )
                 protective_stop_queued = True
             else:
@@ -240,7 +243,8 @@ def _apply_trade_update_locked(
                             initial_stop_price=existing_stop.initial_stop_price,
                             broker_order_id=existing_stop.broker_order_id,
                             signal_timestamp=existing_stop.signal_timestamp,
-                        )
+                        ),
+                        commit=False,
                     )
                 protective_stop_client_order_id = None
     elif matched_order.intent_type in {"stop", "exit"} and normalized.status == "filled":
@@ -249,6 +253,7 @@ def _apply_trade_update_locked(
             trading_mode=matched_order.trading_mode,
             strategy_version=matched_order.strategy_version,
             strategy_name=matched_order.strategy_name or "breakout",
+            commit=False,
         )
         position_updated = True
         position_cleared = True
@@ -270,6 +275,7 @@ def _apply_trade_update_locked(
             trading_mode=matched_order.trading_mode,
             strategy_version=matched_order.strategy_version,
             strategy_name=matched_order.strategy_name or "breakout",
+            commit=False,
         )
         protective_stop_client_order_id_cancel = _protective_stop_client_order_id(
             matched_order.client_order_id
@@ -293,7 +299,8 @@ def _apply_trade_update_locked(
                     initial_stop_price=pending_stop.initial_stop_price,
                     broker_order_id=pending_stop.broker_order_id,
                     signal_timestamp=pending_stop.signal_timestamp,
-                )
+                ),
+                commit=False,
             )
         position_updated = True
         position_cleared = True
@@ -318,8 +325,10 @@ def _apply_trade_update_locked(
             symbol=matched_order.symbol,
             payload=audit_payload,
             created_at=timestamp,
-        )
+        ),
+        commit=False,
     )
+    runtime.connection.commit()
     return {
         "matched_order_id": matched_order.client_order_id,
         "status": normalized.status,

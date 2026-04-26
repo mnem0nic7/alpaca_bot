@@ -261,8 +261,9 @@ def create_app(
                 content="Unknown strategy",
             )
         now = datetime.now(timezone.utc)
-        connection = app.state.connect_postgres(app_settings.database_url)
+        connection = None
         try:
+            connection = app.state.connect_postgres(app_settings.database_url)
             flag_store = _build_store(app.state.strategy_flag_store_factory, connection)
             audit_store = _build_store(app.state.audit_event_store_factory, connection)
             current_flag = flag_store.load(

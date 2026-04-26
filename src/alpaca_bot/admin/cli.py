@@ -220,6 +220,7 @@ def main(
         resolved_settings = _fallback_settings()
     else:
         resolved_settings = Settings.from_env()
+    output: str | None = None
     connection = connect() if connect is not None else connect_postgres(resolved_settings.database_url)
     try:
         args = build_parser(resolved_settings).parse_args(parsed_argv)
@@ -278,7 +279,8 @@ def main(
         close = getattr(connection, "close", None)
         if callable(close):
             close()
-    print(output, file=stdout or sys.stdout)
+    if output is not None:
+        print(output, file=stdout or sys.stdout)
     return 0
 
 

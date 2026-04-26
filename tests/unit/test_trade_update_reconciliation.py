@@ -54,7 +54,7 @@ class RecordingOrderStore:
             return self.order
         return None
 
-    def save(self, order: OrderRecord) -> None:
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None:
         self.saved.append(order)
 
 
@@ -63,10 +63,10 @@ class RecordingPositionStore:
         self.saved: list[PositionRecord] = []
         self.deleted: list[dict[str, object]] = []
 
-    def save(self, position: PositionRecord) -> None:
+    def save(self, position: PositionRecord, *, commit: bool = True) -> None:
         self.saved.append(position)
 
-    def delete(self, *, symbol: str, trading_mode: TradingMode, strategy_version: str, strategy_name: str = "breakout") -> None:
+    def delete(self, *, symbol: str, trading_mode: TradingMode, strategy_version: str, strategy_name: str = "breakout", commit: bool = True) -> None:
         self.deleted.append(
             {
                 "symbol": symbol,
@@ -80,7 +80,7 @@ class RecordingAuditEventStore:
     def __init__(self) -> None:
         self.appended: list[AuditEvent] = []
 
-    def append(self, event: AuditEvent) -> None:
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None:
         self.appended.append(event)
 
 
@@ -112,6 +112,7 @@ def test_apply_trade_update_updates_entry_order_and_creates_position() -> None:
         signal_timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
     )
     runtime = SimpleNamespace(
+        connection=SimpleNamespace(commit=lambda: None),
         order_store=RecordingOrderStore(existing_order),
         position_store=RecordingPositionStore(),
         audit_event_store=RecordingAuditEventStore(),
@@ -217,6 +218,7 @@ def test_apply_trade_update_falls_back_to_broker_order_id_for_partial_fill() -> 
         signal_timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
     )
     runtime = SimpleNamespace(
+        connection=SimpleNamespace(commit=lambda: None),
         order_store=RecordingOrderStore(existing_order),
         position_store=RecordingPositionStore(),
         audit_event_store=RecordingAuditEventStore(),
@@ -283,6 +285,7 @@ def test_apply_trade_update_for_stop_order_updates_order_without_position_change
         broker_order_id="broker-stop-1",
     )
     runtime = SimpleNamespace(
+        connection=SimpleNamespace(commit=lambda: None),
         order_store=RecordingOrderStore(existing_order),
         position_store=RecordingPositionStore(),
         audit_event_store=RecordingAuditEventStore(),
@@ -319,6 +322,7 @@ def test_apply_trade_update_audits_unmatched_updates() -> None:
     settings = make_settings()
     timestamp = datetime(2026, 4, 24, 19, 22, tzinfo=timezone.utc)
     runtime = SimpleNamespace(
+        connection=SimpleNamespace(commit=lambda: None),
         order_store=RecordingOrderStore(),
         position_store=RecordingPositionStore(),
         audit_event_store=RecordingAuditEventStore(),
@@ -388,6 +392,7 @@ def test_apply_trade_update_for_filled_entry_queues_pending_protective_stop_orde
         signal_timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
     )
     runtime = SimpleNamespace(
+        connection=SimpleNamespace(commit=lambda: None),
         order_store=RecordingOrderStore(existing_order),
         position_store=RecordingPositionStore(),
         audit_event_store=RecordingAuditEventStore(),
@@ -492,6 +497,7 @@ def test_apply_trade_update_for_filled_stop_removes_matching_position() -> None:
         signal_timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
     )
     runtime = SimpleNamespace(
+        connection=SimpleNamespace(commit=lambda: None),
         order_store=RecordingOrderStore(existing_order),
         position_store=RecordingPositionStore(),
         audit_event_store=RecordingAuditEventStore(),
@@ -584,6 +590,7 @@ def test_apply_trade_update_for_filled_exit_removes_matching_position() -> None:
         signal_timestamp=datetime(2026, 4, 24, 19, 45, tzinfo=timezone.utc),
     )
     runtime = SimpleNamespace(
+        connection=SimpleNamespace(commit=lambda: None),
         order_store=RecordingOrderStore(existing_order),
         position_store=RecordingPositionStore(),
         audit_event_store=RecordingAuditEventStore(),

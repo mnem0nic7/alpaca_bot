@@ -263,13 +263,14 @@ class TestTradeUpdateNotifier:
             order_store=SimpleNamespace(
                 load=lambda client_order_id: order if client_order_id == order.client_order_id else None,
                 load_by_broker_order_id=lambda _: None,
-                save=lambda _: None,
+                save=lambda _, **__: None,
             ),
             position_store=SimpleNamespace(
-                save=lambda _: None,
+                save=lambda _, **__: None,
                 delete=lambda **_: positions_deleted.append("deleted"),
             ),
-            audit_event_store=SimpleNamespace(append=events.append),
+            audit_event_store=SimpleNamespace(append=lambda e, **__: events.append(e)),
+            connection=SimpleNamespace(commit=lambda: None),
             _events=events,
             _deleted=positions_deleted,
         )
