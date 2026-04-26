@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 from alpaca_bot.config import Settings
 from alpaca_bot.domain.models import Bar, EntrySignal
-from alpaca_bot.risk.atr import calculate_atr
+from alpaca_bot.risk.atr import atr_stop_buffer
 from alpaca_bot.strategy.breakout import daily_trend_filter_passes, is_entry_session_time
 
 
@@ -49,12 +49,11 @@ def evaluate_momentum_signal(
 
     stop_price = round(signal_bar.high + settings.entry_stop_price_buffer, 2)
     limit_price = round(stop_price * (1 + settings.stop_limit_buffer_pct), 2)
-    atr = calculate_atr(daily_bars, settings.atr_period)
-    if atr is not None:
-        stop_buffer = max(0.01, settings.atr_stop_multiplier * atr)
-    else:
-        stop_buffer = max(0.01, yesterday_high * settings.breakout_stop_buffer_pct)
-    initial_stop_price = round(yesterday_high - stop_buffer, 2)
+    stop_buffer = atr_stop_buffer(
+        daily_bars, settings.atr_period, settings.atr_stop_multiplier,
+        yesterday_high, settings.breakout_stop_buffer_pct,
+    )
+    initial_stop_price = round(max(0.01, yesterday_high - stop_buffer), 2)
 
     return EntrySignal(
         symbol=symbol,
