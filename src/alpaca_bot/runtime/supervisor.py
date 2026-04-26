@@ -371,8 +371,14 @@ class RuntimeSupervisor:
                     i for i in getattr(cycle_result, "intents", [])
                     if getattr(i, "intent_type", None) == CycleIntentType.ENTRY
                 ]
+                exit_intents = [
+                    i for i in getattr(cycle_result, "intents", [])
+                    if getattr(i, "intent_type", None) == CycleIntentType.EXIT
+                ]
                 global_occupied_slots += len(new_entry_intents)
+                global_occupied_slots = max(global_occupied_slots - len(exit_intents), 0)
                 global_position_symbols.update(i.symbol for i in new_entry_intents)
+                global_position_symbols -= {i.symbol for i in exit_intents}
 
                 has_flatten_intents = any(
                     getattr(intent, "reason", None) in {"eod_flatten", "loss_limit_flatten"}
@@ -673,19 +679,18 @@ class RuntimeSupervisor:
         """Return (strategy_name, evaluator) for every enabled strategy."""
         store = getattr(self.runtime, "strategy_flag_store", None)
         store_lock = getattr(self.runtime, "store_lock", None)
-        lock_ctx = store_lock if store_lock is not None else contextlib.nullcontext()
         active = []
-        for name, evaluator in STRATEGY_REGISTRY.items():
-            if store is not None:
-                with lock_ctx:
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            for name, evaluator in STRATEGY_REGISTRY.items():
+                if store is not None:
                     flag = store.load(
                         strategy_name=name,
                         trading_mode=self.settings.trading_mode,
                         strategy_version=self.settings.strategy_version,
                     )
-                if flag is not None and not flag.enabled:
-                    continue
-            active.append((name, evaluator))
+                    if flag is not None and not flag.enabled:
+                        continue
+                active.append((name, evaluator))
         return active
 
     def _working_symbols_for_strategy(

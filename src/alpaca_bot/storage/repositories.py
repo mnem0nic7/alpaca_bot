@@ -398,7 +398,7 @@ class OrderStore:
                       AND e.strategy_name = x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
-                      AND DATE(e.updated_at AT TIME ZONE 'America/New_York') = %s
+                      AND e.status = 'filled'
                     ORDER BY e.updated_at DESC
                     LIMIT 1
                 ) AS entry_fill,
@@ -409,10 +409,10 @@ class OrderStore:
               AND x.strategy_version = %s
               AND x.intent_type IN ('stop', 'exit')
               AND x.fill_price IS NOT NULL
+              AND x.status = 'filled'
               AND DATE(x.updated_at AT TIME ZONE 'America/New_York') = %s
             """,
             (
-                session_date,
                 trading_mode.value,
                 strategy_version,
                 session_date,
@@ -455,7 +455,7 @@ class OrderStore:
                       AND e.strategy_name = x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
-                      AND DATE(e.updated_at AT TIME ZONE 'America/New_York') = %s
+                      AND e.status = 'filled'
                     ORDER BY e.updated_at DESC LIMIT 1
                 ) AS entry_fill,
                 (
@@ -467,7 +467,7 @@ class OrderStore:
                       AND e.strategy_name = x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
-                      AND DATE(e.updated_at AT TIME ZONE 'America/New_York') = %s
+                      AND e.status = 'filled'
                     ORDER BY e.updated_at DESC LIMIT 1
                 ) AS entry_limit,
                 (
@@ -479,7 +479,7 @@ class OrderStore:
                       AND e.strategy_name = x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
-                      AND DATE(e.updated_at AT TIME ZONE 'America/New_York') = %s
+                      AND e.status = 'filled'
                     ORDER BY e.updated_at DESC LIMIT 1
                 ) AS entry_time,
                 x.fill_price AS exit_fill,
@@ -490,12 +490,12 @@ class OrderStore:
               AND x.strategy_version = %s
               AND x.intent_type IN ('stop', 'exit')
               AND x.fill_price IS NOT NULL
+              AND x.status = 'filled'
               AND DATE(x.updated_at AT TIME ZONE 'America/New_York') = %s
               {strategy_clause}
             ORDER BY x.updated_at
             """,
             (
-                session_date, session_date, session_date,
                 trading_mode.value,
                 strategy_version,
                 session_date,

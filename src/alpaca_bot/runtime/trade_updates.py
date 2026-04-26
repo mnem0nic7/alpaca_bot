@@ -62,13 +62,20 @@ def apply_trade_update(
 ) -> dict[str, Any]:
     store_lock = getattr(runtime, "store_lock", None)
     with store_lock if store_lock is not None else _nullcontext():
-        return _apply_trade_update_locked(
+        result, pending_notifications = _apply_trade_update_locked(
             settings=settings,
             runtime=runtime,
             update=update,
             now=now,
-            notifier=notifier,
         )
+    # Fire notifier outside the lock to avoid blocking the stream thread.
+    if notifier is not None:
+        for subject, body in pending_notifications:
+            try:
+                notifier.send(subject=subject, body=body)
+            except Exception:
+                logger.exception("Notifier failed to send: %s", subject)
+    return result
 
 
 class _nullcontext:
@@ -82,11 +89,11 @@ def _apply_trade_update_locked(
     runtime: RuntimeProtocol,
     update: Any,
     now: datetime | Callable[[], datetime] | None = None,
-    notifier: Notifier | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], list[tuple[str, str]]]:
     normalized = _normalize_trade_update(update)
     timestamp = _resolve_now(now, fallback=normalized.timestamp)
     matched_order = _find_order(runtime.order_store, normalized)
+    pending_notifications: list[tuple[str, str]] = []
     if matched_order is None:
         runtime.audit_event_store.append(
             AuditEvent(
@@ -107,7 +114,7 @@ def _apply_trade_update_locked(
             "position_updated": False,
             "order_updated": False,
             "unmatched": True,
-        }
+        }, []
 
     _is_fill_event = normalized.status in {"filled", "partially_filled"}
     saved_order = OrderRecord(
@@ -162,32 +169,25 @@ def _apply_trade_update_locked(
             )
         )
         position_updated = True
-        if notifier is not None:
-            fill_price = normalized.filled_avg_price
-            qty = normalized.filled_qty or matched_order.quantity
-            slippage = (
-                (matched_order.limit_price - fill_price)
-                if matched_order.limit_price is not None and fill_price is not None
-                else None
-            )
-            slippage_msg = ""
-            if (
-                slippage is not None
-                and fill_price is not None
-                and fill_price > 0
-                and slippage < -(settings.notify_slippage_threshold_pct * fill_price)
-            ):
-                slippage_msg = f"  \u26a0 Adverse slippage: {slippage:.3f}"
-            try:
-                notifier.send(
-                    subject=f"Fill: {matched_order.symbol} {qty}@{fill_price}",
-                    body=(
-                        f"{matched_order.symbol}: {qty} shares filled at {fill_price}"
-                        f"{slippage_msg}"
-                    ),
-                )
-            except Exception:
-                logger.exception("Notifier failed to send entry fill alert for %s", matched_order.symbol)
+        fill_price = normalized.filled_avg_price
+        qty = normalized.filled_qty or matched_order.quantity
+        slippage = (
+            (matched_order.limit_price - fill_price)
+            if matched_order.limit_price is not None and fill_price is not None
+            else None
+        )
+        slippage_msg = ""
+        if (
+            slippage is not None
+            and fill_price is not None
+            and fill_price > 0
+            and slippage < -(settings.notify_slippage_threshold_pct * fill_price)
+        ):
+            slippage_msg = f"  \u26a0 Adverse slippage: {slippage:.3f}"
+        pending_notifications.append((
+            f"Fill: {matched_order.symbol} {qty}@{fill_price}",
+            f"{matched_order.symbol}: {qty} shares filled at {fill_price}{slippage_msg}",
+        ))
         if matched_order.initial_stop_price is not None:
             protective_stop_client_order_id = _protective_stop_client_order_id(
                 matched_order.client_order_id
@@ -250,19 +250,13 @@ def _apply_trade_update_locked(
         )
         position_updated = True
         position_cleared = True
-        if notifier is not None:
-            fill_price = normalized.filled_avg_price
-            qty = normalized.filled_qty
-            try:
-                notifier.send(
-                    subject=f"Position closed: {matched_order.symbol}",
-                    body=(
-                        f"{matched_order.intent_type.upper()} fill on {matched_order.symbol}: "
-                        f"{qty} shares @ {fill_price}"
-                    ),
-                )
-            except Exception:
-                logger.exception("Notifier failed to send exit fill alert for %s", matched_order.symbol)
+        pending_notifications.append((
+            f"Position closed: {matched_order.symbol}",
+            (
+                f"{matched_order.intent_type.upper()} fill on {matched_order.symbol}: "
+                f"{normalized.filled_qty} shares @ {normalized.filled_avg_price}"
+            ),
+        ))
     elif (
         matched_order.intent_type == "entry"
         and normalized.status in {"cancelled", "expired"}
@@ -331,7 +325,7 @@ def _apply_trade_update_locked(
         "position_cleared": position_cleared,
         "order_updated": True,
         "unmatched": False,
-    }
+    }, pending_notifications
 
 
 def _normalize_trade_update(update: Any) -> TradeUpdate:
