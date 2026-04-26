@@ -256,3 +256,48 @@ def test_new_strategies_in_registry():
     assert "orb" in STRATEGY_REGISTRY
     assert "high_watermark" in STRATEGY_REGISTRY
     assert "ema_pullback" in STRATEGY_REGISTRY
+
+
+def test_momentum_initial_stop_uses_atr_when_enough_daily_bars():
+    from alpaca_bot.strategy.momentum import evaluate_momentum_signal
+    from alpaca_bot.risk.atr import calculate_atr
+    settings = _make_settings(atr_period=3)
+    daily_bars = _make_daily_bars(n=10, high=100.0)  # 10 >= atr_period+1=4 → ATR computable
+    intraday_bars = _make_intraday_bars(n=6, high=102.0, close=101.5)
+
+    atr = calculate_atr(daily_bars, 3)
+    assert atr is not None
+    yesterday_high = daily_bars[-1].high
+    expected_stop = round(yesterday_high - max(0.01, 1.5 * atr), 2)
+
+    result = evaluate_momentum_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=len(intraday_bars) - 1,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+    assert result is not None
+    assert result.initial_stop_price == expected_stop
+
+
+def test_momentum_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
+    from alpaca_bot.strategy.momentum import evaluate_momentum_signal
+    from alpaca_bot.risk.atr import calculate_atr
+    settings = _make_settings(atr_period=3, daily_sma_period=3)
+    daily_bars = _make_daily_bars(n=3, high=100.0)  # 3 < atr_period+1=4 → ATR returns None
+    intraday_bars = _make_intraday_bars(n=6, high=102.0, close=101.5)
+
+    assert calculate_atr(daily_bars, 3) is None
+    yesterday_high = daily_bars[-1].high
+    expected_stop = round(yesterday_high - max(0.01, yesterday_high * 0.001), 2)
+
+    result = evaluate_momentum_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=len(intraday_bars) - 1,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+    assert result is not None
+    assert result.initial_stop_price == expected_stop

@@ -307,3 +307,46 @@ def test_orb_ignores_bars_from_prior_sessions():
     )
     assert result is not None
     assert result.entry_level == 105.0
+
+
+def test_orb_initial_stop_uses_atr_when_enough_daily_bars():
+    from alpaca_bot.risk.atr import calculate_atr
+    settings = _make_settings(atr_period=3)
+    daily_bars = _make_daily_bars(n=6)  # 6 >= atr_period+1=4 → ATR computable
+    intraday_bars, signal_index = _make_intraday_bars_with_orb(orb_low=99.0)
+
+    atr = calculate_atr(daily_bars, 3)
+    assert atr is not None
+    orb_low = 99.0
+    expected_stop = round(orb_low - max(0.01, 1.5 * atr), 2)
+
+    result = evaluate_orb_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+    assert result is not None
+    assert result.initial_stop_price == expected_stop
+
+
+def test_orb_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
+    from alpaca_bot.risk.atr import calculate_atr
+    settings = _make_settings(atr_period=3, daily_sma_period=3)
+    daily_bars = _make_daily_bars(n=3)  # 3 < atr_period+1=4 → ATR returns None
+    intraday_bars, signal_index = _make_intraday_bars_with_orb(orb_low=99.0)
+
+    assert calculate_atr(daily_bars, 3) is None
+    orb_low = 99.0
+    expected_stop = round(orb_low - max(0.01, orb_low * 0.001), 2)
+
+    result = evaluate_orb_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+    assert result is not None
+    assert result.initial_stop_price == expected_stop

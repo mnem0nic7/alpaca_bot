@@ -29,6 +29,7 @@ def make_settings(**overrides: str) -> Settings:
         "ENTRY_WINDOW_START": "10:00",
         "ENTRY_WINDOW_END": "15:30",
         "FLATTEN_TIME": "15:45",
+        "ATR_PERIOD": "50",
     }
     values.update(overrides)
     return Settings.from_env(values)

@@ -5,6 +5,7 @@ from datetime import date, datetime
 
 from alpaca_bot.config import Settings
 from alpaca_bot.domain.models import Bar, EntrySignal
+from alpaca_bot.risk.atr import calculate_atr
 
 
 def is_entry_session_time(timestamp: datetime, settings: Settings) -> bool:
@@ -68,7 +69,11 @@ def evaluate_breakout_signal(
 
     stop_price = round(signal_bar.high + settings.entry_stop_price_buffer, 2)
     limit_price = round(stop_price * (1 + settings.stop_limit_buffer_pct), 2)
-    breakout_stop_buffer = max(0.01, breakout_level * settings.breakout_stop_buffer_pct)
+    atr = calculate_atr(daily_bars, settings.atr_period)
+    if atr is not None:
+        breakout_stop_buffer = max(0.01, settings.atr_stop_multiplier * atr)
+    else:
+        breakout_stop_buffer = max(0.01, breakout_level * settings.breakout_stop_buffer_pct)
     initial_stop_price = round(breakout_level - breakout_stop_buffer, 2)
     return EntrySignal(
         symbol=symbol,

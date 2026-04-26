@@ -245,3 +245,50 @@ def test_detect_ema_pullback_returns_true_when_prior_close_at_or_below_ema():
     bars.append(Bar(symbol="AAPL", timestamp=base + timedelta(minutes=15 * 8),
                     open=115.0, high=116.0, low=114.0, close=115.0, volume=200_000.0))
     assert _detect_ema_pullback(bars, signal_index=8, ema_period=3) is True
+
+
+def test_ema_pullback_initial_stop_uses_atr_when_enough_daily_bars():
+    from alpaca_bot.risk.atr import calculate_atr
+    settings = _make_settings(atr_period=3)
+    daily_bars = _make_daily_bars(n=10)  # 10 >= atr_period+1=4 → ATR computable
+    intraday_bars, signal_index = _make_pullback_bars(
+        trend_close=110.0, pullback_close=106.0, signal_close=115.0
+    )
+
+    atr = calculate_atr(daily_bars, 3)
+    assert atr is not None
+    prior_bar_low = intraday_bars[signal_index - 1].low  # pullback_close - 1.0 = 105.0
+    expected_stop = round(prior_bar_low - max(0.01, 1.5 * atr), 2)
+
+    result = evaluate_ema_pullback_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+    assert result is not None
+    assert result.initial_stop_price == expected_stop
+
+
+def test_ema_pullback_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
+    from alpaca_bot.risk.atr import calculate_atr
+    settings = _make_settings(atr_period=3, daily_sma_period=3)
+    daily_bars = _make_daily_bars(n=3)  # 3 < atr_period+1=4 → ATR returns None
+    intraday_bars, signal_index = _make_pullback_bars(
+        trend_close=110.0, pullback_close=106.0, signal_close=115.0
+    )
+
+    assert calculate_atr(daily_bars, 3) is None
+    prior_bar_low = intraday_bars[signal_index - 1].low  # pullback_close - 1.0 = 105.0
+    expected_stop = round(prior_bar_low - max(0.01, prior_bar_low * 0.001), 2)
+
+    result = evaluate_ema_pullback_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+    assert result is not None
+    assert result.initial_stop_price == expected_stop

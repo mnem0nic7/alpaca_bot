@@ -79,6 +79,8 @@ class Settings:
     orb_opening_bars: int = 2
     high_watermark_lookback_days: int = 252
     ema_period: int = 9
+    atr_period: int = 14
+    atr_stop_multiplier: float = 1.5
     market_timezone: ZoneInfo = ZoneInfo("America/New_York")
     dashboard_auth_enabled: bool = False
     dashboard_auth_username: str | None = None
@@ -133,6 +135,8 @@ class Settings:
             orb_opening_bars=int(values.get("ORB_OPENING_BARS", "2")),
             high_watermark_lookback_days=int(values.get("HIGH_WATERMARK_LOOKBACK_DAYS", "252")),
             ema_period=int(values.get("EMA_PERIOD", "9")),
+            atr_period=int(values.get("ATR_PERIOD", "14")),
+            atr_stop_multiplier=float(values.get("ATR_STOP_MULTIPLIER", "1.5")),
             stop_limit_buffer_pct=float(values.get("STOP_LIMIT_BUFFER_PCT", "0.001")),
             breakout_stop_buffer_pct=float(
                 values.get("BREAKOUT_STOP_BUFFER_PCT", "0.001")
@@ -204,6 +208,10 @@ class Settings:
             raise ValueError("HIGH_WATERMARK_LOOKBACK_DAYS must be at least 5")
         if self.ema_period < 2:
             raise ValueError("EMA_PERIOD must be at least 2")
+        if self.atr_period < 2:
+            raise ValueError("ATR_PERIOD must be at least 2")
+        if self.atr_stop_multiplier <= 0:
+            raise ValueError("ATR_STOP_MULTIPLIER must be positive")
         if self.max_open_positions < 1:
             raise ValueError("MAX_OPEN_POSITIONS must be at least 1")
         if self.dashboard_auth_enabled:
