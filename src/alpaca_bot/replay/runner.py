@@ -250,6 +250,7 @@ class ReplayRunner:
                     details={"exit_price": round(exit_price, 2)},
                 )
             )
+            state.equity += (exit_price - position.entry_price) * position.quantity
             state.traded_symbols.add(
                 (position.symbol, session_day(bar.timestamp, self.settings))
             )
@@ -276,6 +277,7 @@ class ReplayRunner:
                 details={"exit_price": round(bar.close, 2)},
             )
         )
+        state.equity += (bar.close - position.entry_price) * position.quantity
         state.traded_symbols.add(
             (position.symbol, session_day(bar.timestamp, self.settings))
         )

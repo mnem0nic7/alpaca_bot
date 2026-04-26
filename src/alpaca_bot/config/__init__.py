@@ -171,6 +171,8 @@ class Settings:
     def validate(self) -> None:
         if self.trading_mode is TradingMode.LIVE and not self.enable_live_trading:
             raise ValueError("ENABLE_LIVE_TRADING=true is required when TRADING_MODE=live")
+        if self.enable_live_trading and self.trading_mode is not TradingMode.LIVE:
+            raise ValueError("TRADING_MODE=live is required when ENABLE_LIVE_TRADING=true")
 
         if self.entry_window_start >= self.entry_window_end:
             raise ValueError("ENTRY_WINDOW_START must be before ENTRY_WINDOW_END")
@@ -216,6 +218,14 @@ class Settings:
             raise ValueError("ATR_STOP_MULTIPLIER must be <= 10.0 (got a suspiciously large value)")
         if self.max_open_positions < 1:
             raise ValueError("MAX_OPEN_POSITIONS must be at least 1")
+        if self.max_open_positions > 20:
+            raise ValueError("MAX_OPEN_POSITIONS must be at most 20")
+        if not 1 <= self.notify_smtp_port <= 65535:
+            raise ValueError("NOTIFY_SMTP_PORT must be between 1 and 65535")
+        if self.max_position_pct > self.max_portfolio_exposure_pct:
+            raise ValueError(
+                "MAX_POSITION_PCT must be <= MAX_PORTFOLIO_EXPOSURE_PCT"
+            )
         if self.dashboard_auth_enabled:
             if not self.dashboard_auth_username:
                 raise ValueError(

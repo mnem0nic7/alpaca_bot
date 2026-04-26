@@ -225,7 +225,7 @@ class AlpacaExecutionAdapter:
             filters = {"status": "open"}
         else:
             filters = GetOrdersRequest(status="open")
-        raw_orders = self._trading.get_orders(filter=filters)
+        raw_orders = _retry_with_backoff(lambda: self._trading.get_orders(filter=filters))
         return [
             BrokerOrder(
                 client_order_id=str(getattr(order, "client_order_id", "")),
@@ -347,7 +347,7 @@ class AlpacaExecutionAdapter:
         )
 
     def cancel_order(self, order_id: str) -> None:
-        self._trading.cancel_order_by_id(order_id)
+        _retry_with_backoff(lambda: self._trading.cancel_order_by_id(order_id))
 
     def get_calendar(self, *, start: date, end: date) -> list[MarketCalendarDay]:
         return self.get_market_calendar(start=start, end=end)

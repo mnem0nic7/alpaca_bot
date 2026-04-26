@@ -54,7 +54,7 @@ def build_operator_session_token(
         return ""
     expires_at = int(now if now is not None else time.time()) + _SESSION_TTL_SECONDS
     payload = f"{canonical_username}\n{expires_at}"
-    signature = hmac.new(
+    signature = hmac.HMAC(
         configured_hash.encode("utf-8"),
         payload.encode("utf-8"),
         hashlib.sha256,
@@ -78,6 +78,7 @@ def set_operator_session(
         max_age=_SESSION_TTL_SECONDS,
         httponly=True,
         samesite="lax",
+        secure=True,
     )
 
 
@@ -180,7 +181,7 @@ def _parse_session_operator(request: Request, *, settings: Settings) -> str | No
     if not hmac.compare_digest(_normalize_username(username), canonical_username):
         return None
     payload = f"{canonical_username}\n{expires_at}"
-    expected_signature = hmac.new(
+    expected_signature = hmac.HMAC(
         configured_hash.encode("utf-8"),
         payload.encode("utf-8"),
         hashlib.sha256,

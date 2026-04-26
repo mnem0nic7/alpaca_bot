@@ -399,7 +399,7 @@ def test_dashboard_login_sets_session_cookie_and_redirects() -> None:
         ),
     )
 
-    with TestClient(app) as client:
+    with TestClient(app, base_url="https://testserver") as client:
         login_response = client.post(
             "/login",
             data={

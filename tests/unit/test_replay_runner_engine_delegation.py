@@ -14,6 +14,8 @@ from __future__ import annotations
 from datetime import datetime, timezone, timedelta
 from typing import Sequence
 
+import pytest
+
 from alpaca_bot.config import Settings
 from alpaca_bot.domain import Bar, OpenPosition
 from alpaca_bot.domain.enums import IntentType
@@ -614,3 +616,93 @@ def test_stale_working_entry_order_persists_without_crash_or_fill() -> None:
     expire_events = [e for e in events if e.event_type == IntentType.ENTRY_EXPIRED]
     assert fill_events == [], f"Unexpected fill events: {fill_events}"
     assert expire_events == [], f"Unexpected expire events: {expire_events}"
+
+
+# ---------------------------------------------------------------------------
+# Test: equity compounding after stop hit and EOD exit
+# ---------------------------------------------------------------------------
+
+def test_equity_updated_after_stop_hit() -> None:
+    """After a stop-hit exit, state.equity must reflect the realized P&L."""
+    from alpaca_bot.replay.runner import ReplayRunner, ReplayState
+    from alpaca_bot.domain.models import ReplayEvent
+
+    settings = make_settings()
+    runner = ReplayRunner(settings)
+
+    entry_price = 110.0
+    stop_price = 108.0
+    quantity = 50
+    starting_equity = 100_000.0
+
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
+        entry_price=entry_price,
+        quantity=quantity,
+        entry_level=entry_price,
+        initial_stop_price=stop_price,
+        stop_price=stop_price,
+        highest_price=entry_price,
+    )
+    state = ReplayState(equity=starting_equity, position=position)
+    events: list[ReplayEvent] = []
+
+    # Bar whose low crosses below stop_price — stop fills at stop_price (> bar.open is false,
+    # so fill = min(stop_price, bar.open) = min(108.0, 107.5) = 107.5)
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 14, 15, tzinfo=timezone.utc),
+        open=107.5,
+        high=109.0,
+        low=107.0,
+        close=107.8,
+        volume=5000,
+    )
+    hit = runner._process_stop_hit(bar=bar, state=state, events=events)
+
+    assert hit is True
+    expected_exit = min(stop_price, bar.open)  # 107.5
+    expected_pnl = (expected_exit - entry_price) * quantity  # (107.5-110.0)*50 = -125.0
+    assert state.equity == pytest.approx(starting_equity + expected_pnl)
+
+
+def test_equity_updated_after_eod_exit() -> None:
+    """After an EOD exit, state.equity must reflect the realized P&L."""
+    from alpaca_bot.replay.runner import ReplayRunner, ReplayState
+    from alpaca_bot.domain.models import ReplayEvent
+
+    settings = make_settings()
+    runner = ReplayRunner(settings)
+
+    entry_price = 110.0
+    quantity = 30
+    starting_equity = 100_000.0
+
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
+        entry_price=entry_price,
+        quantity=quantity,
+        entry_level=entry_price,
+        initial_stop_price=108.0,
+        stop_price=108.0,
+        highest_price=entry_price,
+    )
+    state = ReplayState(equity=starting_equity, position=position)
+    events: list[ReplayEvent] = []
+
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 15, 45, tzinfo=timezone.utc),
+        open=112.0,
+        high=113.0,
+        low=111.5,
+        close=112.5,
+        volume=3000,
+    )
+    runner._handle_eod_exit(bar=bar, state=state, events=events)
+
+    expected_pnl = (bar.close - entry_price) * quantity  # (112.5-110.0)*30 = 75.0
+    assert state.equity == pytest.approx(starting_equity + expected_pnl)
+    assert state.position is None

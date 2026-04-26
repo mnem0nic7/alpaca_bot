@@ -276,6 +276,21 @@ def test_settings_validates_atr_stop_multiplier_upper_bound():
         _make_settings(atr_stop_multiplier=10.1)
 
 
+def test_settings_rejects_enable_live_trading_without_live_mode():
+    with pytest.raises(ValueError, match="TRADING_MODE=live"):
+        _make_settings(enable_live_trading=True)
+
+
+def test_settings_validates_max_open_positions_upper_bound():
+    with pytest.raises(ValueError, match="MAX_OPEN_POSITIONS"):
+        _make_settings(max_open_positions=21)
+
+
+def test_settings_rejects_max_position_pct_exceeding_portfolio_exposure():
+    with pytest.raises(ValueError, match="MAX_POSITION_PCT"):
+        _make_settings(max_position_pct=0.2, max_portfolio_exposure_pct=0.15)
+
+
 def test_new_strategies_in_registry():
     from alpaca_bot.strategy import STRATEGY_REGISTRY
     assert "orb" in STRATEGY_REGISTRY

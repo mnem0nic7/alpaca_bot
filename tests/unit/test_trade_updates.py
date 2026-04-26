@@ -663,3 +663,53 @@ class TestFillPricePersistence:
         payload = applied_events[0].payload
         assert "fill_price" not in payload
         assert "filled_quantity" not in payload
+
+    def test_strategy_name_propagated_to_position_on_fill(self):
+        """PositionRecord must inherit strategy_name from the matched order."""
+        entry_order = OrderRecord(
+            client_order_id="v1-breakout:2026-04-25:AAPL:entry:2026-04-25T14:00:00+00:00",
+            symbol="AAPL",
+            side="buy",
+            intent_type="entry",
+            status="new",
+            quantity=10,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            strategy_name="momentum",
+            created_at=NOW,
+            updated_at=NOW,
+            initial_stop_price=109.50,
+            signal_timestamp=NOW,
+        )
+        runtime = _make_runtime(orders=[entry_order])
+        update = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+        _apply(runtime, update)
+
+        saved_positions = [r for r in runtime.position_store.saved if isinstance(r, PositionRecord)]
+        assert len(saved_positions) == 1
+        assert saved_positions[0].strategy_name == "momentum"
+
+    def test_strategy_name_propagated_to_protective_stop_on_fill(self):
+        """Protective stop OrderRecord must inherit strategy_name from the entry order."""
+        entry_order = OrderRecord(
+            client_order_id="v1-breakout:2026-04-25:AAPL:entry:2026-04-25T14:00:00+00:00",
+            symbol="AAPL",
+            side="buy",
+            intent_type="entry",
+            status="new",
+            quantity=10,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            strategy_name="orb",
+            created_at=NOW,
+            updated_at=NOW,
+            initial_stop_price=109.50,
+            signal_timestamp=NOW,
+        )
+        runtime = _make_runtime(orders=[entry_order])
+        update = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+        _apply(runtime, update)
+
+        stop_orders = [o for o in runtime.order_store.saved if o.intent_type == "stop"]
+        assert len(stop_orders) == 1
+        assert stop_orders[0].strategy_name == "orb"
