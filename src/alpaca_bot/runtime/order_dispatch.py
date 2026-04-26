@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -59,7 +60,13 @@ def dispatch_pending_orders(
     blocked_strategy_names: set[str] | None = None,
 ) -> OrderDispatchReport:
     timestamp = _resolve_now(now)
-    pending_orders = _list_pending_submit_orders(runtime, settings)
+
+    # Serialize all store access with the stream thread — they share one psycopg2 connection.
+    store_lock = getattr(runtime, "store_lock", None)
+    lock_ctx = store_lock if store_lock is not None else contextlib.nullcontext()
+
+    with lock_ctx:
+        pending_orders = _list_pending_submit_orders(runtime, settings)
 
     session_date_et = timestamp.astimezone(settings.market_timezone).date()
     submitted_count = 0
@@ -88,6 +95,8 @@ def dispatch_pending_orders(
                 )
                 continue
         try:
+            # Broker submission stays outside the lock — it is slow network I/O
+            # and must not block the trade-update stream thread.
             broker_order = _submit_order(order=order, broker=broker)
         except Exception as exc:
             logger.warning(
@@ -96,27 +105,51 @@ def dispatch_pending_orders(
                 order.intent_type,
                 exc,
             )
-            runtime.audit_event_store.append(
-                AuditEvent(
-                    event_type="order_dispatch_failed",
-                    symbol=order.symbol,
-                    payload={
-                        "error": str(exc),
-                        "symbol": order.symbol,
-                        "intent_type": order.intent_type,
-                        "timestamp": timestamp.isoformat(),
-                    },
-                    created_at=timestamp,
+            with lock_ctx:
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="order_dispatch_failed",
+                        symbol=order.symbol,
+                        payload={
+                            "error": str(exc),
+                            "symbol": order.symbol,
+                            "intent_type": order.intent_type,
+                            "timestamp": timestamp.isoformat(),
+                        },
+                        created_at=timestamp,
+                    )
                 )
-            )
+                runtime.order_store.save(
+                    OrderRecord(
+                        client_order_id=order.client_order_id,
+                        symbol=order.symbol,
+                        side=order.side,
+                        intent_type=order.intent_type,
+                        status="error",
+                        quantity=order.quantity,
+                        trading_mode=order.trading_mode,
+                        strategy_version=order.strategy_version,
+                        strategy_name=order.strategy_name,
+                        created_at=order.created_at,
+                        updated_at=timestamp,
+                        stop_price=order.stop_price,
+                        limit_price=order.limit_price,
+                        initial_stop_price=order.initial_stop_price,
+                        broker_order_id=order.broker_order_id,
+                        signal_timestamp=order.signal_timestamp,
+                    )
+                )
+            continue
+        normalized_status = str(broker_order.status).lower()
+        with lock_ctx:
             runtime.order_store.save(
                 OrderRecord(
                     client_order_id=order.client_order_id,
                     symbol=order.symbol,
                     side=order.side,
                     intent_type=order.intent_type,
-                    status="error",
-                    quantity=order.quantity,
+                    status=normalized_status,
+                    quantity=int(broker_order.quantity),
                     trading_mode=order.trading_mode,
                     strategy_version=order.strategy_version,
                     strategy_name=order.strategy_name,
@@ -125,45 +158,23 @@ def dispatch_pending_orders(
                     stop_price=order.stop_price,
                     limit_price=order.limit_price,
                     initial_stop_price=order.initial_stop_price,
-                    broker_order_id=order.broker_order_id,
+                    broker_order_id=broker_order.broker_order_id,
                     signal_timestamp=order.signal_timestamp,
                 )
             )
-            continue
-        normalized_status = str(broker_order.status).lower()
-        runtime.order_store.save(
-            OrderRecord(
-                client_order_id=order.client_order_id,
-                symbol=order.symbol,
-                side=order.side,
-                intent_type=order.intent_type,
-                status=normalized_status,
-                quantity=int(broker_order.quantity),
-                trading_mode=order.trading_mode,
-                strategy_version=order.strategy_version,
-                strategy_name=order.strategy_name,
-                created_at=order.created_at,
-                updated_at=timestamp,
-                stop_price=order.stop_price,
-                limit_price=order.limit_price,
-                initial_stop_price=order.initial_stop_price,
-                broker_order_id=broker_order.broker_order_id,
-                signal_timestamp=order.signal_timestamp,
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="order_submitted",
+                    symbol=order.symbol,
+                    payload={
+                        "client_order_id": order.client_order_id,
+                        "broker_order_id": broker_order.broker_order_id,
+                        "intent_type": order.intent_type,
+                        "status": normalized_status,
+                    },
+                    created_at=timestamp,
+                )
             )
-        )
-        runtime.audit_event_store.append(
-            AuditEvent(
-                event_type="order_submitted",
-                symbol=order.symbol,
-                payload={
-                    "client_order_id": order.client_order_id,
-                    "broker_order_id": broker_order.broker_order_id,
-                    "intent_type": order.intent_type,
-                    "status": normalized_status,
-                },
-                created_at=timestamp,
-            )
-        )
         submitted_count += 1
 
     return OrderDispatchReport(submitted_count=submitted_count)

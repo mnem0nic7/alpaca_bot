@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import logging
@@ -223,19 +224,18 @@ class RuntimeSupervisor:
                 self._session_equity_baseline[session_date] = persisted.equity_baseline
             else:
                 self._session_equity_baseline[session_date] = account.equity
-                if self.runtime.daily_session_state_store is not None:
-                    self.runtime.daily_session_state_store.save(
-                        DailySessionState(
-                            session_date=session_date,
-                            trading_mode=self.settings.trading_mode,
-                            strategy_version=self.settings.strategy_version,
-                            strategy_name="_equity",
-                            entries_disabled=False,
-                            flatten_complete=False,
-                            equity_baseline=account.equity,
-                            updated_at=timestamp,
-                        )
+                self._save_session_state(
+                    DailySessionState(
+                        session_date=session_date,
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                        strategy_name="_equity",
+                        entries_disabled=False,
+                        flatten_complete=False,
+                        equity_baseline=account.equity,
+                        updated_at=timestamp,
                     )
+                )
         baseline_equity = self._session_equity_baseline[session_date]
         loss_limit = self.settings.daily_loss_limit_pct * baseline_equity
         daily_loss_limit_breached = realized_pnl < -loss_limit
@@ -358,10 +358,8 @@ class RuntimeSupervisor:
                     getattr(intent, "reason", None) in {"eod_flatten", "loss_limit_flatten"}
                     for intent in getattr(cycle_result, "intents", [])
                 )
-                if has_flatten_intents and self.runtime.daily_session_state_store is not None and hasattr(
-                    self.runtime.daily_session_state_store, "save"
-                ):
-                    self.runtime.daily_session_state_store.save(
+                if has_flatten_intents:
+                    self._save_session_state(
                         DailySessionState(
                             session_date=session_date,
                             trading_mode=self.settings.trading_mode,
@@ -700,12 +698,23 @@ class RuntimeSupervisor:
             self.runtime.daily_session_state_store, "load"
         ):
             return None
-        return self.runtime.daily_session_state_store.load(
-            session_date=session_date,
-            trading_mode=self.settings.trading_mode,
-            strategy_version=self.settings.strategy_version,
-            strategy_name=strategy_name,
-        )
+        store_lock = getattr(self.runtime, "store_lock", None)
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            return self.runtime.daily_session_state_store.load(
+                session_date=session_date,
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+                strategy_name=strategy_name,
+            )
+
+    def _save_session_state(self, state: DailySessionState) -> None:
+        if self.runtime.daily_session_state_store is None or not hasattr(
+            self.runtime.daily_session_state_store, "save"
+        ):
+            return
+        store_lock = getattr(self.runtime, "store_lock", None)
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            self.runtime.daily_session_state_store.save(state)
 
     def _effective_trading_status(
         self,
