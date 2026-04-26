@@ -308,7 +308,7 @@ class TestTradeUpdateNotifier:
         assert "AAPL" in subject
         assert "148.0" in body
 
-    def test_entry_fill_does_not_trigger_notification(self):
+    def test_entry_fill_sends_fill_notification(self):
         from alpaca_bot.runtime.trade_updates import apply_trade_update
 
         order = self._make_order("entry")
@@ -336,7 +336,10 @@ class TestTradeUpdateNotifier:
             notifier=notifier,
         )
 
-        assert notifier.calls == []
+        assert len(notifier.calls) == 1
+        subject, body = notifier.calls[0]
+        assert "AAPL" in subject
+        assert "150.0" in subject or "150.0" in body
 
     def test_none_notifier_on_stop_fill_does_not_raise(self):
         from alpaca_bot.runtime.trade_updates import apply_trade_update

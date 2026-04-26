@@ -11,6 +11,7 @@ from alpaca_bot.storage import (
     OrderStore,
     PostgresAdvisoryLock,
     PositionStore,
+    StrategyFlagStore,
     TradingStatusStore,
     resolve_migrations_path,
 )
@@ -27,6 +28,7 @@ class RuntimeContext:
     order_store: OrderStore
     daily_session_state_store: DailySessionStateStore | None = None
     position_store: PositionStore | None = None
+    strategy_flag_store: StrategyFlagStore | None = None
 
 
 def bootstrap_runtime(
@@ -62,6 +64,7 @@ def bootstrap_runtime(
         order_store=OrderStore(runtime_connection),
         position_store=PositionStore(runtime_connection),
         daily_session_state_store=DailySessionStateStore(runtime_connection),
+        strategy_flag_store=StrategyFlagStore(runtime_connection),
     )
 
 
@@ -85,6 +88,7 @@ def reconnect_runtime_connection(context: RuntimeContext) -> None:
         "order_store",
         "daily_session_state_store",
         "position_store",
+        "strategy_flag_store",
     ):
         store = getattr(context, attr, None)
         if store is not None and hasattr(store, "_connection"):

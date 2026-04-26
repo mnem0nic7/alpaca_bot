@@ -10,6 +10,7 @@ from alpaca_bot.storage.models import (
     DailySessionState,
     OrderRecord,
     PositionRecord,
+    StrategyFlag,
     TradingStatus,
     TradingStatusValue,
 )
@@ -18,6 +19,7 @@ from alpaca_bot.storage.repositories import (
     DailySessionStateStore,
     OrderStore,
     PositionStore,
+    StrategyFlagStore,
     TradingStatusStore,
 )
 
@@ -35,6 +37,8 @@ __all__ = [
     "PositionStore",
     "PostgresAdvisoryLock",
     "resolve_migrations_path",
+    "StrategyFlag",
+    "StrategyFlagStore",
     "TradingStatus",
     "TradingStatusStore",
     "TradingStatusValue",

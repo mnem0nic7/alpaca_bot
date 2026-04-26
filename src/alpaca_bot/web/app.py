@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qsl
 
@@ -11,13 +11,17 @@ from fastapi.templating import Jinja2Templates
 
 from alpaca_bot.config import Settings
 from alpaca_bot.storage import (
+    AuditEvent,
     AuditEventStore,
     DailySessionStateStore,
     OrderStore,
     PositionStore,
+    StrategyFlag,
+    StrategyFlagStore,
     TradingStatusStore,
 )
-from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres
+from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres, execute
+from alpaca_bot.strategy import STRATEGY_REGISTRY
 from alpaca_bot.web.auth import (
     authenticate_operator,
     auth_enabled,
@@ -44,6 +48,7 @@ def create_app(
     order_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     daily_session_state_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     audit_event_store_factory: Callable[[ConnectionProtocol], object] | None = None,
+    strategy_flag_store_factory: Callable[[ConnectionProtocol], object] | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings.from_env()
     fixed_connection = connection or db_connection
@@ -73,6 +78,7 @@ def create_app(
         daily_session_state_store_factory or DailySessionStateStore
     )
     app.state.audit_event_store_factory = audit_event_store_factory or AuditEventStore
+    app.state.strategy_flag_store_factory = strategy_flag_store_factory or StrategyFlagStore
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request) -> HTMLResponse:
@@ -215,6 +221,59 @@ def create_app(
             }
         )
 
+    @app.post("/strategies/{strategy_name}/toggle")
+    def toggle_strategy(strategy_name: str, request: Request) -> Response:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return RedirectResponse(url="/login?next=/", status_code=status.HTTP_303_SEE_OTHER)
+        if strategy_name not in STRATEGY_REGISTRY:
+            return HTMLResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content="Unknown strategy",
+            )
+        now = datetime.now(timezone.utc)
+        connection = app.state.connect_postgres(app_settings.database_url)
+        try:
+            flag_store = _build_store(app.state.strategy_flag_store_factory, connection)
+            audit_store = _build_store(app.state.audit_event_store_factory, connection)
+            current_flag = flag_store.load(
+                strategy_name=strategy_name,
+                trading_mode=app_settings.trading_mode,
+                strategy_version=app_settings.strategy_version,
+            )
+            new_enabled = not (current_flag.enabled if current_flag is not None else True)
+            execute(connection, "BEGIN")
+            try:
+                flag_store.save(
+                    StrategyFlag(
+                        strategy_name=strategy_name,
+                        trading_mode=app_settings.trading_mode,
+                        strategy_version=app_settings.strategy_version,
+                        enabled=new_enabled,
+                        updated_at=now,
+                    )
+                )
+                audit_store.append(
+                    AuditEvent(
+                        event_type="strategy_flag_changed",
+                        payload={
+                            "strategy_name": strategy_name,
+                            "enabled": new_enabled,
+                            "operator": operator or "web",
+                        },
+                        created_at=now,
+                    )
+                )
+                execute(connection, "COMMIT")
+            except Exception:
+                execute(connection, "ROLLBACK")
+                raise
+        finally:
+            close = getattr(connection, "close", None)
+            if callable(close):
+                close()
+        return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+
     return app
 
 
@@ -240,6 +299,10 @@ def _load_dashboard_data(app: FastAPI) -> tuple:
             ),
             order_store=order_store,
             audit_event_store=audit_event_store,
+            strategy_flag_store=_build_store(
+                app.state.strategy_flag_store_factory,
+                connection,
+            ),
         )
         metrics = load_metrics_snapshot(
             settings=app.state.settings,
