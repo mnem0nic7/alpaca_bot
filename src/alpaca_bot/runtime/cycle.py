@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 from datetime import date, datetime
 from typing import Mapping, Protocol, Sequence
 
@@ -58,41 +59,43 @@ def run_cycle(
         global_open_count=global_open_count,
     )
 
-    for intent in result.intents:
-        if intent.intent_type is not CycleIntentType.ENTRY:
-            continue
-        runtime.order_store.save(
-            OrderRecord(
-                client_order_id=intent.client_order_id or "",
-                symbol=intent.symbol,
-                side="buy",
-                intent_type=intent.intent_type.value,
-                status="pending_submit",
-                quantity=intent.quantity or 0,
-                trading_mode=settings.trading_mode,
-                strategy_version=settings.strategy_version,
+    _store_lock = getattr(runtime, "store_lock", None)
+    with _store_lock if _store_lock is not None else contextlib.nullcontext():
+        for intent in result.intents:
+            if intent.intent_type is not CycleIntentType.ENTRY:
+                continue
+            runtime.order_store.save(
+                OrderRecord(
+                    client_order_id=intent.client_order_id or "",
+                    symbol=intent.symbol,
+                    side="buy",
+                    intent_type=intent.intent_type.value,
+                    status="pending_submit",
+                    quantity=intent.quantity or 0,
+                    trading_mode=settings.trading_mode,
+                    strategy_version=settings.strategy_version,
+                    created_at=now,
+                    updated_at=now,
+                    stop_price=intent.stop_price,
+                    limit_price=intent.limit_price,
+                    initial_stop_price=intent.initial_stop_price,
+                    signal_timestamp=intent.signal_timestamp,
+                    strategy_name=intent.strategy_name,
+                )
+            )
+
+        runtime.audit_event_store.append(
+            AuditEvent(
+                event_type="decision_cycle_completed",
+                payload={
+                    "trading_mode": settings.trading_mode.value,
+                    "strategy_version": settings.strategy_version,
+                    "intent_count": len(result.intents),
+                    "intent_types": [intent.intent_type.value for intent in result.intents],
+                    "cycle_timestamp": now.isoformat(),
+                },
                 created_at=now,
-                updated_at=now,
-                stop_price=intent.stop_price,
-                limit_price=intent.limit_price,
-                initial_stop_price=intent.initial_stop_price,
-                signal_timestamp=intent.signal_timestamp,
-                strategy_name=intent.strategy_name,
             )
         )
-
-    runtime.audit_event_store.append(
-        AuditEvent(
-            event_type="decision_cycle_completed",
-            payload={
-                "trading_mode": settings.trading_mode.value,
-                "strategy_version": settings.strategy_version,
-                "intent_count": len(result.intents),
-                "intent_types": [intent.intent_type.value for intent in result.intents],
-                "cycle_timestamp": now.isoformat(),
-            },
-            created_at=now,
-        )
-    )
 
     return result
