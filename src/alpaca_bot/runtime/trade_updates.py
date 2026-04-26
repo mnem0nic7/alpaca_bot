@@ -75,6 +75,8 @@ def apply_trade_update(
                 notifier.send(subject=subject, body=body)
             except Exception:
                 logger.exception("Notifier failed to send: %s", subject)
+    elif pending_notifications:
+        logger.debug("Notifier not configured; suppressing %d fill notification(s)", len(pending_notifications))
     return result
 
 
@@ -250,11 +252,13 @@ def _apply_trade_update_locked(
         )
         position_updated = True
         position_cleared = True
+        exit_qty = normalized.filled_qty if normalized.filled_qty is not None else matched_order.quantity
+        exit_price = normalized.filled_avg_price or matched_order.fill_price or "?"
         pending_notifications.append((
             f"Position closed: {matched_order.symbol}",
             (
                 f"{matched_order.intent_type.upper()} fill on {matched_order.symbol}: "
-                f"{normalized.filled_qty} shares @ {normalized.filled_avg_price}"
+                f"{exit_qty} shares @ {exit_price}"
             ),
         ))
     elif (

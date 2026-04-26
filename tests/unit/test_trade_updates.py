@@ -715,6 +715,216 @@ class TestFillPricePersistence:
         assert stop_orders[0].strategy_name == "orb"
 
 
+class RecordingNotifier:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+        self.raise_on_send: Exception | None = None
+
+    def send(self, subject: str, body: str) -> None:
+        if self.raise_on_send is not None:
+            raise self.raise_on_send
+        self.sent.append((subject, body))
+
+
+def _apply_with_notifier(runtime, update_dict, notifier, *, settings=None):
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    return apply_trade_update(
+        settings=settings or make_settings(),
+        runtime=runtime,
+        update=update_dict,
+        now=NOW,
+        notifier=notifier,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Notifier tests
+# ---------------------------------------------------------------------------
+
+class TestNotifier:
+    def test_entry_fill_sends_notification_with_symbol_qty_price(self):
+        """An entry fill must send one notification with the symbol, qty, and fill price."""
+        entry_order = _make_entry_order(quantity=10)
+        runtime = _make_runtime(orders=[entry_order])
+        notifier = RecordingNotifier()
+
+        update = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+        _apply_with_notifier(runtime, update, notifier)
+
+        assert len(notifier.sent) == 1
+        subject, body = notifier.sent[0]
+        assert "AAPL" in subject
+        assert "10" in subject
+        assert "112.0" in subject
+        assert "AAPL" in body
+        assert "10" in body
+        assert "112.0" in body
+
+    def test_entry_fill_includes_slippage_alert_when_fill_exceeds_limit(self):
+        """When the fill price exceeds the limit price by more than the threshold,
+        the notification body must include the slippage warning."""
+        entry_order = OrderRecord(
+            client_order_id="v1-breakout:2026-04-25:AAPL:entry:2026-04-25T14:00:00+00:00",
+            symbol="AAPL",
+            side="buy",
+            intent_type="entry",
+            status="new",
+            quantity=10,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            created_at=NOW,
+            updated_at=NOW,
+            initial_stop_price=109.50,
+            limit_price=110.00,   # fill at 111.00 → 0.9% adverse slippage > 0.5% threshold
+            signal_timestamp=NOW,
+        )
+        runtime = _make_runtime(orders=[entry_order])
+        notifier = RecordingNotifier()
+
+        update = _make_trade_update(
+            status="filled", qty=10, filled_qty=10, filled_avg_price=111.00
+        )
+        _apply_with_notifier(runtime, update, notifier)
+
+        assert len(notifier.sent) == 1
+        _, body = notifier.sent[0]
+        assert "slippage" in body.lower() or "\u26a0" in body
+
+    def test_entry_fill_no_slippage_alert_within_threshold(self):
+        """When the fill is within the threshold, no slippage warning appears in the body."""
+        entry_order = OrderRecord(
+            client_order_id="v1-breakout:2026-04-25:AAPL:entry:2026-04-25T14:00:00+00:00",
+            symbol="AAPL",
+            side="buy",
+            intent_type="entry",
+            status="new",
+            quantity=10,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            created_at=NOW,
+            updated_at=NOW,
+            initial_stop_price=109.50,
+            limit_price=112.00,   # fill at 112.10 → 0.089% < 0.5% threshold
+            signal_timestamp=NOW,
+        )
+        runtime = _make_runtime(orders=[entry_order])
+        notifier = RecordingNotifier()
+
+        update = _make_trade_update(
+            status="filled", qty=10, filled_qty=10, filled_avg_price=112.10
+        )
+        _apply_with_notifier(runtime, update, notifier)
+
+        assert len(notifier.sent) == 1
+        _, body = notifier.sent[0]
+        assert "\u26a0" not in body
+
+    def test_exit_fill_sends_position_closed_notification(self):
+        """A stop or exit fill must send a 'Position closed' notification."""
+        stop_order = OrderRecord(
+            client_order_id="v1-breakout:2026-04-25:AAPL:stop:2026-04-25T14:00:00+00:00",
+            symbol="AAPL",
+            side="sell",
+            intent_type="stop",
+            status="new",
+            quantity=10,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            strategy_name="breakout",
+            created_at=NOW,
+            updated_at=NOW,
+            stop_price=109.50,
+            initial_stop_price=109.50,
+            signal_timestamp=NOW,
+        )
+        runtime = _make_runtime(orders=[stop_order])
+        notifier = RecordingNotifier()
+
+        update = _make_trade_update(
+            client_order_id=stop_order.client_order_id,
+            symbol="AAPL",
+            side="sell",
+            status="filled",
+            qty=10,
+            filled_qty=10,
+            filled_avg_price=109.20,
+        )
+        _apply_with_notifier(runtime, update, notifier)
+
+        assert len(notifier.sent) == 1
+        subject, body = notifier.sent[0]
+        assert "AAPL" in subject
+        assert "closed" in subject.lower() or "STOP" in body
+        assert "109.2" in body
+
+    def test_exit_fill_with_none_price_does_not_raise(self):
+        """An exit fill where filled_avg_price is None must send a notification
+        with '?' as the price rather than raising."""
+        stop_order = OrderRecord(
+            client_order_id="v1-breakout:2026-04-25:AAPL:stop:2026-04-25T14:00:00+00:00",
+            symbol="AAPL",
+            side="sell",
+            intent_type="stop",
+            status="new",
+            quantity=10,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            strategy_name="breakout",
+            created_at=NOW,
+            updated_at=NOW,
+            stop_price=109.50,
+            initial_stop_price=109.50,
+            signal_timestamp=NOW,
+        )
+        runtime = _make_runtime(orders=[stop_order])
+        notifier = RecordingNotifier()
+
+        update = _make_trade_update(
+            client_order_id=stop_order.client_order_id,
+            symbol="AAPL",
+            side="sell",
+            status="filled",
+            qty=10,
+            filled_qty=10,
+            filled_avg_price=109.20,
+        )
+        update["filled_avg_price"] = None
+
+        _apply_with_notifier(runtime, update, notifier)
+
+        assert len(notifier.sent) == 1
+        _, body = notifier.sent[0]
+        assert "?" in body
+
+    def test_notifier_send_exception_is_swallowed(self):
+        """When notifier.send() raises, apply_trade_update must not re-raise —
+        the fill is already processed and the notification is best-effort."""
+        entry_order = _make_entry_order(quantity=10)
+        runtime = _make_runtime(orders=[entry_order])
+        notifier = RecordingNotifier()
+        notifier.raise_on_send = RuntimeError("slack timeout")
+
+        update = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+        # Must not raise even though notifier.send() raises.
+        result = _apply_with_notifier(runtime, update, notifier)
+
+        assert result["position_updated"] is True
+
+    def test_no_notification_sent_when_no_fill_event(self):
+        """A non-fill status update (e.g. 'new') must not trigger any notification."""
+        entry_order = _make_entry_order(quantity=10)
+        runtime = _make_runtime(orders=[entry_order])
+        notifier = RecordingNotifier()
+
+        update = _make_trade_update(status="new", qty=10, filled_qty=None, filled_avg_price=None)
+        update["filled_avg_price"] = None
+        update["filled_qty"] = None
+        _apply_with_notifier(runtime, update, notifier)
+
+        assert notifier.sent == []
+
+
 def test_final_fill_updates_pending_stop_quantity_to_match_actual_fill() -> None:
     """When a partial fill creates a pending_submit stop, the final fill event must
     update the stop quantity to the actual filled quantity so the protective stop
