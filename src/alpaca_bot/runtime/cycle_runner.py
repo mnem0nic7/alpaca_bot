@@ -123,6 +123,7 @@ def _to_storage_intent(
             quantity=intent.quantity or 0,
             trading_mode=settings.trading_mode,
             strategy_version=settings.strategy_version,
+            strategy_name=getattr(intent, "strategy_name", "breakout"),
             signal_timestamp=intent.signal_timestamp,
             stop_price=intent.stop_price,
             limit_price=intent.limit_price,

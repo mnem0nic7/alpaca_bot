@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import io
+from types import SimpleNamespace
 
 from alpaca_bot.admin.cli import main
 from alpaca_bot.config import TradingMode
@@ -24,7 +25,7 @@ class RecordingTradingStatusStore:
         self.saved: list[TradingStatus] = []
         self.load_calls: list[tuple[TradingMode, str]] = []
 
-    def save(self, status: TradingStatus) -> None:
+    def save(self, status: TradingStatus, *, commit: bool = True) -> None:
         self.saved.append(status)
 
     def load(
@@ -41,13 +42,13 @@ class RecordingAuditEventStore:
     def __init__(self) -> None:
         self.appended: list[AuditEvent] = []
 
-    def append(self, event: AuditEvent) -> None:
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None:
         self.appended.append(event)
 
 
 def test_halt_command_saves_halted_status_and_appends_audit_event() -> None:
     now = datetime(2026, 4, 24, 20, 30, tzinfo=timezone.utc)
-    connection = object()
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
     status_store = RecordingTradingStatusStore()
     audit_store = RecordingAuditEventStore()
     stdout = io.StringIO()
@@ -97,7 +98,7 @@ def test_halt_command_saves_halted_status_and_appends_audit_event() -> None:
 
 def test_close_only_command_saves_close_only_status() -> None:
     now = datetime(2026, 4, 24, 20, 35, tzinfo=timezone.utc)
-    connection = object()
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
     status_store = RecordingTradingStatusStore()
     audit_store = RecordingAuditEventStore()
 
@@ -131,7 +132,7 @@ def test_close_only_command_saves_close_only_status() -> None:
 
 def test_resume_command_restores_enabled_status_for_requested_target() -> None:
     now = datetime(2026, 4, 24, 20, 40, tzinfo=timezone.utc)
-    connection = object()
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
     status_store = RecordingTradingStatusStore()
     audit_store = RecordingAuditEventStore()
 

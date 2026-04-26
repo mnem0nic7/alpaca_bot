@@ -117,7 +117,7 @@
   </head>
   <body>
     <main>
-      {% if settings.trading_mode.value == "live" %}
+      {% if trading_mode == "live" %}
         <div style="background: #c0392b; color: #fff; text-align: center; padding: 0.6rem 1rem; font-weight: 700; letter-spacing: 0.05em; margin-bottom: 1rem;">
           &#9888; LIVE TRADING ACTIVE &mdash; real capital at risk
         </div>
@@ -143,8 +143,8 @@
           <h1>Read-Only Runtime Dashboard</h1>
           <p class="muted" style="margin-top: 0.55rem;">
             Generated {{ format_timestamp(snapshot.generated_at) }} for
-            <span class="mono">{{ settings.trading_mode.value }}</span> /
-            <span class="mono">{{ settings.strategy_version }}</span>
+            <span class="mono">{{ trading_mode }}</span> /
+            <span class="mono">{{ strategy_version }}</span>
           </p>
           <div class="status-grid">
             <div>

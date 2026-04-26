@@ -867,7 +867,7 @@ class StrategyFlagStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
         self._connection = connection
 
-    def save(self, flag: StrategyFlag) -> None:
+    def save(self, flag: StrategyFlag, *, commit: bool = True) -> None:
         execute(
             self._connection,
             """
@@ -887,6 +887,7 @@ class StrategyFlagStore:
                 flag.enabled,
                 flag.updated_at,
             ),
+            commit=commit,
         )
 
     def load(

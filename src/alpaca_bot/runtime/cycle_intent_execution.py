@@ -157,6 +157,8 @@ def _execute_update_stop(
 ) -> str | None:
     if position is None or stop_price is None:
         return None
+    if stop_price <= position.stop_price:
+        return None
 
     if lock_ctx is None:
         lock_ctx = contextlib.nullcontext()

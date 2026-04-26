@@ -617,32 +617,6 @@ class RuntimeSupervisor:
             idle_iterations=idle_iterations,
         )
 
-    def _sync_positions(
-        self,
-        *,
-        open_positions: list[BrokerPosition],
-        timestamp: datetime,
-    ) -> None:
-        if self.runtime.position_store is None:
-            raise RuntimeError("Runtime context is missing a position store")
-        existing_by_symbol = {
-            position.symbol: position
-            for position in self._load_position_records()
-        }
-        self.runtime.position_store.replace_all(
-            positions=[
-                _synced_position_record(
-                    settings=self.settings,
-                    position=position,
-                    existing=existing_by_symbol.get(position.symbol),
-                    timestamp=timestamp,
-                )
-                for position in open_positions
-            ],
-            trading_mode=self.settings.trading_mode,
-            strategy_version=self.settings.strategy_version,
-        )
-
     def _load_open_positions(self) -> list[OpenPosition]:
         return [
             OpenPosition(
@@ -887,22 +861,3 @@ def _session_date(timestamp: datetime, settings: Settings) -> date:
     return timestamp.astimezone(settings.market_timezone).date()
 
 
-def _synced_position_record(
-    *,
-    settings: Settings,
-    position: BrokerPosition,
-    existing: PositionRecord | None,
-    timestamp: datetime,
-) -> PositionRecord:
-    return PositionRecord(
-        symbol=position.symbol,
-        trading_mode=settings.trading_mode,
-        strategy_version=settings.strategy_version,
-        strategy_name=existing.strategy_name if existing is not None else "breakout",
-        quantity=position.quantity,
-        entry_price=position.entry_price or 0.0,
-        stop_price=existing.stop_price if existing is not None else 0.0,
-        initial_stop_price=existing.initial_stop_price if existing is not None else 0.0,
-        opened_at=existing.opened_at if existing is not None else timestamp,
-        updated_at=timestamp,
-    )

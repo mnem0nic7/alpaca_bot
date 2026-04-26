@@ -145,7 +145,7 @@ def _write_status_change(
     command_name: str,
     trading_mode: TradingMode,
     strategy_version: str,
-    reason: str,
+    reason: str | None,
     now: datetime,
     kill_switch_enabled: bool,
 ) -> str:
@@ -155,7 +155,7 @@ def _write_status_change(
         strategy_version=strategy_version,
         status=new_status,
         kill_switch_enabled=kill_switch_enabled,
-        status_reason=reason,
+        status_reason=reason or None,
         updated_at=now,
     )
     # Write status and audit event atomically so a crash between the two cannot
@@ -261,33 +261,18 @@ def main(
             else:
                 raise ValueError(f"Unsupported command: {args.command}")
 
-            status = TradingStatus(
+            output = _write_status_change(
+                connection=connection,
+                settings=resolved_settings,
+                status_store=status_store,
+                event_store=audit_store,
+                new_status=status_value,
+                command_name=args.command,
                 trading_mode=trading_mode,
                 strategy_version=strategy_version,
-                status=status_value,
+                reason=command_reason or None,
+                now=timestamp,
                 kill_switch_enabled=kill_switch_enabled,
-                status_reason=command_reason,
-                updated_at=timestamp,
-            )
-            status_store.save(status)
-            audit_store.append(
-                AuditEvent(
-                    event_type="trading_status_changed",
-                    payload=_status_change_payload(
-                        command_name=args.command,
-                        trading_mode=trading_mode,
-                        strategy_version=strategy_version,
-                        new_status=status_value,
-                        reason=command_reason,
-                    ),
-                    created_at=timestamp,
-                )
-            )
-            output = (
-                f"mode={trading_mode.value} "
-                f"strategy={strategy_version} "
-                f"status={status_value.value} "
-                f"reason={command_reason or '-'}"
             )
     finally:
         close = getattr(connection, "close", None)

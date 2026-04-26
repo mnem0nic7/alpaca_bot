@@ -412,12 +412,12 @@ def _make_toggle_app(
     def flag_store_factory(_conn):
         return SimpleNamespace(
             load=lambda **_: initial_flag,
-            save=lambda flag: saved_flags.append(flag),
+            save=lambda flag, **_: saved_flags.append(flag),
         )
 
     def audit_store_factory(_conn):
         return SimpleNamespace(
-            append=lambda event: appended_events.append(event),
+            append=lambda event, **_: appended_events.append(event),
             list_recent=lambda **_: [],
             load_latest=lambda **_: None,
             list_by_event_types=lambda **_: [],

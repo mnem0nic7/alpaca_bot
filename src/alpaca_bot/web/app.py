@@ -115,7 +115,8 @@ def create_app(
             name="dashboard.html",
             context={
                 "request": request,
-                "settings": app_settings,
+                "trading_mode": app_settings.trading_mode.value,
+                "strategy_version": app_settings.strategy_version,
                 "snapshot": snapshot,
                 "metrics": metrics,
                 "operator_email": operator,
@@ -270,32 +271,29 @@ def create_app(
                 strategy_version=app_settings.strategy_version,
             )
             new_enabled = not (current_flag.enabled if current_flag is not None else True)
-            execute(connection, "BEGIN")
-            try:
-                flag_store.save(
-                    StrategyFlag(
-                        strategy_name=strategy_name,
-                        trading_mode=app_settings.trading_mode,
-                        strategy_version=app_settings.strategy_version,
-                        enabled=new_enabled,
-                        updated_at=now,
-                    )
-                )
-                audit_store.append(
-                    AuditEvent(
-                        event_type="strategy_flag_changed",
-                        payload={
-                            "strategy_name": strategy_name,
-                            "enabled": new_enabled,
-                            "operator": operator or "web",
-                        },
-                        created_at=now,
-                    )
-                )
-                execute(connection, "COMMIT")
-            except Exception:
-                execute(connection, "ROLLBACK")
-                raise
+            flag_store.save(
+                StrategyFlag(
+                    strategy_name=strategy_name,
+                    trading_mode=app_settings.trading_mode,
+                    strategy_version=app_settings.strategy_version,
+                    enabled=new_enabled,
+                    updated_at=now,
+                ),
+                commit=False,
+            )
+            audit_store.append(
+                AuditEvent(
+                    event_type="strategy_flag_changed",
+                    payload={
+                        "strategy_name": strategy_name,
+                        "enabled": new_enabled,
+                        "operator": operator or "web",
+                    },
+                    created_at=now,
+                ),
+                commit=False,
+            )
+            connection.commit()
         finally:
             close = getattr(connection, "close", None)
             if callable(close):
@@ -396,12 +394,14 @@ def _render_login_page(
     error_message: str | None = None,
     status_code: int = status.HTTP_200_OK,
 ) -> HTMLResponse:
+    _s = app.state.settings
     return app.state.templates.TemplateResponse(
         request=request,
         name="login.html",
         context={
             "request": request,
-            "settings": app.state.settings,
+            "trading_mode": _s.trading_mode.value,
+            "strategy_version": _s.strategy_version,
             "next_path": _local_path(next_path),
             "username": username,
             "error_message": error_message,
