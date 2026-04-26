@@ -378,7 +378,7 @@ def test_load_dashboard_snapshot_sets_none_for_missing_flag_row() -> None:
         **stores,
     )
 
-    assert snapshot.strategy_flags == [("breakout", None)]
+    assert snapshot.strategy_flags == [("breakout", None), ("momentum", None)]
 
 
 # ---------------------------------------------------------------------------

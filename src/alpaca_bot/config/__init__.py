@@ -73,6 +73,9 @@ class Settings:
     entry_window_start: time
     entry_window_end: time
     flatten_time: time
+    max_portfolio_exposure_pct: float = 0.15
+    notify_slippage_threshold_pct: float = 0.005
+    prior_day_high_lookback_bars: int = 1
     market_timezone: ZoneInfo = ZoneInfo("America/New_York")
     dashboard_auth_enabled: bool = False
     dashboard_auth_username: str | None = None
@@ -88,6 +91,9 @@ class Settings:
     notify_smtp_port: int = 587
     notify_smtp_user: str | None = None
     notify_smtp_password: str | None = None
+
+    def __post_init__(self) -> None:
+        self.validate()
 
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> "Settings":
@@ -114,6 +120,13 @@ class Settings:
             max_position_pct=float(values.get("MAX_POSITION_PCT", "0.05")),
             max_open_positions=int(values.get("MAX_OPEN_POSITIONS", "3")),
             daily_loss_limit_pct=float(values.get("DAILY_LOSS_LIMIT_PCT", "0.01")),
+            max_portfolio_exposure_pct=float(
+                values.get("MAX_PORTFOLIO_EXPOSURE_PCT", "0.15")
+            ),
+            notify_slippage_threshold_pct=float(
+                values.get("NOTIFY_SLIPPAGE_THRESHOLD_PCT", "0.005")
+            ),
+            prior_day_high_lookback_bars=int(values.get("PRIOR_DAY_HIGH_LOOKBACK_BARS", "1")),
             stop_limit_buffer_pct=float(values.get("STOP_LIMIT_BUFFER_PCT", "0.001")),
             breakout_stop_buffer_pct=float(
                 values.get("BREAKOUT_STOP_BUFFER_PCT", "0.001")
@@ -143,7 +156,6 @@ class Settings:
             notify_smtp_user=values.get("NOTIFY_SMTP_USER"),
             notify_smtp_password=values.get("NOTIFY_SMTP_PASSWORD"),
         )
-        settings.validate()
         return settings
 
     def validate(self) -> None:
@@ -155,6 +167,12 @@ class Settings:
         if self.entry_window_end >= self.flatten_time:
             raise ValueError("ENTRY_WINDOW_END must be before FLATTEN_TIME")
 
+        if not 0 < self.max_portfolio_exposure_pct <= 1.0:
+            raise ValueError(
+                "MAX_PORTFOLIO_EXPOSURE_PCT must be between 0 (exclusive) and 1.0 (inclusive)"
+            )
+        if self.notify_slippage_threshold_pct < 0:
+            raise ValueError("NOTIFY_SLIPPAGE_THRESHOLD_PCT must be >= 0")
         _validate_positive_fraction("RISK_PER_TRADE_PCT", self.risk_per_trade_pct)
         _validate_positive_fraction("MAX_POSITION_PCT", self.max_position_pct)
         _validate_positive_fraction("DAILY_LOSS_LIMIT_PCT", self.daily_loss_limit_pct)
@@ -172,8 +190,8 @@ class Settings:
             raise ValueError("RELATIVE_VOLUME_LOOKBACK_BARS must be at least 2")
         if self.relative_volume_threshold <= 1.0:
             raise ValueError("RELATIVE_VOLUME_THRESHOLD must be greater than 1.0")
-        if self.entry_timeframe_minutes != 15:
-            raise ValueError("ENTRY_TIMEFRAME_MINUTES must be 15 for this strategy")
+        if self.prior_day_high_lookback_bars < 1:
+            raise ValueError("PRIOR_DAY_HIGH_LOOKBACK_BARS must be at least 1")
         if self.max_open_positions < 1:
             raise ValueError("MAX_OPEN_POSITIONS must be at least 1")
         if self.dashboard_auth_enabled:
