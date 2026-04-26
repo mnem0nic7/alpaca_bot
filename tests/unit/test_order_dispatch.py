@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from importlib import import_module
 from types import SimpleNamespace
@@ -464,3 +465,54 @@ def test_dispatch_does_not_skip_naive_signal_timestamp_from_same_day() -> None:
     # Same-day naive signal must be dispatched, not skipped
     assert len(broker.entry_calls) == 1
     assert report["submitted_count"] == 1
+
+
+def test_dispatch_pending_orders_acquires_store_lock_for_order_store_save() -> None:
+    """store_lock must be held when order_store.save() is called so the stream
+    thread cannot concurrently use the shared psycopg2 connection."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 25, 18, 30, tzinfo=timezone.utc)
+    entry = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:lock-test",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=101.0,
+        limit_price=101.5,
+        initial_stop_price=99.5,
+        signal_timestamp=now,
+    )
+
+    real_lock = threading.Lock()
+    lock_held_during_save: list[bool] = []
+
+    class LockWatchingOrderStore(RecordingOrderStore):
+        def save(self, order: OrderRecord) -> None:
+            # If lock is held by the caller, acquire(blocking=False) returns False.
+            acquired = real_lock.acquire(blocking=False)
+            lock_held_during_save.append(not acquired)
+            if acquired:
+                real_lock.release()
+            super().save(order)
+
+    runtime = SimpleNamespace(
+        order_store=LockWatchingOrderStore([entry]),
+        audit_event_store=RecordingAuditEventStore(),
+        store_lock=real_lock,
+    )
+    broker = RecordingBroker()
+
+    dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    assert lock_held_during_save, "order_store.save was never called"
+    assert all(lock_held_during_save), (
+        "store_lock must be held for every order_store.save call in dispatch_pending_orders"
+    )
+

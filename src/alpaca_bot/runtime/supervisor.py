@@ -163,16 +163,20 @@ class RuntimeSupervisor:
             logger.warning(
                 "Postgres connection appears dead at cycle start; reconnecting..."
             )
-            self._reconnect(self.runtime)
-            logger.info("Postgres connection re-established.")
-            reconnect_ts = _resolve_now(now)
-            self.runtime.audit_event_store.append(
-                AuditEvent(
-                    event_type="postgres_reconnected",
-                    payload={"timestamp": reconnect_ts.isoformat()},
-                    created_at=reconnect_ts,
+            # Acquire store_lock before rewiring _connection on all store objects so
+            # the stream thread is not mid-query on the old connection when we swap it.
+            _reconnect_lock = getattr(self.runtime, "store_lock", None)
+            with _reconnect_lock if _reconnect_lock is not None else contextlib.nullcontext():
+                self._reconnect(self.runtime)
+                logger.info("Postgres connection re-established.")
+                reconnect_ts = _resolve_now(now)
+                self.runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="postgres_reconnected",
+                        payload={"timestamp": reconnect_ts.isoformat()},
+                        created_at=reconnect_ts,
+                    )
                 )
-            )
 
         timestamp = _resolve_now(now)
         broker_open_orders = list(_list_open_orders(self.broker))
@@ -209,11 +213,13 @@ class RuntimeSupervisor:
         if session_state is not None and session_state.session_date != session_date:
             session_state = None
 
-        realized_pnl = self.runtime.order_store.daily_realized_pnl(
-            trading_mode=self.settings.trading_mode,
-            strategy_version=self.settings.strategy_version,
-            session_date=session_date,
-        )
+        _pnl_lock = getattr(self.runtime, "store_lock", None)
+        with _pnl_lock if _pnl_lock is not None else contextlib.nullcontext():
+            realized_pnl = self.runtime.order_store.daily_realized_pnl(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+                session_date=session_date,
+            )
         # Snapshot equity once per session day so the daily loss limit is always
         # computed against start-of-day capital, not the current (post-loss) value.
         # On mid-day restart the in-memory dict is empty, so we recover the
@@ -651,14 +657,17 @@ class RuntimeSupervisor:
     def _resolve_active_strategies(self) -> list[tuple[str, StrategySignalEvaluator]]:
         """Return (strategy_name, evaluator) for every enabled strategy."""
         store = getattr(self.runtime, "strategy_flag_store", None)
+        store_lock = getattr(self.runtime, "store_lock", None)
+        lock_ctx = store_lock if store_lock is not None else contextlib.nullcontext()
         active = []
         for name, evaluator in STRATEGY_REGISTRY.items():
             if store is not None:
-                flag = store.load(
-                    strategy_name=name,
-                    trading_mode=self.settings.trading_mode,
-                    strategy_version=self.settings.strategy_version,
-                )
+                with lock_ctx:
+                    flag = store.load(
+                        strategy_name=name,
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                    )
                 if flag is not None and not flag.enabled:
                     continue
             active.append((name, evaluator))
@@ -672,12 +681,15 @@ class RuntimeSupervisor:
     ) -> set[str]:
         symbols: set[str] = set()
         if hasattr(self.runtime.order_store, "list_by_status"):
-            for order in self.runtime.order_store.list_by_status(
-                trading_mode=self.settings.trading_mode,
-                strategy_version=self.settings.strategy_version,
-                statuses=["pending_submit"],
-                strategy_name=strategy_name,
-            ):
+            store_lock = getattr(self.runtime, "store_lock", None)
+            with store_lock if store_lock is not None else contextlib.nullcontext():
+                pending = self.runtime.order_store.list_by_status(
+                    trading_mode=self.settings.trading_mode,
+                    strategy_version=self.settings.strategy_version,
+                    statuses=["pending_submit"],
+                    strategy_name=strategy_name,
+                )
+            for order in pending:
                 symbols.add(order.symbol)
         for order in broker_open_orders:
             cid = getattr(order, "client_order_id", "") or ""
@@ -732,19 +744,23 @@ class RuntimeSupervisor:
     def _load_trading_status(self) -> TradingStatusValue | None:
         if not hasattr(self.runtime.trading_status_store, "load"):
             return None
-        status = self.runtime.trading_status_store.load(
-            trading_mode=self.settings.trading_mode,
-            strategy_version=self.settings.strategy_version,
-        )
+        store_lock = getattr(self.runtime, "store_lock", None)
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            status = self.runtime.trading_status_store.load(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+            )
         return None if status is None else status.status
 
     def _list_pending_submit_orders(self) -> list[object]:
         if not hasattr(self.runtime.order_store, "list_pending_submit"):
             return []
-        return self.runtime.order_store.list_pending_submit(
-            trading_mode=self.settings.trading_mode,
-            strategy_version=self.settings.strategy_version,
-        )
+        store_lock = getattr(self.runtime, "store_lock", None)
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            return self.runtime.order_store.list_pending_submit(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+            )
 
     def _load_traded_symbols(
         self,
@@ -754,12 +770,14 @@ class RuntimeSupervisor:
     ) -> set[tuple[str, date]]:
         if not hasattr(self.runtime.order_store, "list_by_status"):
             return set()
-        orders = self.runtime.order_store.list_by_status(
-            trading_mode=self.settings.trading_mode,
-            strategy_version=self.settings.strategy_version,
-            statuses=["filled", "partially_filled"],
-            strategy_name=strategy_name,
-        )
+        store_lock = getattr(self.runtime, "store_lock", None)
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            orders = self.runtime.order_store.list_by_status(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+                statuses=["filled", "partially_filled"],
+                strategy_name=strategy_name,
+            )
         traded_symbols: set[tuple[str, date]] = set()
         for order in orders:
             if getattr(order, "intent_type", None) != "entry":
@@ -784,36 +802,41 @@ class RuntimeSupervisor:
             return
 
         def runner() -> None:
+            _stream_lock = getattr(self.runtime, "store_lock", None)
+            _stream_lock_ctx = _stream_lock if _stream_lock is not None else contextlib.nullcontext()
             timestamp = _resolve_now(now)
-            self.runtime.audit_event_store.append(
-                AuditEvent(
-                    event_type="trade_update_stream_started",
-                    payload={"timestamp": timestamp.isoformat()},
-                    created_at=timestamp,
+            with _stream_lock_ctx:
+                self.runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="trade_update_stream_started",
+                        payload={"timestamp": timestamp.isoformat()},
+                        created_at=timestamp,
+                    )
                 )
-            )
             try:
                 if not hasattr(self.stream, "run"):
                     raise RuntimeError("Configured trade update stream does not expose run()")
                 self.stream.run()
             except Exception as exc:
                 failure_at = _resolve_now(now)
-                self.runtime.audit_event_store.append(
-                    AuditEvent(
-                        event_type="trade_update_stream_failed",
-                        payload={"error": str(exc)},
-                        created_at=failure_at,
+                with _stream_lock_ctx:
+                    self.runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="trade_update_stream_failed",
+                            payload={"error": str(exc)},
+                            created_at=failure_at,
+                        )
                     )
-                )
             else:
                 stopped_at = _resolve_now(now)
-                self.runtime.audit_event_store.append(
-                    AuditEvent(
-                        event_type="trade_update_stream_stopped",
-                        payload={"reason": "stream_exited"},
-                        created_at=stopped_at,
+                with _stream_lock_ctx:
+                    self.runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="trade_update_stream_stopped",
+                            payload={"reason": "stream_exited"},
+                            created_at=stopped_at,
+                        )
                     )
-                )
             finally:
                 self._stream_thread = None
 
