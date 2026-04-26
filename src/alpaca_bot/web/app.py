@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
+import secrets
 from urllib.parse import parse_qsl
 
 from fastapi import FastAPI, Request, status
@@ -66,16 +67,19 @@ def create_app(
         settings=app_settings,
     )
     templates.env.globals["format_price"] = _format_price
+    csrf_secret = secrets.token_bytes(32)
     templates.env.globals["csrf_token_for"] = lambda request, action: csrf_token_for_session(
         request,
         settings=app_settings,
         action=action,
+        csrf_secret=csrf_secret,
     )
 
     app = FastAPI(title="alpaca_bot dashboard")
     app.state.settings = app_settings
     app.state.connect_postgres = connector
     app.state.templates = templates
+    app.state.csrf_secret = csrf_secret
     app.state.trading_status_store_factory = (
         trading_status_store_factory or TradingStatusStore
     )
@@ -189,8 +193,8 @@ def create_app(
     async def logout(request: Request) -> Response:
         fields = await _read_form_fields(request)
         token = fields.get("_csrf_token", "")
-        if auth_enabled(app_settings) and not validate_csrf_token(
-            request, token, settings=app_settings, action="logout"
+        if not validate_csrf_token(
+            request, token, settings=app_settings, action="logout", csrf_secret=csrf_secret
         ):
             return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
         response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
@@ -246,8 +250,8 @@ def create_app(
             return RedirectResponse(url="/login?next=/", status_code=status.HTTP_303_SEE_OTHER)
         fields = await _read_form_fields(request)
         token = fields.get("_csrf_token", "")
-        if auth_enabled(app_settings) and not validate_csrf_token(
-            request, token, settings=app_settings, action="toggle"
+        if not validate_csrf_token(
+            request, token, settings=app_settings, action="toggle", csrf_secret=csrf_secret
         ):
             return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
         if strategy_name not in STRATEGY_REGISTRY:

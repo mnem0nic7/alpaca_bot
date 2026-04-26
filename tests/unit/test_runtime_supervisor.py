@@ -1753,3 +1753,84 @@ def test_daily_loss_limit_allows_entries_when_not_breached(
         if getattr(e, "event_type", None) == "daily_loss_limit_breached"
     ]
     assert breach_events == [], "No breach event expected when PnL is within limit"
+
+
+def test_supervisor_passes_midnight_of_session_date_as_daily_bars_end(monkeypatch) -> None:
+    """get_daily_bars must receive end=midnight-of-session-date (ET) to avoid including
+    today's in-progress bar, which would corrupt signal calculations for all 5 strategies."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    # 19:00 UTC on 2026-04-25 = 15:00 ET (within session)
+    now = datetime(2026, 4, 25, 19, 0, tzinfo=timezone.utc)
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={},
+        daily_bars_by_symbol={},
+    )
+    stream = FakeStream()
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(settings, order_store=order_store)
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        cycle_intent_executor=lambda **kwargs: None,
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    assert len(market_data.daily_bar_calls) >= 1, "get_daily_bars must have been called"
+    call = market_data.daily_bar_calls[0]
+    end = call["end"]
+    # Midnight ET on 2026-04-25: represented as 00:00 in the ET timezone (UTC-4)
+    end_et = end.astimezone(settings.market_timezone)
+    assert end_et.hour == 0 and end_et.minute == 0, (
+        f"Expected end=midnight ET to exclude today's in-progress bar, got {end_et}"
+    )
+    assert end_et.date().isoformat() == "2026-04-25", f"Wrong date in daily_bars end: {end_et}"
+    # Must be strictly before now so today's bar is excluded
+    assert end < now, f"daily_bars end ({end}) must be before now ({now})"
+
+
+def test_run_cycle_once_continues_after_all_strategy_intent_executors_raise(monkeypatch) -> None:
+    """If every per-strategy _cycle_intent_executor raises, run_cycle_once must still
+    return a report and dispatch_pending_orders must still be called."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 25, 19, 0, tzinfo=timezone.utc)
+    dispatch_calls: list[dict] = []
+
+    def raising_executor(**kwargs):
+        raise RuntimeError("executor exploded")
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=make_runtime_context(settings),
+        broker=FakeBroker(),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        cycle_intent_executor=raising_executor,
+        order_dispatcher=lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0},
+    )
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", raising_executor)
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    assert report is not None, "run_cycle_once must return a report even when all executors raise"
+    assert len(dispatch_calls) >= 1, "dispatch_pending_orders must still be called after executor failures"

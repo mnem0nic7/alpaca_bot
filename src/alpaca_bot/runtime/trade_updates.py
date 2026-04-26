@@ -20,7 +20,9 @@ class OrderStoreProtocol(Protocol):
 class PositionStoreProtocol(Protocol):
     def save(self, position: PositionRecord) -> None: ...
 
-    def delete(self, *, symbol: str, trading_mode, strategy_version: str) -> None: ...
+    def delete(
+        self, *, symbol: str, trading_mode, strategy_version: str, strategy_name: str
+    ) -> None: ...
 
 
 class AuditEventStoreProtocol(Protocol):
@@ -48,6 +50,30 @@ class TradeUpdate:
 
 
 def apply_trade_update(
+    *,
+    settings: Settings,
+    runtime: RuntimeProtocol,
+    update: Any,
+    now: datetime | Callable[[], datetime] | None = None,
+    notifier: Notifier | None = None,
+) -> dict[str, Any]:
+    store_lock = getattr(runtime, "store_lock", None)
+    with store_lock if store_lock is not None else _nullcontext():
+        return _apply_trade_update_locked(
+            settings=settings,
+            runtime=runtime,
+            update=update,
+            now=now,
+            notifier=notifier,
+        )
+
+
+class _nullcontext:
+    def __enter__(self): return self
+    def __exit__(self, *_): pass
+
+
+def _apply_trade_update_locked(
     *,
     settings: Settings,
     runtime: RuntimeProtocol,
@@ -214,6 +240,7 @@ def apply_trade_update(
             symbol=matched_order.symbol,
             trading_mode=matched_order.trading_mode,
             strategy_version=matched_order.strategy_version,
+            strategy_name=matched_order.strategy_name or "breakout",
         )
         position_updated = True
         position_cleared = True
@@ -235,6 +262,7 @@ def apply_trade_update(
             symbol=matched_order.symbol,
             trading_mode=matched_order.trading_mode,
             strategy_version=matched_order.strategy_version,
+            strategy_name=matched_order.strategy_name or "breakout",
         )
         protective_stop_client_order_id_cancel = _protective_stop_client_order_id(
             matched_order.client_order_id

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import hmac
 from types import SimpleNamespace
 
 import pytest
@@ -12,6 +14,12 @@ from alpaca_bot.storage.db import ConnectionProtocol
 from alpaca_bot.strategy import STRATEGY_REGISTRY
 from alpaca_bot.web.app import create_app
 from alpaca_bot.web.service import load_dashboard_snapshot
+
+
+def _csrf_token(client: TestClient, action: str) -> str:
+    """Compute a valid CSRF token for the given TestClient's app and action."""
+    secret: bytes = client.app.state.csrf_secret
+    return hmac.HMAC(secret, f"\n{action}".encode(), hashlib.sha256).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -454,7 +462,10 @@ def test_toggle_endpoint_disables_enabled_strategy() -> None:
         initial_flag=None,  # None = currently enabled (default)
     )
 
-    response = client.post("/strategies/breakout/toggle")
+    response = client.post(
+        "/strategies/breakout/toggle",
+        data={"_csrf_token": _csrf_token(client, "toggle")},
+    )
 
     assert response.status_code == 303
     assert response.headers["location"] == "/"
@@ -484,7 +495,10 @@ def test_toggle_endpoint_enables_disabled_strategy() -> None:
         initial_flag=disabled_flag,
     )
 
-    response = client.post("/strategies/breakout/toggle")
+    response = client.post(
+        "/strategies/breakout/toggle",
+        data={"_csrf_token": _csrf_token(client, "toggle")},
+    )
 
     assert response.status_code == 303
     assert saved_flags[0].enabled is True
@@ -495,7 +509,10 @@ def test_toggle_endpoint_returns_404_for_unknown_strategy() -> None:
     appended_events: list = []
     client = _make_toggle_app(saved_flags=saved_flags, appended_events=appended_events)
 
-    response = client.post("/strategies/nonexistent_xyz/toggle")
+    response = client.post(
+        "/strategies/nonexistent_xyz/toggle",
+        data={"_csrf_token": _csrf_token(client, "toggle")},
+    )
 
     assert response.status_code == 404
     assert saved_flags == []
@@ -526,3 +543,30 @@ def test_toggle_endpoint_redirects_to_login_when_auth_required_and_no_session() 
     assert "/login" in response.headers["location"]
     assert saved_flags == []
     assert appended_events == []
+
+
+def test_toggle_endpoint_returns_403_for_bad_csrf_token() -> None:
+    """A POST with a wrong CSRF token must be rejected with 403 regardless of auth mode."""
+    saved_flags: list = []
+    appended_events: list = []
+    client = _make_toggle_app(saved_flags=saved_flags, appended_events=appended_events)
+
+    response = client.post(
+        "/strategies/breakout/toggle",
+        data={"_csrf_token": "bad-token"},
+    )
+
+    assert response.status_code == 403
+    assert saved_flags == []
+
+
+def test_toggle_endpoint_returns_403_when_csrf_token_missing() -> None:
+    """A POST with no CSRF token must be rejected with 403."""
+    saved_flags: list = []
+    appended_events: list = []
+    client = _make_toggle_app(saved_flags=saved_flags, appended_events=appended_events)
+
+    response = client.post("/strategies/breakout/toggle")
+
+    assert response.status_code == 403
+    assert saved_flags == []

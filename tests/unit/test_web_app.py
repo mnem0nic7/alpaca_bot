@@ -900,3 +900,67 @@ def test_healthz_closes_connection_after_health_load() -> None:
         client.get("/healthz")
 
     assert connection.closed is True
+
+
+# ---------------------------------------------------------------------------
+# CSRF protection
+# ---------------------------------------------------------------------------
+
+
+import hashlib
+import hmac as _hmac_module
+
+
+def _csrf_token(client: TestClient, action: str) -> str:
+    secret: bytes = client.app.state.csrf_secret
+    return _hmac_module.HMAC(secret, f"\n{action}".encode(), hashlib.sha256).hexdigest()
+
+
+def _make_minimal_app(settings=None):
+    """Minimal create_app suitable for testing CSRF / logout flows."""
+    s = settings or make_settings()
+    app = create_app(
+        settings=s,
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+        strategy_flag_store_factory=lambda _c: SimpleNamespace(
+            load=lambda **_: None,
+            list_all=lambda **_: [],
+        ),
+    )
+    return app
+
+
+def test_logout_returns_403_for_missing_csrf_token() -> None:
+    app = _make_minimal_app()
+    client = TestClient(app, follow_redirects=False)
+    response = client.post("/logout")
+    assert response.status_code == 403
+
+
+def test_logout_returns_403_for_wrong_csrf_token() -> None:
+    app = _make_minimal_app()
+    client = TestClient(app, follow_redirects=False)
+    response = client.post("/logout", data={"_csrf_token": "wrong"})
+    assert response.status_code == 403
+
+
+def test_logout_redirects_with_valid_csrf_token() -> None:
+    app = _make_minimal_app()
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "logout")
+    response = client.post("/logout", data={"_csrf_token": token})
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"

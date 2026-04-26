@@ -561,6 +561,13 @@ class RuntimeSupervisor:
     def _load_position_records(self) -> list[PositionRecord]:
         if self.runtime.position_store is None or not hasattr(self.runtime.position_store, "list_all"):
             return []
+        store_lock = getattr(self.runtime, "store_lock", None)
+        if store_lock is not None:
+            with store_lock:
+                return self.runtime.position_store.list_all(
+                    trading_mode=self.settings.trading_mode,
+                    strategy_version=self.settings.strategy_version,
+                )
         return self.runtime.position_store.list_all(
             trading_mode=self.settings.trading_mode,
             strategy_version=self.settings.strategy_version,

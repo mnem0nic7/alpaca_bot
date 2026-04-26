@@ -109,9 +109,9 @@ class RecordingPositionStore:
     def save(self, position: PositionRecord) -> None:
         self.saved.append(position)
 
-    def delete(self, *, symbol: str, trading_mode, strategy_version: str) -> None:
+    def delete(self, *, symbol: str, trading_mode, strategy_version: str, strategy_name: str = "breakout") -> None:
         self.deleted.append(
-            {"symbol": symbol, "trading_mode": trading_mode, "strategy_version": strategy_version}
+            {"symbol": symbol, "trading_mode": trading_mode, "strategy_version": strategy_version, "strategy_name": strategy_name}
         )
 
 
@@ -517,7 +517,7 @@ class TestPositionStoreDeleteRaises:
             def save(self, position):
                 pass
 
-            def delete(self, *, symbol, trading_mode, strategy_version):
+            def delete(self, *, symbol, trading_mode, strategy_version, strategy_name="breakout"):
                 raise RuntimeError("db delete failed")
 
         entry_order = _make_entry_order(quantity=10)

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 
 from alpaca_bot.config import Settings
 from alpaca_bot.storage import (
@@ -29,6 +30,8 @@ class RuntimeContext:
     daily_session_state_store: DailySessionStateStore | None = None
     position_store: PositionStore | None = None
     strategy_flag_store: StrategyFlagStore | None = None
+    # Protects all store operations against concurrent access from the trade update stream thread
+    store_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 def bootstrap_runtime(
@@ -68,7 +71,11 @@ def bootstrap_runtime(
     )
 
 
-def reconnect_runtime_connection(context: RuntimeContext) -> None:
+def reconnect_runtime_connection(
+    context: RuntimeContext,
+    *,
+    _new_conn: ConnectionProtocol | None = None,
+) -> None:
     """Replace the underlying Postgres connection in *context* and all stores.
 
     Opens a new connection using :func:`connect_postgres_with_retry` (up to 3
@@ -77,8 +84,10 @@ def reconnect_runtime_connection(context: RuntimeContext) -> None:
 
     This is called by the supervisor when :func:`~alpaca_bot.storage.db.check_connection`
     detects that the current connection is dead.
+
+    *_new_conn* is an injection seam for tests — production code never passes it.
     """
-    new_conn = connect_postgres_with_retry(context.settings.database_url)
+    new_conn = _new_conn if _new_conn is not None else connect_postgres_with_retry(context.settings.database_url)
     # RuntimeContext is a plain (non-frozen) dataclass so direct assignment works.
     context.connection = new_conn
     # Rewire all stores that cache the connection.

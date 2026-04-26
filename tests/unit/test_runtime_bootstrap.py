@@ -7,6 +7,7 @@ import pytest
 
 from alpaca_bot.config import Settings
 from alpaca_bot.runtime import bootstrap_runtime
+from alpaca_bot.runtime.bootstrap import RuntimeContext, reconnect_runtime_connection
 
 
 class FakeCursor:
@@ -115,3 +116,85 @@ def test_bootstrap_runtime_raises_when_singleton_lock_unavailable(tmp_path: Path
             connection=connection,
             migrations_path=tmp_path,
         )
+
+
+# ---------------------------------------------------------------------------
+# reconnect_runtime_connection tests
+# ---------------------------------------------------------------------------
+
+
+class FakeStore:
+    """Minimal stand-in for any storage class that holds a _connection."""
+
+    def __init__(self, conn: FakeConnection) -> None:
+        self._connection = conn
+
+
+class FakeLock:
+    """Stand-in for PostgresAdvisoryLock."""
+
+    def __init__(self, conn: FakeConnection, *, acquire_result: bool = True) -> None:
+        self._connection = conn
+        self.acquire_result = acquire_result
+        self.try_acquire_calls = 0
+
+    def try_acquire(self) -> bool:
+        self.try_acquire_calls += 1
+        return self.acquire_result
+
+    def release(self) -> None:
+        pass
+
+
+def _make_context(old_conn: FakeConnection, lock: FakeLock) -> RuntimeContext:
+    """Build a RuntimeContext with all stores pointing at *old_conn*."""
+    return RuntimeContext(
+        settings=make_settings(),
+        connection=old_conn,
+        lock=lock,
+        trading_status_store=FakeStore(old_conn),  # type: ignore[arg-type]
+        audit_event_store=FakeStore(old_conn),  # type: ignore[arg-type]
+        order_store=FakeStore(old_conn),  # type: ignore[arg-type]
+        daily_session_state_store=FakeStore(old_conn),  # type: ignore[arg-type]
+        position_store=FakeStore(old_conn),  # type: ignore[arg-type]
+        strategy_flag_store=FakeStore(old_conn),  # type: ignore[arg-type]
+    )
+
+
+def test_reconnect_splices_new_connection_into_all_stores(tmp_path: Path) -> None:
+    old_conn = FakeConnection()
+    new_conn = FakeConnection()
+    lock = FakeLock(old_conn)
+    context = _make_context(old_conn, lock)
+
+    reconnect_runtime_connection(context, _new_conn=new_conn)
+
+    assert context.connection is new_conn
+    assert context.trading_status_store._connection is new_conn  # type: ignore[union-attr]
+    assert context.audit_event_store._connection is new_conn  # type: ignore[union-attr]
+    assert context.order_store._connection is new_conn  # type: ignore[union-attr]
+    assert context.daily_session_state_store._connection is new_conn  # type: ignore[union-attr]
+    assert context.position_store._connection is new_conn  # type: ignore[union-attr]
+    assert context.strategy_flag_store._connection is new_conn  # type: ignore[union-attr]
+    assert context.lock._connection is new_conn
+
+
+def test_reconnect_reacquires_advisory_lock_on_new_connection(tmp_path: Path) -> None:
+    old_conn = FakeConnection()
+    new_conn = FakeConnection()
+    lock = FakeLock(old_conn, acquire_result=True)
+    context = _make_context(old_conn, lock)
+
+    reconnect_runtime_connection(context, _new_conn=new_conn)
+
+    assert lock.try_acquire_calls == 1
+
+
+def test_reconnect_raises_if_lock_cannot_be_reacquired(tmp_path: Path) -> None:
+    old_conn = FakeConnection()
+    new_conn = FakeConnection()
+    lock = FakeLock(old_conn, acquire_result=False)
+    context = _make_context(old_conn, lock)
+
+    with pytest.raises(RuntimeError, match="re-acquire singleton trader lock"):
+        reconnect_runtime_connection(context, _new_conn=new_conn)

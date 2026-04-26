@@ -66,7 +66,7 @@ class RecordingPositionStore:
     def save(self, position: PositionRecord) -> None:
         self.saved.append(position)
 
-    def delete(self, *, symbol: str, trading_mode: TradingMode, strategy_version: str) -> None:
+    def delete(self, *, symbol: str, trading_mode: TradingMode, strategy_version: str, strategy_name: str = "breakout") -> None:
         self.deleted.append(
             {
                 "symbol": symbol,
