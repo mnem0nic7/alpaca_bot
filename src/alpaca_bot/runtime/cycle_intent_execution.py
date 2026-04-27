@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol, Sequence
 
@@ -120,6 +120,15 @@ def execute_cycle_intents(
                 replaced_stop_count += 1
             elif action == "submitted":
                 submitted_stop_count += 1
+            # Refresh the cached position so subsequent intents for the same symbol
+            # see the updated stop_price and don't bypass the regression guard.
+            new_stop = getattr(intent, "stop_price", None)
+            if action in ("replaced", "submitted") and new_stop is not None:
+                cached = positions_by_symbol.get((symbol, strategy_name))
+                if cached is not None:
+                    positions_by_symbol[(symbol, strategy_name)] = dataclass_replace(
+                        cached, stop_price=new_stop
+                    )
         elif intent_type is CycleIntentType.EXIT:
             if positions_by_symbol is None:
                 with lock_ctx:
@@ -406,11 +415,20 @@ def _execute_exit(
                         runtime.order_store.save(record, commit=False)
                     runtime.connection.commit()
                 except Exception:
+                    logger.exception(
+                        "cycle_intent_execution: failed to persist canceled stop records "
+                        "for %s after hard-failed cancel; position may be unprotected",
+                        symbol,
+                    )
                     try:
                         runtime.connection.rollback()
                     except Exception:
                         pass
-                    raise
+                    # Do not re-raise: a DB write failure here is secondary. Re-raising
+                    # would leave the successfully-canceled stops looking "active" in the
+                    # DB, causing every subsequent cycle to re-cancel them, hit
+                    # "already_canceled", set position_already_gone, and permanently
+                    # abandon the exit for an unprotected position.
         return canceled_stop_count, 0
 
     if position_already_gone:

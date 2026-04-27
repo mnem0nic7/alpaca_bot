@@ -6,7 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from alpaca_bot.storage.repositories import TuningResultStore
+from alpaca_bot.storage.repositories import PositionStore, TuningResultStore
+from alpaca_bot.storage.models import PositionRecord
+from alpaca_bot.config import TradingMode
 
 
 def _make_candidate(*, params: dict, score: float | None = 1.0):
@@ -208,3 +210,81 @@ def test_save_run_reraises_after_rollback() -> None:
 
     assert exc_raised is not None, "Original exception must be re-raised"
     assert "execute failed" in str(exc_raised)
+
+
+# ── PositionStore.replace_all rollback guard ─────────────────────────────────
+
+
+def _make_position() -> PositionRecord:
+    return PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        quantity=10,
+        entry_price=150.0,
+        stop_price=145.0,
+        initial_stop_price=145.0,
+        opened_at=datetime(2026, 4, 24, tzinfo=timezone.utc),
+    )
+
+
+def test_position_store_replace_all_commits_on_success() -> None:
+    conn = _TrackingConnection()
+    store = PositionStore(conn)
+
+    store.replace_all(
+        positions=[_make_position()],
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+    )
+
+    assert conn.commit_count == 1
+    assert conn.rollback_count == 0
+    # DELETE + INSERT = 2 execute calls
+    assert len(conn.execute_calls) == 2
+
+
+def test_position_store_replace_all_rollback_on_insert_failure() -> None:
+    # First execute = DELETE (succeeds), second = INSERT (fails)
+    conn = _FailingCursorConnection(fail_on_execute=2)
+    store = PositionStore(conn)
+
+    with pytest.raises(RuntimeError, match="execute failed mid-loop"):
+        store.replace_all(
+            positions=[_make_position()],
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+
+    assert conn.rollback_count == 1, "rollback() must be called on insert failure"
+    assert conn.commit_count == 0, "commit() must NOT be called after failure"
+
+
+def test_position_store_replace_all_rollback_on_delete_failure() -> None:
+    conn = _FailingCursorConnection(fail_on_execute=1)
+    store = PositionStore(conn)
+
+    with pytest.raises(RuntimeError, match="execute failed mid-loop"):
+        store.replace_all(
+            positions=[_make_position()],
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+
+    assert conn.rollback_count == 1, "rollback() must be called on delete failure"
+
+
+def test_position_store_replace_all_empty_positions_commits_once() -> None:
+    conn = _TrackingConnection()
+    store = PositionStore(conn)
+
+    store.replace_all(
+        positions=[],
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+    )
+
+    # Only DELETE, no inserts
+    assert len(conn.execute_calls) == 1
+    assert conn.commit_count == 1
+    assert conn.rollback_count == 0

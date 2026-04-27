@@ -111,6 +111,14 @@ def check_connection(connection: ConnectionProtocol) -> bool:
     """
     try:
         connection.cursor().execute("SELECT 1")
+        try:
+            connection.rollback()
+        except Exception:
+            pass
         return True
     except Exception:
+        try:
+            connection.rollback()
+        except Exception:
+            pass
         return False

@@ -547,7 +547,12 @@ class RuntimeSupervisor:
                     # Stream thread watchdog — restart dead stream thread with
                     # exponential backoff (cap 5 min) and alert after 5 failures.
                     _stream_thread = self._stream_thread
-                    if (
+                    if _stream_thread is not None and _stream_thread.is_alive():
+                        # Stream recovered — reset failure counter so future turbulence
+                        # doesn't permanently fire at the >=5 alert threshold.
+                        self._stream_restart_attempts = 0
+                        self._next_stream_restart_at = None
+                    elif (
                         _stream_thread is not None
                         and not _stream_thread.is_alive()
                     ):
@@ -876,7 +881,13 @@ class RuntimeSupervisor:
                             )
                         )
                     except Exception:
-                        logger.exception("Failed to append trade_update_stream_failed; continuing")
+                        # Log the original stream exception here since the audit append failed
+                        # and it would otherwise be silently discarded.
+                        logger.exception(
+                            "Trade update stream exited with error: %s; "
+                            "also failed to append audit event",
+                            exc,
+                        )
                         try:
                             self.runtime.connection.rollback()
                         except Exception:

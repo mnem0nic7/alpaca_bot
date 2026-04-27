@@ -1552,8 +1552,13 @@ def _make_aapl_position(*, now: datetime) -> PositionRecord:
 
 def test_execute_exit_cancel_hard_failed_rollback_on_db_failure() -> None:
     """cancel_hard_failed path: if the DB write for successfully-canceled stops raises,
-    connection.rollback() must be called and the exception must propagate."""
-    import pytest
+    connection.rollback() must be called but the exception must NOT propagate.
+
+    Re-raising here would leave the successfully-canceled stops looking "active" in the
+    DB, causing every subsequent cycle to re-cancel them, hit "already_canceled", set
+    position_already_gone, and permanently abandon the exit for an unprotected position.
+    Swallowing the DB failure (after rollback+log) is the safer outcome.
+    """
     execute_cycle_intents = load_cycle_intent_execution_api()
     settings = make_settings()
     now = datetime(2026, 4, 24, 21, 0, tzinfo=timezone.utc)
@@ -1580,22 +1585,22 @@ def test_execute_exit_cancel_hard_failed_rollback_on_db_failure() -> None:
         connection=connection,
     )
 
-    with pytest.raises(RuntimeError, match="simulated_db_failure"):
-        execute_cycle_intents(
-            settings=settings,
-            runtime=runtime,
-            broker=HardFailOnSecondBroker(),
-            cycle_result=CycleResult(
-                as_of=now,
-                intents=[CycleIntent(
-                    intent_type=CycleIntentType.EXIT,
-                    symbol="AAPL",
-                    timestamp=now,
-                    reason="eod_flatten",
-                )],
-            ),
-            now=now,
-        )
+    # Must NOT raise — DB write failure is swallowed to avoid stale active-stop records.
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=HardFailOnSecondBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
 
     assert connection.rollback_count == 1, (
         f"rollback must be called once when DB write fails in cancel_hard_failed path; "
