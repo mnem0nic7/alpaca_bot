@@ -35,7 +35,7 @@ POSTGRES_DB=alpaca_bot
 POSTGRES_USER=alpaca_bot
 POSTGRES_PASSWORD=replace-me
 DATABASE_URL=postgresql://alpaca_bot:replace-me@postgres:5432/alpaca_bot
-MARKET_DATA_FEED=sip
+MARKET_DATA_FEED=iex  # use "sip" only with a paid Alpaca subscription; paper accounts require "iex"
 SYMBOLS=AAPL,MSFT,SPY
 
 DAILY_SMA_PERIOD=20

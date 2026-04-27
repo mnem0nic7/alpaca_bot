@@ -1031,6 +1031,57 @@ def test_runtime_supervisor_run_forever_starts_once_loops_until_stop_and_sleeps(
     assert report.idle_iterations == 0
 
 
+def test_runtime_supervisor_run_forever_uses_time_sleep_by_default(
+    monkeypatch,
+) -> None:
+    # Verify the production default sleeper is time.sleep, not a no-op.
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker()
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream()
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    sleep_calls: list[float] = []
+    stop_sequence = iter([False, False, True])
+
+    import alpaca_bot.runtime.supervisor as supervisor_module
+
+    monkeypatch.setattr(supervisor_module.time, "sleep", lambda s: sleep_calls.append(s))
+    monkeypatch.setattr(
+        supervisor,
+        "startup",
+        lambda **kwargs: make_startup_report(),
+    )
+    monkeypatch.setattr(
+        supervisor,
+        "run_cycle_once",
+        lambda **kwargs: SupervisorCycleReport(
+            entries_disabled=False,
+            cycle_result=SimpleNamespace(intents=[]),
+            dispatch_report={"submitted_count": 0},
+        ),
+    )
+    monkeypatch.setattr(supervisor, "close", lambda: None)
+
+    supervisor.run_forever(
+        should_stop=lambda: next(stop_sequence),
+        poll_interval_seconds=7.5,
+        # No sleep_fn passed — should default to time.sleep
+    )
+
+    assert sleep_calls == [7.5]
+
+
 def test_runtime_supervisor_run_forever_skips_cycle_when_market_is_closed_and_audits_idle() -> None:
     _module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
     settings = make_settings()

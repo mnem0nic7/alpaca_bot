@@ -111,7 +111,7 @@ class Settings:
             strategy_version=_get_required(values, "STRATEGY_VERSION").strip(),
             database_url=_get_required(values, "DATABASE_URL").strip(),
             market_data_feed=MarketDataFeed(
-                values.get("MARKET_DATA_FEED", MarketDataFeed.SIP).strip().lower()
+                values.get("MARKET_DATA_FEED", MarketDataFeed.IEX).strip().lower()
             ),
             symbols=_parse_symbols(_get_required(values, "SYMBOLS")),
             daily_sma_period=int(values.get("DAILY_SMA_PERIOD", "20")),

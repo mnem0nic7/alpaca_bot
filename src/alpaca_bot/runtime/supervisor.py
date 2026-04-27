@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import logging
 import threading
+import time
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
@@ -497,7 +498,7 @@ class RuntimeSupervisor:
         iterations = 0
         active_iterations = 0
         idle_iterations = 0
-        sleeper = sleep_fn or (lambda _seconds: None)
+        sleeper = sleep_fn if sleep_fn is not None else time.sleep
 
         try:
             if startup_now is None:

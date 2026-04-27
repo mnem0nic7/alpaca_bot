@@ -521,7 +521,7 @@ def _fallback_settings() -> Settings:
             "ENABLE_LIVE_TRADING": "false",
             "STRATEGY_VERSION": "v1-breakout",
             "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
-            "MARKET_DATA_FEED": "sip",
+            "MARKET_DATA_FEED": "iex",
             "SYMBOLS": "AAPL",
             "DAILY_SMA_PERIOD": "20",
             "BREAKOUT_LOOKBACK_BARS": "20",
