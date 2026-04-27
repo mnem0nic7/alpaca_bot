@@ -23,16 +23,21 @@ class OrderStoreProtocol(Protocol):
         statuses: list[str],
     ) -> list[OrderRecord]: ...
 
-    def save(self, order: OrderRecord) -> None: ...
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None: ...
 
 
 class AuditEventStoreProtocol(Protocol):
-    def append(self, event: AuditEvent) -> None: ...
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None: ...
+
+
+class ConnectionProtocol(Protocol):
+    def commit(self) -> None: ...
 
 
 class RuntimeProtocol(Protocol):
     order_store: OrderStoreProtocol
     audit_event_store: AuditEventStoreProtocol
+    connection: ConnectionProtocol
 
 
 class BrokerProtocol(Protocol):
@@ -119,7 +124,8 @@ def dispatch_pending_orders(
                             "timestamp": timestamp.isoformat(),
                         },
                         created_at=timestamp,
-                    )
+                    ),
+                    commit=False,
                 )
                 runtime.order_store.save(
                     OrderRecord(
@@ -139,8 +145,10 @@ def dispatch_pending_orders(
                         initial_stop_price=order.initial_stop_price,
                         broker_order_id=order.broker_order_id,
                         signal_timestamp=order.signal_timestamp,
-                    )
+                    ),
+                    commit=False,
                 )
+                runtime.connection.commit()
             if notifier is not None:
                 try:
                     notifier.send(
@@ -174,7 +182,8 @@ def dispatch_pending_orders(
                     initial_stop_price=order.initial_stop_price,
                     broker_order_id=broker_order.broker_order_id,
                     signal_timestamp=order.signal_timestamp,
-                )
+                ),
+                commit=False,
             )
             runtime.audit_event_store.append(
                 AuditEvent(
@@ -187,8 +196,10 @@ def dispatch_pending_orders(
                         "status": normalized_status,
                     },
                     created_at=timestamp,
-                )
+                ),
+                commit=False,
             )
+            runtime.connection.commit()
         submitted_count += 1
 
     return OrderDispatchReport(submitted_count=submitted_count)

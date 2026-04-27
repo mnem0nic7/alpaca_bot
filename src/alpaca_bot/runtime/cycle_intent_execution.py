@@ -17,7 +17,7 @@ ACTIVE_STOP_STATUSES = ("pending_submit", "new", "accepted", "submitted", "parti
 
 
 class OrderStoreProtocol(Protocol):
-    def save(self, order: OrderRecord) -> None: ...
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None: ...
 
     def list_by_status(
         self,
@@ -30,7 +30,7 @@ class OrderStoreProtocol(Protocol):
 
 
 class PositionStoreProtocol(Protocol):
-    def save(self, position: PositionRecord) -> None: ...
+    def save(self, position: PositionRecord, *, commit: bool = True) -> None: ...
 
     def list_all(
         self,
@@ -41,13 +41,18 @@ class PositionStoreProtocol(Protocol):
 
 
 class AuditEventStoreProtocol(Protocol):
-    def append(self, event: AuditEvent) -> None: ...
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None: ...
+
+
+class ConnectionProtocol(Protocol):
+    def commit(self) -> None: ...
 
 
 class RuntimeProtocol(Protocol):
     order_store: OrderStoreProtocol
     position_store: PositionStoreProtocol
     audit_event_store: AuditEventStoreProtocol
+    connection: ConnectionProtocol
 
 
 class BrokerProtocol(Protocol):
@@ -239,7 +244,7 @@ def _execute_update_stop(
                 strategy_name,
             )
             return None
-        runtime.order_store.save(updated_order)
+        runtime.order_store.save(updated_order, commit=False)
         runtime.position_store.save(
             PositionRecord(
                 symbol=position.symbol,
@@ -252,7 +257,8 @@ def _execute_update_stop(
                 opened_at=position.opened_at,
                 updated_at=now,
                 strategy_name=strategy_name,
-            )
+            ),
+            commit=False,
         )
         runtime.audit_event_store.append(
             AuditEvent(
@@ -264,8 +270,10 @@ def _execute_update_stop(
                     "stop_price": stop_price,
                 },
                 created_at=now,
-            )
+            ),
+            commit=False,
         )
+        runtime.connection.commit()
     return action
 
 
@@ -399,7 +407,7 @@ def _execute_exit(
             )
             return canceled_stop_count, 0
         for record in canceled_order_records:
-            runtime.order_store.save(record)
+            runtime.order_store.save(record, commit=False)
         runtime.order_store.save(
             OrderRecord(
                 client_order_id=client_order_id,
@@ -416,7 +424,8 @@ def _execute_exit(
                 broker_order_id=broker_order.broker_order_id,
                 signal_timestamp=intent_timestamp,
                 strategy_name=strategy_name,
-            )
+            ),
+            commit=False,
         )
         runtime.audit_event_store.append(
             AuditEvent(
@@ -430,8 +439,10 @@ def _execute_exit(
                     "client_order_id": client_order_id,
                 },
                 created_at=now,
-            )
+            ),
+            commit=False,
         )
+        runtime.connection.commit()
     return canceled_stop_count, 1
 
 

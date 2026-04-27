@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from alpaca_bot.config import Settings
 from alpaca_bot.domain.models import Bar, EntrySignal
 from alpaca_bot.risk.atr import atr_stop_buffer
-from alpaca_bot.strategy.breakout import daily_trend_filter_passes, is_entry_session_time
+from alpaca_bot.strategy.breakout import daily_trend_filter_passes, is_entry_session_time, session_day
 
 
 def evaluate_momentum_signal(
@@ -26,13 +26,18 @@ def evaluate_momentum_signal(
         return None
     if not is_entry_session_time(signal_bar.timestamp, settings):
         return None
-    if not daily_trend_filter_passes(daily_bars, settings):
+
+    # Exclude today's partial daily bar — Alpaca may include an in-progress bar.
+    today = session_day(signal_bar.timestamp, settings)
+    prior_daily = [b for b in daily_bars if b.timestamp.date() < today]
+
+    if not daily_trend_filter_passes(prior_daily, settings):
         return None
 
     lookback = settings.prior_day_high_lookback_bars
-    if len(daily_bars) < lookback:
+    if len(prior_daily) < lookback:
         return None
-    yesterday_high = daily_bars[-lookback].high
+    yesterday_high = prior_daily[-lookback].high
 
     if signal_bar.high <= yesterday_high:
         return None
@@ -50,7 +55,7 @@ def evaluate_momentum_signal(
     stop_price = round(signal_bar.high + settings.entry_stop_price_buffer, 2)
     limit_price = round(stop_price * (1 + settings.stop_limit_buffer_pct), 2)
     stop_buffer = atr_stop_buffer(
-        daily_bars, settings.atr_period, settings.atr_stop_multiplier,
+        prior_daily, settings.atr_period, settings.atr_stop_multiplier,
         yesterday_high, settings.breakout_stop_buffer_pct,
     )
     initial_stop_price = round(max(0.01, yesterday_high - stop_buffer), 2)

@@ -97,6 +97,8 @@ class RuntimeSupervisor:
         self._consecutive_cycle_failures: int = 0
         # Keyed by session_date (ET); populated on the first cycle of each day.
         self._session_equity_baseline: dict[date, float] = {}
+        # Dates for which the daily loss limit alert has already been sent (once per day).
+        self._loss_limit_alerted: set[date] = set()
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
@@ -251,7 +253,8 @@ class RuntimeSupervisor:
         baseline_equity = self._session_equity_baseline[session_date]
         loss_limit = self.settings.daily_loss_limit_pct * baseline_equity
         daily_loss_limit_breached = realized_pnl < -loss_limit
-        if daily_loss_limit_breached:
+        if daily_loss_limit_breached and session_date not in self._loss_limit_alerted:
+            self._loss_limit_alerted.add(session_date)
             self._append_audit(
                 AuditEvent(
                     event_type="daily_loss_limit_breached",

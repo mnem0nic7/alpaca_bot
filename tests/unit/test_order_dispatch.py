@@ -59,7 +59,7 @@ class RecordingOrderStore:
         self.find_pending_submit_calls.append((trading_mode, strategy_version))
         return list(self.pending_orders)
 
-    def save(self, order: OrderRecord) -> None:
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None:
         self.saved.append(order)
 
 
@@ -67,8 +67,13 @@ class RecordingAuditEventStore:
     def __init__(self) -> None:
         self.appended: list[AuditEvent] = []
 
-    def append(self, event: AuditEvent) -> None:
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None:
         self.appended.append(event)
+
+
+class FakeConnection:
+    def commit(self) -> None:
+        pass
 
 
 class RecordingBroker:
@@ -135,7 +140,7 @@ def test_dispatch_pending_orders_submits_entry_and_stop_orders_and_persists_upda
     )
     order_store = RecordingOrderStore([entry_order, stop_order])
     audit_store = RecordingAuditEventStore()
-    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store)
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
     broker = RecordingBroker()
 
     report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
@@ -225,7 +230,7 @@ def test_dispatch_pending_orders_returns_empty_report_when_no_pending_orders() -
     now = datetime(2026, 4, 24, 19, 45, tzinfo=timezone.utc)
     order_store = RecordingOrderStore([])
     audit_store = RecordingAuditEventStore()
-    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store)
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
     broker = RecordingBroker()
 
     report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
@@ -275,7 +280,7 @@ def test_dispatch_pending_orders_filters_out_disallowed_intent_types() -> None:
     )
     order_store = RecordingOrderStore([entry_order, stop_order])
     audit_store = RecordingAuditEventStore()
-    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store)
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
     broker = RecordingBroker()
 
     report = dispatch_pending_orders(
@@ -342,7 +347,7 @@ def test_dispatch_records_error_status_on_broker_failure() -> None:
     )
     order_store = RecordingOrderStore([entry_order])
     audit_store = RecordingAuditEventStore()
-    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store)
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
 
     report = dispatch_pending_orders(
         settings=settings, runtime=runtime, broker=FailingBroker(), now=now
@@ -386,7 +391,7 @@ def test_dispatch_skips_entry_orders_with_stale_signal_date() -> None:
     )
     order_store = RecordingOrderStore([stale_entry])
     audit_store = RecordingAuditEventStore()
-    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store)
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
     broker = RecordingBroker()
 
     report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
@@ -421,7 +426,7 @@ def test_dispatch_handles_naive_signal_timestamp_without_crashing() -> None:
     )
     order_store = RecordingOrderStore([stale_entry])
     audit_store = RecordingAuditEventStore()
-    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store)
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
     broker = RecordingBroker()
 
     # Must not raise — naive timestamp is treated as UTC, so stale date is detected
@@ -457,7 +462,7 @@ def test_dispatch_does_not_skip_naive_signal_timestamp_from_same_day() -> None:
     )
     order_store = RecordingOrderStore([entry])
     audit_store = RecordingAuditEventStore()
-    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store)
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
     broker = RecordingBroker()
 
     report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
@@ -494,18 +499,19 @@ def test_dispatch_pending_orders_acquires_store_lock_for_order_store_save() -> N
     lock_held_during_save: list[bool] = []
 
     class LockWatchingOrderStore(RecordingOrderStore):
-        def save(self, order: OrderRecord) -> None:
+        def save(self, order: OrderRecord, *, commit: bool = True) -> None:
             # If lock is held by the caller, acquire(blocking=False) returns False.
             acquired = real_lock.acquire(blocking=False)
             lock_held_during_save.append(not acquired)
             if acquired:
                 real_lock.release()
-            super().save(order)
+            super().save(order, commit=commit)
 
     runtime = SimpleNamespace(
         order_store=LockWatchingOrderStore([entry]),
         audit_event_store=RecordingAuditEventStore(),
         store_lock=real_lock,
+        connection=FakeConnection(),
     )
     broker = RecordingBroker()
 
@@ -515,4 +521,170 @@ def test_dispatch_pending_orders_acquires_store_lock_for_order_store_save() -> N
     assert all(lock_held_during_save), (
         "store_lock must be held for every order_store.save call in dispatch_pending_orders"
     )
+
+
+def test_dispatch_skips_entry_when_strategy_is_blocked() -> None:
+    """Entry orders whose strategy_name appears in blocked_strategy_names must be skipped."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+    entry_order = OrderRecord(
+        client_order_id="paper:v1-breakout:breakout:AAPL:entry:1",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=101.0,
+        limit_price=101.5,
+        initial_stop_price=99.5,
+        signal_timestamp=now,
+    )
+    order_store = RecordingOrderStore([entry_order])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
+
+    report = dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=RecordingBroker(),
+        now=now,
+        blocked_strategy_names={"breakout"},
+    )
+
+    assert order_store.saved == [], "blocked entry must not be submitted or saved"
+    assert audit_store.appended == []
+    assert report["submitted_count"] == 0
+
+
+def test_dispatch_does_not_block_non_entry_order_for_blocked_strategy() -> None:
+    """blocked_strategy_names only filters entry intents, not stops."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+    stop_order = OrderRecord(
+        client_order_id="paper:v1-breakout:breakout:AAPL:stop:1",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=99.5,
+        signal_timestamp=now,
+    )
+    order_store = RecordingOrderStore([stop_order])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
+
+    report = dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=RecordingBroker(),
+        now=now,
+        blocked_strategy_names={"breakout"},
+    )
+
+    assert report["submitted_count"] == 1, "stop order must not be filtered by blocked_strategy_names"
+
+
+def test_dispatch_notifier_called_on_broker_failure() -> None:
+    """When broker submission fails and a notifier is provided, it must receive send()."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+    entry_order = OrderRecord(
+        client_order_id="paper:v1-breakout:breakout:AAPL:entry:notifier",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=101.0,
+        limit_price=101.5,
+        initial_stop_price=99.5,
+        signal_timestamp=now,
+    )
+    notifier_calls: list[dict] = []
+
+    class RecordingNotifier:
+        def send(self, *, subject: str, body: str) -> None:
+            notifier_calls.append({"subject": subject, "body": body})
+
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore([entry_order]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=FailingBroker(),
+        now=now,
+        notifier=RecordingNotifier(),
+    )
+
+    assert len(notifier_calls) == 1
+    assert "AAPL" in notifier_calls[0]["subject"]
+    assert "entry" in notifier_calls[0]["subject"]
+
+
+def test_dispatch_notifier_not_called_on_success() -> None:
+    """Notifier must not be called when broker submission succeeds."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+    entry_order = OrderRecord(
+        client_order_id="paper:v1-breakout:breakout:AAPL:entry:ok",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=101.0,
+        limit_price=101.5,
+        initial_stop_price=99.5,
+        signal_timestamp=now,
+    )
+    notifier_calls: list[dict] = []
+
+    class RecordingNotifier:
+        def send(self, *, subject: str, body: str) -> None:
+            notifier_calls.append({"subject": subject, "body": body})
+
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore([entry_order]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=RecordingBroker(),
+        now=now,
+        notifier=RecordingNotifier(),
+    )
+
+    assert notifier_calls == []
 

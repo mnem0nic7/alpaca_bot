@@ -132,8 +132,9 @@ def test_run_cycle_writes_order_with_strategy_name():
         )
 
     runtime = SimpleNamespace(
-        order_store=SimpleNamespace(save=saved_orders.append),
-        audit_event_store=SimpleNamespace(append=lambda _: None),
+        order_store=SimpleNamespace(save=lambda order, *, commit=True: saved_orders.append(order)),
+        audit_event_store=SimpleNamespace(append=lambda _, *, commit=True: None),
+        connection=SimpleNamespace(commit=lambda: None),
     )
 
     run_cycle(
@@ -193,13 +194,14 @@ def test_exit_intent_does_not_cancel_other_strategy_stop():
     runtime = SimpleNamespace(
         order_store=SimpleNamespace(
             list_by_status=fake_list_by_status,
-            save=lambda _: None,
+            save=lambda _, *, commit=True: None,
         ),
         position_store=SimpleNamespace(
             list_all=lambda **_: [momentum_position],
-            save=lambda _: None,
+            save=lambda _, *, commit=True: None,
         ),
-        audit_event_store=SimpleNamespace(append=lambda _: None),
+        audit_event_store=SimpleNamespace(append=lambda _, *, commit=True: None),
+        connection=SimpleNamespace(commit=lambda: None),
     )
     fake_broker = SimpleNamespace(
         cancel_order=lambda order_id: canceled_ids.append(order_id),

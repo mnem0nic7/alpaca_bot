@@ -56,7 +56,7 @@ class RecordingOrderStore:
             orders = [o for o in orders if o.strategy_name == strategy_name]
         return orders
 
-    def save(self, order: OrderRecord) -> None:
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None:
         self.saved.append(order)
 
 
@@ -75,7 +75,7 @@ class RecordingPositionStore:
         self.list_calls.append((trading_mode, strategy_version))
         return list(self.positions)
 
-    def save(self, position: PositionRecord) -> None:
+    def save(self, position: PositionRecord, *, commit: bool = True) -> None:
         self.saved.append(position)
 
 
@@ -83,8 +83,13 @@ class RecordingAuditEventStore:
     def __init__(self) -> None:
         self.appended: list[AuditEvent] = []
 
-    def append(self, event: AuditEvent) -> None:
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None:
         self.appended.append(event)
+
+
+class FakeConnection:
+    def commit(self) -> None:
+        pass
 
 
 class RecordingBroker:
@@ -175,6 +180,7 @@ def test_execute_cycle_intents_replaces_active_stop_and_updates_position() -> No
         order_store=RecordingOrderStore(orders=[active_stop]),
         position_store=RecordingPositionStore(positions=[position]),
         audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
     )
     broker = RecordingBroker()
     cycle_result = CycleResult(
@@ -270,6 +276,7 @@ def test_execute_cycle_intents_submits_new_stop_when_no_active_stop_exists() -> 
         order_store=RecordingOrderStore(orders=[]),
         position_store=RecordingPositionStore(positions=[position]),
         audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
     )
     broker = RecordingBroker()
     cycle_result = CycleResult(
@@ -341,6 +348,7 @@ def test_execute_cycle_intents_cancels_active_stops_and_submits_exit_order() -> 
         order_store=RecordingOrderStore(orders=[active_stop]),
         position_store=RecordingPositionStore(positions=[position]),
         audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
     )
     broker = RecordingBroker()
     cycle_result = CycleResult(
@@ -459,6 +467,7 @@ def test_execute_cycle_intents_marks_stop_canceled_when_broker_reports_already_f
         order_store=RecordingOrderStore(orders=[active_stop]),
         position_store=RecordingPositionStore(positions=[position]),
         audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
     )
     broker = RecordingBroker(cancel_raises=Exception("order not found: already filled"))
     cycle_result = CycleResult(
@@ -532,20 +541,21 @@ def test_execute_cycle_intents_acquires_store_lock_on_update_stop() -> None:
     real_lock = threading.Lock()
 
     class LockWatchingPositionStore(RecordingPositionStore):
-        def save(self, position):
+        def save(self, position, *, commit: bool = True):
             # Record whether the lock is held when save() is called
             lock_held_during_save.append(not real_lock.acquire(blocking=False))
             if lock_held_during_save[-1]:
                 pass  # lock was held — correct
             else:
                 real_lock.release()  # we acquired it just to check; release it
-            super().save(position)
+            super().save(position, commit=commit)
 
     runtime = SimpleNamespace(
         order_store=RecordingOrderStore(orders=[active_stop]),
         position_store=LockWatchingPositionStore(positions=[position]),
         audit_event_store=RecordingAuditEventStore(),
         store_lock=real_lock,
+        connection=FakeConnection(),
     )
     broker = RecordingBroker()
     cycle_result = CycleResult(
@@ -613,17 +623,18 @@ def test_execute_cycle_intents_acquires_store_lock_on_order_store_save_during_up
     real_lock = threading.Lock()
 
     class LockWatchingOrderStore(RecordingOrderStore):
-        def save(self, order):
+        def save(self, order, *, commit: bool = True):
             lock_held_during_save.append(not real_lock.acquire(blocking=False))
             if not lock_held_during_save[-1]:
                 real_lock.release()
-            super().save(order)
+            super().save(order, commit=commit)
 
     runtime = SimpleNamespace(
         order_store=LockWatchingOrderStore(orders=[active_stop]),
         position_store=RecordingPositionStore(positions=[position]),
         audit_event_store=RecordingAuditEventStore(),
         store_lock=real_lock,
+        connection=FakeConnection(),
     )
     broker = RecordingBroker()
     cycle_result = CycleResult(
@@ -691,17 +702,18 @@ def test_execute_cycle_intents_acquires_store_lock_on_order_store_save_during_ex
     real_lock = threading.Lock()
 
     class LockWatchingOrderStore(RecordingOrderStore):
-        def save(self, order):
+        def save(self, order, *, commit: bool = True):
             lock_held_during_save.append(not real_lock.acquire(blocking=False))
             if not lock_held_during_save[-1]:
                 real_lock.release()
-            super().save(order)
+            super().save(order, commit=commit)
 
     runtime = SimpleNamespace(
         order_store=LockWatchingOrderStore(orders=[active_stop]),
         position_store=RecordingPositionStore(positions=[position]),
         audit_event_store=RecordingAuditEventStore(),
         store_lock=real_lock,
+        connection=FakeConnection(),
     )
     broker = RecordingBroker()
     cycle_result = CycleResult(
@@ -766,6 +778,7 @@ def test_execute_cycle_intents_emits_audit_event_when_position_already_gone() ->
         order_store=RecordingOrderStore(orders=[active_stop]),
         position_store=RecordingPositionStore(positions=[position]),
         audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
     )
     broker = RecordingBroker(cancel_raises=Exception("not found: already filled"))
     cycle_result = CycleResult(
@@ -837,6 +850,7 @@ def test_canceled_stop_preserves_non_default_strategy_name() -> None:
         order_store=RecordingOrderStore(orders=[active_stop]),
         position_store=RecordingPositionStore(positions=[position]),
         audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
     )
     broker = RecordingBroker()
     cycle_result = CycleResult(
