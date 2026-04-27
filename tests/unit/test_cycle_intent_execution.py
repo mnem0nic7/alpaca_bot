@@ -2022,6 +2022,134 @@ def test_execute_update_stop_does_not_submit_to_broker_when_stop_is_pending_subm
     assert saved.status == "pending_submit", "status must remain pending_submit for dispatch"
 
 
+def test_execute_exit_proceeds_when_cancel_returns_already_canceled() -> None:
+    """cancel_order returning 'already canceled' must NOT be treated as position-gone.
+
+    A stop can be canceled by a prior replace_order (the broker cancels the old order
+    as a side effect of creating the replacement) while the equity position remains open.
+    Treating 'already canceled' as position-gone would abandon the exit and leave an
+    unprotected open position. The market exit must proceed; the pre-exit reverify step
+    handles the case where the position is actually already closed.
+    """
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 50, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:already-canceled-test",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-ac",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    broker = RecordingBroker(cancel_raises=Exception("already canceled"))
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    assert broker.exit_calls, (
+        "submit_market_exit must be called when cancel returns 'already canceled' — "
+        "stop being canceled does not mean position is gone"
+    )
+    assert report.submitted_exit_count == 1
+
+
+def test_execute_update_stop_pending_submit_counted_and_cache_refreshed() -> None:
+    """updated_pending action must be counted in the report and the positions cache
+    must be refreshed so a subsequent intent for the same symbol sees the new stop_price."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+
+    pending_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:cache-test",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id=None,
+        signal_timestamp=now,
+    )
+    position = _make_aapl_position(now=now)
+
+    order_store = RecordingOrderStore(orders=[pending_stop])
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="AAPL",
+                timestamp=now,
+                stop_price=110.50,
+            )],
+        ),
+        now=now,
+    )
+
+    assert report.updated_pending_stop_count == 1, (
+        f"updated_pending_stop_count must be 1; got {report.updated_pending_stop_count}"
+    )
+    assert report.submitted_stop_count == 0
+    assert report.replaced_stop_count == 0
+
+
 def test_execute_update_stop_no_op_when_stop_not_improving() -> None:
     """_execute_update_stop must be a no-op when the new stop_price <= current position.stop_price.
     No broker call and no DB write should occur — this is the hot path in a trending session."""

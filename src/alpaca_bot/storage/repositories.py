@@ -322,7 +322,7 @@ class OrderStore:
         if not statuses:
             return []
         placeholders = ", ".join(["%s"] * len(statuses))
-        strategy_clause = "AND strategy_name = %s" if strategy_name is not None else ""
+        strategy_clause = "AND strategy_name IS NOT DISTINCT FROM %s" if strategy_name is not None else ""
         strategy_params = (strategy_name,) if strategy_name is not None else ()
         rows = fetch_all(
             self._connection,
@@ -454,7 +454,7 @@ class OrderStore:
         look up entry fill data without risking Cartesian-product duplicates.
         Rows where entry_fill or exit_fill is NULL are excluded.
         """
-        strategy_clause = "AND x.strategy_name = %s" if strategy_name is not None else ""
+        strategy_clause = "AND x.strategy_name IS NOT DISTINCT FROM %s" if strategy_name is not None else ""
         strategy_params = (strategy_name,) if strategy_name is not None else ()
         rows = fetch_all(
             self._connection,
@@ -771,7 +771,7 @@ class PositionStore:
         strategy_version: str,
         strategy_name: str | None = None,
     ) -> list[PositionRecord]:
-        strategy_clause = "AND strategy_name = %s" if strategy_name is not None else ""
+        strategy_clause = "AND strategy_name IS NOT DISTINCT FROM %s" if strategy_name is not None else ""
         strategy_params = (strategy_name,) if strategy_name is not None else ()
         cursor = self._connection.cursor()
         cursor.execute(

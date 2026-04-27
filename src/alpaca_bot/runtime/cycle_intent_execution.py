@@ -71,6 +71,7 @@ class CycleIntentExecutionReport:
     submitted_stop_count: int
     submitted_exit_count: int
     canceled_stop_count: int
+    updated_pending_stop_count: int = 0
 
 
 def execute_cycle_intents(
@@ -88,6 +89,7 @@ def execute_cycle_intents(
     submitted_stop_count = 0
     submitted_exit_count = 0
     canceled_stop_count = 0
+    updated_pending_stop_count = 0
 
     store_lock = getattr(runtime, "store_lock", None)
     lock_ctx = store_lock if store_lock is not None else contextlib.nullcontext()
@@ -120,10 +122,12 @@ def execute_cycle_intents(
                 replaced_stop_count += 1
             elif action == "submitted":
                 submitted_stop_count += 1
+            elif action == "updated_pending":
+                updated_pending_stop_count += 1
             # Refresh the cached position so subsequent intents for the same symbol
             # see the updated stop_price and don't bypass the regression guard.
             new_stop = getattr(intent, "stop_price", None)
-            if action in ("replaced", "submitted") and new_stop is not None:
+            if action in ("replaced", "submitted", "updated_pending") and new_stop is not None:
                 cached = positions_by_symbol.get((symbol, strategy_name))
                 if cached is not None:
                     positions_by_symbol[(symbol, strategy_name)] = dataclass_replace(
@@ -153,6 +157,7 @@ def execute_cycle_intents(
         submitted_stop_count=submitted_stop_count,
         submitted_exit_count=submitted_exit_count,
         canceled_stop_count=canceled_stop_count,
+        updated_pending_stop_count=updated_pending_stop_count,
     )
 
 
@@ -379,18 +384,31 @@ def _execute_exit(
                 broker.cancel_order(stop_order.broker_order_id)
             except Exception as exc:
                 exc_msg = str(exc).lower()
-                if any(
-                    phrase in exc_msg
-                    for phrase in ("not found", "already filled", "already canceled", "does not exist")
-                ):
+                if "already filled" in exc_msg:
                     logger.warning(
-                        "cycle_intent_execution: stop already gone for %s broker_order_id=%s: %s",
+                        "cycle_intent_execution: stop filled (position gone) for %s "
+                        "broker_order_id=%s: %s",
                         symbol,
                         stop_order.broker_order_id,
                         exc,
                     )
                     position_already_gone = True
-                    # Still record the cancellation in DB even if the broker order is already gone.
+                    # Still record the cancellation in DB.
+                elif any(
+                    phrase in exc_msg
+                    for phrase in ("not found", "already canceled", "does not exist")
+                ):
+                    # Stop is gone at broker but position may still be open (e.g., stop was
+                    # canceled by a prior replace_order). Proceed with market exit; the
+                    # pre-exit reverify step will catch the case where position is actually gone.
+                    logger.warning(
+                        "cycle_intent_execution: stop already gone for %s broker_order_id=%s "
+                        "(not position-closing): %s",
+                        symbol,
+                        stop_order.broker_order_id,
+                        exc,
+                    )
+                    # Still record the cancellation in DB.
                 else:
                     # Unknown error: stop may still be live at the broker. Aborting the exit
                     # to prevent a double-sell (live stop + new market exit order).
