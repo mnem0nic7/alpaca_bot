@@ -227,3 +227,37 @@ def test_exit_intent_does_not_cancel_other_strategy_stop():
 
     assert "broker-momentum-1" in canceled_ids
     assert "broker-breakout-1" not in canceled_ids, "EXIT for momentum must NOT cancel breakout stop"
+
+
+def test_evaluate_cycle_skips_position_with_no_intraday_bars():
+    """A position whose symbol has no bars in intraday_bars_by_symbol must be silently
+    skipped — no error, no intent emitted for that symbol."""
+    settings = _make_settings()
+    now = datetime(2026, 1, 2, 14, 0, tzinfo=timezone.utc)
+
+    open_positions = [
+        OpenPosition(
+            symbol="AAPL",
+            entry_timestamp=datetime(2026, 1, 2, 10, tzinfo=timezone.utc),
+            entry_price=150.0,
+            quantity=10,
+            entry_level=148.0,
+            initial_stop_price=147.0,
+            stop_price=147.0,
+            strategy_name="breakout",
+        )
+    ]
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={},  # no bars for AAPL
+        daily_bars_by_symbol={"AAPL": []},
+        open_positions=open_positions,
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+        strategy_name="breakout",
+    )
+    assert result.intents == [], "No intents expected when position has no intraday bars"

@@ -883,3 +883,124 @@ def test_canceled_stop_preserves_non_default_strategy_name() -> None:
     assert canceled_stop.strategy_name == "momentum", (
         f"Expected strategy_name='momentum' on canceled stop, got {canceled_stop.strategy_name!r}"
     )
+
+
+def test_execute_exit_aborts_when_position_disappears_before_market_exit() -> None:
+    """Naked-short guard: if the position is gone by the time we re-check under lock
+    (between cancel_order and submit_market_exit), no exit order must be submitted."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 50, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:breakout:2026-04-24:AAPL:stop:t",
+        symbol="AAPL", side="sell", intent_type="stop", status="accepted",
+        quantity=25, trading_mode=TradingMode.PAPER, strategy_version="v1-breakout",
+        created_at=now, updated_at=now, stop_price=109.89, initial_stop_price=109.89,
+        broker_order_id="broker-stop-1", signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL", trading_mode=TradingMode.PAPER, strategy_version="v1-breakout",
+        quantity=25, entry_price=111.02, stop_price=109.89, initial_stop_price=109.89,
+        opened_at=now, updated_at=now,
+    )
+
+    call_count = [0]
+
+    class DisappearingPositionStore(RecordingPositionStore):
+        def list_all(self, *, trading_mode, strategy_version):
+            call_count[0] += 1
+            # Second call (re-check under lock) returns empty — position was filled by stream
+            if call_count[0] >= 2:
+                return []
+            return list(self.positions)
+
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=DisappearingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    assert broker.exit_calls == [], "submit_market_exit must NOT be called when position disappeared"
+    assert any(
+        e.payload.get("action") == "skipped_position_already_gone"
+        for e in runtime.audit_event_store.appended
+    ), "Audit event must record the skipped-position-already-gone case"
+
+
+def test_execute_update_stop_aborts_when_position_disappears_during_broker_call() -> None:
+    """If the position disappears between the broker replace_order call and the DB write,
+    the order and position write must be skipped to avoid stale state."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:2026-04-24T19:00:00+00:00",
+        symbol="AAPL", side="sell", intent_type="stop", status="accepted",
+        quantity=25, trading_mode=TradingMode.PAPER, strategy_version="v1-breakout",
+        created_at=now, updated_at=now, stop_price=109.89, initial_stop_price=109.89,
+        broker_order_id="broker-stop-1", signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL", trading_mode=TradingMode.PAPER, strategy_version="v1-breakout",
+        quantity=25, entry_price=111.02, stop_price=109.89, initial_stop_price=109.89,
+        opened_at=now, updated_at=now,
+    )
+
+    call_count = [0]
+
+    class DisappearingPositionStore(RecordingPositionStore):
+        def list_all(self, *, trading_mode, strategy_version):
+            call_count[0] += 1
+            # Second call (re-check after broker call) returns empty
+            if call_count[0] >= 2:
+                return []
+            return list(self.positions)
+
+    order_store = RecordingOrderStore(orders=[active_stop])
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=DisappearingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="AAPL",
+                timestamp=now,
+                stop_price=112.0,
+            )],
+        ),
+        now=now,
+    )
+
+    # Broker was called (replace was attempted), but no DB writes happened
+    assert broker.replace_calls, "replace_order should be called"
+    assert order_store.saved == [], "No order write when position disappeared during broker call"

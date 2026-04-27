@@ -341,3 +341,33 @@ def test_momentum_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
     )
     assert result is not None
     assert result.initial_stop_price == expected_stop
+
+
+def test_momentum_returns_none_when_close_at_or_below_yesterday_high():
+    """Signal bar must close ABOVE yesterday_high — close == high or below rejects."""
+    from alpaca_bot.strategy.momentum import evaluate_momentum_signal
+    settings = _make_settings()
+    daily_bars = _make_daily_bars(n=10, high=100.0)
+    yesterday_high = daily_bars[-1].high  # 100.9 (last bar high = 100.0 + 9*0.1)
+
+    # Close exactly at yesterday_high — must reject
+    intraday_bars = _make_intraday_bars(n=6, high=yesterday_high + 0.5, close=yesterday_high)
+    result = evaluate_momentum_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=len(intraday_bars) - 1,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+    assert result is None, "close == yesterday_high should reject"
+
+    # Close below yesterday_high — must also reject
+    intraday_bars_below = _make_intraday_bars(n=6, high=yesterday_high + 0.5, close=yesterday_high - 0.1)
+    result_below = evaluate_momentum_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars_below,
+        signal_index=len(intraday_bars_below) - 1,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+    assert result_below is None, "close < yesterday_high should reject"
