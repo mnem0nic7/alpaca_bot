@@ -124,7 +124,7 @@ class RecordingAuditEventStore:
     def __init__(self) -> None:
         self.appended: list[object] = []
 
-    def append(self, event: object) -> None:
+    def append(self, event: object, *, commit: bool = True) -> None:
         self.appended.append(event)
 
 
@@ -140,7 +140,7 @@ class RecordingOrderStore:
         self.list_by_status_calls: list[dict[str, object]] = []
         self._daily_pnl = daily_pnl
 
-    def save(self, order: object) -> None:
+    def save(self, order: object, *, commit: bool = True) -> None:
         self.saved.append(order)
 
     def list_by_status(
@@ -196,9 +196,13 @@ def make_runtime_context(
     order_store: RecordingOrderStore | None = None,
     daily_session_state_store: RecordingDailySessionStateStore | None = None,
 ) -> RuntimeContext:
+    class _FakeConn:
+        def commit(self) -> None:
+            pass
+
     return RuntimeContext(
         settings=settings,
-        connection=object(),  # type: ignore[arg-type]
+        connection=_FakeConn(),  # type: ignore[arg-type]
         lock=object(),  # type: ignore[arg-type]
         trading_status_store=trading_status_store or RecordingTradingStatusStore(),  # type: ignore[arg-type]
         audit_event_store=RecordingAuditEventStore(),  # type: ignore[arg-type]

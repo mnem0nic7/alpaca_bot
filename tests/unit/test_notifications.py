@@ -73,7 +73,7 @@ def _make_runtime(
     def _list_by_status(**_):
         return list(orders or [])
 
-    def _save(_):
+    def _save(_, *, commit=True):
         pass
 
     return SimpleNamespace(
@@ -85,7 +85,8 @@ def _make_runtime(
             list_by_status=_list_by_status,
             save=_save,
         ),
-        audit_event_store=SimpleNamespace(append=events.append),
+        audit_event_store=SimpleNamespace(append=lambda e, *, commit=True: events.append(e)),
+        connection=SimpleNamespace(commit=lambda: None),
         _events=events,
     )
 

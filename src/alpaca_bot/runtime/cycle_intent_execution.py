@@ -366,7 +366,7 @@ def _execute_exit(
     if position_already_gone:
         with lock_ctx:
             for record in canceled_order_records:
-                runtime.order_store.save(record)
+                runtime.order_store.save(record, commit=False)
             runtime.audit_event_store.append(
                 AuditEvent(
                     event_type="cycle_intent_executed",
@@ -378,8 +378,10 @@ def _execute_exit(
                         "canceled_stop_count": canceled_stop_count,
                     },
                     created_at=now,
-                )
+                ),
+                commit=False,
             )
+            runtime.connection.commit()
         return canceled_stop_count, 0
 
     # Re-verify position still exists before submitting exit — prevents naked-short

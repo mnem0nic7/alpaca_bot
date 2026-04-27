@@ -37,7 +37,7 @@ def evaluate_momentum_signal(
     lookback = settings.prior_day_high_lookback_bars
     if len(prior_daily) < lookback:
         return None
-    yesterday_high = prior_daily[-lookback].high
+    yesterday_high = max(b.high for b in prior_daily[-lookback:])
 
     if signal_bar.high <= yesterday_high:
         return None

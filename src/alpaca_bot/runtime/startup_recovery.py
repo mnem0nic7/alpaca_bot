@@ -14,7 +14,7 @@ ACTIVE_ORDER_STATUSES = ["pending_submit", "new", "accepted", "submitted", "part
 
 
 class OrderStoreProtocol(Protocol):
-    def save(self, order: OrderRecord) -> None: ...
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None: ...
 
     def list_by_status(
         self,
@@ -43,13 +43,18 @@ class PositionStoreProtocol(Protocol):
 
 
 class AuditEventStoreProtocol(Protocol):
-    def append(self, event: AuditEvent) -> None: ...
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None: ...
+
+
+class ConnectionProtocol(Protocol):
+    def commit(self) -> None: ...
 
 
 class RuntimeProtocol(Protocol):
     order_store: OrderStoreProtocol
     position_store: PositionStoreProtocol
     audit_event_store: AuditEventStoreProtocol
+    connection: ConnectionProtocol
 
 
 @dataclass(frozen=True)
@@ -236,7 +241,8 @@ def recover_startup_state(
                 initial_stop_price=existing.initial_stop_price if existing is not None else None,
                 broker_order_id=broker_order.broker_order_id,
                 signal_timestamp=existing.signal_timestamp if existing is not None else None,
-            )
+            ),
+            commit=False,
         )
         synced_order_count += 1
 
@@ -263,7 +269,8 @@ def recover_startup_state(
                 initial_stop_price=order.initial_stop_price,
                 broker_order_id=order.broker_order_id,
                 signal_timestamp=order.signal_timestamp,
-            )
+            ),
+            commit=False,
         )
         cleared_order_count += 1
 
@@ -292,8 +299,10 @@ def recover_startup_state(
                     "cleared_order_count": report.cleared_order_count,
                 },
                 created_at=timestamp,
-            )
+            ),
+            commit=False,
         )
+    runtime.connection.commit()
     return report
 
 

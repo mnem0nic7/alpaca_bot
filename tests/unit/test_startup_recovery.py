@@ -74,7 +74,7 @@ class RecordingAuditEventStore:
     def __init__(self) -> None:
         self.appended: list[AuditEvent] = []
 
-    def append(self, event: AuditEvent) -> None:
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None:
         self.appended.append(event)
 
 
@@ -113,7 +113,7 @@ class RecordingOrderStore:
         self.existing_orders = list(existing_orders or [])
         self.saved: list[OrderRecord] = []
 
-    def save(self, order: OrderRecord) -> None:
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None:
         self.saved.append(order)
 
     def list_by_status(
@@ -132,6 +132,11 @@ class RecordingOrderStore:
         ]
 
 
+class FakeConnection:
+    def commit(self) -> None:
+        pass
+
+
 def make_runtime_context(
     settings: Settings,
     *,
@@ -141,7 +146,7 @@ def make_runtime_context(
 ) -> RuntimeContext:
     return RuntimeContext(
         settings=settings,
-        connection=object(),  # type: ignore[arg-type]
+        connection=FakeConnection(),  # type: ignore[arg-type]
         lock=object(),  # type: ignore[arg-type]
         trading_status_store=RecordingTradingStatusStore(),  # type: ignore[arg-type]
         audit_event_store=audit_event_store or RecordingAuditEventStore(),  # type: ignore[arg-type]
@@ -512,3 +517,100 @@ def test_broker_only_position_with_no_entry_price_falls_back_to_zero_with_audit_
     ]
     assert len(warning_events) == 1
     assert warning_events[0].payload["symbol"] == "TSLA"
+
+
+def test_recover_startup_state_records_mismatch_when_position_quantity_differs() -> None:
+    """When broker reports a different quantity than the local record, a mismatch is logged
+    and the synced position uses the broker's authoritative quantity."""
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+
+    local_position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="breakout",
+        quantity=5,           # local thinks 5 shares
+        entry_price=150.0,
+        stop_price=148.0,
+        initial_stop_price=147.0,
+        opened_at=now,
+        updated_at=now,
+    )
+    broker_position = BrokerPosition(
+        symbol="AAPL",
+        quantity=10,          # broker says 10 shares
+        entry_price=150.0,
+    )
+
+    position_store = RecordingPositionStore(existing_positions=[local_position])
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(
+        settings, position_store=position_store, order_store=order_store
+    )
+
+    report = recover_startup_state(
+        settings=settings,
+        runtime=runtime,  # type: ignore[arg-type]
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+        audit_event_type=None,
+    )
+
+    assert any("broker position differs locally" in m for m in report.mismatches)
+    synced = position_store.replace_all_calls[0]["positions"]
+    assert len(synced) == 1
+    assert synced[0].quantity == 10, "Synced position must carry broker's authoritative quantity"
+    assert synced[0].strategy_name == "breakout", "strategy_name must be preserved from local record"
+
+
+def test_recover_startup_state_multi_strategy_same_symbol() -> None:
+    """When two strategies each hold AAPL and broker reports a combined position,
+    both local records are preserved with their per-strategy quantities."""
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+
+    breakout_pos = PositionRecord(
+        symbol="AAPL", trading_mode=settings.trading_mode, strategy_version=settings.strategy_version,
+        strategy_name="breakout", quantity=10, entry_price=150.0,
+        stop_price=148.0, initial_stop_price=147.0, opened_at=now, updated_at=now,
+    )
+    momentum_pos = PositionRecord(
+        symbol="AAPL", trading_mode=settings.trading_mode, strategy_version=settings.strategy_version,
+        strategy_name="momentum", quantity=5, entry_price=152.0,
+        stop_price=150.0, initial_stop_price=149.0, opened_at=now, updated_at=now,
+    )
+    broker_position = BrokerPosition(symbol="AAPL", quantity=15, entry_price=150.8)
+
+    position_store = RecordingPositionStore(existing_positions=[breakout_pos, momentum_pos])
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(
+        settings, position_store=position_store, order_store=order_store
+    )
+
+    report = recover_startup_state(
+        settings=settings,
+        runtime=runtime,  # type: ignore[arg-type]
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+        audit_event_type=None,
+    )
+
+    assert report.mismatches == (), f"No mismatch expected when total qty matches: {report.mismatches}"
+    synced = position_store.replace_all_calls[0]["positions"]
+    assert len(synced) == 2, "Both per-strategy position records must be preserved"
+    strategies = {p.strategy_name for p in synced}
+    assert strategies == {"breakout", "momentum"}
+    assert sum(p.quantity for p in synced) == 15
+
+
+def test_infer_strategy_name_from_client_order_id() -> None:
+    """Known strategy prefixes are parsed; unknown and empty strings fall back to 'breakout'."""
+    from alpaca_bot.runtime.startup_recovery import _infer_strategy_name_from_client_order_id
+
+    assert _infer_strategy_name_from_client_order_id("breakout:v1:2026-01-02:AAPL:stop:t") == "breakout"
+    assert _infer_strategy_name_from_client_order_id("momentum:v1:2026-01-02:AAPL:entry:t") == "momentum"
+    assert _infer_strategy_name_from_client_order_id("unknown_strategy:v1:2026-01-02:AAPL:stop:t") == "breakout"
+    assert _infer_strategy_name_from_client_order_id("") == "breakout"

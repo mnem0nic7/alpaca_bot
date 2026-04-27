@@ -39,7 +39,7 @@ def _make_settings(symbols=("AAPL",)):
 
 def _make_runtime(flags=None):
     return SimpleNamespace(
-        connection=SimpleNamespace(),
+        connection=SimpleNamespace(commit=lambda: None),
         trading_status_store=SimpleNamespace(load=lambda **_: None),
         order_store=SimpleNamespace(
             save=lambda _: None,

@@ -120,7 +120,7 @@ class RecordingOrderStore:
         self.existing_orders = list(existing_orders or [])
         self.saved: list[OrderRecord] = []
 
-    def save(self, order: OrderRecord) -> None:
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None:
         self.saved.append(order)
 
     def list_by_status(
@@ -143,7 +143,7 @@ class RecordingAuditEventStore:
     def __init__(self) -> None:
         self.appended: list[AuditEvent] = []
 
-    def append(self, event: AuditEvent) -> None:
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None:
         self.appended.append(event)
 
 
