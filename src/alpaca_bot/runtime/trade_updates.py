@@ -192,7 +192,7 @@ def _apply_trade_update_locked(
             )
     elif (
         matched_order.intent_type in {"stop", "exit"}
-        and normalized.status == "filled"
+        and normalized.status in {"filled", "partially_filled"}
         and matched_order.status not in {"filled"}
     ):
         position_updated = True
@@ -307,7 +307,7 @@ def _apply_trade_update_locked(
                     protective_stop_client_order_id = None
         elif (
             matched_order.intent_type in {"stop", "exit"}
-            and normalized.status == "filled"
+            and normalized.status in {"filled", "partially_filled"}
             and matched_order.status not in {"filled"}
         ):
             runtime.position_store.delete(

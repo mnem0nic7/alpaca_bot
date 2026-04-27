@@ -207,6 +207,12 @@ def recover_startup_state(
     cleared_order_count = 0
     for order in local_active_orders:
         if order.client_order_id not in matched_local_client_ids:
+            # Never-submitted orders (pending_submit, no broker_order_id) were queued
+            # locally but not yet sent to the broker — their absence from broker open
+            # orders is expected.  Exclude them from mismatch reporting so they are
+            # also preserved in the DB write loop below.
+            if _is_never_submitted(order):
+                continue
             mismatches.append(f"local order missing at broker: {order.client_order_id}")
             cleared_order_count += 1
 
@@ -270,6 +276,10 @@ def recover_startup_state(
             )
         for order in local_active_orders:
             if order.client_order_id in matched_local_client_ids:
+                continue
+            # Never-submitted orders must remain pending_submit so dispatch_pending_orders
+            # can submit them on the next cycle and the position retains stop protection.
+            if _is_never_submitted(order):
                 continue
             runtime.order_store.save(
                 OrderRecord(
@@ -362,6 +372,18 @@ def _infer_intent_type(*, client_order_id: str, side: str) -> str:
     if ":exit:" in lowered:
         return "exit"
     return "stop" if side.lower() == "sell" else "entry"
+
+
+def _is_never_submitted(order: "OrderRecord") -> bool:
+    """Return True when an order was queued locally but never sent to the broker.
+
+    These orders have status='pending_submit' and no broker_order_id because
+    the process crashed before dispatch_pending_orders ran.  Their absence
+    from the broker's open-orders list is expected — they must remain
+    pending_submit so the next dispatch cycle submits them and the position
+    retains stop protection.
+    """
+    return order.status == "pending_submit" and not order.broker_order_id
 
 
 def _resolve_now(now: datetime | Callable[[], datetime] | None) -> datetime:

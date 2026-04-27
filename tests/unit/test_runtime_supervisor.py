@@ -817,12 +817,16 @@ def test_runtime_supervisor_run_cycle_once_disables_entries_when_runtime_reconci
         settings,
         order_store=RecordingOrderStore(
             [
+                # An order that WAS submitted to the broker (has a broker_order_id) but is
+                # now absent from broker open orders — this is a real mismatch that should
+                # disable entries. (pending_submit orders without broker_order_id are NOT
+                # mismatches — they were queued locally and never sent to the broker.)
                 OrderRecord(
                     client_order_id="v1-breakout:2026-04-24:AAPL:entry:2026-04-24T19:00:00+00:00",
                     symbol="AAPL",
                     side="buy",
                     intent_type="entry",
-                    status="pending_submit",
+                    status="accepted",
                     quantity=10,
                     trading_mode=TradingMode.PAPER,
                     strategy_version="v1-breakout",
@@ -831,6 +835,7 @@ def test_runtime_supervisor_run_cycle_once_disables_entries_when_runtime_reconci
                     stop_price=111.01,
                     limit_price=111.12,
                     initial_stop_price=109.89,
+                    broker_order_id="broker-entry-accepted-missing",
                 )
             ]
         ),
@@ -896,7 +901,7 @@ def test_runtime_supervisor_run_cycle_once_disables_entries_when_runtime_reconci
         stop_price=111.01,
         limit_price=111.12,
         initial_stop_price=109.89,
-        broker_order_id=None,
+        broker_order_id="broker-entry-accepted-missing",
     )
     assert runtime.audit_event_store.appended[-1] == AuditEvent(
         event_type="runtime_reconciliation_detected",

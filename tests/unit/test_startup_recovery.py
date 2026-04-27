@@ -626,3 +626,77 @@ def test_infer_intent_type_all_branches() -> None:
     # Fallback: unknown format, side=buy → entry; side=sell → stop
     assert _infer_intent_type(client_order_id="some-opaque-id", side="buy") == "entry"
     assert _infer_intent_type(client_order_id="some-opaque-id", side="sell") == "stop"
+
+
+def test_recover_startup_state_preserves_pending_submit_stop_with_no_broker_id() -> None:
+    """A pending_submit stop order that was never sent to the broker must NOT be
+    written as 'reconciled_missing' on restart.  Its absence from broker open orders
+    is expected — it was queued locally before the crash.  It must remain pending_submit
+    so dispatch_pending_orders submits it on the next cycle and the position stays protected.
+    """
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 5, tzinfo=timezone.utc)
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=10,
+        entry_price=155.50,
+        stop_price=152.00,
+        initial_stop_price=152.00,
+        opened_at=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+    )
+    never_submitted_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:2026-04-24T19:00:00+00:00",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        stop_price=152.00,
+        initial_stop_price=152.00,
+        broker_order_id=None,  # never sent to broker before crash
+    )
+    position_store = RecordingPositionStore(existing_positions=[position])
+    order_store = RecordingOrderStore(existing_orders=[never_submitted_stop])
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+    )
+
+    report = recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[],  # position not at broker yet (entry not reflected)
+        broker_open_orders=[],
+        now=now,
+    )
+
+    # Never-submitted stops must be excluded from mismatch reporting.
+    missing_mismatch = [
+        m for m in report.mismatches
+        if "local order missing at broker" in m and "AAPL:stop" in m
+    ]
+    assert missing_mismatch == [], (
+        "pending_submit stop with no broker_order_id must not be reported as a mismatch"
+    )
+    assert report.cleared_order_count == 0, (
+        "pending_submit stop must not be counted as cleared"
+    )
+
+    # The stop must NOT have been written with reconciled_missing.
+    reconciled_saves = [
+        o for o in order_store.saved
+        if getattr(o, "status", None) == "reconciled_missing"
+        and getattr(o, "intent_type", None) == "stop"
+    ]
+    assert reconciled_saves == [], (
+        "pending_submit stop must remain pending_submit so dispatch_pending_orders "
+        "can submit it and keep the position protected after restart"
+    )
