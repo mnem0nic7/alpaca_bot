@@ -893,3 +893,39 @@ def test_dispatch_broker_failure_path_rollback_on_db_failure() -> None:
         f"got rollback_count={connection.rollback_count}"
     )
 
+
+def test_dispatch_notifier_send_failure_is_swallowed() -> None:
+    """If notifier.send() raises, dispatch must NOT re-raise — a notification failure
+    must never abort the dispatch loop and leave subsequent orders unsubmitted."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 27, 14, 10, tzinfo=timezone.utc)
+    order = _make_entry_order(now=now)
+
+    class FailingBroker:
+        def submit_stop_limit_entry(self, **kwargs):
+            raise RuntimeError("broker_down")
+
+        def submit_stop_order(self, **kwargs):
+            raise RuntimeError("broker_down")
+
+    class ExplodingNotifier:
+        def send(self, *, subject: str, body: str) -> None:
+            raise RuntimeError("smtp_exploded")
+
+    connection = _RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=_CommitTrackingOrderStore([order]),
+        audit_event_store=_CommitTrackingAuditEventStore(),
+        connection=connection,
+    )
+
+    # Must NOT raise even though both broker and notifier fail
+    dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=FailingBroker(),
+        now=now,
+        notifier=ExplodingNotifier(),
+    )
+

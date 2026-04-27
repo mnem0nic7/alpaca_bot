@@ -95,6 +95,9 @@ services:
     ports:
       - "127.0.0.1:18080:8080"
 
+  # Note: the supervisor self-migrates at startup via bootstrap_runtime → MigrationRunner.apply_all().
+  # This service exists for manual one-shot migration runs via deploy.sh (profiles: [ops]).
+  # Running `docker compose up` without deploy.sh is safe — the supervisor handles migrations.
   migrate:
     image: alpaca-bot:latest
     build:

@@ -386,10 +386,6 @@ class RuntimeSupervisor:
                     i for i in getattr(cycle_result, "intents", [])
                     if getattr(i, "intent_type", None) == CycleIntentType.ENTRY
                 ]
-                exit_intents = [
-                    i for i in getattr(cycle_result, "intents", [])
-                    if getattr(i, "intent_type", None) == CycleIntentType.EXIT
-                ]
                 global_occupied_slots += len(new_entry_intents)
                 global_position_symbols.update(i.symbol for i in new_entry_intents)
 

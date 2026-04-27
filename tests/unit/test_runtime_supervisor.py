@@ -2323,3 +2323,130 @@ def test_save_session_state_rollback_and_reraise_on_store_failure() -> None:
         supervisor._save_session_state(state)
 
     assert rollback_count == 1, "rollback() must be called when session state save fails"
+
+
+# ── _start_stream_thread rollback guards ─────────────────────────────────────
+
+
+def _make_supervisor_with_failing_audit_on_nth_append(
+    *,
+    settings: Settings,
+    fail_on_nth: int,
+    stream_raises: Exception | None = None,
+) -> tuple:
+    """Build a supervisor whose audit store raises on the Nth append call.
+    Returns (supervisor, rollback_counter_dict, RuntimeSupervisor class).
+    """
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    rollback_counter = {"count": 0}
+
+    class _FailConn:
+        def rollback(self) -> None:
+            rollback_counter["count"] += 1
+
+        def commit(self) -> None:
+            pass
+
+    class _NthFailAuditStore:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        def append(self, event: object, *, commit: bool = True) -> None:
+            self._calls += 1
+            if self._calls >= fail_on_nth:
+                raise RuntimeError(f"audit append failed on call {self._calls}")
+
+    runtime = make_runtime_context(settings)
+    runtime = runtime.__class__(
+        settings=settings,
+        connection=_FailConn(),  # type: ignore[arg-type]
+        lock=object(),  # type: ignore[arg-type]
+        trading_status_store=RecordingTradingStatusStore(),  # type: ignore[arg-type]
+        audit_event_store=_NthFailAuditStore(),  # type: ignore[arg-type]
+        order_store=RecordingOrderStore(),  # type: ignore[arg-type]
+        position_store=RecordingPositionStore(),  # type: ignore[arg-type]
+        daily_session_state_store=RecordingDailySessionStateStore(),  # type: ignore[arg-type]
+    )
+
+    stream = FakeStream(raise_on_run=stream_raises)
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=stream,
+    )
+    return supervisor, rollback_counter, stream
+
+
+def test_stream_thread_started_audit_rollback_on_failure() -> None:
+    """If the trade_update_stream_started audit append fails, rollback must be called
+    and the stream thread must continue to call stream.run()."""
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+
+    # 1st append (stream_started) fails
+    supervisor, rollback_counter, stream = _make_supervisor_with_failing_audit_on_nth_append(
+        settings=settings,
+        fail_on_nth=1,
+    )
+
+    supervisor._start_stream_thread(now=lambda: now)
+    assert supervisor._stream_thread is not None
+    stream.run_started.wait(timeout=2.0)
+    if supervisor._stream_thread is not None:
+        supervisor._stream_thread.join(timeout=2.0)
+
+    assert rollback_counter["count"] >= 1, (
+        "rollback() must be called when trade_update_stream_started audit append fails"
+    )
+    assert stream.run_calls == 1, "stream.run() must still be called despite audit failure"
+
+
+def test_stream_thread_failed_audit_rollback_on_failure() -> None:
+    """If the trade_update_stream_failed audit append fails (double-failure: stream crashes
+    AND audit store is down), rollback must be called and the thread must exit cleanly."""
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+
+    # 2nd append (stream_failed) fails — 1st (stream_started) succeeds
+    supervisor, rollback_counter, stream = _make_supervisor_with_failing_audit_on_nth_append(
+        settings=settings,
+        fail_on_nth=2,
+        stream_raises=RuntimeError("stream_crashed"),
+    )
+
+    supervisor._start_stream_thread(now=lambda: now)
+    stream.run_started.wait(timeout=2.0)
+    # Thread may complete very quickly; join via stored reference if available
+    t = supervisor._stream_thread
+    if t is not None:
+        t.join(timeout=2.0)
+
+    assert rollback_counter["count"] >= 1, (
+        "rollback() must be called when trade_update_stream_failed audit append fails"
+    )
+
+
+def test_stream_thread_stopped_audit_rollback_on_failure() -> None:
+    """If trade_update_stream_stopped audit append fails (stream exits cleanly but audit
+    store is down), rollback must be called and the thread must exit cleanly."""
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+
+    # 2nd append (stream_stopped) fails — 1st (stream_started) succeeds
+    supervisor, rollback_counter, stream = _make_supervisor_with_failing_audit_on_nth_append(
+        settings=settings,
+        fail_on_nth=2,
+        stream_raises=None,  # stream exits cleanly
+    )
+
+    supervisor._start_stream_thread(now=lambda: now)
+    stream.run_started.wait(timeout=2.0)
+    t = supervisor._stream_thread
+    if t is not None:
+        t.join(timeout=2.0)
+
+    assert rollback_counter["count"] >= 1, (
+        "rollback() must be called when trade_update_stream_stopped audit append fails"
+    )

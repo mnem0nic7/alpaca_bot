@@ -1942,3 +1942,49 @@ def test_execute_update_stop_uses_commit_false_for_all_writes() -> None:
     assert commit_count[0] == 1, (
         f"Exactly one connection.commit() must fire in _execute_update_stop; got {commit_count[0]}"
     )
+
+
+def test_execute_update_stop_no_op_when_stop_not_improving() -> None:
+    """_execute_update_stop must be a no-op when the new stop_price <= current position.stop_price.
+    No broker call and no DB write should occur — this is the hot path in a trending session."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+
+    active_stop = _make_aapl_stop(now=now, broker_order_id="broker-us-noi", client_suffix="us-noi")
+    position = _make_aapl_position(now=now)  # stop_price=109.0
+
+    order_store = RecordingOrderStore(orders=[active_stop])
+    position_store = RecordingPositionStore(positions=[position])
+    audit_store = RecordingAuditEventStore()
+    broker = RecordingBroker()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=position_store,
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+
+    for non_improving_stop in (109.0, 108.5, 90.0):
+        execute_cycle_intents(
+            settings=settings,
+            runtime=runtime,
+            broker=broker,
+            cycle_result=CycleResult(
+                as_of=now,
+                intents=[CycleIntent(
+                    intent_type=CycleIntentType.UPDATE_STOP,
+                    symbol="AAPL",
+                    timestamp=now,
+                    stop_price=non_improving_stop,
+                )],
+            ),
+            now=now,
+        )
+
+    assert not broker.replace_calls, (
+        "replace_order must NOT be called when stop_price does not improve"
+    )
+    assert order_store.saved == [], (
+        "No DB write must occur when stop_price does not improve"
+    )

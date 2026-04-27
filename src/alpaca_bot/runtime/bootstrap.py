@@ -106,6 +106,10 @@ def reconnect_runtime_connection(
     if hasattr(context.lock, "_connection"):
         context.lock._connection = new_conn
     if not context.lock.try_acquire():
+        try:
+            new_conn.close()
+        except Exception:
+            pass
         raise RuntimeError(
             "Could not re-acquire singleton trader lock after reconnect for "
             f"{context.settings.trading_mode.value}/{context.settings.strategy_version}"
