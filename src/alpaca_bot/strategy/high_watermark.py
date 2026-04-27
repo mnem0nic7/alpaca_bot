@@ -29,10 +29,11 @@ def evaluate_high_watermark_signal(
     if not daily_trend_filter_passes(daily_bars, settings):
         return None
 
-    if len(daily_bars) < settings.high_watermark_lookback_days:
+    completed_bars = daily_bars[:-1]  # exclude today's in-progress bar
+    if len(completed_bars) < settings.high_watermark_lookback_days:
         return None
 
-    historical_bars = daily_bars[-settings.high_watermark_lookback_days :]
+    historical_bars = completed_bars[-settings.high_watermark_lookback_days :]
     historical_high = max(bar.high for bar in historical_bars)
 
     if signal_bar.high <= historical_high:

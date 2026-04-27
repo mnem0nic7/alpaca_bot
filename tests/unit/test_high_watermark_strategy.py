@@ -44,13 +44,19 @@ def _make_settings(**overrides):
 
 def _make_daily_bars(n: int, high_peak: float = 150.0, high_base: float = 100.0) -> list[Bar]:
     """
-    Build n daily bars with steadily increasing closes (high_base+i) except the last bar
-    which is high_peak. This ensures the trend filter (SMA) passes: the last close (high_peak-0.5)
-    is well above the SMA of the trailing daily_sma_period=5 bars.
+    Build n daily bars. Bar n-2 (last completed day) has high=high_peak, making it the
+    historical maximum; bar n-1 (today's partial) has high=high_peak-5 so the lookback
+    window excludes it without losing the peak. The trend filter passes because
+    daily_bars[-sma_period-1:-1][-1] == bar[n-2] whose close (high_peak-0.5) >> SMA.
     """
     bars = []
     for i in range(n):
-        h = high_peak if i == n - 1 else high_base + i
+        if i == n - 2:
+            h = high_peak
+        elif i == n - 1:
+            h = high_peak - 5.0  # today's partial bar — below the peak
+        else:
+            h = high_base + i
         bars.append(
             Bar(
                 symbol="AAPL",
@@ -101,7 +107,7 @@ def _make_intraday_bars(
 
 def test_high_watermark_returns_signal_when_all_conditions_met():
     settings = _make_settings()
-    daily_bars = _make_daily_bars(n=10, high_peak=150.0, high_base=100.0)
+    daily_bars = _make_daily_bars(n=11, high_peak=150.0, high_base=100.0)
     intraday_bars, signal_index = _make_intraday_bars(signal_high=155.0, signal_close=154.0)
     result = evaluate_high_watermark_signal(
         symbol="AAPL",
@@ -117,7 +123,7 @@ def test_high_watermark_returns_signal_when_all_conditions_met():
 
 def test_high_watermark_entry_level_equals_historical_high():
     settings = _make_settings(high_watermark_lookback_days=10)
-    daily_bars = _make_daily_bars(n=10, high_peak=150.0, high_base=100.0)
+    daily_bars = _make_daily_bars(n=11, high_peak=150.0, high_base=100.0)
     intraday_bars, signal_index = _make_intraday_bars(signal_high=155.0, signal_close=154.0)
     result = evaluate_high_watermark_signal(
         symbol="AAPL",
@@ -132,7 +138,7 @@ def test_high_watermark_entry_level_equals_historical_high():
 
 def test_high_watermark_stop_below_historical_high():
     settings = _make_settings()
-    daily_bars = _make_daily_bars(n=10, high_peak=150.0)
+    daily_bars = _make_daily_bars(n=11, high_peak=150.0)
     intraday_bars, signal_index = _make_intraday_bars(signal_high=155.0, signal_close=154.0)
     result = evaluate_high_watermark_signal(
         symbol="AAPL",
@@ -147,7 +153,7 @@ def test_high_watermark_stop_below_historical_high():
 
 def test_high_watermark_returns_none_when_bar_does_not_cross_historical_high():
     settings = _make_settings()
-    daily_bars = _make_daily_bars(n=10, high_peak=150.0)
+    daily_bars = _make_daily_bars(n=11, high_peak=150.0)
     intraday_bars, signal_index = _make_intraday_bars(signal_high=148.0, signal_close=147.0)
     result = evaluate_high_watermark_signal(
         symbol="AAPL",
@@ -161,7 +167,7 @@ def test_high_watermark_returns_none_when_bar_does_not_cross_historical_high():
 
 def test_high_watermark_returns_none_when_close_below_historical_high():
     settings = _make_settings()
-    daily_bars = _make_daily_bars(n=10, high_peak=150.0)
+    daily_bars = _make_daily_bars(n=11, high_peak=150.0)
     # high crosses but close stays below
     intraday_bars, signal_index = _make_intraday_bars(signal_high=152.0, signal_close=149.0)
     result = evaluate_high_watermark_signal(
@@ -212,9 +218,49 @@ def test_high_watermark_returns_none_when_trend_filter_fails():
     assert result is None
 
 
+def test_high_watermark_excludes_todays_partial_bar_from_historical_high():
+    """Today's in-progress daily bar must not inflate the 252-day high threshold.
+
+    If the partial bar's high exceeds the true historical high, including it
+    would raise the entry threshold and suppress valid signals for the rest of
+    the session.
+    """
+    settings = _make_settings(high_watermark_lookback_days=10, daily_sma_period=5)
+    # 11 bars: bars[0-9] are completed; bars[10] would be today's partial.
+    # _make_daily_bars places peak at n-2=9 (high=150.0) and today's partial at n-1=10
+    # with high=145.0. We override the last bar with high=200.0 to simulate a spike.
+    daily_bars = _make_daily_bars(n=11, high_peak=150.0, high_base=100.0)
+    # Replace today's partial bar (index 10) with a spike to test exclusion
+    daily_bars[-1] = Bar(
+        symbol="AAPL",
+        timestamp=daily_bars[-1].timestamp,
+        open=148.0,
+        high=200.0,  # spike — partial intraday data
+        low=147.0,
+        close=149.0,
+        volume=500_000.0,
+    )
+
+    # Signal bar clears 150.0 (true historical high) but not 200.0 (partial bar)
+    intraday_bars, signal_index = _make_intraday_bars(signal_high=155.0, signal_close=154.0)
+
+    result = evaluate_high_watermark_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+    assert result is not None, (
+        "Signal should fire: bar clears true historical high (150.0); "
+        "today's partial bar (200.0) must be excluded"
+    )
+    assert result.entry_level == 150.0
+
+
 def test_high_watermark_returns_none_when_volume_below_threshold():
     settings = _make_settings(relative_volume_threshold=1.5)
-    daily_bars = _make_daily_bars(n=10, high_peak=150.0)
+    daily_bars = _make_daily_bars(n=11, high_peak=150.0)
     # all bars including signal have low volume → rv < 1.5
     intraday_bars, signal_index = _make_intraday_bars(
         signal_high=155.0, signal_close=154.0, signal_volume=10_000.0
@@ -231,7 +277,7 @@ def test_high_watermark_returns_none_when_volume_below_threshold():
 
 def test_high_watermark_returns_none_outside_entry_window():
     settings = _make_settings()
-    daily_bars = _make_daily_bars(n=10, high_peak=150.0)
+    daily_bars = _make_daily_bars(n=11, high_peak=150.0)
     ny = ZoneInfo("America/New_York")
     intraday_bars, _ = _make_intraday_bars(signal_high=155.0, signal_close=154.0)
     late_ts = datetime(2026, 1, 2, 16, 0, tzinfo=ny)
@@ -254,7 +300,7 @@ def test_high_watermark_returns_none_outside_entry_window():
 def test_high_watermark_initial_stop_uses_atr_when_enough_daily_bars():
     from alpaca_bot.risk.atr import calculate_atr
     settings = _make_settings(atr_period=3)
-    daily_bars = _make_daily_bars(n=10, high_peak=150.0, high_base=100.0)
+    daily_bars = _make_daily_bars(n=11, high_peak=150.0, high_base=100.0)
     intraday_bars, signal_index = _make_intraday_bars(signal_high=155.0, signal_close=154.0)
 
     atr = calculate_atr(daily_bars, 3)
@@ -275,9 +321,9 @@ def test_high_watermark_initial_stop_uses_atr_when_enough_daily_bars():
 
 def test_high_watermark_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
     from alpaca_bot.risk.atr import calculate_atr
-    # atr_period=50 with 10 bars (10 < 51) → ATR returns None; high_watermark_lookback_days >= 5 min
+    # atr_period=50 with 11 bars (11 < 51) → ATR returns None; high_watermark_lookback_days >= 5 min
     settings = _make_settings(atr_period=50)
-    daily_bars = _make_daily_bars(n=10, high_peak=150.0, high_base=100.0)
+    daily_bars = _make_daily_bars(n=11, high_peak=150.0, high_base=100.0)
     intraday_bars, signal_index = _make_intraday_bars(signal_high=155.0, signal_close=154.0)
 
     assert calculate_atr(daily_bars, 50) is None

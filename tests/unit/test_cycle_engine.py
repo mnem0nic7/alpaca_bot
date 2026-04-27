@@ -792,3 +792,89 @@ def test_eod_flatten_fires_even_when_no_bars_available_for_symbol() -> None:
     assert len(exit_intents) == 1, "EOD flatten must emit EXIT even without bars"
     assert exit_intents[0].symbol == "AAPL"
     assert exit_intents[0].reason == "eod_flatten"
+
+
+def test_stale_bar_suppresses_entry_signal() -> None:
+    """Entry must be skipped when the latest bar is older than 2× timeframe_minutes.
+
+    If the data feed stalls, the last bar from the previous cycle would still
+    pass the session-time check (bar.timestamp is within the window), but it
+    should not trigger a new order because the price data is stale.
+    """
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    # Bars end at 14:45 UTC; now is 15:30 UTC — 45 min gap > 2×15 = 30 min threshold
+    stale_bars = make_breakout_intraday_bars()
+    stale_bars[-1] = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 14, 45, tzinfo=timezone.utc),
+        open=109.8,
+        high=111.0,
+        low=109.7,
+        close=110.8,
+        volume=2000,
+    )
+    now = datetime(2026, 4, 24, 15, 30, tzinfo=timezone.utc)
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": stale_bars},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+    )
+
+    entry_intents = [i for i in result.intents if i.intent_type == CycleIntentType.ENTRY]
+    assert entry_intents == [], "Stale bar must not trigger an entry order"
+
+
+def test_stale_bar_suppresses_trailing_stop_update() -> None:
+    """Trailing-stop updates must be skipped when the latest bar is stale.
+
+    An UPDATE_STOP based on old high/low data could lock in a worse stop than
+    the live market warrants; suppress it until fresh data arrives.
+    """
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    # Position is in profit and would normally trigger trailing-stop update
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
+        entry_price=110.0,
+        quantity=45,
+        entry_level=109.9,
+        initial_stop_price=109.89,
+        stop_price=109.89,
+        trailing_active=True,
+        highest_price=112.0,
+    )
+    # Bar is 45 min old (> 2×15 = 30 min threshold)
+    stale_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 14, 45, tzinfo=timezone.utc),
+        open=112.0,
+        high=113.0,  # high enough to trigger trailing stop update
+        low=111.5,
+        close=112.5,
+        volume=2000,
+    )
+    now = datetime(2026, 4, 24, 15, 30, tzinfo=timezone.utc)
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [stale_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+    )
+
+    update_intents = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    assert update_intents == [], "Stale bar must not trigger a trailing-stop update"

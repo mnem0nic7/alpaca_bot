@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from enum import StrEnum
 from typing import TYPE_CHECKING, Mapping, Sequence
 
@@ -107,6 +107,10 @@ def evaluate_cycle(
             continue
         latest_bar = bars[-1]
 
+        bar_age_seconds = (now - latest_bar.timestamp.astimezone(timezone.utc)).total_seconds()
+        if bar_age_seconds > 2 * settings.entry_timeframe_minutes * 60:
+            continue
+
         if latest_bar.high >= position.entry_price + position.risk_per_share:
             new_stop = round(max(position.stop_price, position.entry_price, latest_bar.low), 2)
             if new_stop > position.stop_price:
@@ -144,6 +148,10 @@ def evaluate_cycle(
                     continue
                 latest_bar = bars[-1]
                 if (symbol, session_day(latest_bar.timestamp, settings)) in traded_symbols_today:
+                    continue
+
+                bar_age_seconds = (now - latest_bar.timestamp.astimezone(timezone.utc)).total_seconds()
+                if bar_age_seconds > 2 * settings.entry_timeframe_minutes * 60:
                     continue
 
                 signal = signal_evaluator(

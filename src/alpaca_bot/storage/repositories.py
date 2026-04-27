@@ -400,7 +400,7 @@ class OrderStore:
                     WHERE e.symbol = x.symbol
                       AND e.trading_mode = x.trading_mode
                       AND e.strategy_version = x.strategy_version
-                      AND e.strategy_name = x.strategy_name
+                      AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
                       AND e.status = 'filled'
@@ -468,7 +468,7 @@ class OrderStore:
                     WHERE e.symbol = x.symbol
                       AND e.trading_mode = x.trading_mode
                       AND e.strategy_version = x.strategy_version
-                      AND e.strategy_name = x.strategy_name
+                      AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
                       AND e.status = 'filled'
@@ -481,7 +481,7 @@ class OrderStore:
                     WHERE e.symbol = x.symbol
                       AND e.trading_mode = x.trading_mode
                       AND e.strategy_version = x.strategy_version
-                      AND e.strategy_name = x.strategy_name
+                      AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
                       AND e.status = 'filled'
@@ -494,7 +494,7 @@ class OrderStore:
                     WHERE e.symbol = x.symbol
                       AND e.trading_mode = x.trading_mode
                       AND e.strategy_version = x.strategy_version
-                      AND e.strategy_name = x.strategy_name
+                      AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
                       AND e.status = 'filled'
