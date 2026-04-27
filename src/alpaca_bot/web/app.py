@@ -615,6 +615,76 @@ def create_app(
                 close()
         return RedirectResponse(url="/watchlist", status_code=status.HTTP_303_SEE_OTHER)
 
+    @app.post("/admin/watchlist/ignore")
+    async def watchlist_ignore(request: Request) -> Response:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return RedirectResponse(url="/login?next=/watchlist", status_code=status.HTTP_303_SEE_OTHER)
+        fields = await _read_form_fields(request)
+        token = fields.get("_csrf_token", "")
+        if not validate_csrf_token(
+            request, token, settings=app_settings, action="watchlist", csrf_secret=csrf_secret
+        ):
+            return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
+        symbol = fields.get("symbol", "").strip().upper()
+        connection = None
+        try:
+            connection = app.state.connect_postgres(app_settings.database_url)
+            store = _build_store(app.state.watchlist_store_factory, connection)
+            audit_store = _build_store(app.state.audit_event_store_factory, connection)
+            now = datetime.now(timezone.utc)
+            store.ignore(symbol, app_settings.trading_mode.value, commit=False)
+            audit_store.append(
+                AuditEvent(
+                    event_type="WATCHLIST_IGNORE",
+                    symbol=symbol,
+                    payload={"ignored_by": operator or "admin", "trading_mode": app_settings.trading_mode.value},
+                    created_at=now,
+                ),
+                commit=False,
+            )
+            connection.commit()
+        finally:
+            close = getattr(connection, "close", None)
+            if callable(close):
+                close()
+        return RedirectResponse(url="/watchlist", status_code=status.HTTP_303_SEE_OTHER)
+
+    @app.post("/admin/watchlist/unignore")
+    async def watchlist_unignore(request: Request) -> Response:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return RedirectResponse(url="/login?next=/watchlist", status_code=status.HTTP_303_SEE_OTHER)
+        fields = await _read_form_fields(request)
+        token = fields.get("_csrf_token", "")
+        if not validate_csrf_token(
+            request, token, settings=app_settings, action="watchlist", csrf_secret=csrf_secret
+        ):
+            return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
+        symbol = fields.get("symbol", "").strip().upper()
+        connection = None
+        try:
+            connection = app.state.connect_postgres(app_settings.database_url)
+            store = _build_store(app.state.watchlist_store_factory, connection)
+            audit_store = _build_store(app.state.audit_event_store_factory, connection)
+            now = datetime.now(timezone.utc)
+            store.unignore(symbol, app_settings.trading_mode.value, commit=False)
+            audit_store.append(
+                AuditEvent(
+                    event_type="WATCHLIST_UNIGNORE",
+                    symbol=symbol,
+                    payload={"unignored_by": operator or "admin", "trading_mode": app_settings.trading_mode.value},
+                    created_at=now,
+                ),
+                commit=False,
+            )
+            connection.commit()
+        finally:
+            close = getattr(connection, "close", None)
+            if callable(close):
+                close()
+        return RedirectResponse(url="/watchlist", status_code=status.HTTP_303_SEE_OTHER)
+
     return app
 
 

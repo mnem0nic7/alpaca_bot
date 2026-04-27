@@ -43,6 +43,8 @@ ALL_AUDIT_EVENT_TYPES = [
     "stream_restart_failed",
     "WATCHLIST_ADD",
     "WATCHLIST_REMOVE",
+    "WATCHLIST_IGNORE",
+    "WATCHLIST_UNIGNORE",
 ]
 
 WORKING_ORDER_STATUSES = [

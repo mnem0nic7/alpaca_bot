@@ -1032,6 +1032,7 @@ class WatchlistRecord:
     symbol: str
     trading_mode: str
     enabled: bool
+    ignored: bool
     added_at: datetime
     added_by: str
 
@@ -1053,7 +1054,7 @@ class WatchlistStore:
     def list_all(self, trading_mode: str) -> list[WatchlistRecord]:
         rows = fetch_all(
             self._connection,
-            "SELECT symbol, trading_mode, enabled, added_at, added_by "
+            "SELECT symbol, trading_mode, enabled, ignored, added_at, added_by "
             "FROM symbol_watchlist "
             "WHERE trading_mode = %s "
             "ORDER BY symbol",
@@ -1064,8 +1065,9 @@ class WatchlistStore:
                 symbol=row[0],
                 trading_mode=row[1],
                 enabled=bool(row[2]),
-                added_at=row[3],
-                added_by=row[4],
+                ignored=bool(row[3]),
+                added_at=row[4],
+                added_by=row[5],
             )
             for row in rows
         ]
@@ -1087,6 +1089,36 @@ class WatchlistStore:
         execute(
             self._connection,
             "UPDATE symbol_watchlist SET enabled = FALSE "
+            "WHERE symbol = %s AND trading_mode = %s",
+            (symbol, trading_mode),
+            commit=commit,
+        )
+
+    def list_ignored(self, trading_mode: str) -> list[str]:
+        rows = fetch_all(
+            self._connection,
+            "SELECT symbol FROM symbol_watchlist "
+            "WHERE trading_mode = %s AND enabled = TRUE AND ignored = TRUE "
+            "ORDER BY symbol",
+            (trading_mode,),
+        )
+        return [row[0] for row in rows]
+
+    def ignore(self, symbol: str, trading_mode: str, *, commit: bool = True) -> None:
+        """Mark an enabled symbol as ignored for new entries. Idempotent."""
+        execute(
+            self._connection,
+            "UPDATE symbol_watchlist SET ignored = TRUE "
+            "WHERE symbol = %s AND trading_mode = %s",
+            (symbol, trading_mode),
+            commit=commit,
+        )
+
+    def unignore(self, symbol: str, trading_mode: str, *, commit: bool = True) -> None:
+        """Clear the ignore flag; the symbol resumes normal entry evaluation."""
+        execute(
+            self._connection,
+            "UPDATE symbol_watchlist SET ignored = FALSE "
             "WHERE symbol = %s AND trading_mode = %s",
             (symbol, trading_mode),
             commit=commit,

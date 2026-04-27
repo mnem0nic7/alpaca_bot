@@ -1313,23 +1313,32 @@ def _make_watchlist_app(
     *,
     watchlist_records: list | None = None,
     enabled_symbols: list[str] | None = None,
+    ignored_symbols: list[str] | None = None,
     saved_adds: list | None = None,
     saved_removes: list | None = None,
+    saved_ignores: list | None = None,
+    saved_unignores: list | None = None,
     saved_events: list | None = None,
 ):
     """App with injectable watchlist store for testing watchlist endpoints."""
     records = watchlist_records if watchlist_records is not None else []
     enabled = enabled_symbols if enabled_symbols is not None else ["AAPL", "MSFT"]
+    ignored = ignored_symbols if ignored_symbols is not None else []
     adds = saved_adds if saved_adds is not None else []
     removes = saved_removes if saved_removes is not None else []
+    ignores = saved_ignores if saved_ignores is not None else []
+    unignores = saved_unignores if saved_unignores is not None else []
     events = saved_events if saved_events is not None else []
 
     def watchlist_store_factory(_conn):
         return SimpleNamespace(
             list_all=lambda trading_mode: records,
             list_enabled=lambda trading_mode: list(enabled),
+            list_ignored=lambda trading_mode: list(ignored),
             add=lambda symbol, trading_mode, *, added_by="system", commit=True: adds.append(symbol),
             remove=lambda symbol, trading_mode, *, commit=False: removes.append(symbol),
+            ignore=lambda symbol, trading_mode, *, commit=True: ignores.append(symbol),
+            unignore=lambda symbol, trading_mode, *, commit=True: unignores.append(symbol),
         )
 
     def audit_store_factory(_conn):
@@ -1362,8 +1371,8 @@ def test_watchlist_page_renders_symbols() -> None:
 
     now = datetime.now(timezone.utc)
     records = [
-        SimpleNamespace(symbol="AAPL", enabled=True, added_at=now, added_by="system"),
-        SimpleNamespace(symbol="MSFT", enabled=True, added_at=now, added_by="operator"),
+        SimpleNamespace(symbol="AAPL", enabled=True, ignored=False, added_at=now, added_by="system"),
+        SimpleNamespace(symbol="MSFT", enabled=True, ignored=False, added_at=now, added_by="operator"),
     ]
     app = _make_watchlist_app(watchlist_records=records, enabled_symbols=["AAPL", "MSFT"])
     with TestClient(app) as client:
@@ -1515,3 +1524,91 @@ def test_watchlist_nav_link_present_on_audit_page() -> None:
     with TestClient(app) as client:
         response = client.get("/audit")
     assert 'href="/watchlist"' in response.text
+
+
+def test_watchlist_ignore_valid_symbol_calls_store() -> None:
+    saved_ignores: list = []
+    saved_events: list = []
+    app = _make_watchlist_app(
+        enabled_symbols=["TSLA", "AAPL"],
+        saved_ignores=saved_ignores,
+        saved_events=saved_events,
+    )
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "watchlist")
+
+    response = client.post(
+        "/admin/watchlist/ignore",
+        data={"_csrf_token": token, "symbol": "TSLA"},
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/watchlist"
+    assert "TSLA" in saved_ignores
+    assert any(e.event_type == "WATCHLIST_IGNORE" for e in saved_events)
+    assert saved_events[0].symbol == "TSLA"
+
+
+def test_watchlist_ignore_returns_403_for_bad_csrf() -> None:
+    app = _make_watchlist_app()
+    client = TestClient(app, follow_redirects=False)
+
+    response = client.post(
+        "/admin/watchlist/ignore",
+        data={"_csrf_token": "bad-token", "symbol": "TSLA"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_watchlist_unignore_valid_symbol_calls_store() -> None:
+    saved_unignores: list = []
+    saved_events: list = []
+    app = _make_watchlist_app(
+        enabled_symbols=["TSLA", "AAPL"],
+        ignored_symbols=["TSLA"],
+        saved_unignores=saved_unignores,
+        saved_events=saved_events,
+    )
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "watchlist")
+
+    response = client.post(
+        "/admin/watchlist/unignore",
+        data={"_csrf_token": token, "symbol": "TSLA"},
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/watchlist"
+    assert "TSLA" in saved_unignores
+    assert any(e.event_type == "WATCHLIST_UNIGNORE" for e in saved_events)
+    assert saved_events[0].symbol == "TSLA"
+
+
+def test_watchlist_unignore_returns_403_for_bad_csrf() -> None:
+    app = _make_watchlist_app()
+    client = TestClient(app, follow_redirects=False)
+
+    response = client.post(
+        "/admin/watchlist/unignore",
+        data={"_csrf_token": "bad-token", "symbol": "TSLA"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_watchlist_page_renders_ignored_badge() -> None:
+    from datetime import timezone
+
+    now = datetime.now(timezone.utc)
+    records = [
+        SimpleNamespace(symbol="TSLA", enabled=True, ignored=True, added_at=now, added_by="system"),
+        SimpleNamespace(symbol="AAPL", enabled=True, ignored=False, added_at=now, added_by="system"),
+    ]
+    app = _make_watchlist_app(watchlist_records=records, enabled_symbols=["TSLA", "AAPL"])
+    with TestClient(app) as client:
+        response = client.get("/watchlist")
+
+    assert response.status_code == 200
+    assert "ignored" in response.text
+    assert "badge-ignored" in response.text

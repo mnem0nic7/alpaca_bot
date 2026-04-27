@@ -312,8 +312,11 @@ class RuntimeSupervisor:
             if not watchlist_symbols:
                 logger.warning("Symbol watchlist is empty — skipping cycle")
                 return
+            ignored_set = set(watchlist_store.list_ignored(self.settings.trading_mode.value))
+            entry_symbols = tuple(s for s in watchlist_symbols if s not in ignored_set)
         else:
             watchlist_symbols = self.settings.symbols
+            entry_symbols = watchlist_symbols
 
         intraday_bars_by_symbol = self.market_data.get_stock_bars(
             symbols=list(watchlist_symbols),
@@ -392,7 +395,7 @@ class RuntimeSupervisor:
                     signal_evaluator=evaluator,
                     strategy_name=strategy_name,
                     global_open_count=global_occupied_slots,
-                    symbols=watchlist_symbols,
+                    symbols=entry_symbols,
                 )
                 all_cycle_results.append((strategy_name, cycle_result))
                 # Consume slots and symbols taken by entries this strategy emitted so

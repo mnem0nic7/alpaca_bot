@@ -2721,3 +2721,61 @@ def test_flatten_complete_not_set_when_executor_raises(monkeypatch) -> None:
     assert flatten_complete_saved == [], (
         "flatten_complete must NOT be written when execute_cycle_intents raises"
     )
+
+
+def test_entry_symbols_excludes_ignored_but_market_data_includes_all(monkeypatch) -> None:
+    """Ignored symbols are excluded from entry evaluation but still get bars fetched."""
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    runtime = make_runtime_context(settings)
+    # Inject a watchlist_store with AAPL+TSLA enabled, TSLA ignored
+    runtime.watchlist_store = SimpleNamespace(  # type: ignore[attr-defined]
+        list_enabled=lambda trading_mode: ["AAPL", "TSLA"],
+        list_ignored=lambda trading_mode: ["TSLA"],
+    )
+    broker = FakeBroker(
+        account=BrokerAccount(equity=100_000.0, buying_power=200_000.0, trading_blocked=False),
+    )
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=21),
+            "TSLA": make_bar_series("TSLA", end=now, count=21),
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=20, days=True),
+            "TSLA": make_bar_series("TSLA", end=now, count=20, days=True),
+        },
+    )
+    stream = FakeStream()
+    cycle_calls: list[dict] = []
+
+    def fake_run_cycle(**kwargs):
+        cycle_calls.append(kwargs)
+        return SimpleNamespace(intents=[])
+
+    monkeypatch.setattr(module, "run_cycle", fake_run_cycle)
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **_: {"submitted_count": 0})
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    # Market data fetch includes BOTH symbols — bars needed for stop/exit on TSLA positions
+    stock_bar_symbols = market_data.stock_bar_calls[0]["symbols"]
+    assert "TSLA" in stock_bar_symbols
+    assert "AAPL" in stock_bar_symbols
+
+    # Entry evaluation only receives AAPL — TSLA is ignored for new entries
+    assert len(cycle_calls) >= 1
+    symbols_arg = cycle_calls[0]["symbols"]
+    assert "TSLA" not in symbols_arg
+    assert "AAPL" in symbols_arg

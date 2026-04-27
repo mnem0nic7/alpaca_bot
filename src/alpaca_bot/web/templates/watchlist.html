@@ -83,6 +83,11 @@
         background: #f0ece5; color: var(--muted); border-radius: 999px;
         font-size: 0.8rem;
       }
+      .badge-ignored {
+        display: inline-block; padding: 0.15rem 0.55rem;
+        background: #fdf3e3; color: #8f6000; border-radius: 999px;
+        font-size: 0.8rem; font-weight: 600;
+      }
       .error-panel {
         background: #fdf0ee;
         border: 1px solid #e8b4ad;
@@ -165,6 +170,7 @@
                 <th>Added At</th>
                 <th>Added By</th>
                 <th>Remove</th>
+                <th>Ignore</th>
               </tr>
             </thead>
             <tbody>
@@ -172,7 +178,9 @@
                 <tr>
                   <td><strong class="mono">{{ rec.symbol }}</strong></td>
                   <td>
-                    {% if rec.enabled %}
+                    {% if rec.enabled and rec.ignored %}
+                      <span class="badge-ignored">ignored</span>
+                    {% elif rec.enabled %}
                       <span class="badge-enabled">enabled</span>
                     {% else %}
                       <span class="badge-disabled">disabled</span>
@@ -195,9 +203,26 @@
                       <span class="muted" style="font-size: 0.85rem;">—</span>
                     {% endif %}
                   </td>
+                  <td>
+                    {% if rec.enabled and not rec.ignored %}
+                      <form method="post" action="/admin/watchlist/ignore" style="display: inline;">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'watchlist') }}">
+                        <input type="hidden" name="symbol" value="{{ rec.symbol }}">
+                        <button type="submit" class="btn">Ignore</button>
+                      </form>
+                    {% elif rec.enabled and rec.ignored %}
+                      <form method="post" action="/admin/watchlist/unignore" style="display: inline;">
+                        <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'watchlist') }}">
+                        <input type="hidden" name="symbol" value="{{ rec.symbol }}">
+                        <button type="submit" class="btn">Unignore</button>
+                      </form>
+                    {% else %}
+                      <span class="muted" style="font-size: 0.85rem;">—</span>
+                    {% endif %}
+                  </td>
                 </tr>
               {% else %}
-                <tr><td colspan="5" class="muted">No symbols in watchlist.</td></tr>
+                <tr><td colspan="6" class="muted">No symbols in watchlist.</td></tr>
               {% endfor %}
             </tbody>
           </table>

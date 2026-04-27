@@ -329,8 +329,8 @@ def test_watchlist_store_list_enabled_returns_symbols() -> None:
 def test_watchlist_store_list_all_returns_records() -> None:
     now = datetime(2026, 4, 27, tzinfo=timezone.utc)
     rows = [
-        ("AAPL", "paper", True, now, "operator@example.com"),
-        ("TSLA", "paper", False, now, "system"),
+        ("AAPL", "paper", True, False, now, "operator@example.com"),
+        ("TSLA", "paper", False, False, now, "system"),
     ]
     conn = _FetchingConnection(fetchall_result=rows)
     store = WatchlistStore(conn)
@@ -341,6 +341,7 @@ def test_watchlist_store_list_all_returns_records() -> None:
     assert isinstance(result[0], WatchlistRecord)
     assert result[0].symbol == "AAPL"
     assert result[0].enabled is True
+    assert result[0].ignored is False
     assert result[1].symbol == "TSLA"
     assert result[1].enabled is False
 
@@ -410,3 +411,63 @@ def test_watchlist_store_seed_commit_false_does_not_commit() -> None:
     store.seed(("AAPL",), "paper", commit=False)
 
     assert conn.commit_count == 0
+
+
+def test_watchlist_store_list_ignored_returns_only_enabled_and_ignored() -> None:
+    rows = [("TSLA",)]
+    conn = _FetchingConnection(fetchall_result=rows)
+    store = WatchlistStore(conn)
+
+    result = store.list_ignored("paper")
+
+    assert result == ["TSLA"]
+    sql = conn.execute_calls[0][0]
+    assert "enabled = TRUE" in sql
+    assert "ignored = TRUE" in sql
+
+
+def test_watchlist_store_ignore_sets_ignored_true() -> None:
+    conn = _TrackingConnection()
+    store = WatchlistStore(conn)
+
+    store.ignore("TSLA", "paper", commit=True)
+
+    assert len(conn.execute_calls) == 1
+    sql = conn.execute_calls[0][0]
+    assert "ignored = TRUE" in sql
+    assert conn.execute_calls[0][1] == ("TSLA", "paper")
+    assert conn.commit_count == 1
+
+
+def test_watchlist_store_ignore_commit_false_does_not_commit() -> None:
+    conn = _TrackingConnection()
+    store = WatchlistStore(conn)
+
+    store.ignore("TSLA", "paper", commit=False)
+
+    assert conn.commit_count == 0
+
+
+def test_watchlist_store_unignore_sets_ignored_false() -> None:
+    conn = _TrackingConnection()
+    store = WatchlistStore(conn)
+
+    store.unignore("TSLA", "paper", commit=True)
+
+    assert len(conn.execute_calls) == 1
+    sql = conn.execute_calls[0][0]
+    assert "ignored = FALSE" in sql
+    assert conn.execute_calls[0][1] == ("TSLA", "paper")
+    assert conn.commit_count == 1
+
+
+def test_watchlist_store_list_all_includes_ignored_field() -> None:
+    now = datetime(2026, 4, 27, tzinfo=timezone.utc)
+    rows = [("AAPL", "paper", True, False, now, "system")]
+    conn = _FetchingConnection(fetchall_result=rows)
+    store = WatchlistStore(conn)
+
+    result = store.list_all("paper")
+
+    assert len(result) == 1
+    assert result[0].ignored is False
