@@ -339,3 +339,28 @@ def test_high_watermark_initial_stop_falls_back_to_buffer_pct_when_atr_returns_n
     )
     assert result is not None
     assert result.initial_stop_price == expected_stop
+
+
+def test_high_watermark_entry_stop_price_at_historical_high_not_signal_bar_high():
+    """Entry trigger must be historical_high + buffer, not signal_bar.high + buffer.
+
+    The signal bar already traded above historical_high, so placing the stop-limit
+    trigger at signal_bar.high would require an even larger continuation move to fill.
+    Using historical_high keeps the trigger at the original breakout level.
+    """
+    settings = _make_settings(entry_stop_price_buffer=0.01)
+    daily_bars = _make_daily_bars(n=11, high_peak=150.0, high_base=100.0)
+    # signal_bar.high=155.0 is well above historical_high=150.0
+    intraday_bars, signal_index = _make_intraday_bars(signal_high=155.0, signal_close=154.0)
+    result = evaluate_high_watermark_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+    assert result is not None
+    # stop_price must equal historical_high + buffer (150.01), NOT signal_bar.high + buffer (155.01)
+    assert result.stop_price == round(150.0 + 0.01, 2), (
+        f"Expected stop_price=150.01 (historical_high + buffer), got {result.stop_price}"
+    )

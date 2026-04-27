@@ -49,7 +49,11 @@ def evaluate_high_watermark_signal(
     if relative_volume < settings.relative_volume_threshold:
         return None
 
-    stop_price = round(signal_bar.high + settings.entry_stop_price_buffer, 2)
+    # Trigger at historical_high + buffer — the breakout level — so a normal
+    # continuation bar will trade through and fill the stop-limit.  Using
+    # signal_bar.high (which is already above historical_high) would place the
+    # trigger beyond even the signal bar's high, making fills much harder.
+    stop_price = round(historical_high + settings.entry_stop_price_buffer, 2)
     limit_price = round(stop_price * (1 + settings.stop_limit_buffer_pct), 2)
     stop_buffer = atr_stop_buffer(
         daily_bars, settings.atr_period, settings.atr_stop_multiplier,
