@@ -457,30 +457,43 @@ def _execute_exit(
     if cancel_hard_failed:
         # At least one stop cancel failed with an unrecognized broker error: the stop
         # may still be live. Submitting a market exit now would risk a double-sell / naked-short.
-        # Still persist the stops that DID successfully cancel so the next cycle doesn't
-        # see them as active and try to cancel them again (which would yield "already canceled",
-        # set position_already_gone, and permanently abandon the exit).
-        if canceled_order_records:
-            with lock_ctx:
+        # Persist any successfully-canceled stops and an audit event unconditionally so the
+        # next cycle doesn't re-cancel them, hit "already_canceled", and permanently abandon
+        # the exit. Always writing the audit event ensures operator visibility in the DB.
+        with lock_ctx:
+            try:
+                for record in canceled_order_records:
+                    runtime.order_store.save(record, commit=False)
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="exit_hard_failed",
+                        symbol=symbol,
+                        payload={
+                            "intent_type": "exit",
+                            "action": "cancel_hard_failed",
+                            "reason": reason,
+                            "canceled_stop_count": canceled_stop_count,
+                        },
+                        created_at=now,
+                    ),
+                    commit=False,
+                )
+                runtime.connection.commit()
+            except Exception:
+                logger.exception(
+                    "cycle_intent_execution: failed to persist state after hard-failed cancel "
+                    "for %s; position may be unprotected",
+                    symbol,
+                )
                 try:
-                    for record in canceled_order_records:
-                        runtime.order_store.save(record, commit=False)
-                    runtime.connection.commit()
+                    runtime.connection.rollback()
                 except Exception:
-                    logger.exception(
-                        "cycle_intent_execution: failed to persist canceled stop records "
-                        "for %s after hard-failed cancel; position may be unprotected",
-                        symbol,
-                    )
-                    try:
-                        runtime.connection.rollback()
-                    except Exception:
-                        pass
-                    # Do not re-raise: a DB write failure here is secondary. Re-raising
-                    # would leave the successfully-canceled stops looking "active" in the
-                    # DB, causing every subsequent cycle to re-cancel them, hit
-                    # "already_canceled", set position_already_gone, and permanently
-                    # abandon the exit for an unprotected position.
+                    pass
+                # Do not re-raise: a DB write failure here is secondary. Re-raising
+                # would leave the successfully-canceled stops looking "active" in the
+                # DB, causing every subsequent cycle to re-cancel them, hit
+                # "already_canceled", set position_already_gone, and permanently
+                # abandon the exit for an unprotected position.
         return canceled_stop_count, 0, 1  # hard_failed: stop cancel had unrecognized error
 
     if position_already_gone:
@@ -558,27 +571,40 @@ def _execute_exit(
             client_order_id=client_order_id,
         )
     except Exception:
-        # Stops are already canceled at the broker (position is unprotected). Persist any
-        # successfully-canceled stop records so the next cycle doesn't see them as active,
-        # try to cancel them again, get "already canceled", and permanently abandon the exit.
+        # Stops are already canceled at the broker (position is unprotected). Persist
+        # canceled stop records and an audit event unconditionally so the next cycle
+        # doesn't re-cancel them, hit "already canceled", and permanently abandon the exit.
         logger.exception(
             "cycle_intent_execution: submit_market_exit failed for %s/%s; "
             "position is unprotected — manual intervention required",
             symbol,
             strategy_name,
         )
-        if canceled_order_records:
-            with lock_ctx:
+        with lock_ctx:
+            try:
+                for record in canceled_order_records:
+                    runtime.order_store.save(record, commit=False)
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="exit_hard_failed",
+                        symbol=symbol,
+                        payload={
+                            "intent_type": "exit",
+                            "action": "submit_market_exit_failed",
+                            "reason": reason,
+                            "canceled_stop_count": canceled_stop_count,
+                        },
+                        created_at=now,
+                    ),
+                    commit=False,
+                )
+                runtime.connection.commit()
+            except Exception:
                 try:
-                    for record in canceled_order_records:
-                        runtime.order_store.save(record, commit=False)
-                    runtime.connection.commit()
+                    runtime.connection.rollback()
                 except Exception:
-                    try:
-                        runtime.connection.rollback()
-                    except Exception:
-                        pass
-                    raise
+                    pass
+                raise
         return canceled_stop_count, 0, 1  # hard_failed: submit_market_exit raised
 
     # Write all results under lock.
@@ -587,15 +613,54 @@ def _execute_exit(
         current_positions = _positions_by_symbol(runtime, settings)
         try:
             if (symbol, strategy_name) not in current_positions:
+                # Position was closed by the fill stream while the broker call was in-flight.
+                # Still save the exit order record so the fill event can be matched and PnL
+                # can be computed. Without this, the fill arrives as trade_update_unmatched
+                # and daily_realized_pnl misses the trade.
                 logger.warning(
-                    "Position for %s/%s disappeared during broker exit; skipping write",
+                    "Position for %s/%s disappeared during broker exit; "
+                    "saving exit order record for fill tracking",
                     symbol,
                     strategy_name,
                 )
                 for record in canceled_order_records:
                     runtime.order_store.save(record, commit=False)
+                runtime.order_store.save(
+                    OrderRecord(
+                        client_order_id=client_order_id,
+                        symbol=symbol,
+                        side="sell",
+                        intent_type="exit",
+                        status=str(broker_order.status).lower(),
+                        quantity=position.quantity,
+                        trading_mode=settings.trading_mode,
+                        strategy_version=settings.strategy_version,
+                        created_at=now,
+                        updated_at=now,
+                        initial_stop_price=position.initial_stop_price,
+                        broker_order_id=broker_order.broker_order_id,
+                        signal_timestamp=intent_timestamp,
+                        strategy_name=strategy_name,
+                    ),
+                    commit=False,
+                )
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="cycle_intent_executed",
+                        symbol=symbol,
+                        payload={
+                            "intent_type": "exit",
+                            "action": "submitted_position_already_gone",
+                            "reason": reason,
+                            "canceled_stop_count": canceled_stop_count,
+                            "client_order_id": client_order_id,
+                        },
+                        created_at=now,
+                    ),
+                    commit=False,
+                )
                 runtime.connection.commit()
-                return canceled_stop_count, 0, 0  # position gone after submit: not a hard failure
+                return canceled_stop_count, 1, 0  # exit submitted; position already cleared by stream
             for record in canceled_order_records:
                 runtime.order_store.save(record, commit=False)
             runtime.order_store.save(

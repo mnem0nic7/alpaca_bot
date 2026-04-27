@@ -1285,10 +1285,11 @@ def test_execute_exit_returns_without_db_write_when_submit_market_exit_raises() 
     assert exit_writes == [], "No exit record must be written when submit_market_exit raises"
 
 
-def test_execute_exit_skips_db_write_when_position_disappears_after_submit() -> None:
+def test_execute_exit_saves_exit_record_when_position_disappears_after_submit() -> None:
     """When the position disappears between submit_market_exit and the DB write (TOCTOU race),
-    _execute_exit must return without writing — prevents a phantom exit record for a
-    position the fill stream already closed."""
+    _execute_exit must still save the exit order record so the fill event can be matched
+    and daily_realized_pnl can account for the trade. Without saving, the fill arrives as
+    trade_update_unmatched and PnL is permanently missing for this trade."""
     execute_cycle_intents = load_cycle_intent_execution_api()
     settings = make_settings()
     now = datetime(2026, 4, 24, 20, 10, tzinfo=timezone.utc)
@@ -1361,9 +1362,17 @@ def test_execute_exit_skips_db_write_when_position_disappears_after_submit() -> 
     )
 
     assert broker.exit_calls, "submit_market_exit should have been called before position disappeared"
-    assert report.submitted_exit_count == 0, "No count increment when position disappeared before write"
+    assert report.submitted_exit_count == 1, (
+        "submitted_exit_count must be 1: broker accepted the exit order even though "
+        "the position was cleaned up by the fill stream before the DB write"
+    )
     exit_writes = [o for o in order_store.saved if o.intent_type == "exit"]
-    assert exit_writes == [], "No exit record written when position disappeared after submit"
+    assert len(exit_writes) == 1, (
+        "Exit order record must be saved for fill-event matching and PnL tracking"
+    )
+    assert exit_writes[0].broker_order_id == "broker-exit-1", (
+        "Exit record must carry the broker_order_id returned by submit_market_exit"
+    )
 
 
 def test_execute_exit_cancel_hard_failed_writes_partial_cancels_before_early_return() -> None:
