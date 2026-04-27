@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid as _uuid_module
+
+logger = logging.getLogger(__name__)
 from datetime import date, datetime
 from typing import Any
 
@@ -422,6 +425,14 @@ class OrderStore:
                 session_date,
             ),
         )
+        missing_entry = [row for row in rows if row[1] is None]
+        if missing_entry:
+            logger.warning(
+                "daily_realized_pnl: %d exit row(s) skipped — no correlated entry fill "
+                "(symbols: %s); PnL may be understated and loss-limit check may miss losses",
+                len(missing_entry),
+                [row[0] for row in missing_entry],
+            )
         return sum(
             (float(row[2]) - float(row[1])) * int(row[3])
             for row in rows

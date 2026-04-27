@@ -661,3 +661,55 @@ def test_evaluate_cycle_skips_overexposed_candidate_but_selects_next_fitting_sym
     # AAPL must be selected (fits within 5%); MSFT must be skipped (overexposed).
     assert "AAPL" in symbols_selected, "AAPL should be selected — fits within exposure cap"
     assert "MSFT" not in symbols_selected, "MSFT should be skipped — would exceed exposure cap"
+
+
+def test_evaluate_cycle_emits_no_entry_when_signal_evaluator_returns_none() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    from datetime import datetime, timezone
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=lambda **_: None,
+    )
+    entry_intents = [i for i in result.intents if i.intent_type == CycleIntentType.ENTRY]
+    assert entry_intents == [], "No entries expected when signal_evaluator always returns None"
+
+
+def test_evaluate_cycle_emits_no_entry_when_signal_has_inverted_stop() -> None:
+    """Guard at engine.py prevents entry when initial_stop_price >= limit_price."""
+    from types import SimpleNamespace
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    from datetime import datetime, timezone
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    def inverted_signal_evaluator(**kwargs):
+        return SimpleNamespace(
+            initial_stop_price=110.0,
+            limit_price=110.0,  # stop == entry — invalid
+            stop_price=110.0,
+            entry_level=109.0,
+            signal_bar=SimpleNamespace(timestamp=now, close=110.0),
+            relative_volume=2.0,
+        )
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=inverted_signal_evaluator,
+    )
+    entry_intents = [i for i in result.intents if i.intent_type == CycleIntentType.ENTRY]
+    assert entry_intents == [], "No entries expected when stop_price >= limit_price"

@@ -212,6 +212,8 @@ class Settings:
             raise ValueError("EMA_PERIOD must be at least 2")
         if self.atr_period < 2:
             raise ValueError("ATR_PERIOD must be at least 2")
+        if self.entry_timeframe_minutes < 1:
+            raise ValueError("ENTRY_TIMEFRAME_MINUTES must be at least 1")
         if self.atr_stop_multiplier <= 0:
             raise ValueError("ATR_STOP_MULTIPLIER must be positive")
         if self.atr_stop_multiplier > 10.0:

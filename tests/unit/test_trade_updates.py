@@ -1316,3 +1316,33 @@ def test_unmatched_trade_update_rollback_on_audit_append_failure() -> None:
         f"rollback must fire when audit append fails in unmatched path; "
         f"got rollback_count={connection.rollback_count}"
     )
+
+
+def test_rollback_called_when_connection_commit_raises_on_entry_fill() -> None:
+    """If connection.commit() raises during an entry fill, rollback must be called
+    and the exception must propagate out of apply_trade_update."""
+    import pytest
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    class FailingCommitConnection(RollbackTrackingConnection):
+        def commit(self) -> None:
+            self.commit_count += 1
+            raise RuntimeError("commit_failure")
+
+    entry_order = _make_entry_order()
+    connection = FailingCommitConnection()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[entry_order]),
+        position_store=RecordingPositionStore(),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    fill = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+    with pytest.raises(RuntimeError, match="commit_failure"):
+        apply_trade_update(settings=make_settings(), runtime=runtime, update=fill, now=NOW)
+
+    assert connection.rollback_count == 1, (
+        f"rollback must be called when connection.commit raises on entry fill; "
+        f"got rollback_count={connection.rollback_count}"
+    )

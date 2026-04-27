@@ -343,6 +343,7 @@ def _apply_trade_update_locked(
                         quantity=pending_stop.quantity,
                         trading_mode=pending_stop.trading_mode,
                         strategy_version=pending_stop.strategy_version,
+                        strategy_name=pending_stop.strategy_name,
                         created_at=pending_stop.created_at,
                         updated_at=timestamp,
                         stop_price=pending_stop.stop_price,
