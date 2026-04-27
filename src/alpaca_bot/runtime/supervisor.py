@@ -215,11 +215,15 @@ class RuntimeSupervisor:
                         )
                     )
                 except Exception:
+                    # Recovery already succeeded — log and continue rather than aborting
+                    # the cycle just because we couldn't persist the mismatch audit event.
+                    logger.exception(
+                        "Failed to append runtime_reconciliation_detected audit event; continuing"
+                    )
                     try:
                         self.runtime.connection.rollback()
                     except Exception:
                         pass
-                    raise
         account = self.broker.get_account()
         session_date = _session_date(timestamp, self.settings)
 
@@ -731,13 +735,30 @@ class RuntimeSupervisor:
             return
         store_lock = getattr(self.runtime, "store_lock", None)
         with store_lock if store_lock is not None else contextlib.nullcontext():
-            self.runtime.daily_session_state_store.save(state)
+            try:
+                self.runtime.daily_session_state_store.save(state)
+            except Exception:
+                try:
+                    self.runtime.connection.rollback()
+                except Exception:
+                    pass
+                raise
 
     def _append_audit(self, event: AuditEvent) -> None:
         """Append an AuditEvent while holding store_lock to prevent races with the stream thread."""
         store_lock = getattr(self.runtime, "store_lock", None)
         with store_lock if store_lock is not None else contextlib.nullcontext():
-            self.runtime.audit_event_store.append(event)
+            try:
+                self.runtime.audit_event_store.append(event)
+            except Exception:
+                logger.exception(
+                    "Failed to append audit event %s; rolling back and continuing",
+                    event.event_type,
+                )
+                try:
+                    self.runtime.connection.rollback()
+                except Exception:
+                    pass
 
     def _effective_trading_status(
         self,

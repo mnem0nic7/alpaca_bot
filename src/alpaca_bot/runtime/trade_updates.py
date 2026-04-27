@@ -208,7 +208,7 @@ def _apply_trade_update_locked(
         ))
     elif (
         matched_order.intent_type == "entry"
-        and normalized.status in {"cancelled", "expired"}
+        and normalized.status in {"cancelled", "canceled", "expired"}
     ):
         position_updated = True
         position_cleared = True
@@ -319,7 +319,7 @@ def _apply_trade_update_locked(
             )
         elif (
             matched_order.intent_type == "entry"
-            and normalized.status in {"cancelled", "expired"}
+            and normalized.status in {"cancelled", "canceled", "expired"}
         ):
             runtime.position_store.delete(
                 symbol=matched_order.symbol,

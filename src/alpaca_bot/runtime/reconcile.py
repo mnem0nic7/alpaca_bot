@@ -91,7 +91,14 @@ def reconcile_startup(
 
     if context.daily_session_state_store is None:
         raise RuntimeError("Runtime context is missing a daily session state store")
-    context.daily_session_state_store.save(session_state)
+    try:
+        context.daily_session_state_store.save(session_state)
+    except Exception:
+        try:
+            context.connection.rollback()
+        except Exception:
+            pass
+        raise
 
     return ReconciliationOutcome(
         session=session,

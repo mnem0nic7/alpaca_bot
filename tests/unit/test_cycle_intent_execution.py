@@ -1822,3 +1822,123 @@ def test_execute_exit_active_exit_order_exists_rollback_on_db_failure() -> None:
         f"rollback must be called once when audit append fails in active_exit_order_exists path; "
         f"got rollback_count={connection.rollback_count}"
     )
+
+
+def test_execute_update_stop_rollback_on_db_failure() -> None:
+    """If any store write fails inside _execute_update_stop's atomic block,
+    connection.rollback() must be called and the exception must propagate."""
+    import pytest
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+
+    active_stop = _make_aapl_stop(now=now, broker_order_id="broker-us-rb", client_suffix="us-rb")
+    position = _make_aapl_position(now=now)
+
+    class FailingPositionStore(RecordingPositionStore):
+        def save(self, p: PositionRecord, *, commit: bool = True) -> None:
+            raise RuntimeError("simulated_db_failure")
+
+    connection = _RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=FailingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated_db_failure"):
+        execute_cycle_intents(
+            settings=settings,
+            runtime=runtime,
+            broker=RecordingBroker(),
+            cycle_result=CycleResult(
+                as_of=now,
+                intents=[CycleIntent(
+                    intent_type=CycleIntentType.UPDATE_STOP,
+                    symbol="AAPL",
+                    timestamp=now,
+                    stop_price=112.0,
+                )],
+            ),
+            now=now,
+        )
+
+    assert connection.rollback_count == 1, (
+        f"rollback must be called once when DB write fails in _execute_update_stop; "
+        f"got rollback_count={connection.rollback_count}"
+    )
+
+
+def test_execute_update_stop_uses_commit_false_for_all_writes() -> None:
+    """order_store.save(), position_store.save(), and audit_event_store.append()
+    in _execute_update_stop must all use commit=False; exactly one connection.commit() fires."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 40, tzinfo=timezone.utc)
+
+    active_stop = _make_aapl_stop(now=now, broker_order_id="broker-us-cd", client_suffix="us-cd")
+    position = _make_aapl_position(now=now)
+
+    order_commit_args: list[bool] = []
+    position_commit_args: list[bool] = []
+    audit_commit_args: list[bool] = []
+    commit_count = [0]
+
+    class TrackingOrderStore(RecordingOrderStore):
+        def save(self, order: OrderRecord, *, commit: bool = True) -> None:
+            order_commit_args.append(commit)
+            super().save(order, commit=commit)
+
+    class TrackingPositionStore(RecordingPositionStore):
+        def save(self, p: PositionRecord, *, commit: bool = True) -> None:
+            position_commit_args.append(commit)
+            super().save(p, commit=commit)
+
+    class TrackingAuditStore(RecordingAuditEventStore):
+        def append(self, event: AuditEvent, *, commit: bool = True) -> None:
+            audit_commit_args.append(commit)
+            super().append(event, commit=commit)
+
+    class TrackingConnection:
+        def commit(self) -> None:
+            commit_count[0] += 1
+
+        def rollback(self) -> None:
+            pass
+
+    runtime = SimpleNamespace(
+        order_store=TrackingOrderStore(orders=[active_stop]),
+        position_store=TrackingPositionStore(positions=[position]),
+        audit_event_store=TrackingAuditStore(),
+        connection=TrackingConnection(),
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=RecordingBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="AAPL",
+                timestamp=now,
+                stop_price=112.0,
+            )],
+        ),
+        now=now,
+    )
+
+    assert all(not c for c in order_commit_args), (
+        f"order_store.save() must use commit=False in _execute_update_stop; got {order_commit_args}"
+    )
+    assert all(not c for c in position_commit_args), (
+        f"position_store.save() must use commit=False in _execute_update_stop; got {position_commit_args}"
+    )
+    assert all(not c for c in audit_commit_args), (
+        f"audit_event_store.append() must use commit=False in _execute_update_stop; got {audit_commit_args}"
+    )
+    assert commit_count[0] == 1, (
+        f"Exactly one connection.commit() must fire in _execute_update_stop; got {commit_count[0]}"
+    )

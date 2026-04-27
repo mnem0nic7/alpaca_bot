@@ -1179,3 +1179,140 @@ def test_entry_fill_all_writes_use_commit_false() -> None:
     assert connection.commit_count == 1, (
         f"Exactly one connection.commit() must fire; got {connection.commit_count}"
     )
+
+
+def _make_stop_order(
+    *,
+    client_order_id: str = "v1-breakout:2026-04-25:AAPL:stop:2026-04-25T14:00:00+00:00",
+    symbol: str = "AAPL",
+    quantity: int = 10,
+) -> OrderRecord:
+    return OrderRecord(
+        client_order_id=client_order_id,
+        symbol=symbol,
+        side="sell",
+        intent_type="stop",
+        status="new",
+        quantity=quantity,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=NOW,
+        updated_at=NOW,
+        stop_price=109.50,
+        initial_stop_price=109.50,
+        signal_timestamp=NOW,
+    )
+
+
+def test_stop_fill_all_writes_use_commit_false() -> None:
+    """All store writes during a stop fill must use commit=False;
+    exactly one connection.commit() must fire at the end."""
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    class CommitTrackingPositionStore(RecordingPositionStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.delete_commit_args: list[bool] = []
+
+        def delete(self, *, symbol, trading_mode, strategy_version,
+                   strategy_name="breakout", commit=True) -> None:
+            super().delete(symbol=symbol, trading_mode=trading_mode,
+                           strategy_version=strategy_version,
+                           strategy_name=strategy_name, commit=commit)
+            self.delete_commit_args.append(commit)
+
+    stop_order = _make_stop_order()
+    connection = RollbackTrackingConnection()
+    position_store = CommitTrackingPositionStore()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[stop_order]),
+        position_store=position_store,
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    fill = _make_trade_update(
+        client_order_id=stop_order.client_order_id,
+        symbol="AAPL",
+        side="sell",
+        status="filled",
+        qty=10,
+        filled_qty=10,
+        filled_avg_price=109.20,
+    )
+    apply_trade_update(settings=make_settings(), runtime=runtime, update=fill, now=NOW)
+
+    assert all(not c for c in position_store.delete_commit_args), (
+        f"position_store.delete() must use commit=False; got {position_store.delete_commit_args}"
+    )
+    assert connection.commit_count == 1, (
+        f"Exactly one connection.commit() must fire on stop fill; got {connection.commit_count}"
+    )
+
+
+def test_rollback_called_when_position_store_delete_raises_on_stop_fill() -> None:
+    """If position_store.delete raises during a stop fill, connection.rollback()
+    must be called and the exception must propagate."""
+    import pytest
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    stop_order = _make_stop_order()
+    connection = RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[stop_order]),
+        position_store=FailingPositionStore(),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    fill = _make_trade_update(
+        client_order_id=stop_order.client_order_id,
+        symbol="AAPL",
+        side="sell",
+        status="filled",
+        qty=10,
+        filled_qty=10,
+        filled_avg_price=109.20,
+    )
+    with pytest.raises(RuntimeError, match="simulated_db_failure"):
+        apply_trade_update(settings=make_settings(), runtime=runtime, update=fill, now=NOW)
+
+    assert connection.rollback_count == 1, (
+        f"rollback must be called when position_store.delete raises on stop fill; "
+        f"got rollback_count={connection.rollback_count}"
+    )
+
+
+def test_unmatched_trade_update_rollback_on_audit_append_failure() -> None:
+    """When matched_order is None and audit_event_store.append raises,
+    connection.rollback() must be called and the exception must propagate."""
+    import pytest
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    class FailingAuditEventStore:
+        def append(self, event: AuditEvent, *, commit: bool = True) -> None:
+            raise RuntimeError("simulated_audit_failure")
+
+    connection = RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[]),
+        position_store=RecordingPositionStore(),
+        audit_event_store=FailingAuditEventStore(),
+        connection=connection,
+    )
+
+    unknown = _make_trade_update(
+        client_order_id="unknown-cid",
+        broker_order_id="unknown-bid",
+        status="filled",
+        qty=5,
+        filled_qty=5,
+        filled_avg_price=100.0,
+    )
+    with pytest.raises(RuntimeError, match="simulated_audit_failure"):
+        apply_trade_update(settings=make_settings(), runtime=runtime, update=unknown, now=NOW)
+
+    assert connection.rollback_count == 1, (
+        f"rollback must fire when audit append fails in unmatched path; "
+        f"got rollback_count={connection.rollback_count}"
+    )

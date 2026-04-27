@@ -443,8 +443,10 @@ def _execute_exit(
 
     # Re-verify position still exists before submitting exit — prevents naked-short
     # if the fill stream closed the position between cancel_order and here.
+    # Also refresh position quantity in case a partial fill arrived while stops were canceling.
     with lock_ctx:
-        if (symbol, strategy_name) not in _positions_by_symbol(runtime, settings):
+        _reverify_positions = _positions_by_symbol(runtime, settings)
+        if (symbol, strategy_name) not in _reverify_positions:
             try:
                 for record in canceled_order_records:
                     runtime.order_store.save(record, commit=False)
@@ -470,6 +472,7 @@ def _execute_exit(
                     pass
                 raise
             return canceled_stop_count, 0
+        position = _reverify_positions[(symbol, strategy_name)]
 
     client_order_id = _exit_client_order_id(
         settings=settings,
