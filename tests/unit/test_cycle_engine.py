@@ -574,3 +574,25 @@ def test_zero_equity_does_not_raise_with_open_positions() -> None:
     )
 
     assert result is not None
+
+
+def test_evaluate_cycle_skips_entry_when_position_size_rounds_to_zero() -> None:
+    """With tiny equity, calculate_position_size returns 0 → quantity < 1 guard
+    prevents an ENTRY intent from being emitted."""
+    _CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=now,
+        equity=0.01,  # so tiny that position size rounds to 0 shares
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+    )
+
+    entry_intents = [i for i in result.intents if i.intent_type == _CycleIntentType.ENTRY]
+    assert entry_intents == [], "Expected no ENTRY intent when position size is zero"

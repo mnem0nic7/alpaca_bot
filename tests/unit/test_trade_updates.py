@@ -961,3 +961,52 @@ def test_final_fill_updates_pending_stop_quantity_to_match_actual_fill() -> None
         f"Expected stop quantity updated to 10 (final filled qty), got {stop_saves[0].quantity}"
     )
     assert stop_saves[0].status == "pending_submit"
+
+
+def test_two_event_partial_then_filled_position_quantity_reflects_final_fill() -> None:
+    """After a partially_filled event followed by a filled event, the saved
+    PositionRecord.quantity must equal the total filled quantity from the final
+    fill event — not the partial-fill quantity."""
+    entry_order = _make_entry_order(quantity=10, initial_stop_price=109.50)
+    runtime = _make_runtime(orders=[entry_order])
+
+    # Event 1: partial fill of 7 shares
+    partial_update = _make_trade_update(status="partially_filled", qty=10, filled_qty=7, filled_avg_price=111.50)
+    _apply(runtime, partial_update)
+
+    # Event 2: final fill for remaining 3 (total 10)
+    final_update = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+    _apply(runtime, final_update)
+
+    position_saves = runtime.position_store.saved
+    assert len(position_saves) >= 2, f"Expected at least 2 position saves, got {len(position_saves)}"
+    last_position = position_saves[-1]
+    assert last_position.quantity == 10, (
+        f"Expected final position quantity=10, got {last_position.quantity}"
+    )
+
+
+def test_filled_event_with_no_matching_local_order_emits_unmatched_audit_event() -> None:
+    """A fill event whose client_order_id has no matching local record must emit
+    a 'trade_update_unmatched' audit event and must not create any position."""
+    runtime = _make_runtime(orders=[])  # empty — no local orders
+
+    update = _make_trade_update(
+        client_order_id="v1-breakout:2026-04-25:AAPL:entry:2026-04-25T14:00:00+00:00",
+        broker_order_id="broker-unknown-1",
+        status="filled",
+        qty=10,
+        filled_qty=10,
+        filled_avg_price=112.00,
+    )
+    result = _apply(runtime, update)
+
+    assert result["unmatched"] is True
+    unmatched_events = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "trade_update_unmatched"
+    ]
+    assert len(unmatched_events) == 1, (
+        f"Expected 1 unmatched audit event, got {len(unmatched_events)}"
+    )
+    assert runtime.position_store.saved == [], "No position must be saved for an unmatched fill"

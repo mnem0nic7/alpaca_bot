@@ -229,8 +229,12 @@ def _execute_update_stop(
                 strategy_name=strategy_name,
             )
             action = "submitted"
-    except Exception:
-        logger.exception("Broker call failed for update_stop on %s; skipping", symbol)
+    except Exception as exc:
+        exc_msg = str(exc).lower()
+        if any(phrase in exc_msg for phrase in ("not found", "already filled", "already canceled", "does not exist")):
+            logger.debug("update_stop skipped for %s — order already gone: %s", symbol, exc)
+        else:
+            logger.exception("Broker call failed for update_stop on %s; skipping", symbol)
         return None
 
     # All store writes under lock — serializes with the trade-update stream thread.
