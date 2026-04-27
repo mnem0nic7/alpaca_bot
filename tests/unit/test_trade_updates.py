@@ -123,6 +123,28 @@ class RecordingAuditEventStore:
         self.appended.append(event)
 
 
+class RollbackTrackingConnection:
+    def __init__(self) -> None:
+        self.commit_count = 0
+        self.rollback_count = 0
+
+    def commit(self) -> None:
+        self.commit_count += 1
+
+    def rollback(self) -> None:
+        self.rollback_count += 1
+
+
+class FailingPositionStore:
+    """Position store that raises on save() — for rollback guard tests."""
+
+    def save(self, position: PositionRecord, *, commit: bool = True) -> None:
+        raise RuntimeError("simulated_db_failure")
+
+    def delete(self, *, symbol: str, trading_mode, strategy_version: str, strategy_name: str = "breakout", commit: bool = True) -> None:
+        raise RuntimeError("simulated_db_failure")
+
+
 def _make_runtime(
     *,
     orders: list[OrderRecord] | None = None,
@@ -1074,4 +1096,86 @@ def test_duplicate_entry_fill_skips_position_save_when_order_already_filled() ->
     assert position_saves_after_second == position_saves_after_first, (
         "Duplicate fill event must NOT trigger an additional position save — "
         f"got {position_saves_after_second} saves after second event, expected {position_saves_after_first}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Rollback guard coverage for _apply_trade_update_locked
+# ---------------------------------------------------------------------------
+
+def test_rollback_called_when_position_store_save_raises_on_entry_fill() -> None:
+    """If position_store.save raises during an entry fill, connection.rollback()
+    must be called and the exception must propagate out of apply_trade_update."""
+    import pytest
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    entry_order = _make_entry_order()
+    connection = RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[entry_order]),
+        position_store=FailingPositionStore(),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    fill = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+    with pytest.raises(RuntimeError, match="simulated_db_failure"):
+        apply_trade_update(
+            settings=make_settings(),
+            runtime=runtime,
+            update=fill,
+            now=NOW,
+        )
+
+    assert connection.rollback_count == 1, (
+        f"rollback must be called exactly once when position_store.save raises; "
+        f"got rollback_count={connection.rollback_count}"
+    )
+
+
+def test_entry_fill_all_writes_use_commit_false() -> None:
+    """All store writes during an entry fill must use commit=False;
+    only a single connection.commit() must fire at the end."""
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    class CommitTrackingOrderStore(RecordingOrderStore):
+        def __init__(self, orders=None) -> None:
+            super().__init__(orders=orders)
+            self.commit_args: list[bool] = []
+
+        def save(self, order: OrderRecord, *, commit: bool = True) -> None:
+            super().save(order, commit=commit)
+            self.commit_args.append(commit)
+
+    class CommitTrackingPositionStore(RecordingPositionStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.commit_args: list[bool] = []
+
+        def save(self, position: PositionRecord, *, commit: bool = True) -> None:
+            super().save(position, commit=commit)
+            self.commit_args.append(commit)
+
+    entry_order = _make_entry_order()
+    connection = RollbackTrackingConnection()
+    order_store = CommitTrackingOrderStore(orders=[entry_order])
+    position_store = CommitTrackingPositionStore()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=position_store,
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    fill = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+    apply_trade_update(settings=make_settings(), runtime=runtime, update=fill, now=NOW)
+
+    assert all(not c for c in order_store.commit_args), (
+        f"All order_store.save() calls must use commit=False; got {order_store.commit_args}"
+    )
+    assert all(not c for c in position_store.commit_args), (
+        f"All position_store.save() calls must use commit=False; got {position_store.commit_args}"
+    )
+    assert connection.commit_count == 1, (
+        f"Exactly one connection.commit() must fire; got {connection.commit_count}"
     )

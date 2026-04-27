@@ -113,42 +113,49 @@ def dispatch_pending_orders(
                 exc,
             )
             with lock_ctx:
-                runtime.audit_event_store.append(
-                    AuditEvent(
-                        event_type="order_dispatch_failed",
-                        symbol=order.symbol,
-                        payload={
-                            "error": str(exc),
-                            "symbol": order.symbol,
-                            "intent_type": order.intent_type,
-                            "timestamp": timestamp.isoformat(),
-                        },
-                        created_at=timestamp,
-                    ),
-                    commit=False,
-                )
-                runtime.order_store.save(
-                    OrderRecord(
-                        client_order_id=order.client_order_id,
-                        symbol=order.symbol,
-                        side=order.side,
-                        intent_type=order.intent_type,
-                        status="error",
-                        quantity=order.quantity,
-                        trading_mode=order.trading_mode,
-                        strategy_version=order.strategy_version,
-                        strategy_name=order.strategy_name,
-                        created_at=order.created_at,
-                        updated_at=timestamp,
-                        stop_price=order.stop_price,
-                        limit_price=order.limit_price,
-                        initial_stop_price=order.initial_stop_price,
-                        broker_order_id=order.broker_order_id,
-                        signal_timestamp=order.signal_timestamp,
-                    ),
-                    commit=False,
-                )
-                runtime.connection.commit()
+                try:
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="order_dispatch_failed",
+                            symbol=order.symbol,
+                            payload={
+                                "error": str(exc),
+                                "symbol": order.symbol,
+                                "intent_type": order.intent_type,
+                                "timestamp": timestamp.isoformat(),
+                            },
+                            created_at=timestamp,
+                        ),
+                        commit=False,
+                    )
+                    runtime.order_store.save(
+                        OrderRecord(
+                            client_order_id=order.client_order_id,
+                            symbol=order.symbol,
+                            side=order.side,
+                            intent_type=order.intent_type,
+                            status="error",
+                            quantity=order.quantity,
+                            trading_mode=order.trading_mode,
+                            strategy_version=order.strategy_version,
+                            strategy_name=order.strategy_name,
+                            created_at=order.created_at,
+                            updated_at=timestamp,
+                            stop_price=order.stop_price,
+                            limit_price=order.limit_price,
+                            initial_stop_price=order.initial_stop_price,
+                            broker_order_id=order.broker_order_id,
+                            signal_timestamp=order.signal_timestamp,
+                        ),
+                        commit=False,
+                    )
+                    runtime.connection.commit()
+                except Exception:
+                    try:
+                        runtime.connection.rollback()
+                    except Exception:
+                        pass
+                    raise
             if notifier is not None:
                 try:
                     notifier.send(
@@ -164,42 +171,49 @@ def dispatch_pending_orders(
             continue
         normalized_status = str(broker_order.status).lower()
         with lock_ctx:
-            runtime.order_store.save(
-                OrderRecord(
-                    client_order_id=order.client_order_id,
-                    symbol=order.symbol,
-                    side=order.side,
-                    intent_type=order.intent_type,
-                    status=normalized_status,
-                    quantity=int(broker_order.quantity),
-                    trading_mode=order.trading_mode,
-                    strategy_version=order.strategy_version,
-                    strategy_name=order.strategy_name,
-                    created_at=order.created_at,
-                    updated_at=timestamp,
-                    stop_price=order.stop_price,
-                    limit_price=order.limit_price,
-                    initial_stop_price=order.initial_stop_price,
-                    broker_order_id=broker_order.broker_order_id,
-                    signal_timestamp=order.signal_timestamp,
-                ),
-                commit=False,
-            )
-            runtime.audit_event_store.append(
-                AuditEvent(
-                    event_type="order_submitted",
-                    symbol=order.symbol,
-                    payload={
-                        "client_order_id": order.client_order_id,
-                        "broker_order_id": broker_order.broker_order_id,
-                        "intent_type": order.intent_type,
-                        "status": normalized_status,
-                    },
-                    created_at=timestamp,
-                ),
-                commit=False,
-            )
-            runtime.connection.commit()
+            try:
+                runtime.order_store.save(
+                    OrderRecord(
+                        client_order_id=order.client_order_id,
+                        symbol=order.symbol,
+                        side=order.side,
+                        intent_type=order.intent_type,
+                        status=normalized_status,
+                        quantity=int(broker_order.quantity),
+                        trading_mode=order.trading_mode,
+                        strategy_version=order.strategy_version,
+                        strategy_name=order.strategy_name,
+                        created_at=order.created_at,
+                        updated_at=timestamp,
+                        stop_price=order.stop_price,
+                        limit_price=order.limit_price,
+                        initial_stop_price=order.initial_stop_price,
+                        broker_order_id=broker_order.broker_order_id,
+                        signal_timestamp=order.signal_timestamp,
+                    ),
+                    commit=False,
+                )
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="order_submitted",
+                        symbol=order.symbol,
+                        payload={
+                            "client_order_id": order.client_order_id,
+                            "broker_order_id": broker_order.broker_order_id,
+                            "intent_type": order.intent_type,
+                            "status": normalized_status,
+                        },
+                        created_at=timestamp,
+                    ),
+                    commit=False,
+                )
+                runtime.connection.commit()
+            except Exception:
+                try:
+                    runtime.connection.rollback()
+                except Exception:
+                    pass
+                raise
         submitted_count += 1
 
     return OrderDispatchReport(submitted_count=submitted_count)

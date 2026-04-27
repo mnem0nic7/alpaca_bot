@@ -88,8 +88,14 @@ class RecordingAuditEventStore:
 
 
 class FakeConnection:
+    def __init__(self) -> None:
+        self.rollback_count = 0
+
     def commit(self) -> None:
         pass
+
+    def rollback(self) -> None:
+        self.rollback_count += 1
 
 
 class RecordingBroker:
@@ -1462,3 +1468,238 @@ def test_execute_exit_cancel_hard_failed_writes_partial_cancels_before_early_ret
     )
     canceled_writes = [o for o in order_store.saved if o.status == "canceled"]
     assert len(canceled_writes) == 1, f"Expected exactly 1 canceled DB write, got {len(canceled_writes)}"
+
+
+# ---------------------------------------------------------------------------
+# Rollback guard coverage for _execute_exit early-return paths
+# ---------------------------------------------------------------------------
+
+class _FailingOnSaveOrderStore:
+    """Order store that raises on save() — used to test rollback guards."""
+
+    def __init__(self, *, orders: list[OrderRecord] | None = None) -> None:
+        self._orders: dict[str, OrderRecord] = {o.client_order_id: o for o in (orders or [])}
+
+    def load(self, client_order_id: str) -> OrderRecord | None:
+        return self._orders.get(client_order_id)
+
+    def load_by_broker_order_id(self, broker_order_id: str) -> OrderRecord | None:
+        for o in self._orders.values():
+            if o.broker_order_id == broker_order_id:
+                return o
+        return None
+
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None:
+        raise RuntimeError("simulated_db_failure")
+
+    def list_by_status(
+        self,
+        *,
+        trading_mode,
+        strategy_version: str,
+        statuses: list[str],
+        strategy_name: str | None = None,
+    ) -> list[OrderRecord]:
+        orders = [o for o in self._orders.values() if o.status in statuses]
+        if strategy_name is not None:
+            orders = [o for o in orders if o.strategy_name == strategy_name]
+        return orders
+
+
+class _RollbackTrackingConnection:
+    def __init__(self) -> None:
+        self.rollback_count = 0
+
+    def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
+        self.rollback_count += 1
+
+
+def _make_aapl_stop(*, now: datetime, broker_order_id: str, client_suffix: str) -> OrderRecord:
+    return OrderRecord(
+        client_order_id=f"v1-breakout:2026-04-24:AAPL:stop:{client_suffix}",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.0,
+        initial_stop_price=109.0,
+        broker_order_id=broker_order_id,
+        signal_timestamp=now,
+    )
+
+
+def _make_aapl_position(*, now: datetime) -> PositionRecord:
+    return PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=10,
+        entry_price=111.0,
+        stop_price=109.0,
+        initial_stop_price=109.0,
+        opened_at=now,
+        updated_at=now,
+    )
+
+
+def test_execute_exit_cancel_hard_failed_rollback_on_db_failure() -> None:
+    """cancel_hard_failed path: if the DB write for successfully-canceled stops raises,
+    connection.rollback() must be called and the exception must propagate."""
+    import pytest
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 21, 0, tzinfo=timezone.utc)
+
+    first_stop = _make_aapl_stop(now=now, broker_order_id="broker-hf-1", client_suffix="hf-1")
+    second_stop = _make_aapl_stop(now=now, broker_order_id="broker-hf-2", client_suffix="hf-2")
+    position = _make_aapl_position(now=now)
+
+    cancel_call_count = 0
+
+    class HardFailOnSecondBroker(RecordingBroker):
+        def cancel_order(self, order_id: str) -> None:
+            nonlocal cancel_call_count
+            cancel_call_count += 1
+            self.cancel_calls.append(order_id)
+            if cancel_call_count >= 2:
+                raise RuntimeError("network timeout")
+
+    connection = _RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=_FailingOnSaveOrderStore(orders=[first_stop, second_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated_db_failure"):
+        execute_cycle_intents(
+            settings=settings,
+            runtime=runtime,
+            broker=HardFailOnSecondBroker(),
+            cycle_result=CycleResult(
+                as_of=now,
+                intents=[CycleIntent(
+                    intent_type=CycleIntentType.EXIT,
+                    symbol="AAPL",
+                    timestamp=now,
+                    reason="eod_flatten",
+                )],
+            ),
+            now=now,
+        )
+
+    assert connection.rollback_count == 1, (
+        f"rollback must be called once when DB write fails in cancel_hard_failed path; "
+        f"got rollback_count={connection.rollback_count}"
+    )
+
+
+def test_execute_exit_position_already_gone_rollback_on_db_failure() -> None:
+    """position_already_gone path: if cancel raises 'not found' and the subsequent DB
+    write raises, connection.rollback() must be called and the exception must propagate."""
+    import pytest
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 21, 10, tzinfo=timezone.utc)
+
+    stop = _make_aapl_stop(now=now, broker_order_id="broker-pag-1", client_suffix="pag-1")
+    position = _make_aapl_position(now=now)
+
+    class NotFoundBroker(RecordingBroker):
+        def cancel_order(self, order_id: str) -> None:
+            self.cancel_calls.append(order_id)
+            raise RuntimeError("order not found at broker")
+
+    connection = _RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=_FailingOnSaveOrderStore(orders=[stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated_db_failure"):
+        execute_cycle_intents(
+            settings=settings,
+            runtime=runtime,
+            broker=NotFoundBroker(),
+            cycle_result=CycleResult(
+                as_of=now,
+                intents=[CycleIntent(
+                    intent_type=CycleIntentType.EXIT,
+                    symbol="AAPL",
+                    timestamp=now,
+                    reason="eod_flatten",
+                )],
+            ),
+            now=now,
+        )
+
+    assert connection.rollback_count == 1, (
+        f"rollback must be called once when DB write fails in position_already_gone path; "
+        f"got rollback_count={connection.rollback_count}"
+    )
+
+
+def test_execute_exit_re_verify_position_gone_rollback_on_db_failure() -> None:
+    """Re-verify path: stop cancel succeeds but position disappears between cancel and re-verify.
+    If the DB write in that path raises, connection.rollback() must be called."""
+    import pytest
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 21, 20, tzinfo=timezone.utc)
+
+    stop = _make_aapl_stop(now=now, broker_order_id="broker-rv-1", client_suffix="rv-1")
+    position = _make_aapl_position(now=now)
+
+    # Position store returns position on first call (for execute_cycle_intents fetch),
+    # then empty on subsequent calls (re-verify inside _execute_exit).
+    class VanishingPositionStore:
+        def __init__(self) -> None:
+            self._call_count = 0
+
+        def list_all(self, *, trading_mode, strategy_version) -> list[PositionRecord]:
+            self._call_count += 1
+            return [position] if self._call_count == 1 else []
+
+        def save(self, p: PositionRecord, *, commit: bool = True) -> None:
+            pass
+
+    connection = _RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=_FailingOnSaveOrderStore(orders=[stop]),
+        position_store=VanishingPositionStore(),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated_db_failure"):
+        execute_cycle_intents(
+            settings=settings,
+            runtime=runtime,
+            broker=RecordingBroker(),
+            cycle_result=CycleResult(
+                as_of=now,
+                intents=[CycleIntent(
+                    intent_type=CycleIntentType.EXIT,
+                    symbol="AAPL",
+                    timestamp=now,
+                    reason="eod_flatten",
+                )],
+            ),
+            now=now,
+        )
+
+    assert connection.rollback_count == 1, (
+        f"rollback must be called once when DB write fails in re-verify-position-gone path; "
+        f"got rollback_count={connection.rollback_count}"
+    )

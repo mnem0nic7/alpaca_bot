@@ -489,9 +489,16 @@ def _execute_exit(
         )
         if canceled_order_records:
             with lock_ctx:
-                for record in canceled_order_records:
-                    runtime.order_store.save(record, commit=False)
-                runtime.connection.commit()
+                try:
+                    for record in canceled_order_records:
+                        runtime.order_store.save(record, commit=False)
+                    runtime.connection.commit()
+                except Exception:
+                    try:
+                        runtime.connection.rollback()
+                    except Exception:
+                        pass
+                    raise
         return canceled_stop_count, 0
 
     # Write all results under lock.
