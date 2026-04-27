@@ -32,6 +32,7 @@ class PositionStoreProtocol(Protocol):
         positions: list[PositionRecord],
         trading_mode,
         strategy_version: str,
+        commit: bool = True,
     ) -> None: ...
 
     def list_all(
@@ -180,6 +181,7 @@ def recover_startup_state(
         positions=synced_positions,
         trading_mode=settings.trading_mode,
         strategy_version=settings.strategy_version,
+        commit=False,
     )
 
     local_active_orders = runtime.order_store.list_by_status(

@@ -310,8 +310,9 @@ def test_run_cycle_passes_signal_evaluator_to_engine() -> None:
 
     settings = make_settings()
     runtime = SimpleNamespace(
-        order_store=SimpleNamespace(save=lambda _: None),
-        audit_event_store=SimpleNamespace(append=lambda _: None),
+        order_store=SimpleNamespace(save=lambda _, *, commit=True: None),
+        audit_event_store=SimpleNamespace(append=lambda _, *, commit=True: None),
+        connection=SimpleNamespace(commit=lambda: None),
     )
     sentinel_evaluator = lambda **_: None  # noqa: E731
 

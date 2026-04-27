@@ -12,16 +12,21 @@ from alpaca_bot.strategy import StrategySignalEvaluator
 
 
 class OrderStoreProtocol(Protocol):
-    def save(self, order: OrderRecord) -> None: ...
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None: ...
 
 
 class AuditEventStoreProtocol(Protocol):
-    def append(self, event: AuditEvent) -> None: ...
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None: ...
+
+
+class ConnectionProtocol(Protocol):
+    def commit(self) -> None: ...
 
 
 class RuntimeProtocol(Protocol):
     order_store: OrderStoreProtocol
     audit_event_store: AuditEventStoreProtocol
+    connection: ConnectionProtocol
 
 
 def run_cycle(
@@ -81,7 +86,8 @@ def run_cycle(
                     initial_stop_price=intent.initial_stop_price,
                     signal_timestamp=intent.signal_timestamp,
                     strategy_name=intent.strategy_name,
-                )
+                ),
+                commit=False,
             )
 
         runtime.audit_event_store.append(
@@ -95,7 +101,9 @@ def run_cycle(
                     "cycle_timestamp": now.isoformat(),
                 },
                 created_at=now,
-            )
+            ),
+            commit=False,
         )
+        runtime.connection.commit()
 
     return result

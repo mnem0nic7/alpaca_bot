@@ -1050,3 +1050,28 @@ def test_filled_event_with_no_matching_local_order_emits_unmatched_audit_event()
         f"Expected 1 unmatched audit event, got {len(unmatched_events)}"
     )
     assert runtime.position_store.saved == [], "No position must be saved for an unmatched fill"
+
+
+def test_duplicate_entry_fill_skips_position_save_when_order_already_filled() -> None:
+    """A second 'filled' event for an order already in status='filled' must not re-save
+    the position — the duplicate-fill guard (matched_order.status not in {'filled'}) must
+    prevent idempotent replays from doubling up position records."""
+    entry_order = _make_entry_order(quantity=10, initial_stop_price=109.50)
+    runtime = _make_runtime(orders=[entry_order])
+
+    # First fill: processes normally, saves a position.
+    first_fill = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+    _apply(runtime, first_fill)
+
+    position_saves_after_first = len(runtime.position_store.saved)
+    assert position_saves_after_first >= 1, "First fill must produce at least one position save"
+
+    # Second fill: identical event (WebSocket replay / reconnect scenario).
+    second_fill = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+    _apply(runtime, second_fill)
+
+    position_saves_after_second = len(runtime.position_store.saved)
+    assert position_saves_after_second == position_saves_after_first, (
+        "Duplicate fill event must NOT trigger an additional position save — "
+        f"got {position_saves_after_second} saves after second event, expected {position_saves_after_first}"
+    )

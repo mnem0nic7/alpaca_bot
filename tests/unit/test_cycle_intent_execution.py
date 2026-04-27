@@ -1203,3 +1203,158 @@ def test_execute_exit_aborts_when_cancel_order_raises_unrecognized_error() -> No
     assert broker.cancel_calls, "cancel_order should have been attempted"
     assert broker.exit_calls == [], "submit_market_exit must NOT be called when cancel fails with unrecognized error"
     assert report.submitted_exit_count == 0
+
+
+def test_execute_exit_returns_without_db_write_when_submit_market_exit_raises() -> None:
+    """When submit_market_exit raises after stops are already canceled, _execute_exit
+    must return (stop_count, 0) without writing any DB records — the next cycle will
+    detect the missing stop and attempt recovery."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 20, 0, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:exit-raises-test",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-exit-raises",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    class FailingExitBroker(RecordingBroker):
+        def submit_market_exit(self, **kwargs):
+            raise RuntimeError("broker timeout")
+
+    broker = FailingExitBroker()
+    order_store = RecordingOrderStore(orders=[active_stop])
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    assert broker.cancel_calls, "stop cancel should have been attempted"
+    assert broker.exit_calls == [], "submit_market_exit raised — no exit_calls recorded"
+    # canceled_stop_count is returned (the stop WAS canceled), but submitted_exit_count = 0
+    assert report.submitted_exit_count == 0
+    # No exit OrderRecord written to DB — next cycle will handle recovery
+    exit_writes = [o for o in order_store.saved if o.intent_type == "exit"]
+    assert exit_writes == [], "No exit record must be written when submit_market_exit raises"
+
+
+def test_execute_exit_skips_db_write_when_position_disappears_after_submit() -> None:
+    """When the position disappears between submit_market_exit and the DB write (TOCTOU race),
+    _execute_exit must return without writing — prevents a phantom exit record for a
+    position the fill stream already closed."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 20, 10, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:toctou-test",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-toctou",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    # Position store returns position for the first two calls (execute_cycle_intents lookup
+    # + _execute_exit pre-submit check) but returns empty on the third call (post-submit
+    # re-check inside the final lock), simulating the fill stream closing the position
+    # while broker calls were in-flight.
+    call_count = 0
+
+    class DisappearingPositionStore(RecordingPositionStore):
+        def list_all(self, *, trading_mode, strategy_version):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 2:
+                return list(self.positions)  # initial lookup + pre-submit check: position exists
+            return []  # post-submit re-check: position gone
+
+    order_store = RecordingOrderStore(orders=[active_stop])
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=DisappearingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    assert broker.exit_calls, "submit_market_exit should have been called before position disappeared"
+    assert report.submitted_exit_count == 0, "No count increment when position disappeared before write"
+    exit_writes = [o for o in order_store.saved if o.intent_type == "exit"]
+    assert exit_writes == [], "No exit record written when position disappeared after submit"

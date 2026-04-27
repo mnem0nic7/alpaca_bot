@@ -664,6 +664,7 @@ class PositionStore:
         trading_mode: TradingMode,
         strategy_version: str,
         strategy_name: str | None = None,
+        commit: bool = True,
     ) -> None:
         try:
             if strategy_name is not None:
@@ -720,7 +721,8 @@ class PositionStore:
                     ),
                     commit=False,
                 )
-            self._connection.commit()
+            if commit:
+                self._connection.commit()
         except Exception:
             try:
                 self._connection.rollback()

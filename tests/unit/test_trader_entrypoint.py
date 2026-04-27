@@ -96,6 +96,7 @@ class RecordingPositionStore:
         positions: list[PositionRecord],
         trading_mode: TradingMode,
         strategy_version: str,
+        commit: bool = True,
     ) -> None:
         self.calls.append(
             {

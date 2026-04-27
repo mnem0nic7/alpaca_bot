@@ -382,6 +382,14 @@ def _execute_exit(
     if cancel_hard_failed:
         # At least one stop cancel failed with an unrecognized broker error: the stop
         # may still be live. Submitting a market exit now would risk a double-sell / naked-short.
+        # Still persist the stops that DID successfully cancel so the next cycle doesn't
+        # see them as active and try to cancel them again (which would yield "already canceled",
+        # set position_already_gone, and permanently abandon the exit).
+        if canceled_order_records:
+            with lock_ctx:
+                for record in canceled_order_records:
+                    runtime.order_store.save(record, commit=False)
+                runtime.connection.commit()
         return canceled_stop_count, 0
 
     if position_already_gone:
