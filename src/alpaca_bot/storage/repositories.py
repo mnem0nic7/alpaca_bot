@@ -380,6 +380,7 @@ class OrderStore:
         trading_mode: TradingMode,
         strategy_version: str,
         session_date: date,
+        strategy_name: str | None = None,
         market_timezone: str = "America/New_York",
     ) -> float:
         """Return sum of closed-trade PnL for a session date.
@@ -388,10 +389,17 @@ class OrderStore:
         filled entry for the same symbol via correlated subquery (safe even if
         the one-trade-per-symbol invariant is ever violated).
         Returns 0.0 when no completed round-trip trades exist.
+        Pass strategy_name to restrict to a single strategy; omit for portfolio-wide PnL.
         """
+        if strategy_name is not None:
+            strategy_clause = "AND x.strategy_name IS NOT DISTINCT FROM %s"
+            strategy_params: tuple = (strategy_name,)
+        else:
+            strategy_clause = ""
+            strategy_params = ()
         rows = fetch_all(
             self._connection,
-            """
+            f"""
             SELECT
                 x.symbol,
                 (
@@ -417,12 +425,14 @@ class OrderStore:
               AND x.fill_price IS NOT NULL
               AND x.status = 'filled'
               AND DATE(x.updated_at AT TIME ZONE %s) = %s
+              {strategy_clause}
             """,
             (
                 trading_mode.value,
                 strategy_version,
                 market_timezone,
                 session_date,
+                *strategy_params,
             ),
         )
         missing_entry = [row for row in rows if row[1] is None]
@@ -607,7 +617,7 @@ class DailySessionStateStore:
                 updated_at
             FROM daily_session_state
             WHERE session_date = %s AND trading_mode = %s AND strategy_version = %s
-              AND strategy_name = %s
+              AND strategy_name IS NOT DISTINCT FROM %s
             """,
             (session_date, trading_mode.value, strategy_version, strategy_name),
         )
