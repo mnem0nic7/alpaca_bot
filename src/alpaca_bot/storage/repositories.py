@@ -724,10 +724,11 @@ class PositionStore:
             if commit:
                 self._connection.commit()
         except Exception:
-            try:
-                self._connection.rollback()
-            except Exception:
-                pass
+            if commit:
+                try:
+                    self._connection.rollback()
+                except Exception:
+                    pass
             raise
 
     def delete(

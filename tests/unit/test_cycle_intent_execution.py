@@ -1358,3 +1358,107 @@ def test_execute_exit_skips_db_write_when_position_disappears_after_submit() -> 
     assert report.submitted_exit_count == 0, "No count increment when position disappeared before write"
     exit_writes = [o for o in order_store.saved if o.intent_type == "exit"]
     assert exit_writes == [], "No exit record written when position disappeared after submit"
+
+
+def test_execute_exit_cancel_hard_failed_writes_partial_cancels_before_early_return() -> None:
+    """When two stop orders exist and the first cancels successfully but the second
+    raises an unrecognized error (cancel_hard_failed=True), the successfully-canceled
+    first stop must be written to DB before the early return — otherwise the next cycle
+    sees it as an active stop, tries to cancel, gets 'already canceled', interprets that
+    as position_already_gone, and permanently abandons the exit."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 20, 20, tzinfo=timezone.utc)
+
+    first_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:partial-cancel-1",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=15,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.0,
+        initial_stop_price=109.0,
+        broker_order_id="broker-stop-first",
+        signal_timestamp=now,
+    )
+    second_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:partial-cancel-2",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=108.5,
+        initial_stop_price=108.5,
+        broker_order_id="broker-stop-second",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.0,
+        initial_stop_price=109.0,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    # First cancel_order call succeeds; second raises an unrecognized error.
+    cancel_call_count = 0
+
+    class SelectiveFailBroker(RecordingBroker):
+        def cancel_order(self, order_id: str) -> None:
+            nonlocal cancel_call_count
+            cancel_call_count += 1
+            self.cancel_calls.append(order_id)
+            if cancel_call_count >= 2:
+                raise RuntimeError("rate limit exceeded")
+
+    broker = SelectiveFailBroker()
+    order_store = RecordingOrderStore(orders=[first_stop, second_stop])
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    # Abort: no market exit should have been submitted.
+    assert broker.exit_calls == [], "submit_market_exit must NOT be called when a cancel hard-fails"
+    assert report.submitted_exit_count == 0
+
+    # The successfully-canceled first stop MUST be written to DB.
+    saved_client_ids = {o.client_order_id for o in order_store.saved}
+    assert first_stop.client_order_id in saved_client_ids, (
+        "The first stop (which was successfully canceled at broker) must be written "
+        "to DB as 'canceled' so the next cycle doesn't see it as active"
+    )
+    canceled_writes = [o for o in order_store.saved if o.status == "canceled"]
+    assert len(canceled_writes) == 1, f"Expected exactly 1 canceled DB write, got {len(canceled_writes)}"

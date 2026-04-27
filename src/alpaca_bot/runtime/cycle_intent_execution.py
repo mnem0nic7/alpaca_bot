@@ -450,15 +450,20 @@ def _execute_exit(
             client_order_id=client_order_id,
         )
     except Exception:
-        # Stops are already canceled at the broker (position is unprotected). Log a critical
-        # alert so the operator can intervene manually.  Do not write DB records — the next
-        # cycle will detect the missing stop and attempt to re-file one.
+        # Stops are already canceled at the broker (position is unprotected). Persist any
+        # successfully-canceled stop records so the next cycle doesn't see them as active,
+        # try to cancel them again, get "already canceled", and permanently abandon the exit.
         logger.exception(
             "cycle_intent_execution: submit_market_exit failed for %s/%s; "
             "position is unprotected — manual intervention required",
             symbol,
             strategy_name,
         )
+        if canceled_order_records:
+            with lock_ctx:
+                for record in canceled_order_records:
+                    runtime.order_store.save(record, commit=False)
+                runtime.connection.commit()
         return canceled_stop_count, 0
 
     # Write all results under lock.
@@ -471,6 +476,9 @@ def _execute_exit(
                 symbol,
                 strategy_name,
             )
+            for record in canceled_order_records:
+                runtime.order_store.save(record, commit=False)
+            runtime.connection.commit()
             return canceled_stop_count, 0
         for record in canceled_order_records:
             runtime.order_store.save(record, commit=False)

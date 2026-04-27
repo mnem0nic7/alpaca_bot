@@ -21,10 +21,10 @@ class OrderStoreProtocol(Protocol):
 
 
 class PositionStoreProtocol(Protocol):
-    def save(self, position: PositionRecord) -> None: ...
+    def save(self, position: PositionRecord, *, commit: bool = True) -> None: ...
 
     def delete(
-        self, *, symbol: str, trading_mode, strategy_version: str, strategy_name: str
+        self, *, symbol: str, trading_mode, strategy_version: str, strategy_name: str, commit: bool = True
     ) -> None: ...
 
 
