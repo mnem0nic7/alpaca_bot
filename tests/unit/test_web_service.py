@@ -10,10 +10,12 @@ from alpaca_bot.web.service import (
     WORKER_ACTIVITY_EVENT_TYPES,
     WORKER_STALE_AFTER_SECONDS,
     WORKING_ORDER_STATUSES,
+    AuditLogPage,
     _load_worker_health,
     _max_drawdown_pct,
     _mean_return_pct,
     _win_rate,
+    load_audit_page,
     load_dashboard_snapshot,
     load_health_snapshot,
     load_metrics_snapshot,
@@ -648,3 +650,128 @@ def test_trade_record_has_strategy_name():
     from alpaca_bot.web.service import TradeRecord
     fields = {name for name in TradeRecord.__dataclass_fields__}
     assert "strategy_name" in fields
+
+
+# ---------------------------------------------------------------------------
+# load_audit_page
+# ---------------------------------------------------------------------------
+
+
+def make_paged_audit_store(events: list):
+    """Store that returns a slice of events based on limit/offset."""
+    def list_recent(*, limit: int = 20, offset: int = 0) -> list:
+        return events[offset:offset + limit]
+
+    def list_by_event_types(*, event_types: list, limit: int = 20, offset: int = 0) -> list:
+        filtered = [e for e in events if e.event_type in event_types]
+        return filtered[offset:offset + limit]
+
+    return SimpleNamespace(list_recent=list_recent, list_by_event_types=list_by_event_types)
+
+
+def test_load_audit_page_no_filter_returns_events() -> None:
+    events = [make_event("supervisor_cycle", datetime(2026, 4, 25, 14, i, tzinfo=timezone.utc)) for i in range(5)]
+    store = make_paged_audit_store(events)
+    page = load_audit_page(connection=SimpleNamespace(), audit_event_store=store, limit=3, offset=0)
+    assert len(page.events) == 3
+    assert page.has_more is True
+    assert page.next_offset == 3
+    assert page.prev_offset is None
+    assert page.event_type_filter is None
+
+
+def test_load_audit_page_with_filter() -> None:
+    events = [
+        make_event("supervisor_cycle", datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)),
+        make_event("trading_status_changed", datetime(2026, 4, 25, 14, 1, tzinfo=timezone.utc)),
+    ]
+    store = make_paged_audit_store(events)
+    page = load_audit_page(connection=SimpleNamespace(), audit_event_store=store, limit=10, offset=0, event_type_filter="trading_status_changed")
+    assert len(page.events) == 1
+    assert page.event_type_filter == "trading_status_changed"
+
+
+def test_load_audit_page_prev_offset_on_second_page() -> None:
+    events = [make_event("supervisor_cycle", datetime(2026, 4, 25, 14, i, tzinfo=timezone.utc)) for i in range(20)]
+    store = make_paged_audit_store(events)
+    page = load_audit_page(connection=SimpleNamespace(), audit_event_store=store, limit=5, offset=5)
+    assert page.prev_offset == 0
+    assert page.next_offset == 10
+
+
+def test_load_audit_page_no_more_when_exhausted() -> None:
+    events = [make_event("supervisor_cycle", datetime(2026, 4, 25, 14, i, tzinfo=timezone.utc)) for i in range(3)]
+    store = make_paged_audit_store(events)
+    page = load_audit_page(connection=SimpleNamespace(), audit_event_store=store, limit=5, offset=0)
+    assert page.has_more is False
+    assert page.next_offset is None
+
+
+def test_audit_log_page_prev_offset_clamped_to_zero() -> None:
+    page = AuditLogPage(events=[], limit=10, offset=5, has_more=False, event_type_filter=None)
+    assert page.prev_offset == 0
+
+
+# ---------------------------------------------------------------------------
+# load_metrics_snapshot with explicit session_date
+# ---------------------------------------------------------------------------
+
+
+def test_load_metrics_snapshot_explicit_session_date_overrides_now() -> None:
+    captured_dates: list = []
+
+    def recording_list_closed_trades(**kwargs):
+        captured_dates.append(kwargs.get("session_date"))
+        return []
+
+    explicit_date = date(2026, 4, 20)
+    load_metrics_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        session_date=explicit_date,
+        order_store=SimpleNamespace(list_closed_trades=recording_list_closed_trades),
+        audit_event_store=SimpleNamespace(list_by_event_types=lambda **_: []),
+        tuning_result_store=SimpleNamespace(load_latest_best=lambda **_: None),
+    )
+
+    assert captured_dates == [explicit_date]
+
+
+# ---------------------------------------------------------------------------
+# load_dashboard_snapshot — strategy_entries_disabled
+# ---------------------------------------------------------------------------
+
+
+def test_load_dashboard_snapshot_populates_strategy_entries_disabled() -> None:
+    from types import SimpleNamespace as NS
+
+    entries_row = NS(strategy_name="breakout", entries_disabled=True)
+    state_store = NS(
+        load=lambda **_: None,
+        list_by_session=lambda **_: [entries_row],
+    )
+
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc),
+        trading_status_store=SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store=state_store,
+        position_store=SimpleNamespace(list_all=lambda **_: []),
+        order_store=SimpleNamespace(list_by_status=lambda **_: [], list_recent=lambda **_: []),
+        audit_event_store=make_audit_store(),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
+    )
+
+    assert snapshot.strategy_entries_disabled == {"breakout": True}
+
+
+def test_load_dashboard_snapshot_entries_disabled_defaults_empty_without_list_by_session() -> None:
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc),
+        **make_snapshot_stores(),  # fake stores don't have list_by_session
+    )
+
+    assert snapshot.strategy_entries_disabled == {}

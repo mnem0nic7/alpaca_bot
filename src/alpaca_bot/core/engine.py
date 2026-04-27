@@ -62,6 +62,7 @@ def evaluate_cycle(
     session_state: "DailySessionState | None" = None,
     strategy_name: str = "breakout",
     global_open_count: int | None = None,
+    symbols: tuple[str, ...] | None = None,
 ) -> CycleResult:
     if signal_evaluator is None:
         signal_evaluator = evaluate_breakout_signal
@@ -139,7 +140,7 @@ def evaluate_cycle(
                 else 0.0
             )
             entry_candidates: list[tuple[float, float, CycleIntent]] = []
-            for symbol in settings.symbols:
+            for symbol in (symbols or settings.symbols):
                 if symbol in open_position_symbols or symbol in working_order_symbols:
                     continue
                 bars = intraday_bars_by_symbol.get(symbol, ())

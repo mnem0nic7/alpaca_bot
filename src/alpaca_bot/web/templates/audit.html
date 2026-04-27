@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>alpaca_bot — Audit Log</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3f0e8;
+        --panel: #fffdf8;
+        --line: #d8d2c5;
+        --ink: #1d2b2a;
+        --muted: #6a736e;
+        --accent: #1f6f78;
+        --warn: #8f3b2e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Iowan Old Style", "Palatino Linotype", serif;
+        background:
+          radial-gradient(circle at top right, rgba(31, 111, 120, 0.12), transparent 28rem),
+          linear-gradient(180deg, #f9f6ef 0%, var(--bg) 100%);
+        color: var(--ink);
+      }
+      main { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+      h1, h2 { margin: 0; font-weight: 700; letter-spacing: 0.01em; }
+      p { margin: 0; }
+      .panel {
+        background: rgba(255, 253, 248, 0.92);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 1.1rem 1.2rem;
+        box-shadow: 0 10px 30px rgba(29, 43, 42, 0.06);
+        margin-bottom: 1rem;
+      }
+      .eyebrow {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        color: var(--muted);
+        letter-spacing: 0.08em;
+      }
+      .table-wrap { overflow-x: auto; }
+      table { width: 100%; border-collapse: collapse; margin-top: 0.9rem; }
+      th, td {
+        text-align: left;
+        padding: 0.55rem 0.3rem;
+        border-bottom: 1px solid rgba(216, 210, 197, 0.8);
+        font-size: 0.93rem;
+        vertical-align: top;
+      }
+      th { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; }
+      .muted { color: var(--muted); }
+      .mono { font-family: "SFMono-Regular", "Menlo", monospace; font-size: 0.88rem; }
+      .nav-links { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 0.9rem; }
+      .nav-links a { color: var(--accent); text-decoration: none; }
+      .nav-links a:hover { text-decoration: underline; }
+      .pagination { display: flex; gap: 1rem; margin-top: 1rem; align-items: center; }
+      .pagination a {
+        border: 1px solid var(--line); border-radius: 999px;
+        background: #f7f2e7; color: var(--ink);
+        padding: 0.3rem 0.8rem; text-decoration: none; font-size: 0.9rem;
+      }
+      .pagination a:hover { background: #edf7f8; border-color: var(--accent); color: var(--accent); }
+      select, input[type="submit"] {
+        border: 1px solid var(--line); border-radius: 999px;
+        background: #f7f2e7; color: var(--ink);
+        padding: 0.3rem 0.8rem; font: inherit; cursor: pointer;
+      }
+      select:hover, input[type="submit"]:hover { background: #edf7f8; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <nav class="nav-links">
+        <a href="/">Dashboard</a>
+        <a href="/metrics">Metrics</a>
+        <a href="/audit">Audit Log</a>
+        <a href="/watchlist">Watchlist</a>
+      </nav>
+
+      {% if trading_mode == "live" %}
+        <div style="background: #c0392b; color: #fff; text-align: center; padding: 0.6rem 1rem; font-weight: 700; letter-spacing: 0.05em; margin-bottom: 1rem;">
+          &#9888; LIVE TRADING ACTIVE &mdash; real capital at risk
+        </div>
+      {% endif %}
+
+      <div class="panel">
+        <p class="eyebrow">alpaca_bot</p>
+        <h1>Audit Log</h1>
+        <p class="muted" style="margin-top: 0.4rem;">
+          <span class="mono">{{ trading_mode }}</span> / <span class="mono">{{ strategy_version }}</span>
+        </p>
+      </div>
+
+      <div class="panel">
+        <form method="get" action="/audit" style="display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap;">
+          <label for="event_type" class="eyebrow">Filter by event type:</label>
+          <select id="event_type" name="event_type">
+            <option value="" {% if not page.event_type_filter %}selected{% endif %}>All events</option>
+            {% for et in all_event_types %}
+              <option value="{{ et }}" {% if page.event_type_filter == et %}selected{% endif %}>{{ et }}</option>
+            {% endfor %}
+          </select>
+          <input type="hidden" name="limit" value="{{ page.limit }}">
+          <input type="hidden" name="offset" value="0">
+          <input type="submit" value="Apply">
+          {% if page.event_type_filter %}
+            <a href="/audit?limit={{ page.limit }}&amp;offset=0" style="color: var(--muted); font-size: 0.88rem;">Clear filter</a>
+          {% endif %}
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event Type</th>
+                <th>Symbol</th>
+                <th>Payload</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for event in page.events %}
+                <tr>
+                  <td class="mono muted" style="white-space: nowrap;">{{ format_timestamp(event.created_at) }}</td>
+                  <td><strong>{{ event.event_type }}</strong></td>
+                  <td class="mono">{{ event.symbol or "" }}</td>
+                  <td class="mono muted" style="word-break: break-all; max-width: 40ch;">{{ event.payload }}</td>
+                </tr>
+              {% else %}
+                <tr><td colspan="4" class="muted">No events found.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <nav class="pagination">
+          {% if page.prev_offset is not none %}
+            <a href="/audit?limit={{ page.limit }}&amp;offset={{ page.prev_offset }}{% if page.event_type_filter %}&amp;event_type={{ page.event_type_filter }}{% endif %}">&larr; Newer</a>
+          {% endif %}
+          <span class="muted eyebrow">Showing {{ page.offset + 1 }}–{{ page.offset + page.events|length }}</span>
+          {% if page.next_offset is not none %}
+            <a href="/audit?limit={{ page.limit }}&amp;offset={{ page.next_offset }}{% if page.event_type_filter %}&amp;event_type={{ page.event_type_filter }}{% endif %}">Older &rarr;</a>
+          {% endif %}
+        </nav>
+      </div>
+    </main>
+  </body>
+</html>

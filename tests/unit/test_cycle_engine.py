@@ -878,3 +878,74 @@ def test_stale_bar_suppresses_trailing_stop_update() -> None:
 
     update_intents = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
     assert update_intents == [], "Stale bar must not trigger a trailing-stop update"
+
+
+# ── evaluate_cycle symbols param ─────────────────────────────────────────────
+
+
+def test_evaluate_cycle_respects_symbols_param_override() -> None:
+    """symbols param limits evaluation to the given set, ignoring settings.symbols."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    # AAPL has a valid breakout signal; MSFT is NOT in the symbols override
+    result = evaluate_cycle(
+        settings=make_settings(SYMBOLS="AAPL,MSFT,SPY"),
+        now=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        equity=100000.0,
+        intraday_bars_by_symbol={
+            "AAPL": make_breakout_intraday_bars("AAPL"),
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_daily_bars("AAPL"),
+        },
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        symbols=("AAPL",),
+    )
+
+    assert any(i.symbol == "AAPL" for i in result.intents)
+
+
+def test_evaluate_cycle_symbols_none_falls_back_to_settings() -> None:
+    """Passing symbols=None uses settings.symbols (backward compat)."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    result = evaluate_cycle(
+        settings=make_settings(SYMBOLS="AAPL,MSFT,SPY"),
+        now=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        symbols=None,
+    )
+
+    # Same result as not passing symbols at all
+    assert any(i.symbol == "AAPL" for i in result.intents)
+
+
+def test_evaluate_cycle_symbols_param_excludes_symbols_not_in_list() -> None:
+    """Symbols not in the watchlist override are not evaluated even if bars exist."""
+    _CycleIntentType, evaluate_cycle = load_engine_api()
+
+    # Pass MSFT as the only watchlist symbol, but only AAPL has bars with a signal
+    result = evaluate_cycle(
+        settings=make_settings(SYMBOLS="AAPL,MSFT"),
+        now=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars("AAPL")},
+        daily_bars_by_symbol={"AAPL": make_daily_bars("AAPL")},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        symbols=("MSFT",),  # only MSFT — AAPL excluded
+    )
+
+    # No intents because AAPL is excluded and MSFT has no bars
+    assert result.intents == []

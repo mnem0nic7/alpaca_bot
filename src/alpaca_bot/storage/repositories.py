@@ -5,6 +5,7 @@ import logging
 import uuid as _uuid_module
 
 logger = logging.getLogger(__name__)
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
@@ -103,7 +104,7 @@ class AuditEventStore:
             commit=commit,
         )
 
-    def list_recent(self, *, limit: int = 20) -> list[AuditEvent]:
+    def list_recent(self, *, limit: int = 20, offset: int = 0) -> list[AuditEvent]:
         rows = fetch_all(
             self._connection,
             """
@@ -111,8 +112,9 @@ class AuditEventStore:
             FROM audit_events
             ORDER BY created_at DESC, event_id DESC
             LIMIT %s
+            OFFSET %s
             """,
-            (limit,),
+            (limit, offset),
         )
         return [
             AuditEvent(
@@ -153,6 +155,7 @@ class AuditEventStore:
         *,
         event_types: list[str],
         limit: int = 20,
+        offset: int = 0,
     ) -> list[AuditEvent]:
         if not event_types:
             return []
@@ -165,8 +168,9 @@ class AuditEventStore:
             WHERE event_type IN ({placeholders})
             ORDER BY created_at DESC, event_id DESC
             LIMIT %s
+            OFFSET %s
             """,
-            (*event_types, limit),
+            (*event_types, limit, offset),
         )
         return [
             AuditEvent(
@@ -637,6 +641,44 @@ class DailySessionStateStore:
         )
 
 
+    def list_by_session(
+        self,
+        *,
+        session_date: Any,
+        trading_mode: TradingMode,
+        strategy_version: str,
+    ) -> list[DailySessionState]:
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT
+                session_date, trading_mode, strategy_version, strategy_name,
+                entries_disabled, flatten_complete, last_reconciled_at,
+                notes, equity_baseline, updated_at
+            FROM daily_session_state
+            WHERE session_date = %s
+              AND trading_mode = %s
+              AND strategy_version = %s
+            """,
+            (session_date, trading_mode.value, strategy_version),
+        )
+        return [
+            DailySessionState(
+                session_date=row[0],
+                trading_mode=TradingMode(row[1]),
+                strategy_version=row[2],
+                strategy_name=row[3],
+                entries_disabled=bool(row[4]),
+                flatten_complete=bool(row[5]),
+                last_reconciled_at=row[6],
+                notes=row[7],
+                equity_baseline=float(row[8]) if row[8] is not None else None,
+                updated_at=row[9],
+            )
+            for row in rows
+        ]
+
+
 class PositionStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
         self._connection = connection
@@ -983,6 +1025,86 @@ class StrategyFlagStore:
             )
             for row in rows
         ]
+
+
+@dataclass(frozen=True)
+class WatchlistRecord:
+    symbol: str
+    trading_mode: str
+    enabled: bool
+    added_at: datetime
+    added_by: str
+
+
+class WatchlistStore:
+    def __init__(self, connection: ConnectionProtocol) -> None:
+        self._connection = connection
+
+    def list_enabled(self, trading_mode: str) -> list[str]:
+        rows = fetch_all(
+            self._connection,
+            "SELECT symbol FROM symbol_watchlist "
+            "WHERE trading_mode = %s AND enabled = TRUE "
+            "ORDER BY symbol",
+            (trading_mode,),
+        )
+        return [row[0] for row in rows]
+
+    def list_all(self, trading_mode: str) -> list[WatchlistRecord]:
+        rows = fetch_all(
+            self._connection,
+            "SELECT symbol, trading_mode, enabled, added_at, added_by "
+            "FROM symbol_watchlist "
+            "WHERE trading_mode = %s "
+            "ORDER BY symbol",
+            (trading_mode,),
+        )
+        return [
+            WatchlistRecord(
+                symbol=row[0],
+                trading_mode=row[1],
+                enabled=bool(row[2]),
+                added_at=row[3],
+                added_by=row[4],
+            )
+            for row in rows
+        ]
+
+    def add(self, symbol: str, trading_mode: str, *, added_by: str = "system", commit: bool = True) -> None:
+        """Insert or re-enable a symbol. Idempotent."""
+        execute(
+            self._connection,
+            "INSERT INTO symbol_watchlist (symbol, trading_mode, enabled, added_at, added_by) "
+            "VALUES (%s, %s, TRUE, NOW(), %s) "
+            "ON CONFLICT (symbol, trading_mode) DO UPDATE "
+            "SET enabled = TRUE, added_at = NOW(), added_by = EXCLUDED.added_by",
+            (symbol, trading_mode, added_by),
+            commit=commit,
+        )
+
+    def remove(self, symbol: str, trading_mode: str, *, commit: bool = True) -> None:
+        """Soft delete — sets enabled=FALSE, preserves history."""
+        execute(
+            self._connection,
+            "UPDATE symbol_watchlist SET enabled = FALSE "
+            "WHERE symbol = %s AND trading_mode = %s",
+            (symbol, trading_mode),
+            commit=commit,
+        )
+
+    def seed(self, symbols: tuple[str, ...], trading_mode: str, *, commit: bool = True) -> None:
+        """Insert symbols that don't yet exist. Does not re-enable disabled ones."""
+        for symbol in symbols:
+            execute(
+                self._connection,
+                "INSERT INTO symbol_watchlist (symbol, trading_mode, enabled, added_at, added_by) "
+                "VALUES (%s, %s, TRUE, NOW(), 'system') "
+                "ON CONFLICT (symbol, trading_mode) DO NOTHING",
+                (symbol, trading_mode),
+                commit=False,
+            )
+        if commit:
+            self._connection.commit()
 
 
 def _load_json_payload(raw_payload: Any) -> dict[str, Any]:

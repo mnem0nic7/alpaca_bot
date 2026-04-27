@@ -180,7 +180,7 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
         response = client.get("/")
 
     assert response.status_code == 200
-    assert "Read-Only Runtime Dashboard" in response.text
+    assert "Runtime Dashboard" in response.text
     assert "paper" in response.text
     assert "v1-breakout" in response.text
     assert "enabled" in response.text
@@ -964,3 +964,554 @@ def test_logout_redirects_with_valid_csrf_token() -> None:
     response = client.post("/logout", data={"_csrf_token": token})
     assert response.status_code == 303
     assert response.headers["location"] == "/login"
+
+
+# ---------------------------------------------------------------------------
+# Admin status-change routes
+# ---------------------------------------------------------------------------
+
+
+def _make_admin_app(*, saved_statuses: list | None = None, saved_events: list | None = None):
+    """App with write-capable stores for testing admin endpoints."""
+    statuses = saved_statuses if saved_statuses is not None else []
+    events = saved_events if saved_events is not None else []
+
+    def status_store_factory(_conn):
+        return SimpleNamespace(
+            load=lambda **_: None,
+            save=lambda status, *, commit=True: statuses.append(status),
+        )
+
+    def audit_store_factory(_conn):
+        return SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+            append=lambda event, *, commit=True: events.append(event),
+        )
+
+    return create_app(
+        settings=make_settings(),
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=status_store_factory,
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=audit_store_factory,
+        strategy_flag_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None, list_all=lambda **_: []),
+    )
+
+
+def test_admin_halt_writes_status_and_audit_event() -> None:
+    saved_statuses: list = []
+    saved_events: list = []
+    app = _make_admin_app(saved_statuses=saved_statuses, saved_events=saved_events)
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "admin")
+
+    response = client.post(
+        "/admin/halt",
+        data={"_csrf_token": token, "reason": "end of day"},
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    assert len(saved_statuses) == 1
+    assert saved_statuses[0].kill_switch_enabled is True
+    assert saved_statuses[0].status.value == "halted"
+    assert len(saved_events) == 1
+    assert saved_events[0].event_type == "trading_status_changed"
+    assert saved_events[0].payload["command"] == "halt"
+    assert saved_events[0].payload["reason"] == "end of day"
+
+
+def test_admin_halt_returns_400_when_reason_missing() -> None:
+    app = _make_admin_app()
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "admin")
+
+    response = client.post("/admin/halt", data={"_csrf_token": token, "reason": ""})
+
+    assert response.status_code == 400
+
+
+def test_admin_halt_returns_403_for_bad_csrf() -> None:
+    app = _make_admin_app()
+    client = TestClient(app, follow_redirects=False)
+    response = client.post("/admin/halt", data={"_csrf_token": "bad", "reason": "test"})
+    assert response.status_code == 403
+
+
+def test_admin_resume_writes_enabled_status() -> None:
+    saved_statuses: list = []
+    app = _make_admin_app(saved_statuses=saved_statuses)
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "admin")
+
+    response = client.post(
+        "/admin/resume",
+        data={"_csrf_token": token, "reason": ""},
+    )
+
+    assert response.status_code == 303
+    assert saved_statuses[0].kill_switch_enabled is False
+    assert saved_statuses[0].status.value == "enabled"
+
+
+def test_admin_close_only_writes_close_only_status() -> None:
+    saved_statuses: list = []
+    app = _make_admin_app(saved_statuses=saved_statuses)
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "admin")
+
+    response = client.post(
+        "/admin/close-only",
+        data={"_csrf_token": token, "reason": ""},
+    )
+
+    assert response.status_code == 303
+    assert saved_statuses[0].kill_switch_enabled is False
+    assert saved_statuses[0].status.value == "close_only"
+
+
+# ---------------------------------------------------------------------------
+# /strategies/{name}/toggle-entries route
+# ---------------------------------------------------------------------------
+
+
+def test_toggle_entries_flips_entries_disabled() -> None:
+    saved_states: list = []
+    saved_events: list = []
+
+    def state_store_factory(_conn):
+        return SimpleNamespace(
+            load=lambda **_: DailySessionState(
+                session_date=date(2026, 4, 25),
+                trading_mode=TradingMode.PAPER,
+                strategy_version="v1-breakout",
+                entries_disabled=False,
+                flatten_complete=False,
+                last_reconciled_at=None,
+                notes=None,
+                updated_at=datetime.now(timezone.utc),
+            ),
+            save=lambda state, *, commit=True: saved_states.append(state),
+        )
+
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=state_store_factory,
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+            append=lambda event, *, commit=True: saved_events.append(event),
+        ),
+        strategy_flag_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None, list_all=lambda **_: []),
+    )
+
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "toggle")
+
+    response = client.post(
+        "/strategies/breakout/toggle-entries",
+        data={"_csrf_token": token},
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    assert len(saved_states) == 1
+    assert saved_states[0].entries_disabled is True
+    assert len(saved_events) == 1
+    assert saved_events[0].event_type == "strategy_entries_changed"
+    assert saved_events[0].payload["strategy_name"] == "breakout"
+    assert saved_events[0].payload["entries_disabled"] is True
+
+
+def test_toggle_entries_returns_404_for_unknown_strategy() -> None:
+    app = _make_minimal_app()
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "toggle")
+    response = client.post(
+        "/strategies/nonexistent_strategy/toggle-entries",
+        data={"_csrf_token": token},
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /audit route
+# ---------------------------------------------------------------------------
+
+
+def test_audit_route_returns_200_with_empty_events() -> None:
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [], list_recent=lambda **_: [], list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+            append=lambda *a, **kw: None,
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/audit")
+
+    assert response.status_code == 200
+    assert "Audit Log" in response.text
+    assert "No events found." in response.text
+
+
+def test_audit_route_renders_login_page_when_auth_enabled() -> None:
+    settings = make_settings(
+        DASHBOARD_AUTH_ENABLED="true",
+        DASHBOARD_AUTH_USERNAME="operator@example.com",
+        DASHBOARD_AUTH_PASSWORD_HASH=hash_password(
+            "secret",
+            salt=bytes.fromhex("000102030405060708090a0b0c0d0e0f"),
+        ),
+    )
+    app = _make_minimal_app(settings=settings)
+    with TestClient(app) as client:
+        response = client.get("/audit")
+    assert response.status_code == 200
+    assert "Sign in" in response.text
+
+
+def test_audit_route_shows_events() -> None:
+    now = datetime.now(timezone.utc)
+    event = SimpleNamespace(
+        event_type="supervisor_cycle",
+        symbol=None,
+        payload={"reason": "normal"},
+        created_at=now,
+    )
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [], list_recent=lambda **_: [], list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [event],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+            append=lambda *a, **kw: None,
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/audit")
+
+    assert response.status_code == 200
+    assert "supervisor_cycle" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Auto-refresh meta tag
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_includes_auto_refresh_by_default() -> None:
+    app = _make_minimal_app()
+    with TestClient(app) as client:
+        response = client.get("/")
+    assert 'http-equiv="refresh"' in response.text
+
+
+def test_dashboard_omits_auto_refresh_when_no_refresh_param_set() -> None:
+    app = _make_minimal_app()
+    with TestClient(app) as client:
+        response = client.get("/?no_refresh=1")
+    assert 'http-equiv="refresh"' not in response.text
+
+
+# ---------------------------------------------------------------------------
+# /metrics date navigation
+# ---------------------------------------------------------------------------
+
+
+def test_metrics_route_accepts_date_param() -> None:
+    order_dates: list = []
+
+    def tracking_order_store(_conn):
+        def list_closed_trades(**kwargs):
+            order_dates.append(kwargs.get("session_date"))
+            return []
+        return SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=list_closed_trades,
+        )
+
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=tracking_order_store,
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/metrics?date_param=2026-04-20")
+
+    assert response.status_code == 200
+    assert order_dates == [date(2026, 4, 20)]
+
+
+def test_metrics_route_shows_warning_for_invalid_date() -> None:
+    app = _make_minimal_app()
+    with TestClient(app) as client:
+        response = client.get("/metrics?date_param=not-a-date")
+    assert response.status_code == 200
+    assert "Invalid date" in response.text
+
+
+def test_metrics_route_shows_warning_for_future_date() -> None:
+    app = _make_minimal_app()
+    with TestClient(app) as client:
+        response = client.get("/metrics?date_param=2099-01-01")
+    assert response.status_code == 200
+    assert "future" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Watchlist routes
+# ---------------------------------------------------------------------------
+
+
+def _make_watchlist_app(
+    *,
+    watchlist_records: list | None = None,
+    enabled_symbols: list[str] | None = None,
+    saved_adds: list | None = None,
+    saved_removes: list | None = None,
+    saved_events: list | None = None,
+):
+    """App with injectable watchlist store for testing watchlist endpoints."""
+    records = watchlist_records if watchlist_records is not None else []
+    enabled = enabled_symbols if enabled_symbols is not None else ["AAPL", "MSFT"]
+    adds = saved_adds if saved_adds is not None else []
+    removes = saved_removes if saved_removes is not None else []
+    events = saved_events if saved_events is not None else []
+
+    def watchlist_store_factory(_conn):
+        return SimpleNamespace(
+            list_all=lambda trading_mode: records,
+            list_enabled=lambda trading_mode: list(enabled),
+            add=lambda symbol, trading_mode, *, added_by="system", commit=True: adds.append(symbol),
+            remove=lambda symbol, trading_mode, *, commit=False: removes.append(symbol),
+        )
+
+    def audit_store_factory(_conn):
+        return SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+            append=lambda event, *, commit=True: events.append(event),
+        )
+
+    return create_app(
+        settings=make_settings(),
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=audit_store_factory,
+        strategy_flag_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None, list_all=lambda **_: []),
+        watchlist_store_factory=watchlist_store_factory,
+    )
+
+
+def test_watchlist_page_renders_symbols() -> None:
+    from datetime import timezone
+
+    now = datetime.now(timezone.utc)
+    records = [
+        SimpleNamespace(symbol="AAPL", enabled=True, added_at=now, added_by="system"),
+        SimpleNamespace(symbol="MSFT", enabled=True, added_at=now, added_by="operator"),
+    ]
+    app = _make_watchlist_app(watchlist_records=records, enabled_symbols=["AAPL", "MSFT"])
+    with TestClient(app) as client:
+        response = client.get("/watchlist")
+
+    assert response.status_code == 200
+    assert "AAPL" in response.text
+    assert "MSFT" in response.text
+    assert "Symbol Watchlist" in response.text
+
+
+def test_watchlist_page_shows_error_for_invalid_symbol_query_param() -> None:
+    app = _make_watchlist_app()
+    with TestClient(app) as client:
+        response = client.get("/watchlist?error=invalid_symbol")
+
+    assert response.status_code == 200
+    assert "Invalid symbol" in response.text
+
+
+def test_watchlist_page_shows_error_for_last_symbol_query_param() -> None:
+    app = _make_watchlist_app()
+    with TestClient(app) as client:
+        response = client.get("/watchlist?error=last_symbol")
+
+    assert response.status_code == 200
+    assert "Cannot remove the last" in response.text
+
+
+def test_watchlist_add_valid_symbol_calls_store() -> None:
+    saved_adds: list = []
+    saved_events: list = []
+    app = _make_watchlist_app(saved_adds=saved_adds, saved_events=saved_events)
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "watchlist")
+
+    response = client.post(
+        "/admin/watchlist/add",
+        data={"_csrf_token": token, "symbol": "NVDA"},
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/watchlist"
+    assert "NVDA" in saved_adds
+    assert any(e.event_type == "WATCHLIST_ADD" for e in saved_events)
+    assert saved_events[0].symbol == "NVDA"
+
+
+def test_watchlist_add_invalid_symbol_redirects_to_error() -> None:
+    app = _make_watchlist_app()
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "watchlist")
+
+    response = client.post(
+        "/admin/watchlist/add",
+        data={"_csrf_token": token, "symbol": "invalid symbol!"},
+    )
+
+    assert response.status_code == 303
+    assert "invalid_symbol" in response.headers["location"]
+
+
+def test_watchlist_add_lowercase_symbol_is_accepted() -> None:
+    """Input is uppercased server-side; lowercase should normalize correctly."""
+    saved_adds: list = []
+    app = _make_watchlist_app(saved_adds=saved_adds)
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "watchlist")
+
+    response = client.post(
+        "/admin/watchlist/add",
+        data={"_csrf_token": token, "symbol": "nvda"},
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/watchlist"
+    assert "NVDA" in saved_adds
+
+
+def test_watchlist_add_returns_403_for_bad_csrf() -> None:
+    app = _make_watchlist_app()
+    client = TestClient(app, follow_redirects=False)
+
+    response = client.post(
+        "/admin/watchlist/add",
+        data={"_csrf_token": "bad-token", "symbol": "AAPL"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_watchlist_remove_valid_symbol_calls_store() -> None:
+    saved_removes: list = []
+    saved_events: list = []
+    app = _make_watchlist_app(
+        enabled_symbols=["AAPL", "MSFT"],
+        saved_removes=saved_removes,
+        saved_events=saved_events,
+    )
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "watchlist")
+
+    response = client.post(
+        "/admin/watchlist/remove",
+        data={"_csrf_token": token, "symbol": "AAPL"},
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/watchlist"
+    assert "AAPL" in saved_removes
+    assert any(e.event_type == "WATCHLIST_REMOVE" for e in saved_events)
+
+
+def test_watchlist_remove_last_symbol_redirects_to_error() -> None:
+    app = _make_watchlist_app(enabled_symbols=["AAPL"])
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "watchlist")
+
+    response = client.post(
+        "/admin/watchlist/remove",
+        data={"_csrf_token": token, "symbol": "AAPL"},
+    )
+
+    assert response.status_code == 303
+    assert "last_symbol" in response.headers["location"]
+
+
+def test_watchlist_remove_returns_403_for_bad_csrf() -> None:
+    app = _make_watchlist_app()
+    client = TestClient(app, follow_redirects=False)
+
+    response = client.post(
+        "/admin/watchlist/remove",
+        data={"_csrf_token": "wrong", "symbol": "AAPL"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_watchlist_nav_link_present_on_dashboard() -> None:
+    app = _make_minimal_app()
+    with TestClient(app) as client:
+        response = client.get("/")
+    assert 'href="/watchlist"' in response.text
+
+
+def test_watchlist_nav_link_present_on_audit_page() -> None:
+    app = _make_minimal_app()
+    with TestClient(app) as client:
+        response = client.get("/audit")
+    assert 'href="/watchlist"' in response.text

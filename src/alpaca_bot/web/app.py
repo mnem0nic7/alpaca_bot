@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import secrets
 from urllib.parse import parse_qsl
@@ -11,15 +11,21 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.templating import Jinja2Templates
 
 from alpaca_bot.config import Settings
+import re
+
 from alpaca_bot.storage import (
     AuditEvent,
     AuditEventStore,
+    DailySessionState,
     DailySessionStateStore,
     OrderStore,
     PositionStore,
     StrategyFlag,
     StrategyFlagStore,
+    TradingStatus,
     TradingStatusStore,
+    TradingStatusValue,
+    WatchlistStore,
 )
 from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres, execute
 from alpaca_bot.strategy import STRATEGY_REGISTRY
@@ -33,10 +39,20 @@ from alpaca_bot.web.auth import (
     validate_csrf_token,
 )
 from alpaca_bot.web.service import (
+    ALL_AUDIT_EVENT_TYPES,
+    load_audit_page,
     load_dashboard_snapshot,
     load_health_snapshot,
     load_metrics_snapshot,
 )
+
+
+_SYMBOL_RE = re.compile(r"^[A-Z]{1,5}$")
+
+
+def _validate_symbol(raw: str) -> str | None:
+    cleaned = raw.strip().upper()
+    return cleaned if _SYMBOL_RE.match(cleaned) else None
 
 
 def create_app(
@@ -52,6 +68,7 @@ def create_app(
     daily_session_state_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     audit_event_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     strategy_flag_store_factory: Callable[[ConnectionProtocol], object] | None = None,
+    watchlist_store_factory: Callable[[ConnectionProtocol], object] | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings.from_env()
     fixed_connection = connection or db_connection
@@ -90,9 +107,10 @@ def create_app(
     )
     app.state.audit_event_store_factory = audit_event_store_factory or AuditEventStore
     app.state.strategy_flag_store_factory = strategy_flag_store_factory or StrategyFlagStore
+    app.state.watchlist_store_factory = watchlist_store_factory or WatchlistStore
 
     @app.get("/", response_class=HTMLResponse)
-    def dashboard(request: Request) -> HTMLResponse:
+    def dashboard(request: Request, no_refresh: str = "") -> HTMLResponse:
         operator = current_operator(request, settings=app_settings)
         if auth_enabled(app_settings) and operator is None:
             return _render_login_page(
@@ -120,11 +138,12 @@ def create_app(
                 "snapshot": snapshot,
                 "metrics": metrics,
                 "operator_email": operator,
+                "auto_refresh": not bool(no_refresh),
             },
         )
 
     @app.get("/metrics", response_class=HTMLResponse)
-    def metrics_page(request: Request) -> HTMLResponse:
+    def metrics_page(request: Request, date_param: str = "") -> HTMLResponse:
         operator = current_operator(request, settings=app_settings)
         if auth_enabled(app_settings) and operator is None:
             return _render_login_page(
@@ -132,8 +151,23 @@ def create_app(
                 request,
                 next_path=request.url.path,
             )
+        now = datetime.now(timezone.utc)
+        today = now.astimezone(app_settings.market_timezone).date()
+        session_date, date_warning = _parse_date_param(date_param, today=today)
         try:
-            _, metrics = _load_dashboard_data(app)
+            connection = app.state.connect_postgres(app_settings.database_url)
+            try:
+                metrics = load_metrics_snapshot(
+                    settings=app_settings,
+                    connection=connection,
+                    audit_event_store=_build_store(app.state.audit_event_store_factory, connection),
+                    order_store=_build_store(app.state.order_store_factory, connection),
+                    session_date=session_date,
+                )
+            finally:
+                close = getattr(connection, "close", None)
+                if callable(close):
+                    close()
         except Exception:
             return HTMLResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -142,6 +176,9 @@ def create_app(
                     "<p>Service temporarily unavailable.</p></body></html>"
                 ),
             )
+        prev_date = _isoformat(session_date - timedelta(days=1))
+        next_date_obj = session_date + timedelta(days=1)
+        next_date = _isoformat(next_date_obj) if next_date_obj <= today else None
         return templates.TemplateResponse(
             request=request,
             name="dashboard.html",
@@ -151,6 +188,11 @@ def create_app(
                 "snapshot": None,
                 "metrics": metrics,
                 "operator_email": operator,
+                "session_date": session_date.isoformat(),
+                "today": today.isoformat(),
+                "prev_date": prev_date,
+                "next_date": next_date,
+                "date_warning": date_warning,
             },
         )
 
@@ -244,6 +286,174 @@ def create_app(
             status_code=http_status,
         )
 
+    @app.get("/audit", response_class=HTMLResponse)
+    def audit_log(
+        request: Request,
+        limit: int = 50,
+        offset: int = 0,
+        event_type: str = "",
+    ) -> HTMLResponse:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return _render_login_page(app, request, next_path=request.url.path)
+        try:
+            connection = app.state.connect_postgres(app_settings.database_url)
+            try:
+                page = load_audit_page(
+                    connection=connection,
+                    audit_event_store=_build_store(app.state.audit_event_store_factory, connection),
+                    limit=max(1, min(limit, 200)),
+                    offset=max(0, offset),
+                    event_type_filter=event_type or None,
+                )
+            finally:
+                close = getattr(connection, "close", None)
+                if callable(close):
+                    close()
+        except Exception:
+            return HTMLResponse(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                content="<html><body><h1>Audit log unavailable</h1></body></html>",
+            )
+        return templates.TemplateResponse(
+            request=request,
+            name="audit.html",
+            context={
+                "request": request,
+                "trading_mode": app_settings.trading_mode.value,
+                "strategy_version": app_settings.strategy_version,
+                "operator_email": operator,
+                "page": page,
+                "all_event_types": ALL_AUDIT_EVENT_TYPES,
+            },
+        )
+
+    @app.post("/admin/halt")
+    async def admin_halt(request: Request) -> Response:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return RedirectResponse(url="/login?next=/", status_code=status.HTTP_303_SEE_OTHER)
+        fields = await _read_form_fields(request)
+        token = fields.get("_csrf_token", "")
+        if not validate_csrf_token(
+            request, token, settings=app_settings, action="admin", csrf_secret=csrf_secret
+        ):
+            return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
+        reason = fields.get("reason", "").strip()
+        if not reason:
+            return HTMLResponse(status_code=status.HTTP_400_BAD_REQUEST, content="reason is required")
+        return _execute_admin_status_change(
+            app,
+            new_status=TradingStatusValue.HALTED,
+            command_name="halt",
+            kill_switch_enabled=True,
+            reason=reason,
+            operator=operator,
+        )
+
+    @app.post("/admin/resume")
+    async def admin_resume(request: Request) -> Response:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return RedirectResponse(url="/login?next=/", status_code=status.HTTP_303_SEE_OTHER)
+        fields = await _read_form_fields(request)
+        token = fields.get("_csrf_token", "")
+        if not validate_csrf_token(
+            request, token, settings=app_settings, action="admin", csrf_secret=csrf_secret
+        ):
+            return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
+        reason = fields.get("reason", "").strip()
+        return _execute_admin_status_change(
+            app,
+            new_status=TradingStatusValue.ENABLED,
+            command_name="resume",
+            kill_switch_enabled=False,
+            reason=reason or None,
+            operator=operator,
+        )
+
+    @app.post("/admin/close-only")
+    async def admin_close_only(request: Request) -> Response:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return RedirectResponse(url="/login?next=/", status_code=status.HTTP_303_SEE_OTHER)
+        fields = await _read_form_fields(request)
+        token = fields.get("_csrf_token", "")
+        if not validate_csrf_token(
+            request, token, settings=app_settings, action="admin", csrf_secret=csrf_secret
+        ):
+            return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
+        reason = fields.get("reason", "").strip()
+        return _execute_admin_status_change(
+            app,
+            new_status=TradingStatusValue.CLOSE_ONLY,
+            command_name="close-only",
+            kill_switch_enabled=False,
+            reason=reason or None,
+            operator=operator,
+        )
+
+    @app.post("/strategies/{strategy_name}/toggle-entries")
+    async def toggle_strategy_entries(strategy_name: str, request: Request) -> Response:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return RedirectResponse(url="/login?next=/", status_code=status.HTTP_303_SEE_OTHER)
+        fields = await _read_form_fields(request)
+        token = fields.get("_csrf_token", "")
+        if not validate_csrf_token(
+            request, token, settings=app_settings, action="toggle", csrf_secret=csrf_secret
+        ):
+            return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
+        if strategy_name not in STRATEGY_REGISTRY:
+            return HTMLResponse(status_code=status.HTTP_404_NOT_FOUND, content="Unknown strategy")
+        now = datetime.now(timezone.utc)
+        session_date = now.astimezone(app_settings.market_timezone).date()
+        connection = None
+        try:
+            connection = app.state.connect_postgres(app_settings.database_url)
+            state_store = _build_store(app.state.daily_session_state_store_factory, connection)
+            audit_store = _build_store(app.state.audit_event_store_factory, connection)
+            current_state = state_store.load(
+                session_date=session_date,
+                trading_mode=app_settings.trading_mode,
+                strategy_version=app_settings.strategy_version,
+                strategy_name=strategy_name,
+            )
+            new_entries_disabled = not (
+                current_state.entries_disabled if current_state is not None else False
+            )
+            new_state = DailySessionState(
+                session_date=session_date,
+                trading_mode=app_settings.trading_mode,
+                strategy_version=app_settings.strategy_version,
+                strategy_name=strategy_name,
+                entries_disabled=new_entries_disabled,
+                flatten_complete=current_state.flatten_complete if current_state else False,
+                last_reconciled_at=current_state.last_reconciled_at if current_state else None,
+                notes=current_state.notes if current_state else None,
+                equity_baseline=current_state.equity_baseline if current_state else None,
+                updated_at=now,
+            )
+            state_store.save(new_state, commit=False)
+            audit_store.append(
+                AuditEvent(
+                    event_type="strategy_entries_changed",
+                    payload={
+                        "strategy_name": strategy_name,
+                        "entries_disabled": new_entries_disabled,
+                        "operator": operator or "web",
+                    },
+                    created_at=now,
+                ),
+                commit=False,
+            )
+            connection.commit()
+        finally:
+            close = getattr(connection, "close", None)
+            if callable(close):
+                close()
+        return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+
     @app.post("/strategies/{strategy_name}/toggle")
     async def toggle_strategy(strategy_name: str, request: Request) -> Response:
         operator = current_operator(request, settings=app_settings)
@@ -301,7 +511,181 @@ def create_app(
                 close()
         return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
+    @app.get("/watchlist", response_class=HTMLResponse)
+    def watchlist_page(request: Request) -> HTMLResponse:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return _render_login_page(app, request, next_path=request.url.path)
+        connection = None
+        try:
+            connection = app.state.connect_postgres(app_settings.database_url)
+            store = _build_store(app.state.watchlist_store_factory, connection)
+            records = store.list_all(app_settings.trading_mode.value)
+        finally:
+            close = getattr(connection, "close", None)
+            if callable(close):
+                close()
+        enabled_count = sum(1 for r in records if r.enabled)
+        return templates.TemplateResponse(
+            request=request,
+            name="watchlist.html",
+            context={
+                "request": request,
+                "trading_mode": app_settings.trading_mode.value,
+                "strategy_version": app_settings.strategy_version,
+                "operator_email": operator,
+                "watchlist": records,
+                "enabled_count": enabled_count,
+                "error": request.query_params.get("error", ""),
+            },
+        )
+
+    @app.post("/admin/watchlist/add")
+    async def watchlist_add(request: Request) -> Response:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return RedirectResponse(url="/login?next=/watchlist", status_code=status.HTTP_303_SEE_OTHER)
+        fields = await _read_form_fields(request)
+        token = fields.get("_csrf_token", "")
+        if not validate_csrf_token(
+            request, token, settings=app_settings, action="watchlist", csrf_secret=csrf_secret
+        ):
+            return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
+        validated = _validate_symbol(fields.get("symbol", ""))
+        if not validated:
+            return RedirectResponse(url="/watchlist?error=invalid_symbol", status_code=status.HTTP_303_SEE_OTHER)
+        connection = None
+        try:
+            connection = app.state.connect_postgres(app_settings.database_url)
+            store = _build_store(app.state.watchlist_store_factory, connection)
+            audit_store = _build_store(app.state.audit_event_store_factory, connection)
+            now = datetime.now(timezone.utc)
+            store.add(validated, app_settings.trading_mode.value, added_by=operator or "admin", commit=False)
+            audit_store.append(
+                AuditEvent(
+                    event_type="WATCHLIST_ADD",
+                    symbol=validated,
+                    payload={"added_by": operator or "admin", "trading_mode": app_settings.trading_mode.value},
+                    created_at=now,
+                ),
+                commit=False,
+            )
+            connection.commit()
+        finally:
+            close = getattr(connection, "close", None)
+            if callable(close):
+                close()
+        return RedirectResponse(url="/watchlist", status_code=status.HTTP_303_SEE_OTHER)
+
+    @app.post("/admin/watchlist/remove")
+    async def watchlist_remove(request: Request) -> Response:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return RedirectResponse(url="/login?next=/watchlist", status_code=status.HTTP_303_SEE_OTHER)
+        fields = await _read_form_fields(request)
+        token = fields.get("_csrf_token", "")
+        if not validate_csrf_token(
+            request, token, settings=app_settings, action="watchlist", csrf_secret=csrf_secret
+        ):
+            return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
+        symbol = fields.get("symbol", "").strip().upper()
+        connection = None
+        try:
+            connection = app.state.connect_postgres(app_settings.database_url)
+            store = _build_store(app.state.watchlist_store_factory, connection)
+            audit_store = _build_store(app.state.audit_event_store_factory, connection)
+            enabled = store.list_enabled(app_settings.trading_mode.value)
+            if len(enabled) <= 1 and symbol in enabled:
+                return RedirectResponse(url="/watchlist?error=last_symbol", status_code=status.HTTP_303_SEE_OTHER)
+            now = datetime.now(timezone.utc)
+            store.remove(symbol, app_settings.trading_mode.value, commit=False)
+            audit_store.append(
+                AuditEvent(
+                    event_type="WATCHLIST_REMOVE",
+                    symbol=symbol,
+                    payload={"removed_by": operator or "admin", "trading_mode": app_settings.trading_mode.value},
+                    created_at=now,
+                ),
+                commit=False,
+            )
+            connection.commit()
+        finally:
+            close = getattr(connection, "close", None)
+            if callable(close):
+                close()
+        return RedirectResponse(url="/watchlist", status_code=status.HTTP_303_SEE_OTHER)
+
     return app
+
+
+def _execute_admin_status_change(
+    app: FastAPI,
+    *,
+    new_status: TradingStatusValue,
+    command_name: str,
+    kill_switch_enabled: bool,
+    reason: str | None,
+    operator: str | None,
+) -> Response:
+    app_settings = app.state.settings
+    now = datetime.now(timezone.utc)
+    connection = None
+    try:
+        connection = app.state.connect_postgres(app_settings.database_url)
+        status_store = _build_store(app.state.trading_status_store_factory, connection)
+        audit_store = _build_store(app.state.audit_event_store_factory, connection)
+        ts = TradingStatus(
+            trading_mode=app_settings.trading_mode,
+            strategy_version=app_settings.strategy_version,
+            status=new_status,
+            kill_switch_enabled=kill_switch_enabled,
+            status_reason=reason,
+            updated_at=now,
+        )
+        status_store.save(ts, commit=False)
+        payload: dict = {
+            "command": command_name,
+            "trading_mode": app_settings.trading_mode.value,
+            "strategy_version": app_settings.strategy_version,
+            "status": new_status.value,
+            "operator": operator or "web",
+        }
+        if reason is not None:
+            payload["reason"] = reason
+        audit_store.append(
+            AuditEvent(
+                event_type="trading_status_changed",
+                payload=payload,
+                created_at=now,
+            ),
+            commit=False,
+        )
+        connection.commit()
+    finally:
+        close = getattr(connection, "close", None)
+        if callable(close):
+            close()
+    return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _parse_date_param(
+    date_param: str,
+    *,
+    today: date,
+) -> tuple[date, str | None]:
+    if not date_param:
+        return today, None
+    try:
+        parsed = date.fromisoformat(date_param)
+    except ValueError:
+        return today, f"Invalid date '{date_param}' — showing today's data."
+    if parsed > today:
+        return today, f"Date {parsed.isoformat()} is in the future — showing today's data."
+    return parsed, None
+
+
+def _isoformat(d: date | None) -> str | None:
+    return d.isoformat() if d is not None else None
 
 
 def _load_dashboard_data(app: FastAPI) -> tuple:

@@ -1,4 +1,4 @@
-"""Tests for TuningResultStore (and future store coverage)."""
+"""Tests for TuningResultStore, WatchlistStore, and other store coverage."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from alpaca_bot.storage.repositories import PositionStore, TuningResultStore
+from alpaca_bot.storage.repositories import PositionStore, TuningResultStore, WatchlistStore, WatchlistRecord
 from alpaca_bot.storage.models import PositionRecord
 from alpaca_bot.config import TradingMode
 
@@ -288,3 +288,125 @@ def test_position_store_replace_all_empty_positions_commits_once() -> None:
     assert len(conn.execute_calls) == 1
     assert conn.commit_count == 1
     assert conn.rollback_count == 0
+
+
+# ── WatchlistStore ────────────────────────────────────────────────────────────
+
+
+class _FetchingConnection(_TrackingConnection):
+    """Extends _TrackingConnection with configurable fetchall results."""
+
+    def __init__(self, fetchall_result: list | None = None) -> None:
+        super().__init__()
+        self._fetchall_result: list = fetchall_result or []
+
+    def cursor(self):
+        conn = self
+
+        class _FetchCursor:
+            def execute(self, sql: str, params=None) -> None:
+                conn.execute_calls.append((sql, params))
+
+            def fetchall(self):
+                return list(conn._fetchall_result)
+
+        return _FetchCursor()
+
+
+def test_watchlist_store_list_enabled_returns_symbols() -> None:
+    rows = [("AAPL",), ("MSFT",)]
+    conn = _FetchingConnection(fetchall_result=rows)
+    store = WatchlistStore(conn)
+
+    result = store.list_enabled("paper")
+
+    assert result == ["AAPL", "MSFT"]
+    assert len(conn.execute_calls) == 1
+    assert "enabled = TRUE" in conn.execute_calls[0][0]
+    assert conn.execute_calls[0][1] == ("paper",)
+
+
+def test_watchlist_store_list_all_returns_records() -> None:
+    now = datetime(2026, 4, 27, tzinfo=timezone.utc)
+    rows = [
+        ("AAPL", "paper", True, now, "operator@example.com"),
+        ("TSLA", "paper", False, now, "system"),
+    ]
+    conn = _FetchingConnection(fetchall_result=rows)
+    store = WatchlistStore(conn)
+
+    result = store.list_all("paper")
+
+    assert len(result) == 2
+    assert isinstance(result[0], WatchlistRecord)
+    assert result[0].symbol == "AAPL"
+    assert result[0].enabled is True
+    assert result[1].symbol == "TSLA"
+    assert result[1].enabled is False
+
+
+def test_watchlist_store_add_inserts_with_on_conflict_update() -> None:
+    conn = _TrackingConnection()
+    store = WatchlistStore(conn)
+
+    store.add("NVDA", "paper", added_by="admin", commit=True)
+
+    assert len(conn.execute_calls) == 1
+    sql = conn.execute_calls[0][0]
+    assert "ON CONFLICT" in sql
+    assert "enabled = TRUE" in sql
+    assert conn.execute_calls[0][1] == ("NVDA", "paper", "admin")
+    assert conn.commit_count == 1
+
+
+def test_watchlist_store_add_with_commit_false_does_not_commit() -> None:
+    conn = _TrackingConnection()
+    store = WatchlistStore(conn)
+
+    store.add("NVDA", "paper", commit=False)
+
+    assert conn.commit_count == 0
+
+
+def test_watchlist_store_remove_soft_deletes() -> None:
+    conn = _TrackingConnection()
+    store = WatchlistStore(conn)
+
+    store.remove("AAPL", "paper", commit=True)
+
+    assert len(conn.execute_calls) == 1
+    sql = conn.execute_calls[0][0]
+    assert "enabled = FALSE" in sql
+    assert conn.execute_calls[0][1] == ("AAPL", "paper")
+    assert conn.commit_count == 1
+
+
+def test_watchlist_store_seed_uses_on_conflict_do_nothing() -> None:
+    conn = _TrackingConnection()
+    store = WatchlistStore(conn)
+
+    store.seed(("AAPL", "MSFT", "SPY"), "paper", commit=True)
+
+    assert len(conn.execute_calls) == 3
+    for sql, _params in conn.execute_calls:
+        assert "ON CONFLICT" in sql
+        assert "DO NOTHING" in sql
+    assert conn.commit_count == 1
+
+
+def test_watchlist_store_seed_commits_once_for_multiple_symbols() -> None:
+    conn = _TrackingConnection()
+    store = WatchlistStore(conn)
+
+    store.seed(("AAPL", "MSFT"), "paper", commit=True)
+
+    assert conn.commit_count == 1
+
+
+def test_watchlist_store_seed_commit_false_does_not_commit() -> None:
+    conn = _TrackingConnection()
+    store = WatchlistStore(conn)
+
+    store.seed(("AAPL",), "paper", commit=False)
+
+    assert conn.commit_count == 0

@@ -16,8 +16,6 @@ def evaluate_orb_signal(
     daily_bars: Sequence[Bar],
     settings: Settings,
 ) -> EntrySignal | None:
-    if symbol not in settings.symbols:
-        return None
     if not intraday_bars or signal_index < 0 or signal_index >= len(intraday_bars):
         return None
 
