@@ -185,6 +185,7 @@ class RecordingOrderStore:
         trading_mode: TradingMode,
         strategy_version: str,
         session_date: date,
+        market_timezone: str = "America/New_York",
     ) -> float:
         return self._daily_pnl
 
@@ -2209,3 +2210,116 @@ def test_strategy_fan_out_continues_after_one_strategy_raises(monkeypatch) -> No
     assert error_events[0].payload["strategy_name"] == strategy_names[0]
     # The overall cycle must still return a report
     assert isinstance(report, SupervisorCycleReport)
+
+
+# ── _append_audit rollback guard ─────────────────────────────────────────────
+
+
+def test_append_audit_rollback_on_store_failure() -> None:
+    """_append_audit must call connection.rollback() and NOT re-raise when the store fails."""
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    settings = make_settings()
+
+    rollback_count = 0
+
+    class _FailConn:
+        def rollback(self) -> None:
+            nonlocal rollback_count
+            rollback_count += 1
+
+        def commit(self) -> None:
+            pass
+
+    class _FailingAuditStore:
+        def append(self, event: object, *, commit: bool = True) -> None:
+            raise RuntimeError("audit store failed")
+
+    runtime = make_runtime_context(settings)
+    runtime = runtime.__class__(
+        settings=settings,
+        connection=_FailConn(),  # type: ignore[arg-type]
+        lock=object(),  # type: ignore[arg-type]
+        trading_status_store=RecordingTradingStatusStore(),  # type: ignore[arg-type]
+        audit_event_store=_FailingAuditStore(),  # type: ignore[arg-type]
+        order_store=RecordingOrderStore(),  # type: ignore[arg-type]
+        position_store=RecordingPositionStore(),  # type: ignore[arg-type]
+        daily_session_state_store=RecordingDailySessionStateStore(),  # type: ignore[arg-type]
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=None,
+    )
+
+    event = AuditEvent(
+        event_type="test_event",
+        payload={},
+        created_at=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
+    )
+    # Must not raise — _append_audit swallows exceptions
+    supervisor._append_audit(event)
+
+    assert rollback_count == 1, "rollback() must be called when audit store append fails"
+
+
+# ── _save_session_state rollback guard ───────────────────────────────────────
+
+
+def test_save_session_state_rollback_and_reraise_on_store_failure() -> None:
+    """_save_session_state must call connection.rollback() then re-raise."""
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    settings = make_settings()
+
+    rollback_count = 0
+
+    class _FailConn:
+        def rollback(self) -> None:
+            nonlocal rollback_count
+            rollback_count += 1
+
+        def commit(self) -> None:
+            pass
+
+    class _FailingSessionStateStore:
+        def save(self, state: object) -> None:
+            raise RuntimeError("state store failed")
+
+        def load(self, **kwargs: object) -> None:
+            return None
+
+    runtime = make_runtime_context(settings)
+    runtime = runtime.__class__(
+        settings=settings,
+        connection=_FailConn(),  # type: ignore[arg-type]
+        lock=object(),  # type: ignore[arg-type]
+        trading_status_store=RecordingTradingStatusStore(),  # type: ignore[arg-type]
+        audit_event_store=RecordingAuditEventStore(),  # type: ignore[arg-type]
+        order_store=RecordingOrderStore(),  # type: ignore[arg-type]
+        position_store=RecordingPositionStore(),  # type: ignore[arg-type]
+        daily_session_state_store=_FailingSessionStateStore(),  # type: ignore[arg-type]
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=None,
+    )
+
+    state = DailySessionState(
+        session_date=date(2026, 4, 24),
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        entries_disabled=False,
+        flatten_complete=False,
+        updated_at=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
+    )
+
+    with pytest.raises(RuntimeError, match="state store failed"):
+        supervisor._save_session_state(state)
+
+    assert rollback_count == 1, "rollback() must be called when session state save fails"

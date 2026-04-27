@@ -377,6 +377,7 @@ class OrderStore:
         trading_mode: TradingMode,
         strategy_version: str,
         session_date: date,
+        market_timezone: str = "America/New_York",
     ) -> float:
         """Return sum of closed-trade PnL for a session date.
 
@@ -412,11 +413,12 @@ class OrderStore:
               AND x.intent_type IN ('stop', 'exit')
               AND x.fill_price IS NOT NULL
               AND x.status = 'filled'
-              AND DATE(x.updated_at AT TIME ZONE 'America/New_York') = %s
+              AND DATE(x.updated_at AT TIME ZONE %s) = %s
             """,
             (
                 trading_mode.value,
                 strategy_version,
+                market_timezone,
                 session_date,
             ),
         )
@@ -433,6 +435,7 @@ class OrderStore:
         strategy_version: str,
         session_date: date,
         strategy_name: str | None = None,
+        market_timezone: str = "America/New_York",
     ) -> list[dict]:
         """Return one dict per closed round-trip trade for a session date.
 
@@ -496,13 +499,14 @@ class OrderStore:
               AND x.intent_type IN ('stop', 'exit')
               AND x.fill_price IS NOT NULL
               AND x.status = 'filled'
-              AND DATE(x.updated_at AT TIME ZONE 'America/New_York') = %s
+              AND DATE(x.updated_at AT TIME ZONE %s) = %s
               {strategy_clause}
             ORDER BY x.updated_at
             """,
             (
                 trading_mode.value,
                 strategy_version,
+                market_timezone,
                 session_date,
                 *strategy_params,
             ),
@@ -815,33 +819,42 @@ class TuningResultStore:
         scored = [c for c in candidates if c.score is not None]
         best_params = scored[0].params if scored else None
 
-        for candidate in candidates:
-            is_best = bool(best_params and candidate.params == best_params)
-            report = candidate.report
-            execute(
-                self._connection,
-                """
-                INSERT INTO tuning_results (
-                    run_id, created_at, scenario_name, trading_mode,
-                    params, score, total_trades, win_rate,
-                    mean_return_pct, max_drawdown_pct, sharpe_ratio, is_best
-                ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    rid,
-                    created_at,
-                    scenario_name,
-                    trading_mode,
-                    json.dumps(candidate.params),
-                    candidate.score,
-                    report.total_trades if report is not None else 0,
-                    report.win_rate if report is not None else None,
-                    report.mean_return_pct if report is not None else None,
-                    report.max_drawdown_pct if report is not None else None,
-                    report.sharpe_ratio if report is not None else None,
-                    is_best,
-                ),
-            )
+        try:
+            for candidate in candidates:
+                is_best = bool(best_params and candidate.params == best_params)
+                report = candidate.report
+                execute(
+                    self._connection,
+                    """
+                    INSERT INTO tuning_results (
+                        run_id, created_at, scenario_name, trading_mode,
+                        params, score, total_trades, win_rate,
+                        mean_return_pct, max_drawdown_pct, sharpe_ratio, is_best
+                    ) VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        rid,
+                        created_at,
+                        scenario_name,
+                        trading_mode,
+                        json.dumps(candidate.params),
+                        candidate.score,
+                        report.total_trades if report is not None else 0,
+                        report.win_rate if report is not None else None,
+                        report.mean_return_pct if report is not None else None,
+                        report.max_drawdown_pct if report is not None else None,
+                        report.sharpe_ratio if report is not None else None,
+                        is_best,
+                    ),
+                    commit=False,
+                )
+            self._connection.commit()
+        except Exception:
+            try:
+                self._connection.rollback()
+            except Exception:
+                pass
+            raise
         return rid
 
     def load_latest_best(self, *, trading_mode: str) -> dict | None:

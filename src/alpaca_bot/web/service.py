@@ -206,6 +206,7 @@ def load_metrics_snapshot(
         trading_mode=settings.trading_mode,
         strategy_version=settings.strategy_version,
         session_date=session_date,
+        market_timezone=str(settings.market_timezone),
     )
     trades = [_to_trade_record(t) for t in raw_trades]
     trades_by_strategy: dict[str, list[TradeRecord]] = {}

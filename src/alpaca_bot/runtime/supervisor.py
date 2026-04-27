@@ -238,6 +238,7 @@ class RuntimeSupervisor:
                 trading_mode=self.settings.trading_mode,
                 strategy_version=self.settings.strategy_version,
                 session_date=session_date,
+                market_timezone=str(self.settings.market_timezone),
             )
         # Snapshot equity once per session day so the daily loss limit is always
         # computed against start-of-day capital, not the current (post-loss) value.
@@ -390,9 +391,7 @@ class RuntimeSupervisor:
                     if getattr(i, "intent_type", None) == CycleIntentType.EXIT
                 ]
                 global_occupied_slots += len(new_entry_intents)
-                global_occupied_slots = max(global_occupied_slots - len(exit_intents), 0)
                 global_position_symbols.update(i.symbol for i in new_entry_intents)
-                global_position_symbols -= {i.symbol for i in exit_intents}
 
                 has_flatten_intents = any(
                     getattr(intent, "reason", None) in {"eod_flatten", "loss_limit_flatten"}
@@ -411,9 +410,10 @@ class RuntimeSupervisor:
                         )
                     )
 
+                exec_report = None
                 if status is not TradingStatusValue.HALTED:
                     try:
-                        self._cycle_intent_executor(
+                        exec_report = self._cycle_intent_executor(
                             settings=self.settings,
                             runtime=self.runtime,
                             broker=self.broker,
@@ -425,6 +425,16 @@ class RuntimeSupervisor:
                             "execute_cycle_intents failed for strategy %s; continuing to dispatch",
                             strategy_name,
                         )
+
+                # Only free slots for exits that were actually submitted to the broker.
+                # Using intent count would optimistically free slots for exits that may
+                # have failed, allowing over-allocation above max_open_positions.
+                confirmed_exits = (
+                    exec_report.submitted_exit_count
+                    if exec_report is not None
+                    else 0
+                )
+                global_occupied_slots = max(global_occupied_slots - confirmed_exits, 0)
             except Exception:
                 logger.exception(
                     "Strategy cycle failed for %s; skipping to next strategy",
@@ -840,13 +850,20 @@ class RuntimeSupervisor:
             _stream_lock_ctx = _stream_lock if _stream_lock is not None else contextlib.nullcontext()
             timestamp = _resolve_now(now)
             with _stream_lock_ctx:
-                self.runtime.audit_event_store.append(
-                    AuditEvent(
-                        event_type="trade_update_stream_started",
-                        payload={"timestamp": timestamp.isoformat()},
-                        created_at=timestamp,
+                try:
+                    self.runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="trade_update_stream_started",
+                            payload={"timestamp": timestamp.isoformat()},
+                            created_at=timestamp,
+                        )
                     )
-                )
+                except Exception:
+                    logger.exception("Failed to append trade_update_stream_started; continuing")
+                    try:
+                        self.runtime.connection.rollback()
+                    except Exception:
+                        pass
             try:
                 if not hasattr(self.stream, "run"):
                     raise RuntimeError("Configured trade update stream does not expose run()")
@@ -854,23 +871,37 @@ class RuntimeSupervisor:
             except Exception as exc:
                 failure_at = _resolve_now(now)
                 with _stream_lock_ctx:
-                    self.runtime.audit_event_store.append(
-                        AuditEvent(
-                            event_type="trade_update_stream_failed",
-                            payload={"error": str(exc)},
-                            created_at=failure_at,
+                    try:
+                        self.runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="trade_update_stream_failed",
+                                payload={"error": str(exc)},
+                                created_at=failure_at,
+                            )
                         )
-                    )
+                    except Exception:
+                        logger.exception("Failed to append trade_update_stream_failed; continuing")
+                        try:
+                            self.runtime.connection.rollback()
+                        except Exception:
+                            pass
             else:
                 stopped_at = _resolve_now(now)
                 with _stream_lock_ctx:
-                    self.runtime.audit_event_store.append(
-                        AuditEvent(
-                            event_type="trade_update_stream_stopped",
-                            payload={"reason": "stream_exited"},
-                            created_at=stopped_at,
+                    try:
+                        self.runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="trade_update_stream_stopped",
+                                payload={"reason": "stream_exited"},
+                                created_at=stopped_at,
+                            )
                         )
-                    )
+                    except Exception:
+                        logger.exception("Failed to append trade_update_stream_stopped; continuing")
+                        try:
+                            self.runtime.connection.rollback()
+                        except Exception:
+                            pass
             finally:
                 self._stream_thread = None
 
