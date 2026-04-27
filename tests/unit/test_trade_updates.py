@@ -463,6 +463,46 @@ class TestPositionStoreSaveRaises:
 
 
 # ---------------------------------------------------------------------------
+# Test 2b — client_order_id unknown but broker_order_id matches
+# ---------------------------------------------------------------------------
+
+
+def test_apply_trade_update_matches_order_by_broker_id_when_client_id_unknown() -> None:
+    """When client_order_id has no local match, _find_order must fall back to
+    load_by_broker_order_id and successfully process the fill."""
+    entry_order = _make_entry_order()
+    entry_order_with_broker_id = OrderRecord(
+        client_order_id=entry_order.client_order_id,
+        symbol=entry_order.symbol,
+        side=entry_order.side,
+        intent_type=entry_order.intent_type,
+        status=entry_order.status,
+        quantity=entry_order.quantity,
+        trading_mode=entry_order.trading_mode,
+        strategy_version=entry_order.strategy_version,
+        created_at=entry_order.created_at,
+        updated_at=entry_order.updated_at,
+        initial_stop_price=entry_order.initial_stop_price,
+        signal_timestamp=entry_order.signal_timestamp,
+        broker_order_id="broker-entry-9999",
+    )
+    runtime = _make_runtime(orders=[entry_order_with_broker_id])
+
+    update = _make_trade_update(
+        client_order_id="v1-breakout:COMPLETELY-UNKNOWN-CLIENT-ID",  # won't match by client_id
+        broker_order_id="broker-entry-9999",                          # will match by broker_id
+        status="filled",
+        qty=10,
+        filled_qty=10,
+        filled_avg_price=112.00,
+    )
+    result = _apply(runtime, update)
+
+    assert result["unmatched"] is False
+    assert result["matched_order_id"] == entry_order_with_broker_id.client_order_id
+    assert result["position_updated"] is True
+
+
 # Test 3 — both IDs None → falls through to unmatched-update audit event
 # ---------------------------------------------------------------------------
 

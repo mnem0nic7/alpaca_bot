@@ -15,7 +15,7 @@ from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord
 class OrderStoreProtocol(Protocol):
     def load(self, client_order_id: str) -> OrderRecord | None: ...
 
-    def save(self, order: OrderRecord) -> None: ...
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None: ...
 
     def load_by_broker_order_id(self, broker_order_id: str) -> OrderRecord | None: ...
 
@@ -157,6 +157,7 @@ def _apply_trade_update_locked(
         matched_order.intent_type == "entry"
         and normalized.status in {"filled", "partially_filled"}
         and normalized.filled_avg_price is not None
+        and matched_order.status not in {"filled"}
     ):
         initial_stop_price = matched_order.initial_stop_price or 0.0
         runtime.position_store.save(
@@ -249,7 +250,11 @@ def _apply_trade_update_locked(
                         commit=False,
                     )
                 protective_stop_client_order_id = None
-    elif matched_order.intent_type in {"stop", "exit"} and normalized.status == "filled":
+    elif (
+        matched_order.intent_type in {"stop", "exit"}
+        and normalized.status == "filled"
+        and matched_order.status not in {"filled"}
+    ):
         runtime.position_store.delete(
             symbol=matched_order.symbol,
             trading_mode=matched_order.trading_mode,

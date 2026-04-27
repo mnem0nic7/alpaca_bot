@@ -614,3 +614,14 @@ def test_infer_strategy_name_from_client_order_id() -> None:
     assert _infer_strategy_name_from_client_order_id("momentum:v1:2026-01-02:AAPL:entry:t") == "momentum"
     assert _infer_strategy_name_from_client_order_id("unknown_strategy:v1:2026-01-02:AAPL:stop:t") == "breakout"
     assert _infer_strategy_name_from_client_order_id("") == "breakout"
+
+
+def test_infer_intent_type_all_branches() -> None:
+    from alpaca_bot.runtime.startup_recovery import _infer_intent_type
+
+    assert _infer_intent_type(client_order_id="breakout:v1:2026-01-02:AAPL:entry:t", side="buy") == "entry"
+    assert _infer_intent_type(client_order_id="breakout:v1:2026-01-02:AAPL:stop:t", side="sell") == "stop"
+    assert _infer_intent_type(client_order_id="breakout:v1:2026-01-02:AAPL:exit:t", side="sell") == "exit"
+    # Fallback: unknown format, side=buy → entry; side=sell → stop
+    assert _infer_intent_type(client_order_id="some-opaque-id", side="buy") == "entry"
+    assert _infer_intent_type(client_order_id="some-opaque-id", side="sell") == "stop"

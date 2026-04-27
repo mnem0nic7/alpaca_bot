@@ -688,3 +688,45 @@ def test_dispatch_notifier_not_called_on_success() -> None:
 
     assert notifier_calls == []
 
+
+def test_dispatch_unsupported_intent_type_sets_order_to_error_status() -> None:
+    """An order with an unsupported intent_type (e.g. 'exit') that somehow reaches
+    pending_submit must be marked as 'error' — not submitted — and must emit an
+    order_dispatch_failed audit event."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+
+    rogue_order = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:exit:rogue",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        signal_timestamp=now,
+    )
+    order_store = RecordingOrderStore([rogue_order])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+
+    report = dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=RecordingBroker(),
+        now=now,
+    )
+
+    assert report["submitted_count"] == 0
+    assert len(order_store.saved) == 1
+    assert order_store.saved[0].status == "error"
+    assert audit_store.appended[0].event_type == "order_dispatch_failed"
+

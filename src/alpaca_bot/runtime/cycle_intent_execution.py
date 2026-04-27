@@ -315,8 +315,10 @@ def _execute_exit(
                     symbol=symbol,
                     payload={"intent_type": "exit", "reason": "active_exit_order_exists"},
                     created_at=now,
-                )
+                ),
+                commit=False,
             )
+            runtime.connection.commit()
             return 0, 0
 
         stop_orders = _active_stop_orders(runtime, settings, symbol, strategy_name=strategy_name)
@@ -324,25 +326,35 @@ def _execute_exit(
     # Cancel broker stops outside the lock; collect which ones succeeded.
     canceled_order_records: list[OrderRecord] = []
     position_already_gone = False
+    cancel_hard_failed = False
     for stop_order in stop_orders:
         if stop_order.broker_order_id:
             try:
                 broker.cancel_order(stop_order.broker_order_id)
             except Exception as exc:
                 exc_msg = str(exc).lower()
-                logger.warning(
-                    "cycle_intent_execution: cancel_order failed for %s broker_order_id=%s: %s",
-                    symbol,
-                    stop_order.broker_order_id,
-                    exc,
-                )
                 if any(
                     phrase in exc_msg
                     for phrase in ("not found", "already filled", "already canceled", "does not exist")
                 ):
+                    logger.warning(
+                        "cycle_intent_execution: stop already gone for %s broker_order_id=%s: %s",
+                        symbol,
+                        stop_order.broker_order_id,
+                        exc,
+                    )
                     position_already_gone = True
                     # Still record the cancellation in DB even if the broker order is already gone.
                 else:
+                    # Unknown error: stop may still be live at the broker. Aborting the exit
+                    # to prevent a double-sell (live stop + new market exit order).
+                    logger.exception(
+                        "cycle_intent_execution: cancel_order failed with unrecognized error "
+                        "for %s broker_order_id=%s; aborting exit to prevent double-sell",
+                        symbol,
+                        stop_order.broker_order_id,
+                    )
+                    cancel_hard_failed = True
                     continue
         canceled_order_records.append(
             OrderRecord(
@@ -366,6 +378,11 @@ def _execute_exit(
         )
 
     canceled_stop_count = len(canceled_order_records)
+
+    if cancel_hard_failed:
+        # At least one stop cancel failed with an unrecognized broker error: the stop
+        # may still be live. Submitting a market exit now would risk a double-sell / naked-short.
+        return canceled_stop_count, 0
 
     if position_already_gone:
         with lock_ctx:
@@ -418,11 +435,23 @@ def _execute_exit(
         strategy_name=strategy_name,
     )
     # Submit exit outside the lock.
-    broker_order = broker.submit_market_exit(
-        symbol=symbol,
-        quantity=position.quantity,
-        client_order_id=client_order_id,
-    )
+    try:
+        broker_order = broker.submit_market_exit(
+            symbol=symbol,
+            quantity=position.quantity,
+            client_order_id=client_order_id,
+        )
+    except Exception:
+        # Stops are already canceled at the broker (position is unprotected). Log a critical
+        # alert so the operator can intervene manually.  Do not write DB records — the next
+        # cycle will detect the missing stop and attempt to re-file one.
+        logger.exception(
+            "cycle_intent_execution: submit_market_exit failed for %s/%s; "
+            "position is unprotected — manual intervention required",
+            symbol,
+            strategy_name,
+        )
+        return canceled_stop_count, 0
 
     # Write all results under lock.
     with lock_ctx:

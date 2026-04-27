@@ -596,3 +596,68 @@ def test_evaluate_cycle_skips_entry_when_position_size_rounds_to_zero() -> None:
 
     entry_intents = [i for i in result.intents if i.intent_type == _CycleIntentType.ENTRY]
     assert entry_intents == [], "Expected no ENTRY intent when position size is zero"
+
+
+def test_evaluate_cycle_skips_overexposed_candidate_but_selects_next_fitting_symbol() -> None:
+    """The exposure cap must skip candidates that would push portfolio exposure over the
+    limit, but continue iterating so a cheaper candidate can still be selected."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    # AAPL already has a valid breakout signal; add MSFT with its own bars.
+    # Set MAX_PORTFOLIO_EXPOSURE_PCT so that only one entry fits, and rank MSFT first
+    # (higher relative volume) but make it expensive enough to exceed the cap.
+    # AAPL bars: limit_price ~$111, quantity ~44 → exposure ≈ 4.9% at 100k equity.
+    # MSFT bars: make limit_price $2000 → even 1 share = 2%, but position_size
+    # calc on 0.25% risk with $2000-$1990 stop = 25 shares → 50% exposure (too large).
+    msft_start = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+    msft_daily = [
+        Bar(symbol="MSFT", timestamp=msft_start + timedelta(days=i),
+            open=1990.0, high=2010.0 + i, low=1985.0, close=2000.0 + i, volume=1_000_000)
+        for i in range(25)
+    ]
+    msft_intraday: list[Bar] = []
+    for offset in range(20):
+        h = 2008.5 + offset * 0.08
+        c = h - 0.2
+        msft_intraday.append(Bar(
+            symbol="MSFT", timestamp=msft_start + timedelta(minutes=15 * offset),
+            open=round(c - 0.1, 2), high=round(h, 2),
+            low=round(c - 0.25, 2), close=round(c, 2), volume=5000 + offset * 10,
+        ))
+    # Signal bar: closes above prior range high, high relative volume
+    msft_intraday[-1] = Bar(
+        symbol="MSFT", timestamp=msft_intraday[-1].timestamp,
+        open=2009.55, high=2012.0, low=2009.35, close=2011.75, volume=9000,
+    )
+    msft_intraday.append(Bar(
+        symbol="MSFT", timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        open=2012.0, high=2015.0, low=2011.5, close=2014.0, volume=15000,
+    ))
+
+    # Low exposure cap of 5% — AAPL at ~4.9% fits; MSFT at ~50%+ does not.
+    settings = make_settings(MAX_PORTFOLIO_EXPOSURE_PCT="0.05", MAX_OPEN_POSITIONS="3")
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={
+            "AAPL": make_breakout_intraday_bars(),
+            "MSFT": msft_intraday,
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_daily_bars(),
+            "MSFT": msft_daily,
+        },
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+    )
+
+    entry_intents = [i for i in result.intents if i.intent_type == CycleIntentType.ENTRY]
+    symbols_selected = {i.symbol for i in entry_intents}
+    # AAPL must be selected (fits within 5%); MSFT must be skipped (overexposed).
+    assert "AAPL" in symbols_selected, "AAPL should be selected — fits within exposure cap"
+    assert "MSFT" not in symbols_selected, "MSFT should be skipped — would exceed exposure cap"

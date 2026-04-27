@@ -107,7 +107,8 @@ def recover_startup_state(
                         event_type="startup_recovery_missing_entry_price",
                         payload={"symbol": broker_position.symbol},
                         created_at=timestamp,
-                    )
+                    ),
+                    commit=False,
                 )
             synced_positions.append(
                 PositionRecord(

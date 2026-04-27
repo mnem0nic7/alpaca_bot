@@ -1004,3 +1004,202 @@ def test_execute_update_stop_aborts_when_position_disappears_during_broker_call(
     # Broker was called (replace was attempted), but no DB writes happened
     assert broker.replace_calls, "replace_order should be called"
     assert order_store.saved == [], "No order write when position disappeared during broker call"
+
+
+def test_execute_exit_skipped_when_active_exit_order_exists() -> None:
+    """When an exit order with an active status already exists for the symbol,
+    the function must return (0, 0) and emit a cycle_intent_skipped audit event
+    without making any broker calls."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 50, tzinfo=timezone.utc)
+
+    existing_exit = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:exit:existing",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        initial_stop_price=109.89,
+        broker_order_id="broker-exit-existing",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[existing_exit]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    assert report.submitted_exit_count == 0
+    assert broker.cancel_calls == [], "No cancel calls when exit already in-flight"
+    skipped = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "cycle_intent_skipped"
+    ]
+    assert len(skipped) == 1
+    assert skipped[0].payload["reason"] == "active_exit_order_exists"
+
+
+def test_execute_update_stop_broker_raises_unrecognized_error_skips_write() -> None:
+    """When replace_order raises an exception that does NOT match known-gone phrases,
+    the function must log at exception level and return without saving any order record."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:2026-04-24T19:00:00+00:00",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-1",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    class ExplodingBroker(RecordingBroker):
+        def replace_order(self, **kwargs):
+            raise RuntimeError("network timeout — not a known-gone phrase")
+
+    order_store = RecordingOrderStore(orders=[active_stop])
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=ExplodingBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="AAPL",
+                timestamp=now,
+                stop_price=112.0,
+            )],
+        ),
+        now=now,
+    )
+
+    assert report.replaced_stop_count == 0
+    assert order_store.saved == [], "No DB write when broker replace_order fails with unrecognized error"
+
+
+def test_execute_exit_aborts_when_cancel_order_raises_unrecognized_error() -> None:
+    """When cancel_order raises an unrecognized error (not a known-gone phrase),
+    _execute_exit must abort without calling submit_market_exit — prevents double-sell."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 50, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:2026-04-24T19:00:00+00:00",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-1",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    broker = RecordingBroker(cancel_raises=RuntimeError("rate limit exceeded"))
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    # Cancel was attempted but failed; no market exit should have been submitted.
+    assert broker.cancel_calls, "cancel_order should have been attempted"
+    assert broker.exit_calls == [], "submit_market_exit must NOT be called when cancel fails with unrecognized error"
+    assert report.submitted_exit_count == 0
