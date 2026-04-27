@@ -98,21 +98,28 @@ def _apply_trade_update_locked(
     matched_order = _find_order(runtime.order_store, normalized)
     pending_notifications: list[tuple[str, str]] = []
     if matched_order is None:
-        runtime.audit_event_store.append(
-            AuditEvent(
-                event_type="trade_update_unmatched",
-                symbol=normalized.symbol or None,
-                payload={
-                    "client_order_id": normalized.client_order_id,
-                    "broker_order_id": normalized.broker_order_id,
-                    "event": normalized.event,
-                    "status": normalized.status,
-                },
-                created_at=timestamp,
-            ),
-            commit=False,
-        )
-        runtime.connection.commit()
+        try:
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="trade_update_unmatched",
+                    symbol=normalized.symbol or None,
+                    payload={
+                        "client_order_id": normalized.client_order_id,
+                        "broker_order_id": normalized.broker_order_id,
+                        "event": normalized.event,
+                        "status": normalized.status,
+                    },
+                    created_at=timestamp,
+                ),
+                commit=False,
+            )
+            runtime.connection.commit()
+        except Exception:
+            try:
+                runtime.connection.rollback()
+            except Exception:
+                pass
+            raise
         return {
             "matched_order_id": None,
             "status": normalized.status,
@@ -147,34 +154,18 @@ def _apply_trade_update_locked(
             else matched_order.filled_quantity
         ),
     )
-    runtime.order_store.save(saved_order, commit=False)
-
     position_updated = False
     protective_stop_queued = False
     protective_stop_client_order_id: str | None = None
     position_cleared = False
+
+    # Prepare notifications (pure, no DB writes).
     if (
         matched_order.intent_type == "entry"
         and normalized.status in {"filled", "partially_filled"}
         and normalized.filled_avg_price is not None
         and matched_order.status not in {"filled"}
     ):
-        initial_stop_price = matched_order.initial_stop_price or 0.0
-        runtime.position_store.save(
-            PositionRecord(
-                symbol=matched_order.symbol,
-                trading_mode=matched_order.trading_mode,
-                strategy_version=matched_order.strategy_version,
-                strategy_name=matched_order.strategy_name or "breakout",
-                quantity=normalized.filled_qty if normalized.filled_qty is not None else matched_order.quantity,
-                entry_price=normalized.filled_avg_price,
-                stop_price=initial_stop_price,
-                initial_stop_price=initial_stop_price,
-                opened_at=normalized.timestamp,
-                updated_at=timestamp,
-            ),
-            commit=False,
-        )
         position_updated = True
         fill_price = normalized.filled_avg_price
         qty = normalized.filled_qty or matched_order.quantity
@@ -199,69 +190,11 @@ def _apply_trade_update_locked(
             protective_stop_client_order_id = _protective_stop_client_order_id(
                 matched_order.client_order_id
             )
-            existing_stop = runtime.order_store.load(protective_stop_client_order_id)
-            if existing_stop is None:
-                runtime.order_store.save(
-                    OrderRecord(
-                        client_order_id=protective_stop_client_order_id,
-                        symbol=matched_order.symbol,
-                        side="sell",
-                        intent_type="stop",
-                        status="pending_submit",
-                        quantity=normalized.filled_qty if normalized.filled_qty is not None else matched_order.quantity,
-                        trading_mode=matched_order.trading_mode,
-                        strategy_version=matched_order.strategy_version,
-                        strategy_name=matched_order.strategy_name,
-                        created_at=timestamp,
-                        updated_at=timestamp,
-                        stop_price=matched_order.initial_stop_price,
-                        initial_stop_price=matched_order.initial_stop_price,
-                        signal_timestamp=matched_order.signal_timestamp,
-                    ),
-                    commit=False,
-                )
-                protective_stop_queued = True
-            else:
-                if (
-                    normalized.status == "filled"
-                    and existing_stop.status == "pending_submit"
-                    and normalized.filled_qty is not None
-                    and existing_stop.quantity != normalized.filled_qty
-                ):
-                    runtime.order_store.save(
-                        OrderRecord(
-                            client_order_id=existing_stop.client_order_id,
-                            symbol=existing_stop.symbol,
-                            side=existing_stop.side,
-                            intent_type=existing_stop.intent_type,
-                            status=existing_stop.status,
-                            quantity=normalized.filled_qty,
-                            trading_mode=existing_stop.trading_mode,
-                            strategy_version=existing_stop.strategy_version,
-                            strategy_name=existing_stop.strategy_name,
-                            created_at=existing_stop.created_at,
-                            updated_at=timestamp,
-                            stop_price=existing_stop.stop_price,
-                            limit_price=existing_stop.limit_price,
-                            initial_stop_price=existing_stop.initial_stop_price,
-                            broker_order_id=existing_stop.broker_order_id,
-                            signal_timestamp=existing_stop.signal_timestamp,
-                        ),
-                        commit=False,
-                    )
-                protective_stop_client_order_id = None
     elif (
         matched_order.intent_type in {"stop", "exit"}
         and normalized.status == "filled"
         and matched_order.status not in {"filled"}
     ):
-        runtime.position_store.delete(
-            symbol=matched_order.symbol,
-            trading_mode=matched_order.trading_mode,
-            strategy_version=matched_order.strategy_version,
-            strategy_name=matched_order.strategy_name or "breakout",
-            commit=False,
-        )
         position_updated = True
         position_cleared = True
         exit_qty = normalized.filled_qty if normalized.filled_qty is not None else matched_order.quantity
@@ -277,42 +210,10 @@ def _apply_trade_update_locked(
         matched_order.intent_type == "entry"
         and normalized.status in {"cancelled", "expired"}
     ):
-        runtime.position_store.delete(
-            symbol=matched_order.symbol,
-            trading_mode=matched_order.trading_mode,
-            strategy_version=matched_order.strategy_version,
-            strategy_name=matched_order.strategy_name or "breakout",
-            commit=False,
-        )
-        protective_stop_client_order_id_cancel = _protective_stop_client_order_id(
-            matched_order.client_order_id
-        )
-        pending_stop = runtime.order_store.load(protective_stop_client_order_id_cancel)
-        if pending_stop is not None:
-            runtime.order_store.save(
-                OrderRecord(
-                    client_order_id=pending_stop.client_order_id,
-                    symbol=pending_stop.symbol,
-                    side=pending_stop.side,
-                    intent_type=pending_stop.intent_type,
-                    status="cancelled",
-                    quantity=pending_stop.quantity,
-                    trading_mode=pending_stop.trading_mode,
-                    strategy_version=pending_stop.strategy_version,
-                    created_at=pending_stop.created_at,
-                    updated_at=timestamp,
-                    stop_price=pending_stop.stop_price,
-                    limit_price=pending_stop.limit_price,
-                    initial_stop_price=pending_stop.initial_stop_price,
-                    broker_order_id=pending_stop.broker_order_id,
-                    signal_timestamp=pending_stop.signal_timestamp,
-                ),
-                commit=False,
-            )
         position_updated = True
         position_cleared = True
 
-    audit_payload = {
+    audit_payload: dict[str, Any] = {
         "client_order_id": matched_order.client_order_id,
         "broker_order_id": normalized.broker_order_id or matched_order.broker_order_id,
         "event": normalized.event,
@@ -326,16 +227,150 @@ def _apply_trade_update_locked(
         audit_payload["protective_stop_client_order_id"] = protective_stop_client_order_id
     if position_cleared:
         audit_payload["position_cleared"] = True
-    runtime.audit_event_store.append(
-        AuditEvent(
-            event_type="trade_update_applied",
-            symbol=matched_order.symbol,
-            payload=audit_payload,
-            created_at=timestamp,
-        ),
-        commit=False,
-    )
-    runtime.connection.commit()
+
+    # All DB writes in a single atomic block with rollback guard.
+    try:
+        runtime.order_store.save(saved_order, commit=False)
+        if (
+            matched_order.intent_type == "entry"
+            and normalized.status in {"filled", "partially_filled"}
+            and normalized.filled_avg_price is not None
+            and matched_order.status not in {"filled"}
+        ):
+            initial_stop_price = matched_order.initial_stop_price or 0.0
+            runtime.position_store.save(
+                PositionRecord(
+                    symbol=matched_order.symbol,
+                    trading_mode=matched_order.trading_mode,
+                    strategy_version=matched_order.strategy_version,
+                    strategy_name=matched_order.strategy_name or "breakout",
+                    quantity=normalized.filled_qty if normalized.filled_qty is not None else matched_order.quantity,
+                    entry_price=normalized.filled_avg_price,
+                    stop_price=initial_stop_price,
+                    initial_stop_price=initial_stop_price,
+                    opened_at=normalized.timestamp,
+                    updated_at=timestamp,
+                ),
+                commit=False,
+            )
+            if protective_stop_client_order_id is not None:
+                existing_stop = runtime.order_store.load(protective_stop_client_order_id)
+                if existing_stop is None:
+                    runtime.order_store.save(
+                        OrderRecord(
+                            client_order_id=protective_stop_client_order_id,
+                            symbol=matched_order.symbol,
+                            side="sell",
+                            intent_type="stop",
+                            status="pending_submit",
+                            quantity=normalized.filled_qty if normalized.filled_qty is not None else matched_order.quantity,
+                            trading_mode=matched_order.trading_mode,
+                            strategy_version=matched_order.strategy_version,
+                            strategy_name=matched_order.strategy_name,
+                            created_at=timestamp,
+                            updated_at=timestamp,
+                            stop_price=matched_order.initial_stop_price,
+                            initial_stop_price=matched_order.initial_stop_price,
+                            signal_timestamp=matched_order.signal_timestamp,
+                        ),
+                        commit=False,
+                    )
+                    protective_stop_queued = True
+                else:
+                    if (
+                        normalized.status == "filled"
+                        and existing_stop.status == "pending_submit"
+                        and normalized.filled_qty is not None
+                        and existing_stop.quantity != normalized.filled_qty
+                    ):
+                        runtime.order_store.save(
+                            OrderRecord(
+                                client_order_id=existing_stop.client_order_id,
+                                symbol=existing_stop.symbol,
+                                side=existing_stop.side,
+                                intent_type=existing_stop.intent_type,
+                                status=existing_stop.status,
+                                quantity=normalized.filled_qty,
+                                trading_mode=existing_stop.trading_mode,
+                                strategy_version=existing_stop.strategy_version,
+                                strategy_name=existing_stop.strategy_name,
+                                created_at=existing_stop.created_at,
+                                updated_at=timestamp,
+                                stop_price=existing_stop.stop_price,
+                                limit_price=existing_stop.limit_price,
+                                initial_stop_price=existing_stop.initial_stop_price,
+                                broker_order_id=existing_stop.broker_order_id,
+                                signal_timestamp=existing_stop.signal_timestamp,
+                            ),
+                            commit=False,
+                        )
+                    protective_stop_client_order_id = None
+        elif (
+            matched_order.intent_type in {"stop", "exit"}
+            and normalized.status == "filled"
+            and matched_order.status not in {"filled"}
+        ):
+            runtime.position_store.delete(
+                symbol=matched_order.symbol,
+                trading_mode=matched_order.trading_mode,
+                strategy_version=matched_order.strategy_version,
+                strategy_name=matched_order.strategy_name or "breakout",
+                commit=False,
+            )
+        elif (
+            matched_order.intent_type == "entry"
+            and normalized.status in {"cancelled", "expired"}
+        ):
+            runtime.position_store.delete(
+                symbol=matched_order.symbol,
+                trading_mode=matched_order.trading_mode,
+                strategy_version=matched_order.strategy_version,
+                strategy_name=matched_order.strategy_name or "breakout",
+                commit=False,
+            )
+            protective_stop_client_order_id_cancel = _protective_stop_client_order_id(
+                matched_order.client_order_id
+            )
+            pending_stop = runtime.order_store.load(protective_stop_client_order_id_cancel)
+            if pending_stop is not None:
+                runtime.order_store.save(
+                    OrderRecord(
+                        client_order_id=pending_stop.client_order_id,
+                        symbol=pending_stop.symbol,
+                        side=pending_stop.side,
+                        intent_type=pending_stop.intent_type,
+                        status="cancelled",
+                        quantity=pending_stop.quantity,
+                        trading_mode=pending_stop.trading_mode,
+                        strategy_version=pending_stop.strategy_version,
+                        created_at=pending_stop.created_at,
+                        updated_at=timestamp,
+                        stop_price=pending_stop.stop_price,
+                        limit_price=pending_stop.limit_price,
+                        initial_stop_price=pending_stop.initial_stop_price,
+                        broker_order_id=pending_stop.broker_order_id,
+                        signal_timestamp=pending_stop.signal_timestamp,
+                    ),
+                    commit=False,
+                )
+        if protective_stop_client_order_id is None:
+            audit_payload.pop("protective_stop_client_order_id", None)
+        runtime.audit_event_store.append(
+            AuditEvent(
+                event_type="trade_update_applied",
+                symbol=matched_order.symbol,
+                payload=audit_payload,
+                created_at=timestamp,
+            ),
+            commit=False,
+        )
+        runtime.connection.commit()
+    except Exception:
+        try:
+            runtime.connection.rollback()
+        except Exception:
+            pass
+        raise
     return {
         "matched_order_id": matched_order.client_order_id,
         "status": normalized.status,

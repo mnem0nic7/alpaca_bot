@@ -248,36 +248,43 @@ def _execute_update_stop(
                 strategy_name,
             )
             return None
-        runtime.order_store.save(updated_order, commit=False)
-        runtime.position_store.save(
-            PositionRecord(
-                symbol=position.symbol,
-                trading_mode=position.trading_mode,
-                strategy_version=position.strategy_version,
-                quantity=position.quantity,
-                entry_price=position.entry_price,
-                stop_price=stop_price,
-                initial_stop_price=position.initial_stop_price,
-                opened_at=position.opened_at,
-                updated_at=now,
-                strategy_name=strategy_name,
-            ),
-            commit=False,
-        )
-        runtime.audit_event_store.append(
-            AuditEvent(
-                event_type="cycle_intent_executed",
-                symbol=symbol,
-                payload={
-                    "intent_type": "update_stop",
-                    "action": action,
-                    "stop_price": stop_price,
-                },
-                created_at=now,
-            ),
-            commit=False,
-        )
-        runtime.connection.commit()
+        try:
+            runtime.order_store.save(updated_order, commit=False)
+            runtime.position_store.save(
+                PositionRecord(
+                    symbol=position.symbol,
+                    trading_mode=position.trading_mode,
+                    strategy_version=position.strategy_version,
+                    quantity=position.quantity,
+                    entry_price=position.entry_price,
+                    stop_price=stop_price,
+                    initial_stop_price=position.initial_stop_price,
+                    opened_at=position.opened_at,
+                    updated_at=now,
+                    strategy_name=strategy_name,
+                ),
+                commit=False,
+            )
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="cycle_intent_executed",
+                    symbol=symbol,
+                    payload={
+                        "intent_type": "update_stop",
+                        "action": action,
+                        "stop_price": stop_price,
+                    },
+                    created_at=now,
+                ),
+                commit=False,
+            )
+            runtime.connection.commit()
+        except Exception:
+            try:
+                runtime.connection.rollback()
+            except Exception:
+                pass
+            raise
     return action
 
 

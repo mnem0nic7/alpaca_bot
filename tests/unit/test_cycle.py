@@ -171,6 +171,10 @@ def test_run_cycle_saves_all_entry_intents_with_single_commit() -> None:
         "All order_store.save() calls must use commit=False; "
         f"got commit_args={order_store.commit_args}"
     )
+    assert all(not c for c in audit_store.commit_args), (
+        "All audit_event_store.append() calls must use commit=False; "
+        f"got commit_args={audit_store.commit_args}"
+    )
     assert connection.commit_count == 1, (
         f"Exactly one connection.commit() must fire; got {connection.commit_count}"
     )
