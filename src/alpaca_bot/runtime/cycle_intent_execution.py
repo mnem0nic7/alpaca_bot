@@ -394,53 +394,74 @@ def _execute_exit(
         # set position_already_gone, and permanently abandon the exit).
         if canceled_order_records:
             with lock_ctx:
-                for record in canceled_order_records:
-                    runtime.order_store.save(record, commit=False)
-                runtime.connection.commit()
+                try:
+                    for record in canceled_order_records:
+                        runtime.order_store.save(record, commit=False)
+                    runtime.connection.commit()
+                except Exception:
+                    try:
+                        runtime.connection.rollback()
+                    except Exception:
+                        pass
+                    raise
         return canceled_stop_count, 0
 
     if position_already_gone:
         with lock_ctx:
-            for record in canceled_order_records:
-                runtime.order_store.save(record, commit=False)
-            runtime.audit_event_store.append(
-                AuditEvent(
-                    event_type="cycle_intent_executed",
-                    symbol=symbol,
-                    payload={
-                        "intent_type": "exit",
-                        "action": "skipped_position_already_gone",
-                        "reason": reason,
-                        "canceled_stop_count": canceled_stop_count,
-                    },
-                    created_at=now,
-                ),
-                commit=False,
-            )
-            runtime.connection.commit()
+            try:
+                for record in canceled_order_records:
+                    runtime.order_store.save(record, commit=False)
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="cycle_intent_executed",
+                        symbol=symbol,
+                        payload={
+                            "intent_type": "exit",
+                            "action": "skipped_position_already_gone",
+                            "reason": reason,
+                            "canceled_stop_count": canceled_stop_count,
+                        },
+                        created_at=now,
+                    ),
+                    commit=False,
+                )
+                runtime.connection.commit()
+            except Exception:
+                try:
+                    runtime.connection.rollback()
+                except Exception:
+                    pass
+                raise
         return canceled_stop_count, 0
 
     # Re-verify position still exists before submitting exit — prevents naked-short
     # if the fill stream closed the position between cancel_order and here.
     with lock_ctx:
         if (symbol, strategy_name) not in _positions_by_symbol(runtime, settings):
-            for record in canceled_order_records:
-                runtime.order_store.save(record, commit=False)
-            runtime.audit_event_store.append(
-                AuditEvent(
-                    event_type="cycle_intent_executed",
-                    symbol=symbol,
-                    payload={
-                        "intent_type": "exit",
-                        "action": "skipped_position_already_gone",
-                        "reason": reason,
-                        "canceled_stop_count": canceled_stop_count,
-                    },
-                    created_at=now,
-                ),
-                commit=False,
-            )
-            runtime.connection.commit()
+            try:
+                for record in canceled_order_records:
+                    runtime.order_store.save(record, commit=False)
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="cycle_intent_executed",
+                        symbol=symbol,
+                        payload={
+                            "intent_type": "exit",
+                            "action": "skipped_position_already_gone",
+                            "reason": reason,
+                            "canceled_stop_count": canceled_stop_count,
+                        },
+                        created_at=now,
+                    ),
+                    commit=False,
+                )
+                runtime.connection.commit()
+            except Exception:
+                try:
+                    runtime.connection.rollback()
+                except Exception:
+                    pass
+                raise
             return canceled_stop_count, 0
 
     client_order_id = _exit_client_order_id(

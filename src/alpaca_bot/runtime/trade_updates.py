@@ -266,7 +266,7 @@ def _apply_trade_update_locked(
                             quantity=normalized.filled_qty if normalized.filled_qty is not None else matched_order.quantity,
                             trading_mode=matched_order.trading_mode,
                             strategy_version=matched_order.strategy_version,
-                            strategy_name=matched_order.strategy_name,
+                            strategy_name=matched_order.strategy_name or "breakout",
                             created_at=timestamp,
                             updated_at=timestamp,
                             stop_price=matched_order.initial_stop_price,

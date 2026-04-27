@@ -80,6 +80,7 @@ def recover_startup_state(
 ) -> StartupRecoveryReport:
     timestamp = _resolve_now(now)
     mismatches: list[str] = []
+    missing_entry_price_symbols: list[str] = []
 
     local_positions = runtime.position_store.list_all(
         trading_mode=settings.trading_mode,
@@ -103,14 +104,8 @@ def recover_startup_state(
             else:
                 stop_price = 0.0
                 initial_stop_price = 0.0
-                runtime.audit_event_store.append(
-                    AuditEvent(
-                        event_type="startup_recovery_missing_entry_price",
-                        payload={"symbol": broker_position.symbol},
-                        created_at=timestamp,
-                    ),
-                    commit=False,
-                )
+                mismatches.append(f"missing entry price at startup: {broker_position.symbol}")
+                missing_entry_price_symbols.append(broker_position.symbol)
             synced_positions.append(
                 PositionRecord(
                     symbol=broker_position.symbol,
@@ -294,6 +289,15 @@ def recover_startup_state(
                     initial_stop_price=order.initial_stop_price,
                     broker_order_id=order.broker_order_id,
                     signal_timestamp=order.signal_timestamp,
+                ),
+                commit=False,
+            )
+        for sym in missing_entry_price_symbols:
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="startup_recovery_missing_entry_price",
+                    payload={"symbol": sym},
+                    created_at=timestamp,
                 ),
                 commit=False,
             )
