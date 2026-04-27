@@ -1949,6 +1949,79 @@ def test_execute_update_stop_uses_commit_false_for_all_writes() -> None:
     )
 
 
+def test_execute_update_stop_does_not_submit_to_broker_when_stop_is_pending_submit() -> None:
+    """UPDATE_STOP must not call broker.submit_stop_order when an unsubmitted (pending_submit)
+    protective stop already exists.
+
+    Sequence: entry fills → trade-update stream writes pending_submit stop (broker_order_id=None)
+    → next cycle fires UPDATE_STOP for trailing-stop improvement → _execute_update_stop must
+    update the pending record's stop_price in-place and let dispatch_pending_orders submit it.
+    Calling submit_stop_order here AND dispatch both submitting would create two live sell-stop
+    orders at the broker for the same position.
+    """
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+
+    # pending_submit stop with no broker_order_id — as written by apply_trade_update on fill
+    pending_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:pending",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id=None,
+        signal_timestamp=now,
+    )
+    position = _make_aapl_position(now=now)
+
+    order_store = RecordingOrderStore(orders=[pending_stop])
+    position_store = RecordingPositionStore(positions=[position])
+    audit_store = RecordingAuditEventStore()
+    broker = RecordingBroker()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=position_store,
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="AAPL",
+                timestamp=now,
+                stop_price=110.50,
+            )],
+        ),
+        now=now,
+    )
+
+    assert not broker.stop_calls, (
+        "submit_stop_order must NOT be called when a pending_submit stop exists — "
+        "dispatch_pending_orders would submit the same stop, creating a duplicate"
+    )
+    assert not broker.replace_calls, "replace_order must not be called for an unsubmitted stop"
+    # The DB record must be updated with the new stop_price so dispatch submits correctly
+    assert len(order_store.saved) == 1
+    saved = order_store.saved[0]
+    assert saved.stop_price == 110.50, "pending_submit record must be updated with the improved stop"
+    assert saved.broker_order_id is None, "broker_order_id must remain None — not yet dispatched"
+    assert saved.status == "pending_submit", "status must remain pending_submit for dispatch"
+
+
 def test_execute_update_stop_no_op_when_stop_not_improving() -> None:
     """_execute_update_stop must be a no-op when the new stop_price <= current position.stop_price.
     No broker call and no DB write should occur — this is the hot path in a trending session."""

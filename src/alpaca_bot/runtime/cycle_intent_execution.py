@@ -207,6 +207,29 @@ def _execute_update_stop(
                 strategy_name=strategy_name,
             )
             action = "replaced"
+        elif active_stop is not None and not active_stop.broker_order_id:
+            # The stop exists as a pending_submit but hasn't been dispatched yet.
+            # Update its price in-place; dispatch_pending_orders will submit with the
+            # correct price. Submitting to the broker here would create a duplicate
+            # stop alongside the one dispatch will submit from the same record.
+            updated_order = OrderRecord(
+                client_order_id=active_stop.client_order_id,
+                symbol=symbol,
+                side=active_stop.side,
+                intent_type="stop",
+                status="pending_submit",
+                quantity=active_stop.quantity,
+                trading_mode=active_stop.trading_mode,
+                strategy_version=active_stop.strategy_version,
+                created_at=active_stop.created_at,
+                updated_at=now,
+                stop_price=stop_price,
+                initial_stop_price=active_stop.initial_stop_price,
+                broker_order_id=None,
+                signal_timestamp=active_stop.signal_timestamp,
+                strategy_name=strategy_name,
+            )
+            action = "updated_pending"
         else:
             client_order_id = _stop_client_order_id(
                 settings=settings,
