@@ -86,27 +86,26 @@ def evaluate_cycle(
 
     intents: list[CycleIntent] = []
     open_position_symbols = {position.symbol for position in open_positions}
+    past_flatten = is_past_flatten_time(now, settings)
 
     for position in open_positions:
+        if past_flatten:
+            if not flatten_complete:
+                intents.append(
+                    CycleIntent(
+                        intent_type=CycleIntentType.EXIT,
+                        symbol=position.symbol,
+                        timestamp=now,
+                        reason="eod_flatten",
+                        strategy_name=strategy_name,
+                    )
+                )
+            continue
+
         bars = intraday_bars_by_symbol.get(position.symbol, ())
         if not bars:
             continue
         latest_bar = bars[-1]
-
-        if is_past_flatten_time(latest_bar.timestamp, settings):
-            if flatten_complete:
-                # Flatten already happened this session — skip to avoid duplicate orders.
-                continue
-            intents.append(
-                CycleIntent(
-                    intent_type=CycleIntentType.EXIT,
-                    symbol=position.symbol,
-                    timestamp=latest_bar.timestamp,
-                    reason="eod_flatten",
-                    strategy_name=strategy_name,
-                )
-            )
-            continue
 
         if latest_bar.high >= position.entry_price + position.risk_per_share:
             new_stop = round(max(position.stop_price, position.entry_price, latest_bar.low), 2)

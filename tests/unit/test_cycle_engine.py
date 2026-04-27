@@ -36,6 +36,8 @@ def make_settings(**overrides: str) -> Settings:
 
 
 def make_daily_bars(symbol: str = "AAPL") -> list[Bar]:
+    # 21 bars so daily_trend_filter_passes works with sma_period=20 (needs period+1 bars
+    # to exclude the potentially-partial last bar from the SMA window).
     start = datetime(2026, 3, 26, 20, 0, tzinfo=timezone.utc)
     return [
         Bar(
@@ -47,7 +49,7 @@ def make_daily_bars(symbol: str = "AAPL") -> list[Bar]:
             close=90.0 + index,
             volume=1_000_000 + index * 1000,
         )
-        for index in range(20)
+        for index in range(21)
     ]
 
 
@@ -114,10 +116,11 @@ def test_evaluate_cycle_emits_entry_intent_for_valid_breakout() -> None:
 
     assert [intent.intent_type for intent in result.intents] == [CycleIntentType.ENTRY]
     assert result.intents[0].symbol == "AAPL"
-    assert result.intents[0].quantity == 44
-    assert result.intents[0].stop_price == 111.01
-    assert result.intents[0].limit_price == 111.12
+    # stop_price anchors to breakout_level (110.0) + buffer, not signal_bar.high (111.0).
+    assert result.intents[0].stop_price == 110.01
+    assert result.intents[0].limit_price == 110.12
     assert result.intents[0].initial_stop_price == 109.89
+    assert result.intents[0].quantity == 45
 
 
 def test_evaluate_cycle_skips_entry_when_symbol_already_traded_today() -> None:
@@ -713,3 +716,79 @@ def test_evaluate_cycle_emits_no_entry_when_signal_has_inverted_stop() -> None:
     )
     entry_intents = [i for i in result.intents if i.intent_type == CycleIntentType.ENTRY]
     assert entry_intents == [], "No entries expected when stop_price >= limit_price"
+
+
+def test_eod_flatten_uses_now_not_bar_timestamp_for_time_check() -> None:
+    """EOD flatten must use the cycle wall-clock `now`, not the latest bar's timestamp.
+
+    If bars are stale (or unavailable), using bar.timestamp would miss the flatten window.
+    Using `now` ensures positions are always exited at EOD regardless of bar staleness.
+    """
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    # now is past flatten time (15:45 ET = 19:45 UTC)
+    past_flatten_now = datetime(2026, 4, 24, 20, 0, tzinfo=timezone.utc)
+    # Bar timestamp is before flatten time (would NOT trigger flatten if used instead of now)
+    early_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 18, 0, tzinfo=timezone.utc),
+        open=110.0, high=111.0, low=109.5, close=110.5, volume=1500,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 16, 0, tzinfo=timezone.utc),
+        entry_price=110.0, quantity=45, entry_level=109.9,
+        initial_stop_price=109.89, stop_price=109.89,
+        trailing_active=False, highest_price=110.0,
+    )
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=past_flatten_now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [early_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+    )
+
+    exit_intents = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert len(exit_intents) == 1, "EOD flatten must fire based on now, not bar.timestamp"
+    assert exit_intents[0].reason == "eod_flatten"
+
+
+def test_eod_flatten_fires_even_when_no_bars_available_for_symbol() -> None:
+    """Positions must be exited at EOD even when the symbol has no bars.
+
+    Without bars, the engine previously skipped the symbol entirely, leaving
+    positions open past the flatten window.
+    """
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    past_flatten_now = datetime(2026, 4, 24, 20, 0, tzinfo=timezone.utc)
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 16, 0, tzinfo=timezone.utc),
+        entry_price=110.0, quantity=45, entry_level=109.9,
+        initial_stop_price=109.89, stop_price=109.89,
+        trailing_active=False, highest_price=110.0,
+    )
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=past_flatten_now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={},  # no bars for AAPL
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+    )
+
+    exit_intents = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert len(exit_intents) == 1, "EOD flatten must emit EXIT even without bars"
+    assert exit_intents[0].symbol == "AAPL"
+    assert exit_intents[0].reason == "eod_flatten"

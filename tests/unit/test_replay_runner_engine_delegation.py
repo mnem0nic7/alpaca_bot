@@ -57,6 +57,7 @@ def make_settings(**overrides: str) -> Settings:
 
 
 def _make_daily_bars(symbol: str = "AAPL") -> list[Bar]:
+    # 21 bars so daily_trend_filter_passes works with sma_period=20 (needs period+1 bars).
     start = datetime(2026, 3, 26, 20, 0, tzinfo=timezone.utc)
     return [
         Bar(
@@ -68,7 +69,7 @@ def _make_daily_bars(symbol: str = "AAPL") -> list[Bar]:
             close=90.0 + i,
             volume=1_000_000 + i * 1000,
         )
-        for i in range(20)
+        for i in range(21)
     ]
 
 
@@ -272,28 +273,16 @@ def test_runner_emits_stop_hit_when_bar_low_crosses_stop_price() -> None:
             volume=2000,
         )
     )
-    # Fill happens here (open=111.02 > stop_price ~110.01)
+    # Fill happens here (open=110.05 fills at breakout_level+buffer=110.01, limit=110.12)
     bars.append(
         Bar(
             symbol="AAPL",
             timestamp=bars[-1].timestamp.replace(hour=18, minute=45),
-            open=111.02,
+            open=110.05,
             high=111.2,
-            low=110.95,
-            close=111.05,
+            low=108.5,
+            close=108.8,
             volume=1800,
-        )
-    )
-    # Stop hit: low crosses well below initial stop
-    bars.append(
-        Bar(
-            symbol="AAPL",
-            timestamp=bars[-1].timestamp.replace(hour=19, minute=0),
-            open=110.0,
-            high=110.3,
-            low=109.5,
-            close=109.8,
-            volume=1900,
         )
     )
 
@@ -355,7 +344,7 @@ def test_runner_emits_stop_updated_from_engine_decision() -> None:
         f"Expected STOP_UPDATED event, got: {event_types}"
     )
     stop_event = next(e for e in result.events if e.event_type == IntentType.STOP_UPDATED)
-    assert stop_event.details["stop_price"] == 111.7
+    assert stop_event.details["stop_price"] == 110.05
 
 
 # ---------------------------------------------------------------------------

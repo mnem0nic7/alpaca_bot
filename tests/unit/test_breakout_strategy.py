@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from alpaca_bot.domain.models import Bar
 from alpaca_bot.risk.atr import calculate_atr
 from alpaca_bot.strategy.breakout import evaluate_breakout_signal
@@ -103,9 +105,77 @@ def test_breakout_initial_stop_uses_atr_when_enough_daily_bars():
     assert result.initial_stop_price == expected_stop
 
 
+def test_breakout_entry_stop_anchored_to_breakout_level_not_signal_bar_high():
+    """Entry stop trigger must use breakout_level + buffer, not signal_bar.high + buffer.
+
+    When the signal bar runs up well above the breakout level, using signal_bar.high
+    would inflate the trigger price and reduce fill rate on subsequent bars.
+    """
+    settings = _make_settings()
+    daily_bars = _make_daily_bars(n=6)
+    # Signal bar high (102.0) is 2.0 above breakout_level (100.0)
+    intraday_bars, signal_index = _make_breakout_intraday_bars(
+        lookback_high=100.0, signal_high=102.0, signal_close=101.5
+    )
+
+    result = evaluate_breakout_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+    assert result is not None
+    breakout_level = 100.0
+    assert result.stop_price == round(breakout_level + settings.entry_stop_price_buffer, 2)
+    assert result.limit_price == round(result.stop_price * (1 + settings.stop_limit_buffer_pct), 2)
+
+
+def test_breakout_volume_lookback_uses_relative_volume_lookback_bars_not_breakout_lookback_bars():
+    """RELATIVE_VOLUME_LOOKBACK_BARS must be the window for average volume, not BREAKOUT_LOOKBACK_BARS.
+
+    When the two configs differ, relative_volume is computed only from the
+    relative_volume_lookback_bars window.
+    """
+    # Use a short vol lookback (2) and a longer price lookback (5)
+    settings = _make_settings(breakout_lookback_bars=5, relative_volume_lookback_bars=2)
+    daily_bars = _make_daily_bars(n=6)
+    ny = ZoneInfo("America/New_York")
+    base = datetime(2026, 1, 2, 10, 0, tzinfo=ny)
+
+    volumes = [50_000.0, 60_000.0, 70_000.0, 80_000.0, 90_000.0]
+    bars = []
+    for i, vol in enumerate(volumes):
+        bars.append(Bar(
+            symbol="AAPL",
+            timestamp=base + timedelta(minutes=15 * i),
+            open=99.5, high=100.0, low=98.5, close=99.8,
+            volume=vol,
+        ))
+    # Signal bar: high breaks above lookback, volume >> avg of last 2 bars (80k+90k)/2=85k
+    bars.append(Bar(
+        symbol="AAPL",
+        timestamp=base + timedelta(minutes=15 * 5),
+        open=100.0, high=102.0, low=99.5, close=101.5,
+        volume=300_000.0,  # 300k / 85k = 3.5x > threshold=1.5 ✓
+    ))
+    signal_index = len(bars) - 1
+
+    result = evaluate_breakout_signal(
+        symbol="AAPL",
+        intraday_bars=bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+    assert result is not None
+    # Relative volume = 300k / ((80k + 90k) / 2) = 300k / 85k ≈ 3.53
+    assert result.relative_volume == pytest.approx(300_000.0 / 85_000.0, rel=1e-3)
+
+
 def test_breakout_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
-    settings = _make_settings(atr_period=3, daily_sma_period=3)
-    daily_bars = _make_daily_bars(n=3)  # 3 < atr_period+1=4 → ATR returns None
+    settings = _make_settings(atr_period=3, daily_sma_period=2)
+    daily_bars = _make_daily_bars(n=3)  # 3 < atr_period+1=4 → ATR returns None; 3 >= sma_period+1=3 → trend filter passes
     intraday_bars, signal_index = _make_breakout_intraday_bars()
 
     assert calculate_atr(daily_bars, 3) is None

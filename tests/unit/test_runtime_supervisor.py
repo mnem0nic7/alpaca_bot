@@ -1709,12 +1709,13 @@ def _make_minimal_supervisor(
     order_store: RecordingOrderStore,
     broker,
     now: datetime,
+    equity_baseline: float | None = None,
 ):
     """Build a minimal RuntimeSupervisor with injected fakes for loss limit tests."""
+    from alpaca_bot.strategy.breakout import session_day as _session_day
     market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
     stream = FakeStream()
     runtime = make_runtime_context(settings, order_store=order_store)
-    monkeypatch_targets = []
 
     supervisor = RuntimeSupervisor(
         settings=settings,
@@ -1728,6 +1729,9 @@ def _make_minimal_supervisor(
         cycle_intent_executor=lambda **kwargs: None,
         order_dispatcher=lambda **kwargs: {"submitted_count": 0},
     )
+    if equity_baseline is not None:
+        session_date = _session_day(now, settings)
+        supervisor._session_equity_baseline[session_date] = equity_baseline
     return supervisor, runtime
 
 
@@ -1763,10 +1767,10 @@ def test_daily_loss_limit_disables_entries_and_emits_audit_event_when_breached(
         }
     )
     now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
-    # equity=10_000, limit_pct=0.05 → limit=500; pnl=-600 → breached
+    # baseline=10_000, equity=9_400 → total_pnl=-600; limit_pct=0.05 → limit=500 → breached
     order_store = RecordingOrderStore(daily_pnl=-600.0)
     broker = FakeBroker(
-        account=BrokerAccount(equity=10_000.0, buying_power=20_000.0, trading_blocked=False)
+        account=BrokerAccount(equity=9_400.0, buying_power=18_800.0, trading_blocked=False)
     )
     supervisor, runtime = _make_minimal_supervisor(
         module,
@@ -1775,6 +1779,7 @@ def test_daily_loss_limit_disables_entries_and_emits_audit_event_when_breached(
         order_store=order_store,
         broker=broker,
         now=now,
+        equity_baseline=10_000.0,
     )
 
     monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
@@ -1793,6 +1798,7 @@ def test_daily_loss_limit_disables_entries_and_emits_audit_event_when_breached(
     assert len(breach_events) == 1, "Expected exactly one daily_loss_limit_breached audit event"
     payload = breach_events[0].payload
     assert payload["realized_pnl"] == -600.0
+    assert payload["total_pnl"] == pytest.approx(-600.0)
     assert payload["limit"] == pytest.approx(500.0)
 
 
@@ -1884,9 +1890,10 @@ def test_daily_loss_limit_breach_fires_notifier(monkeypatch) -> None:
         }
     )
     now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    # baseline=10_000, equity=9_400 → total_pnl=-600; limit=500 → breached
     order_store = RecordingOrderStore(daily_pnl=-600.0)
     broker = FakeBroker(
-        account=BrokerAccount(equity=10_000.0, buying_power=20_000.0, trading_blocked=False)
+        account=BrokerAccount(equity=9_400.0, buying_power=18_800.0, trading_blocked=False)
     )
 
     notifier_calls: list[tuple[str, str]] = []
@@ -1895,6 +1902,7 @@ def test_daily_loss_limit_breach_fires_notifier(monkeypatch) -> None:
         def send(self, subject: str, body: str) -> None:
             notifier_calls.append((subject, body))
 
+    from alpaca_bot.strategy.breakout import session_day as _session_day
     market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
     stream = FakeStream()
     runtime = make_runtime_context(settings, order_store=order_store)
@@ -1912,6 +1920,7 @@ def test_daily_loss_limit_breach_fires_notifier(monkeypatch) -> None:
         cycle_intent_executor=lambda **kwargs: None,
         order_dispatcher=lambda **kwargs: {"submitted_count": 0},
     )
+    supervisor._session_equity_baseline[_session_day(now, settings)] = 10_000.0
 
     monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
     monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
@@ -2500,4 +2509,143 @@ def test_stream_thread_stopped_audit_rollback_on_failure() -> None:
 
     assert rollback_counter["count"] >= 1, (
         "rollback() must be called when trade_update_stream_stopped audit append fails"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 40: loss limit uses total_pnl (equity delta), not just realized PnL
+# ---------------------------------------------------------------------------
+
+
+def test_daily_loss_limit_uses_unrealized_pnl_via_equity_delta(monkeypatch) -> None:
+    """Loss limit must use total_pnl = account.equity - baseline_equity,
+    which includes unrealized losses on open positions.
+
+    Scenario: realized_pnl=0 (no closed trades) but equity dropped 600
+    due to an open losing position. Limit of 500 should be breached.
+    """
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = Settings.from_env(
+        {
+            "TRADING_MODE": "paper",
+            "ENABLE_LIVE_TRADING": "false",
+            "STRATEGY_VERSION": "v1-breakout",
+            "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+            "MARKET_DATA_FEED": "sip",
+            "SYMBOLS": "AAPL",
+            "DAILY_SMA_PERIOD": "20",
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "ENTRY_TIMEFRAME_MINUTES": "15",
+            "RISK_PER_TRADE_PCT": "0.0025",
+            "MAX_POSITION_PCT": "0.05",
+            "MAX_OPEN_POSITIONS": "3",
+            "DAILY_LOSS_LIMIT_PCT": "0.05",
+            "STOP_LIMIT_BUFFER_PCT": "0.001",
+            "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+            "ENTRY_STOP_PRICE_BUFFER": "0.01",
+            "ENTRY_WINDOW_START": "10:00",
+            "ENTRY_WINDOW_END": "15:30",
+            "FLATTEN_TIME": "15:45",
+        }
+    )
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    # realized_pnl=0 (no closed trades) but equity dropped due to open position
+    order_store = RecordingOrderStore(daily_pnl=0.0)
+    broker = FakeBroker(
+        account=BrokerAccount(equity=9_400.0, buying_power=18_800.0, trading_blocked=False)
+    )
+    supervisor, runtime = _make_minimal_supervisor(
+        module,
+        RuntimeSupervisor,
+        settings=settings,
+        order_store=order_store,
+        broker=broker,
+        now=now,
+        equity_baseline=10_000.0,  # equity dropped 600 → total_pnl=-600 → breach
+    )
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    assert report.entries_disabled is True, (
+        "Entries must be disabled when unrealized loss exceeds daily loss limit"
+    )
+    breach_events = [
+        e for e in runtime.audit_event_store.appended
+        if getattr(e, "event_type", None) == "daily_loss_limit_breached"
+    ]
+    assert len(breach_events) == 1
+    assert breach_events[0].payload["realized_pnl"] == 0.0
+    assert breach_events[0].payload["total_pnl"] == pytest.approx(-600.0)
+
+
+# ---------------------------------------------------------------------------
+# Round 40: flatten_complete only set when executor succeeds, not on exception
+# ---------------------------------------------------------------------------
+
+
+def test_flatten_complete_not_set_when_executor_raises(monkeypatch) -> None:
+    """flatten_complete must NOT be written when execute_cycle_intents raises.
+
+    If the executor crashes during EOD flatten, the flag must remain False so
+    that the next cycle retries the flatten instead of silently skipping it.
+    """
+    from alpaca_bot.core.engine import CycleIntent, CycleIntentType, CycleResult
+
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    # 20:00 UTC = 16:00 ET — past the 15:45 flatten time
+    now = datetime(2026, 4, 24, 20, 0, tzinfo=timezone.utc)
+
+    session_state_store = RecordingDailySessionStateStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=RecordingPositionStore(),
+        daily_session_state_store=session_state_store,
+    )
+
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    stream = FakeStream()
+
+    flatten_intent = CycleIntent(
+        intent_type=CycleIntentType.EXIT,
+        symbol="AAPL",
+        timestamp=now,
+        reason="eod_flatten",
+    )
+    fake_cycle_result = CycleResult(as_of=now, intents=[flatten_intent])
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: fake_cycle_result)
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+
+    def _raising_executor(**kwargs):
+        raise RuntimeError("broker unavailable")
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_intent_executor=_raising_executor,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    flatten_complete_saved = [
+        s for s in session_state_store.saved if s.flatten_complete is True
+    ]
+    assert flatten_complete_saved == [], (
+        "flatten_complete must NOT be written when execute_cycle_intents raises"
     )

@@ -324,8 +324,8 @@ def test_momentum_initial_stop_uses_atr_when_enough_daily_bars():
 def test_momentum_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
     from alpaca_bot.strategy.momentum import evaluate_momentum_signal
     from alpaca_bot.risk.atr import calculate_atr
-    settings = _make_settings(atr_period=3, daily_sma_period=3)
-    daily_bars = _make_daily_bars(n=3, high=100.0)  # 3 < atr_period+1=4 → ATR returns None
+    settings = _make_settings(atr_period=3, daily_sma_period=2)
+    daily_bars = _make_daily_bars(n=3, high=100.0)  # 3 < atr_period+1=4 → ATR returns None; 3 >= sma_period+1=3 → trend filter passes
     intraday_bars = _make_intraday_bars(n=6, high=102.0, close=101.5)
 
     assert calculate_atr(daily_bars, 3) is None

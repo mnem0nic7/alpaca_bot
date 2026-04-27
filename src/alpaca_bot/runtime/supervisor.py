@@ -265,7 +265,10 @@ class RuntimeSupervisor:
                 )
         baseline_equity = self._session_equity_baseline[session_date]
         loss_limit = self.settings.daily_loss_limit_pct * baseline_equity
-        daily_loss_limit_breached = realized_pnl < -loss_limit
+        # Include unrealized losses via broker-reported equity delta so open
+        # positions with large drawdowns trigger the limit before stops fill.
+        total_pnl = account.equity - baseline_equity
+        daily_loss_limit_breached = total_pnl < -loss_limit
         if daily_loss_limit_breached and session_date not in self._loss_limit_alerted:
             self._loss_limit_alerted.add(session_date)
             self._append_audit(
@@ -273,6 +276,7 @@ class RuntimeSupervisor:
                     event_type="daily_loss_limit_breached",
                     payload={
                         "realized_pnl": realized_pnl,
+                        "total_pnl": total_pnl,
                         "limit": loss_limit,
                         "timestamp": timestamp.isoformat(),
                     },
@@ -284,8 +288,8 @@ class RuntimeSupervisor:
                     self._notifier.send(
                         subject="Daily loss limit breached",
                         body=(
-                            f"Realized PnL {realized_pnl:.2f} exceeded limit "
-                            f"{-loss_limit:.2f}. Entries disabled for the session."
+                            f"Total PnL {total_pnl:.2f} (realized {realized_pnl:.2f}) "
+                            f"exceeded limit {-loss_limit:.2f}. Entries disabled for the session."
                         ),
                     )
                 except Exception:
@@ -394,18 +398,6 @@ class RuntimeSupervisor:
                     getattr(intent, "reason", None) in {"eod_flatten", "loss_limit_flatten"}
                     for intent in getattr(cycle_result, "intents", [])
                 )
-                if has_flatten_intents:
-                    self._save_session_state(
-                        DailySessionState(
-                            session_date=session_date,
-                            trading_mode=self.settings.trading_mode,
-                            strategy_version=self.settings.strategy_version,
-                            strategy_name=strategy_name,
-                            entries_disabled=True,
-                            flatten_complete=True,
-                            updated_at=timestamp,
-                        )
-                    )
 
                 exec_report = None
                 if status is not TradingStatusValue.HALTED:
@@ -422,6 +414,35 @@ class RuntimeSupervisor:
                             "execute_cycle_intents failed for strategy %s; continuing to dispatch",
                             strategy_name,
                         )
+                        if has_flatten_intents and self._notifier is not None:
+                            try:
+                                self._notifier.send(
+                                    subject=f"EOD/loss-limit flatten failed: {strategy_name}",
+                                    body=(
+                                        f"execute_cycle_intents raised during flatten for "
+                                        f"strategy {strategy_name}. Open positions may remain."
+                                    ),
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "Notifier failed to send flatten failure alert for %s",
+                                    strategy_name,
+                                )
+
+                # Only mark flatten_complete if the executor did not raise.
+                # exec_report is None only when _cycle_intent_executor raised an exception.
+                if has_flatten_intents and exec_report is not None:
+                    self._save_session_state(
+                        DailySessionState(
+                            session_date=session_date,
+                            trading_mode=self.settings.trading_mode,
+                            strategy_version=self.settings.strategy_version,
+                            strategy_name=strategy_name,
+                            entries_disabled=True,
+                            flatten_complete=True,
+                            updated_at=timestamp,
+                        )
+                    )
 
                 # Only free slots for exits that were actually submitted to the broker.
                 # Using intent count would optimistically free slots for exits that may

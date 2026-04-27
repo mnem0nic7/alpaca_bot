@@ -51,8 +51,8 @@ def test_breakout_success_golden_scenario() -> None:
         IntentType.STOP_UPDATED,
         IntentType.EOD_EXIT,
     ]
-    assert result.events[1].details["entry_price"] == 111.02
-    assert result.events[2].details["stop_price"] == 111.7
+    assert result.events[1].details["entry_price"] == 110.05
+    assert result.events[2].details["stop_price"] == 110.05
     assert result.events[3].details["exit_price"] == 112.5
     assert result.final_position is None
 
@@ -114,10 +114,10 @@ def test_replay_runner_limits_symbol_to_one_trade_per_day() -> None:
             Bar(
                 symbol="AAPL",
                 timestamp=bars[-1].timestamp.replace(hour=18, minute=45),
-                open=111.02,
+                open=110.05,
                 high=111.2,
-                low=110.95,
-                close=111.05,
+                low=109.4,
+                close=109.5,
                 volume=1800,
             ),
             Bar(

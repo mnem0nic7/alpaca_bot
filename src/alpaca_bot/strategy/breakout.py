@@ -23,10 +23,11 @@ def session_day(timestamp: datetime, settings: Settings) -> date:
 
 
 def daily_trend_filter_passes(daily_bars: Sequence[Bar], settings: Settings) -> bool:
-    if len(daily_bars) < settings.daily_sma_period:
+    if len(daily_bars) < settings.daily_sma_period + 1:
         return False
 
-    window = daily_bars[-settings.daily_sma_period :]
+    # Exclude the last bar which may be a partial (intraday) session bar.
+    window = daily_bars[-settings.daily_sma_period - 1 : -1]
     sma = sum(bar.close for bar in window) / len(window)
     latest_close = window[-1].close
     return latest_close > sma
@@ -44,7 +45,8 @@ def evaluate_breakout_signal(
         return None
     if not intraday_bars or signal_index < 0 or signal_index >= len(intraday_bars):
         return None
-    if signal_index < settings.breakout_lookback_bars:
+    min_lookback = max(settings.breakout_lookback_bars, settings.relative_volume_lookback_bars)
+    if signal_index < min_lookback:
         return None
 
     signal_bar = intraday_bars[signal_index]
@@ -59,7 +61,10 @@ def evaluate_breakout_signal(
         signal_index - settings.breakout_lookback_bars : signal_index
     ]
     breakout_level = max(bar.high for bar in lookback)
-    average_volume = sum(bar.volume for bar in lookback) / len(lookback)
+    vol_lookback = intraday_bars[
+        signal_index - settings.relative_volume_lookback_bars : signal_index
+    ]
+    average_volume = sum(bar.volume for bar in vol_lookback) / len(vol_lookback) if vol_lookback else 0.0
     relative_volume = signal_bar.volume / average_volume if average_volume > 0 else 0.0
 
     if signal_bar.high <= breakout_level:
@@ -69,7 +74,7 @@ def evaluate_breakout_signal(
     if relative_volume < settings.relative_volume_threshold:
         return None
 
-    stop_price = round(signal_bar.high + settings.entry_stop_price_buffer, 2)
+    stop_price = round(breakout_level + settings.entry_stop_price_buffer, 2)
     limit_price = round(stop_price * (1 + settings.stop_limit_buffer_pct), 2)
     stop_buffer = atr_stop_buffer(
         daily_bars, settings.atr_period, settings.atr_stop_multiplier,

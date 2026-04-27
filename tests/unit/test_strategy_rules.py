@@ -129,13 +129,15 @@ def test_settings_parse_dashboard_auth_configuration() -> None:
 
 
 def test_daily_trend_filter_requires_latest_close_above_sma() -> None:
-    failing_daily_bars = make_daily_bars([100 + index for index in range(19)] + [80.0])
+    # 21 bars: bars[0..19] form the SMA window; bars[19] close=80 is below SMA ~107.
+    # bars[20] is the "today" partial bar excluded by the [-period-1:-1] slice.
+    failing_daily_bars = make_daily_bars([100 + index for index in range(19)] + [80.0, 90.0])
 
     assert daily_trend_filter_passes(failing_daily_bars, make_settings()) is False
 
 
 def test_breakout_uses_previous_twenty_completed_bars_only() -> None:
-    daily_bars = make_daily_bars([90 + index for index in range(20)])
+    daily_bars = make_daily_bars([90 + index for index in range(21)])
     intraday_bars = make_intraday_bars(
         signal_timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
         signal_high=111.0,
@@ -167,7 +169,7 @@ def test_breakout_uses_previous_twenty_completed_bars_only() -> None:
 
 
 def test_breakout_rejected_before_entry_window() -> None:
-    daily_bars = make_daily_bars([90 + index for index in range(20)])
+    daily_bars = make_daily_bars([90 + index for index in range(21)])
     intraday_bars = make_intraday_bars(
         signal_timestamp=datetime(2026, 4, 24, 13, 45, tzinfo=timezone.utc),
         signal_high=111.0,
