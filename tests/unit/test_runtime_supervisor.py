@@ -1314,6 +1314,73 @@ def test_supervisor_writes_flatten_complete_after_flatten_cycle(
     assert last_saved.strategy_version == settings.strategy_version
 
 
+def test_flatten_complete_not_set_when_exit_hard_fails(monkeypatch) -> None:
+    """flatten_complete must NOT be written when a broker call hard-fails during EOD exit.
+
+    If cancel_order or submit_market_exit raises an unrecognized error, the
+    position may still be open. Writing flatten_complete=True would permanently
+    prevent subsequent cycles from retrying the exit.
+    """
+    from alpaca_bot.core.engine import CycleIntent, CycleIntentType, CycleResult
+    from alpaca_bot.runtime.cycle_intent_execution import CycleIntentExecutionReport
+
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 20, 0, tzinfo=timezone.utc)  # past 15:45 ET flatten_time
+
+    session_state_store = RecordingDailySessionStateStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=RecordingPositionStore(),
+        daily_session_state_store=session_state_store,
+    )
+
+    flatten_intent = CycleIntent(
+        intent_type=CycleIntentType.EXIT,
+        symbol="AAPL",
+        timestamp=now,
+        reason="eod_flatten",
+    )
+    fake_cycle_result = CycleResult(as_of=now, intents=[flatten_intent])
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: fake_cycle_result)
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+
+    def hard_failing_executor(**kwargs) -> CycleIntentExecutionReport:
+        # Simulates cancel_order raising an unrecognized broker error.
+        return CycleIntentExecutionReport(
+            replaced_stop_count=0,
+            submitted_stop_count=0,
+            submitted_exit_count=0,
+            canceled_stop_count=0,
+            failed_exit_count=1,
+        )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=FakeMarketData(
+            intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+            daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+        ),
+        stream=FakeStream(),
+        cycle_intent_executor=hard_failing_executor,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    flatten_complete_saves = [
+        s for s in session_state_store.saved if getattr(s, "flatten_complete", False)
+    ]
+    assert len(flatten_complete_saves) == 0, (
+        "flatten_complete must not be written when an exit broker call hard-failed; "
+        "the position may still be open and the next cycle must retry"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fix #8: Stream restart backoff — emits "stream_restart_failed" after N failures
 # ---------------------------------------------------------------------------

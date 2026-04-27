@@ -72,6 +72,10 @@ class CycleIntentExecutionReport:
     submitted_exit_count: int
     canceled_stop_count: int
     updated_pending_stop_count: int = 0
+    # Incremented when an EXIT intent had a position but a broker call failed (cancel
+    # hard-failed or submit_market_exit raised). Does NOT count exits where the position
+    # was already gone — those are treated as success for flatten_complete purposes.
+    failed_exit_count: int = 0
 
 
 def execute_cycle_intents(
@@ -90,6 +94,7 @@ def execute_cycle_intents(
     submitted_exit_count = 0
     canceled_stop_count = 0
     updated_pending_stop_count = 0
+    failed_exit_count = 0
 
     store_lock = getattr(runtime, "store_lock", None)
     lock_ctx = store_lock if store_lock is not None else contextlib.nullcontext()
@@ -137,7 +142,7 @@ def execute_cycle_intents(
             if positions_by_symbol is None:
                 with lock_ctx:
                     positions_by_symbol = _positions_by_symbol(runtime, settings)
-            canceled, submitted = _execute_exit(
+            canceled, submitted, hard_failed = _execute_exit(
                 settings=settings,
                 runtime=runtime,
                 broker=broker,
@@ -151,6 +156,7 @@ def execute_cycle_intents(
             )
             canceled_stop_count += canceled
             submitted_exit_count += submitted
+            failed_exit_count += hard_failed
 
     return CycleIntentExecutionReport(
         replaced_stop_count=replaced_stop_count,
@@ -158,6 +164,7 @@ def execute_cycle_intents(
         submitted_exit_count=submitted_exit_count,
         canceled_stop_count=canceled_stop_count,
         updated_pending_stop_count=updated_pending_stop_count,
+        failed_exit_count=failed_exit_count,
     )
 
 
@@ -337,9 +344,13 @@ def _execute_exit(
     now: datetime,
     strategy_name: str = "breakout",
     lock_ctx: Any = None,
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
+    # Returns (canceled_stop_count, submitted_exit_count, hard_failed).
+    # hard_failed=1 when a broker call failed with an unrecognized error (stop cancel
+    # or market exit submission), meaning the position is NOT confirmed closed.
+    # hard_failed=0 for all other outcomes including position-already-gone paths.
     if position is None:
-        return 0, 0
+        return 0, 0, 0
 
     if lock_ctx is None:
         lock_ctx = contextlib.nullcontext()
@@ -370,7 +381,7 @@ def _execute_exit(
                 except Exception:
                     pass
                 raise
-            return 0, 0
+            return 0, 0, 0
 
         stop_orders = _active_stop_orders(runtime, settings, symbol, strategy_name=strategy_name)
 
@@ -470,7 +481,7 @@ def _execute_exit(
                     # DB, causing every subsequent cycle to re-cancel them, hit
                     # "already_canceled", set position_already_gone, and permanently
                     # abandon the exit for an unprotected position.
-        return canceled_stop_count, 0
+        return canceled_stop_count, 0, 1  # hard_failed: stop cancel had unrecognized error
 
     if position_already_gone:
         with lock_ctx:
@@ -498,7 +509,7 @@ def _execute_exit(
                 except Exception:
                     pass
                 raise
-        return canceled_stop_count, 0
+        return canceled_stop_count, 0, 0  # position_already_gone: not a hard failure
 
     # Re-verify position still exists before submitting exit — prevents naked-short
     # if the fill stream closed the position between cancel_order and here.
@@ -530,7 +541,7 @@ def _execute_exit(
                 except Exception:
                     pass
                 raise
-            return canceled_stop_count, 0
+            return canceled_stop_count, 0, 0  # position gone at re-verify: not a hard failure
         position = _reverify_positions[(symbol, strategy_name)]
 
     client_order_id = _exit_client_order_id(
@@ -568,7 +579,7 @@ def _execute_exit(
                     except Exception:
                         pass
                     raise
-        return canceled_stop_count, 0
+        return canceled_stop_count, 0, 1  # hard_failed: submit_market_exit raised
 
     # Write all results under lock.
     with lock_ctx:
@@ -584,7 +595,7 @@ def _execute_exit(
                 for record in canceled_order_records:
                     runtime.order_store.save(record, commit=False)
                 runtime.connection.commit()
-                return canceled_stop_count, 0
+                return canceled_stop_count, 0, 0  # position gone after submit: not a hard failure
             for record in canceled_order_records:
                 runtime.order_store.save(record, commit=False)
             runtime.order_store.save(
@@ -628,7 +639,7 @@ def _execute_exit(
             except Exception:
                 pass
             raise
-    return canceled_stop_count, 1
+    return canceled_stop_count, 1, 0  # success
 
 
 def _positions_by_symbol(

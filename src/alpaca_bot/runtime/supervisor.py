@@ -429,9 +429,14 @@ class RuntimeSupervisor:
                                     strategy_name,
                                 )
 
-                # Only mark flatten_complete if the executor did not raise.
-                # exec_report is None only when _cycle_intent_executor raised an exception.
-                if has_flatten_intents and exec_report is not None:
+                # Only mark flatten_complete when no exit hard-failed (broker cancel
+                # error or submit_market_exit failure). Exits that resolve as
+                # position_already_gone are not failures — the position is flat.
+                if (
+                    has_flatten_intents
+                    and exec_report is not None
+                    and exec_report.failed_exit_count == 0
+                ):
                     self._save_session_state(
                         DailySessionState(
                             session_date=session_date,
