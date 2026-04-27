@@ -1703,3 +1703,122 @@ def test_execute_exit_re_verify_position_gone_rollback_on_db_failure() -> None:
         f"rollback must be called once when DB write fails in re-verify-position-gone path; "
         f"got rollback_count={connection.rollback_count}"
     )
+
+
+def test_execute_exit_disappeared_after_submit_rollback_on_db_failure() -> None:
+    """Final lock block, 'position disappeared during broker exit' branch:
+    position vanishes between submit_market_exit and the final write; if the DB
+    write for the canceled stop records fails, rollback() must be called."""
+    import pytest
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 21, 30, tzinfo=timezone.utc)
+
+    stop = _make_aapl_stop(now=now, broker_order_id="broker-das-1", client_suffix="das-1")
+    position = _make_aapl_position(now=now)
+
+    # Position present for calls 1 (initial load) and 2 (re-verify before submit),
+    # absent on call 3 (check inside final lock block after submit).
+    class ThreeCallVanishingPositionStore:
+        def __init__(self) -> None:
+            self._call_count = 0
+
+        def list_all(self, *, trading_mode, strategy_version) -> list[PositionRecord]:
+            self._call_count += 1
+            return [position] if self._call_count <= 2 else []
+
+        def save(self, p: PositionRecord, *, commit: bool = True) -> None:
+            pass
+
+    connection = _RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=_FailingOnSaveOrderStore(orders=[stop]),
+        position_store=ThreeCallVanishingPositionStore(),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated_db_failure"):
+        execute_cycle_intents(
+            settings=settings,
+            runtime=runtime,
+            broker=RecordingBroker(),
+            cycle_result=CycleResult(
+                as_of=now,
+                intents=[CycleIntent(
+                    intent_type=CycleIntentType.EXIT,
+                    symbol="AAPL",
+                    timestamp=now,
+                    reason="eod_flatten",
+                )],
+            ),
+            now=now,
+        )
+
+    assert connection.rollback_count == 1, (
+        f"rollback must be called once when DB write fails in 'position disappeared after submit' path; "
+        f"got rollback_count={connection.rollback_count}"
+    )
+
+
+class _FailingAuditEventStore:
+    """Audit event store that always raises on append — used to test rollback guards."""
+
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None:
+        raise RuntimeError("simulated_audit_failure")
+
+
+def test_execute_exit_active_exit_order_exists_rollback_on_db_failure() -> None:
+    """active_exit_order_exists early-return path: if the audit append raises,
+    connection.rollback() must be called and the exception must propagate."""
+    import pytest
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 21, 40, tzinfo=timezone.utc)
+
+    existing_exit = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:exit:existing-ae",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="accepted",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        initial_stop_price=109.0,
+        broker_order_id="broker-exit-ae",
+        signal_timestamp=now,
+    )
+    position = _make_aapl_position(now=now)
+
+    connection = _RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[existing_exit]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=_FailingAuditEventStore(),
+        connection=connection,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated_audit_failure"):
+        execute_cycle_intents(
+            settings=settings,
+            runtime=runtime,
+            broker=RecordingBroker(),
+            cycle_result=CycleResult(
+                as_of=now,
+                intents=[CycleIntent(
+                    intent_type=CycleIntentType.EXIT,
+                    symbol="AAPL",
+                    timestamp=now,
+                    reason="eod_flatten",
+                )],
+            ),
+            now=now,
+        )
+
+    assert connection.rollback_count == 1, (
+        f"rollback must be called once when audit append fails in active_exit_order_exists path; "
+        f"got rollback_count={connection.rollback_count}"
+    )

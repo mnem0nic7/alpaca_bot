@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Callable, Protocol, Sequence
 
 from alpaca_bot.runtime.bootstrap import RuntimeContext
@@ -74,7 +74,7 @@ def reconcile_startup(
     mismatch_detector: Callable[[RuntimeContext, SessionSnapshot], Sequence[str]] | None = None,
     now: Callable[[], datetime] | None = None,
 ) -> ReconciliationOutcome:
-    timestamp = (now or datetime.utcnow)()
+    timestamp = (now or (lambda: datetime.now(timezone.utc)))()
     detector = mismatch_detector or (lambda runtime_context, snapshot: ())
     mismatches = tuple(detector(context, session))
     final_entries_disabled = entries_disabled or bool(mismatches)

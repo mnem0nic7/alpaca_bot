@@ -45,19 +45,27 @@ def attach_trade_update_stream(
         except Exception as exc:
             _lock = getattr(runtime, "store_lock", None)
             with _lock if _lock is not None else contextlib.nullcontext():
-                runtime.audit_event_store.append(
-                    AuditEvent(
-                        event_type="trade_update_failed",
-                        symbol=_update_value(update, "symbol"),
-                        payload={
-                            "error": str(exc),
-                            "client_order_id": _update_value(update, "client_order_id"),
-                            "broker_order_id": _update_value(update, "broker_order_id")
-                            or _update_value(update, "order_id"),
-                        },
-                        created_at=timestamp,
+                try:
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="trade_update_failed",
+                            symbol=_update_value(update, "symbol"),
+                            payload={
+                                "error": str(exc),
+                                "client_order_id": _update_value(update, "client_order_id"),
+                                "broker_order_id": _update_value(update, "broker_order_id")
+                                or _update_value(update, "order_id"),
+                            },
+                            created_at=timestamp,
+                        )
                     )
-                )
+                except Exception:
+                    try:
+                        conn = getattr(runtime, "connection", None)
+                        if conn is not None:
+                            conn.rollback()
+                    except Exception:
+                        pass
 
     stream.subscribe_trade_updates(handler)
     return handler

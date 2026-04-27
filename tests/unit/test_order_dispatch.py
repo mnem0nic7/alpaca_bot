@@ -730,3 +730,166 @@ def test_dispatch_unsupported_intent_type_sets_order_to_error_status() -> None:
     assert order_store.saved[0].status == "error"
     assert audit_store.appended[0].event_type == "order_dispatch_failed"
 
+
+# ---------------------------------------------------------------------------
+# commit=False discipline and rollback guard tests
+# ---------------------------------------------------------------------------
+
+class _CommitTrackingOrderStore:
+    """Order store that records commit= args on save()."""
+
+    def __init__(self, pending_orders: list[OrderRecord]) -> None:
+        self.pending_orders = list(pending_orders)
+        self.saved: list[OrderRecord] = []
+        self.commit_args: list[bool] = []
+
+    def list_pending_submit(self, *, trading_mode, strategy_version) -> list[OrderRecord]:
+        return list(self.pending_orders)
+
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None:
+        self.saved.append(order)
+        self.commit_args.append(commit)
+
+
+class _CommitTrackingAuditEventStore:
+    def __init__(self) -> None:
+        self.appended: list[AuditEvent] = []
+        self.commit_args: list[bool] = []
+
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None:
+        self.appended.append(event)
+        self.commit_args.append(commit)
+
+
+class _RollbackTrackingConnection:
+    def __init__(self) -> None:
+        self.commit_count = 0
+        self.rollback_count = 0
+
+    def commit(self) -> None:
+        self.commit_count += 1
+
+    def rollback(self) -> None:
+        self.rollback_count += 1
+
+
+class _FailingOnSaveOrderStore:
+    """Fails on save() to test rollback guards."""
+
+    def __init__(self, pending_orders: list[OrderRecord]) -> None:
+        self.pending_orders = list(pending_orders)
+
+    def list_pending_submit(self, *, trading_mode, strategy_version) -> list[OrderRecord]:
+        return list(self.pending_orders)
+
+    def save(self, order: OrderRecord, *, commit: bool = True) -> None:
+        raise RuntimeError("simulated_db_failure")
+
+
+def _make_entry_order(*, now: datetime) -> OrderRecord:
+    return OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:t1",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=99.0,
+        limit_price=101.0,
+        initial_stop_price=99.0,
+        signal_timestamp=now,
+    )
+
+
+def test_dispatch_success_path_uses_commit_false_for_all_writes() -> None:
+    """Both order_store.save() and audit_event_store.append() in the success path
+    must use commit=False; exactly one connection.commit() must fire."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 27, 14, 0, tzinfo=timezone.utc)
+    order = _make_entry_order(now=now)
+
+    order_store = _CommitTrackingOrderStore([order])
+    audit_store = _CommitTrackingAuditEventStore()
+    connection = _RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=audit_store,
+        connection=connection,
+    )
+
+    dispatch_pending_orders(settings=settings, runtime=runtime, broker=RecordingBroker(), now=now)
+
+    assert all(not c for c in order_store.commit_args), (
+        f"order_store.save() must use commit=False; got {order_store.commit_args}"
+    )
+    assert all(not c for c in audit_store.commit_args), (
+        f"audit_event_store.append() must use commit=False; got {audit_store.commit_args}"
+    )
+    assert connection.commit_count == 1, (
+        f"Exactly one connection.commit() per order; got {connection.commit_count}"
+    )
+
+
+def test_dispatch_success_path_rollback_on_db_failure() -> None:
+    """If order_store.save() raises in the success path, rollback() must be called
+    and the exception must propagate."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 27, 14, 5, tzinfo=timezone.utc)
+    order = _make_entry_order(now=now)
+
+    connection = _RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=_FailingOnSaveOrderStore([order]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated_db_failure"):
+        dispatch_pending_orders(
+            settings=settings, runtime=runtime, broker=RecordingBroker(), now=now
+        )
+
+    assert connection.rollback_count == 1, (
+        f"rollback must be called once when DB write fails in success path; "
+        f"got rollback_count={connection.rollback_count}"
+    )
+
+
+def test_dispatch_broker_failure_path_rollback_on_db_failure() -> None:
+    """If broker submission fails and then order_store.save() raises in the
+    broker-failure path, rollback() must be called and the exception must propagate."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 27, 14, 10, tzinfo=timezone.utc)
+    order = _make_entry_order(now=now)
+
+    class FailingBroker:
+        def submit_stop_limit_entry(self, **kwargs):
+            raise RuntimeError("broker_down")
+
+        def submit_stop_order(self, **kwargs):
+            raise RuntimeError("broker_down")
+
+    connection = _RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=_FailingOnSaveOrderStore([order]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    with pytest.raises(RuntimeError, match="simulated_db_failure"):
+        dispatch_pending_orders(
+            settings=settings, runtime=runtime, broker=FailingBroker(), now=now
+        )
+
+    assert connection.rollback_count == 1, (
+        f"rollback must be called once when DB write fails in broker-failure path; "
+        f"got rollback_count={connection.rollback_count}"
+    )
+

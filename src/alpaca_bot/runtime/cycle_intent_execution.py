@@ -316,16 +316,23 @@ def _execute_exit(
             strategy_name=strategy_name,
         )
         if any(o.symbol == symbol and o.intent_type == "exit" for o in active_exit_orders):
-            runtime.audit_event_store.append(
-                AuditEvent(
-                    event_type="cycle_intent_skipped",
-                    symbol=symbol,
-                    payload={"intent_type": "exit", "reason": "active_exit_order_exists"},
-                    created_at=now,
-                ),
-                commit=False,
-            )
-            runtime.connection.commit()
+            try:
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="cycle_intent_skipped",
+                        symbol=symbol,
+                        payload={"intent_type": "exit", "reason": "active_exit_order_exists"},
+                        created_at=now,
+                    ),
+                    commit=False,
+                )
+                runtime.connection.commit()
+            except Exception:
+                try:
+                    runtime.connection.rollback()
+                except Exception:
+                    pass
+                raise
             return 0, 0
 
         stop_orders = _active_stop_orders(runtime, settings, symbol, strategy_name=strategy_name)
@@ -505,53 +512,60 @@ def _execute_exit(
     with lock_ctx:
         # Re-check: position may have been filled/closed while broker calls were in-flight.
         current_positions = _positions_by_symbol(runtime, settings)
-        if (symbol, strategy_name) not in current_positions:
-            logger.warning(
-                "Position for %s/%s disappeared during broker exit; skipping write",
-                symbol,
-                strategy_name,
-            )
+        try:
+            if (symbol, strategy_name) not in current_positions:
+                logger.warning(
+                    "Position for %s/%s disappeared during broker exit; skipping write",
+                    symbol,
+                    strategy_name,
+                )
+                for record in canceled_order_records:
+                    runtime.order_store.save(record, commit=False)
+                runtime.connection.commit()
+                return canceled_stop_count, 0
             for record in canceled_order_records:
                 runtime.order_store.save(record, commit=False)
+            runtime.order_store.save(
+                OrderRecord(
+                    client_order_id=client_order_id,
+                    symbol=symbol,
+                    side="sell",
+                    intent_type="exit",
+                    status=str(broker_order.status).lower(),
+                    quantity=position.quantity,
+                    trading_mode=settings.trading_mode,
+                    strategy_version=settings.strategy_version,
+                    created_at=now,
+                    updated_at=now,
+                    initial_stop_price=position.initial_stop_price,
+                    broker_order_id=broker_order.broker_order_id,
+                    signal_timestamp=intent_timestamp,
+                    strategy_name=strategy_name,
+                ),
+                commit=False,
+            )
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="cycle_intent_executed",
+                    symbol=symbol,
+                    payload={
+                        "intent_type": "exit",
+                        "action": "submitted",
+                        "reason": reason,
+                        "canceled_stop_count": canceled_stop_count,
+                        "client_order_id": client_order_id,
+                    },
+                    created_at=now,
+                ),
+                commit=False,
+            )
             runtime.connection.commit()
-            return canceled_stop_count, 0
-        for record in canceled_order_records:
-            runtime.order_store.save(record, commit=False)
-        runtime.order_store.save(
-            OrderRecord(
-                client_order_id=client_order_id,
-                symbol=symbol,
-                side="sell",
-                intent_type="exit",
-                status=str(broker_order.status).lower(),
-                quantity=position.quantity,
-                trading_mode=settings.trading_mode,
-                strategy_version=settings.strategy_version,
-                created_at=now,
-                updated_at=now,
-                initial_stop_price=position.initial_stop_price,
-                broker_order_id=broker_order.broker_order_id,
-                signal_timestamp=intent_timestamp,
-                strategy_name=strategy_name,
-            ),
-            commit=False,
-        )
-        runtime.audit_event_store.append(
-            AuditEvent(
-                event_type="cycle_intent_executed",
-                symbol=symbol,
-                payload={
-                    "intent_type": "exit",
-                    "action": "submitted",
-                    "reason": reason,
-                    "canceled_stop_count": canceled_stop_count,
-                    "client_order_id": client_order_id,
-                },
-                created_at=now,
-            ),
-            commit=False,
-        )
-        runtime.connection.commit()
+        except Exception:
+            try:
+                runtime.connection.rollback()
+            except Exception:
+                pass
+            raise
     return canceled_stop_count, 1
 
 

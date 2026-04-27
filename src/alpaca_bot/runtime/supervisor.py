@@ -198,21 +198,28 @@ class RuntimeSupervisor:
                 audit_event_type=None,
             )
             if recovery_report.mismatches:
-                self.runtime.audit_event_store.append(
-                    AuditEvent(
-                        event_type="runtime_reconciliation_detected",
-                        payload={
-                            "mismatch_count": len(recovery_report.mismatches),
-                            "mismatches": list(recovery_report.mismatches),
-                            "synced_position_count": recovery_report.synced_position_count,
-                            "synced_order_count": recovery_report.synced_order_count,
-                            "cleared_position_count": recovery_report.cleared_position_count,
-                            "cleared_order_count": recovery_report.cleared_order_count,
-                            "timestamp": timestamp.isoformat(),
-                        },
-                        created_at=timestamp,
+                try:
+                    self.runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="runtime_reconciliation_detected",
+                            payload={
+                                "mismatch_count": len(recovery_report.mismatches),
+                                "mismatches": list(recovery_report.mismatches),
+                                "synced_position_count": recovery_report.synced_position_count,
+                                "synced_order_count": recovery_report.synced_order_count,
+                                "cleared_position_count": recovery_report.cleared_position_count,
+                                "cleared_order_count": recovery_report.cleared_order_count,
+                                "timestamp": timestamp.isoformat(),
+                            },
+                            created_at=timestamp,
+                        )
                     )
-                )
+                except Exception:
+                    try:
+                        self.runtime.connection.rollback()
+                    except Exception:
+                        pass
+                    raise
         account = self.broker.get_account()
         session_date = _session_date(timestamp, self.settings)
 
@@ -798,8 +805,10 @@ class RuntimeSupervisor:
             return bool(self.broker.get_clock().is_open)
         if hasattr(self.broker, "get_market_clock"):
             return bool(self.broker.get_market_clock().is_open)
-        logger.warning("Broker has no clock method; assuming market is open")
-        return True
+        raise RuntimeError(
+            "Broker has no clock method (get_clock or get_market_clock); "
+            "cannot determine market hours — refusing to proceed"
+        )
 
     def _start_stream_thread(self, *, now: Callable[[], datetime]) -> None:
         if self.stream is None or self._stream_thread is not None:

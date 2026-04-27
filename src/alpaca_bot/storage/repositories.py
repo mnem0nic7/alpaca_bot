@@ -400,7 +400,7 @@ class OrderStore:
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
                       AND e.status = 'filled'
-                      AND e.updated_at < x.updated_at
+                      AND e.updated_at <= x.updated_at
                     ORDER BY e.updated_at DESC
                     LIMIT 1
                 ) AS entry_fill,
@@ -458,7 +458,7 @@ class OrderStore:
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
                       AND e.status = 'filled'
-                      AND e.updated_at < x.updated_at
+                      AND e.updated_at <= x.updated_at
                     ORDER BY e.updated_at DESC LIMIT 1
                 ) AS entry_fill,
                 (
@@ -471,7 +471,7 @@ class OrderStore:
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
                       AND e.status = 'filled'
-                      AND e.updated_at < x.updated_at
+                      AND e.updated_at <= x.updated_at
                     ORDER BY e.updated_at DESC LIMIT 1
                 ) AS entry_limit,
                 (
@@ -484,7 +484,7 @@ class OrderStore:
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
                       AND e.status = 'filled'
-                      AND e.updated_at < x.updated_at
+                      AND e.updated_at <= x.updated_at
                     ORDER BY e.updated_at DESC LIMIT 1
                 ) AS entry_time,
                 x.fill_price AS exit_fill,

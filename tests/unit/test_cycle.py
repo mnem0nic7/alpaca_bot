@@ -178,3 +178,60 @@ def test_run_cycle_saves_all_entry_intents_with_single_commit() -> None:
     assert connection.commit_count == 1, (
         f"Exactly one connection.commit() must fire; got {connection.commit_count}"
     )
+
+
+def test_run_cycle_rollback_on_db_failure() -> None:
+    """If order_store.save() raises during the atomic write block, run_cycle must
+    call connection.rollback() and re-raise the exception."""
+    import pytest
+    from alpaca_bot.runtime.cycle import run_cycle
+    import alpaca_bot.runtime.cycle as cycle_module
+
+    settings = _make_settings()
+    now = datetime(2026, 4, 27, 14, 30, tzinfo=timezone.utc)
+
+    class FailingOrderStore:
+        def save(self, order: OrderRecord, *, commit: bool = True) -> None:
+            raise RuntimeError("simulated_db_failure")
+
+    class RollbackTrackingConnection:
+        def __init__(self) -> None:
+            self.rollback_count = 0
+
+        def commit(self) -> None:
+            pass
+
+        def rollback(self) -> None:
+            self.rollback_count += 1
+
+    connection = RollbackTrackingConnection()
+    runtime = SimpleNamespace(
+        order_store=FailingOrderStore(),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    one_entry = CycleResult(as_of=now, intents=[_make_entry_intent("AAPL", now)])
+    original = cycle_module.evaluate_cycle
+    cycle_module.evaluate_cycle = lambda **_: one_entry
+    try:
+        with pytest.raises(RuntimeError, match="simulated_db_failure"):
+            run_cycle(
+                settings=settings,
+                runtime=runtime,
+                now=now,
+                equity=100_000.0,
+                intraday_bars_by_symbol={},
+                daily_bars_by_symbol={},
+                open_positions=[],
+                working_order_symbols=set(),
+                traded_symbols_today=set(),
+                entries_disabled=False,
+            )
+    finally:
+        cycle_module.evaluate_cycle = original
+
+    assert connection.rollback_count == 1, (
+        f"run_cycle must call rollback() once when order_store.save() raises; "
+        f"got rollback_count={connection.rollback_count}"
+    )
