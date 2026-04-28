@@ -177,6 +177,8 @@
             Generated {{ format_timestamp(snapshot.generated_at) }} for
             <span class="mono">{{ trading_mode }}</span> /
             <span class="mono">{{ strategy_version }}</span>
+            &nbsp;
+            <a href="/" style="border: 1px solid var(--line); border-radius: 999px; background: #f7f2e7; color: var(--ink); padding: 0.3rem 0.75rem; font: inherit; font-size: 0.85em; text-decoration: none; cursor: pointer;">↻ Refresh</a>
           </p>
           <div class="status-grid">
             <div>
@@ -334,30 +336,46 @@
                   <th>Strategy</th>
                   <th>Qty</th>
                   <th>Entry</th>
+                  <th>Init Stop</th>
                   <th>Stop</th>
                   <th>Stop %</th>
-                  <th>Trailing</th>
+                  <th>Stop Moved</th>
+                  <th>Risk $</th>
                   <th>Opened</th>
+                  <th>Updated</th>
                 </tr>
               </thead>
               <tbody>
                 {% for position in snapshot.positions %}
                   {% set stop_dist_pct = ((position.entry_price - position.stop_price) / position.entry_price * 100) if (position.entry_price and position.stop_price) else none %}
                   {% set is_trailing = (position.stop_price and position.initial_stop_price and position.stop_price > position.initial_stop_price) %}
+                  {% set stop_moved = (position.stop_price - position.initial_stop_price) if (position.stop_price and position.initial_stop_price) else none %}
+                  {% set risk_dollars = (position.quantity * (position.entry_price - position.initial_stop_price)) if (position.quantity and position.entry_price and position.initial_stop_price) else none %}
                   <tr>
                     <td class="mono">{{ position.symbol }}</td>
                     <td>{{ position.strategy_name }}</td>
                     <td>{{ position.quantity }}</td>
                     <td>{{ format_price(position.entry_price) }}</td>
+                    <td class="muted">{{ format_price(position.initial_stop_price) }}</td>
                     <td>{{ format_price(position.stop_price) }}</td>
                     <td class="muted">
                       {% if stop_dist_pct is not none %}{{ "%.2f" | format(stop_dist_pct) }}%{% else %}n/a{% endif %}
                     </td>
-                    <td>{{ "yes" if is_trailing else "no" }}</td>
+                    <td>
+                      {% if is_trailing and stop_moved is not none %}
+                        <span style="color: var(--accent);">+{{ format_price(stop_moved) }}</span>
+                      {% else %}
+                        <span class="muted">—</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if risk_dollars is not none %}{{ "$%.0f" | format(risk_dollars) }}{% else %}n/a{% endif %}
+                    </td>
                     <td>{{ format_timestamp(position.opened_at) }}</td>
+                    <td class="muted">{{ format_timestamp(position.updated_at) }}</td>
                   </tr>
                 {% else %}
-                  <tr><td colspan="8" class="muted">No open positions.</td></tr>
+                  <tr><td colspan="11" class="muted">No open positions.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
