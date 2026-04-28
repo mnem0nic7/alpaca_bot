@@ -21,6 +21,8 @@ from alpaca_bot.storage.repositories import (
     PositionStore,
     StrategyFlagStore,
     TradingStatusStore,
+    WatchlistRecord,
+    WatchlistStore,
 )
 
 __all__ = [
@@ -42,5 +44,7 @@ __all__ = [
     "TradingStatus",
     "TradingStatusStore",
     "TradingStatusValue",
+    "WatchlistRecord",
+    "WatchlistStore",
     "advisory_lock_key",
 ]

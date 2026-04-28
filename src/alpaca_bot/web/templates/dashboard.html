@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    {% if auto_refresh %}<meta http-equiv="refresh" content="30">{% endif %}
     <title>alpaca_bot dashboard</title>
     <style>
       :root {
@@ -108,6 +109,28 @@
         padding: 0.75rem 0;
         border-bottom: 1px solid rgba(216, 210, 197, 0.8);
       }
+      .btn-danger {
+        border: 1px solid #c0392b; border-radius: 999px;
+        background: #fff0ee; color: #c0392b;
+        padding: 0.35rem 0.8rem; font: inherit; cursor: pointer;
+      }
+      .btn-safe {
+        border: 1px solid #1f6f78; border-radius: 999px;
+        background: #edf7f8; color: #1f6f78;
+        padding: 0.35rem 0.8rem; font: inherit; cursor: pointer;
+      }
+      .btn-neutral {
+        border: 1px solid var(--line); border-radius: 999px;
+        background: #f7f2e7; color: var(--ink);
+        padding: 0.35rem 0.8rem; font: inherit; cursor: pointer;
+      }
+      .nav-links { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 0.9rem; }
+      .nav-links a { color: var(--accent); text-decoration: none; }
+      .nav-links a:hover { text-decoration: underline; }
+      .warning-banner {
+        background: #fff3cd; border: 1px solid #ffc107; border-radius: 8px;
+        padding: 0.6rem 1rem; margin-bottom: 1rem; color: #856404;
+      }
       @media (max-width: 900px) {
         .hero, .section-grid {
           grid-template-columns: 1fr;
@@ -117,6 +140,15 @@
   </head>
   <body>
     <main>
+      <nav class="nav-links">
+        <a href="/">Dashboard</a>
+        <a href="/metrics">Metrics</a>
+        <a href="/audit">Audit Log</a>
+        <a href="/watchlist">Watchlist</a>
+      </nav>
+      {% if date_warning %}
+        <div class="warning-banner">{{ date_warning }}</div>
+      {% endif %}
       {% if trading_mode == "live" %}
         <div style="background: #c0392b; color: #fff; text-align: center; padding: 0.6rem 1rem; font-weight: 700; letter-spacing: 0.05em; margin-bottom: 1rem;">
           &#9888; LIVE TRADING ACTIVE &mdash; real capital at risk
@@ -140,7 +172,7 @@
       <section class="hero">
         <div class="panel">
           <p class="eyebrow">alpaca_bot</p>
-          <h1>Read-Only Runtime Dashboard</h1>
+          <h1>Runtime Dashboard</h1>
           <p class="muted" style="margin-top: 0.55rem;">
             Generated {{ format_timestamp(snapshot.generated_at) }} for
             <span class="mono">{{ trading_mode }}</span> /
@@ -236,25 +268,58 @@
       </section>
 
       <div class="panel" style="margin-bottom: 1rem;">
+        <h2>Operator Controls</h2>
+        <form method="post" style="margin-top: 0.8rem;">
+          <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'admin') }}">
+          <div style="display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-bottom: 0.8rem;">
+            <button type="submit" formaction="/admin/halt" class="btn-danger"
+                    onclick="return confirm('Halt trading and engage kill switch?')">
+              Halt
+            </button>
+            <button type="submit" formaction="/admin/resume" class="btn-safe"
+                    onclick="return confirm('Resume trading?')">
+              Resume
+            </button>
+            <button type="submit" formaction="/admin/close-only" class="btn-neutral"
+                    onclick="return confirm('Switch to close-only mode?')">
+              Close Only
+            </button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 0.6rem;">
+            <label for="admin-reason" class="eyebrow" style="white-space: nowrap;">Reason (required for Halt):</label>
+            <input id="admin-reason" name="reason" type="text"
+                   style="flex: 1; border: 1px solid var(--line); border-radius: 8px;
+                          padding: 0.4rem 0.7rem; font: inherit; background: #fff;">
+          </div>
+        </form>
+      </div>
+
+      <div class="panel" style="margin-bottom: 1rem;">
         <h2>Strategies</h2>
         {% for name, flag in snapshot.strategy_flags %}
-          <form method="post" action="/strategies/{{ name }}/toggle"
-                style="margin-bottom: 0.6rem;">
-            <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'toggle') }}">
-            <div style="display: flex; align-items: center; gap: 1rem;">
-              <span class="mono" style="min-width: 8rem;">{{ name }}</span>
-              {% set is_enabled = (flag is none or flag.enabled) %}
-              <span class="{{ '' if is_enabled else 'warn' }}">
-                {{ "Enabled" if is_enabled else "Disabled" }}
-              </span>
-              <button type="submit"
-                      style="border: 1px solid var(--line); border-radius: 999px;
-                             background: #f7f2e7; color: var(--ink);
-                             padding: 0.35rem 0.8rem; font: inherit; cursor: pointer;">
+          {% set entries_off = snapshot.strategy_entries_disabled.get(name, false) %}
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-bottom: 0.7rem;">
+            <span class="mono" style="min-width: 8rem;">{{ name }}</span>
+            {% set is_enabled = (flag is none or flag.enabled) %}
+            <span class="{{ '' if is_enabled else 'warn' }}" style="min-width: 5rem;">
+              {{ "Enabled" if is_enabled else "Disabled" }}
+            </span>
+            <form method="post" action="/strategies/{{ name }}/toggle">
+              <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'toggle') }}">
+              <button type="submit" class="btn-neutral">
                 {{ "Disable" if is_enabled else "Enable" }}
               </button>
-            </div>
-          </form>
+            </form>
+            <span class="{{ 'warn' if entries_off else 'muted' }}" style="min-width: 8rem;">
+              Entries: {{ "disabled" if entries_off else "enabled" }}
+            </span>
+            <form method="post" action="/strategies/{{ name }}/toggle-entries">
+              <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'toggle') }}">
+              <button type="submit" class="btn-neutral">
+                {{ "Enable Entries" if entries_off else "Disable Entries" }}
+              </button>
+            </form>
+          </div>
         {% endfor %}
       </div>
 
@@ -270,21 +335,29 @@
                   <th>Qty</th>
                   <th>Entry</th>
                   <th>Stop</th>
+                  <th>Stop %</th>
+                  <th>Trailing</th>
                   <th>Opened</th>
                 </tr>
               </thead>
               <tbody>
                 {% for position in snapshot.positions %}
+                  {% set stop_dist_pct = ((position.entry_price - position.stop_price) / position.entry_price * 100) if (position.entry_price and position.stop_price) else none %}
+                  {% set is_trailing = (position.stop_price and position.initial_stop_price and position.stop_price > position.initial_stop_price) %}
                   <tr>
                     <td class="mono">{{ position.symbol }}</td>
                     <td>{{ position.strategy_name }}</td>
                     <td>{{ position.quantity }}</td>
                     <td>{{ format_price(position.entry_price) }}</td>
                     <td>{{ format_price(position.stop_price) }}</td>
+                    <td class="muted">
+                      {% if stop_dist_pct is not none %}{{ "%.2f" | format(stop_dist_pct) }}%{% else %}n/a{% endif %}
+                    </td>
+                    <td>{{ "yes" if is_trailing else "no" }}</td>
                     <td>{{ format_timestamp(position.opened_at) }}</td>
                   </tr>
                 {% else %}
-                  <tr><td colspan="6" class="muted">No open positions.</td></tr>
+                  <tr><td colspan="8" class="muted">No open positions.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
@@ -398,7 +471,11 @@
         <div class="panel">
           <h2>Session P&amp;L Summary</h2>
           <p class="eyebrow" style="margin-top: 0.8rem;">Date</p>
-          <p class="value mono">{{ metrics.session_date.isoformat() }}</p>
+          <div style="display: flex; align-items: center; gap: 0.8rem; margin-top: 0.3rem;">
+            {% if prev_date %}<a href="/metrics?date_param={{ prev_date }}" class="btn-neutral" style="text-decoration: none; padding: 0.2rem 0.5rem;">&#8592;</a>{% endif %}
+            <span class="value mono">{{ session_date or metrics.session_date.isoformat() }}</span>
+            {% if next_date %}<a href="/metrics?date_param={{ next_date }}" class="btn-neutral" style="text-decoration: none; padding: 0.2rem 0.5rem;">&#8594;</a>{% endif %}
+          </div>
           <div class="status-grid" style="margin-top: 0.8rem;">
             <div>
               <p class="eyebrow">Total P&amp;L</p>

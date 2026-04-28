@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dc_field
 from datetime import date, datetime, timezone
 
 from alpaca_bot.config import Settings
@@ -23,6 +23,29 @@ from alpaca_bot.storage.db import ConnectionProtocol
 from alpaca_bot.strategy import STRATEGY_REGISTRY
 
 ADMIN_EVENT_TYPES = ["trading_status_changed", "strategy_flag_changed"]
+
+ALL_AUDIT_EVENT_TYPES = [
+    "trading_status_changed",
+    "strategy_flag_changed",
+    "strategy_entries_changed",
+    "supervisor_cycle",
+    "supervisor_idle",
+    "supervisor_cycle_error",
+    "strategy_cycle_error",
+    "trader_startup_completed",
+    "daily_loss_limit_breached",
+    "postgres_reconnected",
+    "runtime_reconciliation_detected",
+    "trade_update_stream_started",
+    "trade_update_stream_stopped",
+    "trade_update_stream_failed",
+    "trade_update_stream_restarted",
+    "stream_restart_failed",
+    "WATCHLIST_ADD",
+    "WATCHLIST_REMOVE",
+    "WATCHLIST_IGNORE",
+    "WATCHLIST_UNIGNORE",
+]
 
 WORKING_ORDER_STATUSES = [
     "pending_submit",
@@ -70,6 +93,25 @@ class HealthSnapshot:
 
 
 @dataclass(frozen=True)
+class AuditLogPage:
+    events: list[AuditEvent]
+    limit: int
+    offset: int
+    has_more: bool
+    event_type_filter: str | None
+
+    @property
+    def prev_offset(self) -> int | None:
+        if self.offset <= 0:
+            return None
+        return max(0, self.offset - self.limit)
+
+    @property
+    def next_offset(self) -> int | None:
+        return self.offset + self.limit if self.has_more else None
+
+
+@dataclass(frozen=True)
 class MetricsSnapshot:
     generated_at: datetime
     session_date: date
@@ -95,6 +137,7 @@ class DashboardSnapshot:
     recent_events: list[AuditEvent]
     worker_health: WorkerHealth
     strategy_flags: list[tuple[str, StrategyFlag | None]]
+    strategy_entries_disabled: dict[str, bool] = dc_field(default_factory=dict)
 
 
 def load_dashboard_snapshot(
@@ -128,6 +171,16 @@ def load_dashboard_snapshot(
     }
     strategy_flags = [(name, flags_by_name.get(name)) for name in STRATEGY_REGISTRY]
 
+    if hasattr(daily_session_state_store, "list_by_session"):
+        session_states = daily_session_state_store.list_by_session(
+            session_date=session_date,
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+        )
+        strategy_entries_disabled = {s.strategy_name: s.entries_disabled for s in session_states}
+    else:
+        strategy_entries_disabled = {}
+
     return DashboardSnapshot(
         generated_at=generated_at,
         trading_status=trading_status_store.load(
@@ -160,6 +213,7 @@ def load_dashboard_snapshot(
             now=generated_at,
         ),
         strategy_flags=strategy_flags,
+        strategy_entries_disabled=strategy_entries_disabled,
     )
 
 
@@ -195,9 +249,10 @@ def load_metrics_snapshot(
     audit_event_store: AuditEventStore | None = None,
     tuning_result_store: TuningResultStore | None = None,
     now: datetime | None = None,
+    session_date: date | None = None,
 ) -> MetricsSnapshot:
     generated_at = now or datetime.now(timezone.utc)
-    session_date = generated_at.astimezone(settings.market_timezone).date()
+    session_date = session_date or generated_at.astimezone(settings.market_timezone).date()
     order_store = order_store or OrderStore(connection)
     audit_event_store = audit_event_store or AuditEventStore(connection)
     tuning_store = tuning_result_store or TuningResultStore(connection)
@@ -229,6 +284,34 @@ def load_metrics_snapshot(
         sharpe_ratio=_compute_sharpe_from_trade_records(trades),
         admin_history=admin_history,
         last_backtest=last_tuning,
+    )
+
+
+def load_audit_page(
+    *,
+    connection: ConnectionProtocol,
+    audit_event_store: AuditEventStore | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    event_type_filter: str | None = None,
+) -> AuditLogPage:
+    store = audit_event_store or AuditEventStore(connection)
+    fetch_limit = limit + 1
+    if event_type_filter:
+        events = store.list_by_event_types(
+            event_types=[event_type_filter],
+            limit=fetch_limit,
+            offset=offset,
+        )
+    else:
+        events = store.list_recent(limit=fetch_limit, offset=offset)
+    has_more = len(events) > limit
+    return AuditLogPage(
+        events=events[:limit],
+        limit=limit,
+        offset=offset,
+        has_more=has_more,
+        event_type_filter=event_type_filter,
     )
 
 

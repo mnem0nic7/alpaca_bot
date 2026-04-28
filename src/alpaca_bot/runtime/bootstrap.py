@@ -14,6 +14,7 @@ from alpaca_bot.storage import (
     PositionStore,
     StrategyFlagStore,
     TradingStatusStore,
+    WatchlistStore,
     resolve_migrations_path,
 )
 from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres, connect_postgres_with_retry
@@ -30,6 +31,7 @@ class RuntimeContext:
     daily_session_state_store: DailySessionStateStore | None = None
     position_store: PositionStore | None = None
     strategy_flag_store: StrategyFlagStore | None = None
+    watchlist_store: WatchlistStore | None = None
     # Protects all store operations against concurrent access from the trade update stream thread
     store_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -58,6 +60,11 @@ def bootstrap_runtime(
             f"{settings.trading_mode.value}/{settings.strategy_version}"
         )
 
+    watchlist_store = WatchlistStore(runtime_connection)
+    enabled_symbols = watchlist_store.list_enabled(settings.trading_mode.value)
+    if not enabled_symbols:
+        watchlist_store.seed(settings.symbols, settings.trading_mode.value, commit=True)
+
     return RuntimeContext(
         settings=settings,
         connection=runtime_connection,
@@ -68,6 +75,7 @@ def bootstrap_runtime(
         position_store=PositionStore(runtime_connection),
         daily_session_state_store=DailySessionStateStore(runtime_connection),
         strategy_flag_store=StrategyFlagStore(runtime_connection),
+        watchlist_store=watchlist_store,
     )
 
 
@@ -98,6 +106,7 @@ def reconnect_runtime_connection(
         "daily_session_state_store",
         "position_store",
         "strategy_flag_store",
+        "watchlist_store",
     ):
         store = getattr(context, attr, None)
         if store is not None and hasattr(store, "_connection"):

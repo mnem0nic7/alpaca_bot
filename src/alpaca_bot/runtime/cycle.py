@@ -46,6 +46,7 @@ def run_cycle(
     signal_evaluator: StrategySignalEvaluator | None = None,
     strategy_name: str = "breakout",
     global_open_count: int | None = None,
+    symbols: tuple[str, ...] | None = None,
 ) -> CycleResult:
     result = evaluate_cycle(
         settings=settings,
@@ -62,6 +63,7 @@ def run_cycle(
         signal_evaluator=signal_evaluator,
         strategy_name=strategy_name,
         global_open_count=global_open_count,
+        symbols=symbols,
     )
 
     _store_lock = getattr(runtime, "store_lock", None)

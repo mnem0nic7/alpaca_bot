@@ -306,8 +306,20 @@ class RuntimeSupervisor:
         open_positions = self._load_open_positions()
         working_order_symbols = {order.symbol for order in broker_open_orders}
         working_order_symbols.update(order.symbol for order in self._list_pending_submit_orders())
+        watchlist_store = getattr(self.runtime, "watchlist_store", None)
+        if watchlist_store is not None:
+            watchlist_symbols = tuple(watchlist_store.list_enabled(self.settings.trading_mode.value))
+            if not watchlist_symbols:
+                logger.warning("Symbol watchlist is empty — skipping cycle")
+                return
+            ignored_set = set(watchlist_store.list_ignored(self.settings.trading_mode.value))
+            entry_symbols = tuple(s for s in watchlist_symbols if s not in ignored_set)
+        else:
+            watchlist_symbols = self.settings.symbols
+            entry_symbols = watchlist_symbols
+
         intraday_bars_by_symbol = self.market_data.get_stock_bars(
-            symbols=list(self.settings.symbols),
+            symbols=list(watchlist_symbols),
             start=timestamp - timedelta(days=5),
             end=timestamp,
             timeframe_minutes=self.settings.entry_timeframe_minutes,
@@ -316,7 +328,7 @@ class RuntimeSupervisor:
             tzinfo=self.settings.market_timezone
         )
         daily_bars_by_symbol = self.market_data.get_daily_bars(
-            symbols=list(self.settings.symbols),
+            symbols=list(watchlist_symbols),
             start=timestamp - timedelta(days=max(
                 self.settings.daily_sma_period * 3,
                 60,
@@ -383,6 +395,7 @@ class RuntimeSupervisor:
                     signal_evaluator=evaluator,
                     strategy_name=strategy_name,
                     global_open_count=global_occupied_slots,
+                    symbols=entry_symbols,
                 )
                 all_cycle_results.append((strategy_name, cycle_result))
                 # Consume slots and symbols taken by entries this strategy emitted so
