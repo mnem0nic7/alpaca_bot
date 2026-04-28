@@ -1,5 +1,11 @@
 {
   "autoCompactWindow": 150000,
+  "permissions": {
+    "allow": [
+      "Bash(ab1-docker *)",
+      "Bash(ab1-docker)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {
