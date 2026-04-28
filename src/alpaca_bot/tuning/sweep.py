@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import itertools
+import sys
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from alpaca_bot.config import Settings
 from alpaca_bot.domain.models import ReplayScenario
 from alpaca_bot.replay.report import BacktestReport
 from alpaca_bot.replay.runner import ReplayRunner
+
+if TYPE_CHECKING:
+    from alpaca_bot.strategy import StrategySignalEvaluator
 
 
 @dataclass(frozen=True)
@@ -23,6 +28,17 @@ DEFAULT_GRID: ParameterGrid = {
     "RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "1.8", "2.0"],
     "DAILY_SMA_PERIOD": ["10", "20", "30"],
 }
+
+
+def _parse_grid(specs: list[str]) -> ParameterGrid:
+    """Parse KEY=v1,v2,... strings into a ParameterGrid dict."""
+    grid: ParameterGrid = {}
+    for spec in specs:
+        key, _, values = spec.partition("=")
+        if not key or not values:
+            sys.exit(f"Invalid --grid spec: {spec!r}. Expected KEY=v1,v2,...")
+        grid[key.strip()] = [v.strip() for v in values.split(",")]
+    return grid
 
 
 def score_report(report: BacktestReport, *, min_trades: int = 3) -> float | None:
@@ -43,6 +59,7 @@ def run_sweep(
     base_env: dict[str, str],
     grid: ParameterGrid | None = None,
     min_trades: int = 3,
+    signal_evaluator: "StrategySignalEvaluator | None" = None,
 ) -> list[TuningCandidate]:
     """Run a parameter grid sweep over `scenario`.
 
@@ -61,7 +78,7 @@ def run_sweep(
         except ValueError:
             continue  # invalid combination — skip silently
 
-        runner = ReplayRunner(settings)
+        runner = ReplayRunner(settings, signal_evaluator=signal_evaluator)
         result = runner.run(scenario)
         report: BacktestReport | None = result.backtest_report  # type: ignore[assignment]
         s = score_report(report, min_trades=min_trades) if report is not None else None

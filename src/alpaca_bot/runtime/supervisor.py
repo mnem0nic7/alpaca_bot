@@ -100,6 +100,10 @@ class RuntimeSupervisor:
         self._session_equity_baseline: dict[date, float] = {}
         # Dates for which the daily loss limit alert has already been sent (once per day).
         self._loss_limit_alerted: set[date] = set()
+        # Dates for which the daily session summary has already been sent.
+        self._summary_sent: set[date] = set()
+        # Dates on which at least one active cycle ran this process lifetime.
+        self._session_had_active_cycle: set[date] = set()
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
@@ -551,7 +555,9 @@ class RuntimeSupervisor:
                     break
 
                 timestamp = _resolve_now(cycle_now)
+                session_date = _session_date(timestamp, self.settings)
                 if self._market_is_open():
+                    self._session_had_active_cycle.add(session_date)
                     try:
                         cycle_report = self.run_cycle_once(now=lambda: timestamp)
                         self._consecutive_cycle_failures = 0
@@ -657,6 +663,14 @@ class RuntimeSupervisor:
                     )
                 else:
                     idle_iterations += 1
+                    if (
+                        session_date not in self._summary_sent
+                        and session_date in self._session_had_active_cycle
+                    ):
+                        self._send_daily_summary(
+                            session_date=session_date, timestamp=timestamp
+                        )
+                        self._summary_sent.add(session_date)
                     self._append_audit(
                         AuditEvent(
                             event_type="supervisor_idle",
@@ -844,6 +858,37 @@ class RuntimeSupervisor:
                 trading_mode=self.settings.trading_mode,
                 strategy_version=self.settings.strategy_version,
             )
+
+    def _send_daily_summary(self, *, session_date: date, timestamp: datetime) -> None:
+        """Send end-of-session summary notification. Failures are logged, never raised."""
+        if self._notifier is None:
+            return
+        from alpaca_bot.runtime.daily_summary import build_daily_summary
+
+        store_lock = getattr(self.runtime, "store_lock", None)
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            subject, body = build_daily_summary(
+                settings=self.settings,
+                order_store=self.runtime.order_store,
+                position_store=self.runtime.position_store,
+                session_date=session_date,
+                daily_loss_limit_breached=session_date in self._loss_limit_alerted,
+            )
+        try:
+            self._notifier.send(subject, body)
+        except Exception:
+            logger.exception("Notifier failed to send daily summary for %s", session_date)
+            return
+        self._append_audit(
+            AuditEvent(
+                event_type="daily_summary_sent",
+                payload={
+                    "session_date": session_date.isoformat(),
+                    "timestamp": timestamp.isoformat(),
+                },
+                created_at=timestamp,
+            )
+        )
 
     def _load_traded_symbols(
         self,

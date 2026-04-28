@@ -6,17 +6,7 @@ import sys
 from pathlib import Path
 
 from alpaca_bot.replay.runner import ReplayRunner
-from alpaca_bot.tuning.sweep import DEFAULT_GRID, ParameterGrid, run_sweep
-
-
-def _parse_grid(specs: list[str]) -> ParameterGrid:
-    grid: ParameterGrid = {}
-    for spec in specs:
-        key, _, values = spec.partition("=")
-        if not key or not values:
-            sys.exit(f"Invalid --grid spec: {spec!r}. Expected KEY=v1,v2,...")
-        grid[key.strip()] = [v.strip() for v in values.split(",")]
-    return grid
+from alpaca_bot.tuning.sweep import DEFAULT_GRID, ParameterGrid, _parse_grid, run_sweep
 
 
 def main() -> None:

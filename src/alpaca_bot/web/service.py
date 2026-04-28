@@ -41,6 +41,7 @@ ALL_AUDIT_EVENT_TYPES = [
     "trade_update_stream_failed",
     "trade_update_stream_restarted",
     "stream_restart_failed",
+    "daily_summary_sent",
     "WATCHLIST_ADD",
     "WATCHLIST_REMOVE",
     "WATCHLIST_IGNORE",
