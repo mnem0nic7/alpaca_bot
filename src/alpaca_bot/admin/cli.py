@@ -10,11 +10,14 @@ from alpaca_bot.notifications import Notifier
 from alpaca_bot.storage import (
     AuditEvent,
     AuditEventStore,
+    StrategyFlag,
+    StrategyFlagStore,
     TradingStatus,
     TradingStatusStore,
     TradingStatusValue,
 )
 from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres
+from alpaca_bot.strategy import STRATEGY_REGISTRY
 
 
 def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
@@ -37,6 +40,22 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
             subparser.add_argument("--reason", required=True)
         elif name in {"close-only", "resume"}:
             subparser.add_argument("--reason")
+
+    for name in ("enable-strategy", "disable-strategy"):
+        subparser = subparsers.add_parser(name)
+        subparser.add_argument(
+            "strategy_name",
+            choices=list(STRATEGY_REGISTRY),
+        )
+        subparser.add_argument(
+            "--mode",
+            choices=[mode.value for mode in TradingMode],
+            default=defaults.trading_mode.value,
+        )
+        subparser.add_argument(
+            "--strategy-version",
+            default=defaults.strategy_version,
+        )
 
     return parser
 
@@ -132,7 +151,61 @@ def run_admin_command(
             kill_switch_enabled=False,
         )
 
+    if args.command in ("enable-strategy", "disable-strategy"):
+        enabled = args.command == "enable-strategy"
+        return _write_strategy_flag(
+            connection=connection,
+            event_store=event_store,
+            strategy_name=args.strategy_name,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            enabled=enabled,
+            now=timestamp,
+        )
+
     raise ValueError(f"Unsupported command: {args.command}")
+
+
+def _write_strategy_flag(
+    *,
+    connection: ConnectionProtocol,
+    event_store: AuditEventStore,
+    strategy_name: str,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    enabled: bool,
+    now: datetime,
+) -> str:
+    flag = StrategyFlag(
+        strategy_name=strategy_name,
+        trading_mode=trading_mode,
+        strategy_version=strategy_version,
+        enabled=enabled,
+        updated_at=now,
+    )
+    flag_store = StrategyFlagStore(connection)
+    flag_store.save(flag, commit=False)
+    event_store.append(
+        AuditEvent(
+            event_type="strategy_flag_changed",
+            payload={
+                "strategy_name": strategy_name,
+                "trading_mode": trading_mode.value,
+                "strategy_version": strategy_version,
+                "enabled": str(enabled).lower(),
+            },
+            created_at=now,
+        ),
+        commit=False,
+    )
+    connection.commit()
+    action = "enabled" if enabled else "disabled"
+    return (
+        f"strategy={strategy_name} "
+        f"mode={trading_mode.value} "
+        f"version={strategy_version} "
+        f"{action}"
+    )
 
 
 def _write_status_change(
@@ -248,6 +321,16 @@ def main(
                     f"reason={current.status_reason or '-'} "
                     f"updated_at={current.updated_at.isoformat()}"
                 )
+        elif args.command in ("enable-strategy", "disable-strategy"):
+            output = _write_strategy_flag(
+                connection=connection,
+                event_store=audit_store,
+                strategy_name=args.strategy_name,
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                enabled=args.command == "enable-strategy",
+                now=timestamp,
+            )
         else:
             command_reason = getattr(args, "reason", None)
             if args.command == "halt":
