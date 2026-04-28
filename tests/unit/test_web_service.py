@@ -796,3 +796,26 @@ def test_load_dashboard_snapshot_entries_disabled_defaults_empty_without_list_by
     )
 
     assert snapshot.strategy_entries_disabled == {}
+
+
+def test_load_dashboard_snapshot_latest_prices_passed_through() -> None:
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=datetime(2026, 4, 28, 14, 0, tzinfo=timezone.utc),
+        latest_prices={"AAPL": 175.50},
+        **make_snapshot_stores(),
+    )
+
+    assert snapshot.latest_prices == {"AAPL": 175.50}
+
+
+def test_load_dashboard_snapshot_latest_prices_defaults_to_empty() -> None:
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=datetime(2026, 4, 28, 14, 0, tzinfo=timezone.utc),
+        **make_snapshot_stores(),
+    )
+
+    assert snapshot.latest_prices == {}

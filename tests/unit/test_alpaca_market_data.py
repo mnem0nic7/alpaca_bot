@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 from alpaca_bot.config import Settings
@@ -44,6 +45,7 @@ def _normalize_request(request_params: Any) -> Any:
 class HistoricalClientStub:
     def __init__(self) -> None:
         self.requests: list[object] = []
+        self.latest_trades: dict[str, object] = {}
 
     def get_stock_bars(self, request_params: object) -> BarSetStub:
         self.requests.append(_normalize_request(request_params))
@@ -60,6 +62,15 @@ class HistoricalClientStub:
                         volume=2000,
                     )
                 ]
+            }
+        )
+
+    def get_latest_stock_trades(self, request_params: object) -> SimpleNamespace:
+        self.requests.append(request_params)
+        return SimpleNamespace(
+            data={
+                symbol: SimpleNamespace(price=trade.price)
+                for symbol, trade in self.latest_trades.items()
             }
         )
 
@@ -110,6 +121,33 @@ def test_market_data_adapter_from_settings_selects_credentials() -> None:
 
     assert isinstance(adapter, AlpacaMarketDataAdapter)
     assert seen == {"api_key": "paper-key", "secret_key": "paper-secret"}
+
+
+def test_get_latest_prices_returns_prices_for_symbols() -> None:
+    client = HistoricalClientStub()
+    client.latest_trades = {
+        "AAPL": SimpleNamespace(price=175.50),
+        "MSFT": SimpleNamespace(price=420.00),
+    }
+    adapter = AlpacaMarketDataAdapter(client, settings=make_settings())
+    prices = adapter.get_latest_prices(["AAPL", "MSFT"])
+    assert prices == {"AAPL": 175.50, "MSFT": 420.00}
+
+
+def test_get_latest_prices_empty_symbols_returns_empty_dict_without_network_call() -> None:
+    client = HistoricalClientStub()
+    adapter = AlpacaMarketDataAdapter(client, settings=make_settings())
+    prices = adapter.get_latest_prices([])
+    assert prices == {}
+    assert client.requests == []
+
+
+def test_get_latest_prices_symbol_absent_from_response_is_skipped() -> None:
+    client = HistoricalClientStub()
+    client.latest_trades = {"AAPL": SimpleNamespace(price=100.0)}
+    adapter = AlpacaMarketDataAdapter(client, settings=make_settings())
+    prices = adapter.get_latest_prices(["AAPL", "TSLA"])
+    assert prices == {"AAPL": 100.0}
 
 
 def test_get_stock_bars_returns_domain_bars_and_builds_request() -> None:

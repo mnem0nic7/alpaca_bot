@@ -342,6 +342,9 @@
                   <th>Risk $</th>
                   <th>Opened</th>
                   <th>Updated</th>
+                  <th>Last</th>
+                  <th>Unreal P&amp;L $</th>
+                  <th>Unreal P&amp;L %</th>
                 </tr>
               </thead>
               <tbody>
@@ -350,6 +353,7 @@
                   {% set is_trailing = (position.stop_price and position.initial_stop_price and position.stop_price > position.initial_stop_price) %}
                   {% set stop_moved = (position.stop_price - position.initial_stop_price) if (position.stop_price and position.initial_stop_price) else none %}
                   {% set risk_dollars = (position.quantity * (position.entry_price - position.initial_stop_price)) if (position.quantity and position.entry_price and position.initial_stop_price) else none %}
+                  {% set last_price = snapshot.latest_prices.get(position.symbol) %}
                   <tr>
                     <td class="mono">{{ position.symbol }}</td>
                     <td>{{ position.strategy_name }}</td>
@@ -372,9 +376,23 @@
                     </td>
                     <td>{{ format_timestamp(position.opened_at) }}</td>
                     <td class="muted">{{ format_timestamp(position.updated_at) }}</td>
+                    <td>{{ format_price(last_price) if last_price is not none else "—" }}</td>
+                    {% if last_price is not none and position.entry_price %}
+                      {% set upnl = (last_price - position.entry_price) * position.quantity %}
+                      {% set upnl_pct = (last_price - position.entry_price) / position.entry_price * 100 %}
+                      <td style="color: {{ 'var(--accent)' if upnl >= 0 else '#c0392b' }}">
+                        {% if upnl >= 0 %}+{{ format_price(upnl) }}{% else %}-{{ format_price(0 - upnl) }}{% endif %}
+                      </td>
+                      <td style="color: {{ 'var(--accent)' if upnl_pct >= 0 else '#c0392b' }}">
+                        {% if upnl_pct >= 0 %}+{{ "%.2f" | format(upnl_pct) }}%{% else %}{{ "%.2f" | format(upnl_pct) }}%{% endif %}
+                      </td>
+                    {% else %}
+                      <td class="muted">—</td>
+                      <td class="muted">—</td>
+                    {% endif %}
                   </tr>
                 {% else %}
-                  <tr><td colspan="11" class="muted">No open positions.</td></tr>
+                  <tr><td colspan="14" class="muted">No open positions.</td></tr>
                 {% endfor %}
               </tbody>
             </table>

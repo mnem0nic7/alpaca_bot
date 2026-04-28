@@ -72,6 +72,7 @@ def create_app(
     strategy_flag_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     watchlist_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     notifier: Notifier | None = None,
+    market_data_adapter: object | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings.from_env()
     fixed_connection = connection or db_connection
@@ -112,6 +113,13 @@ def create_app(
     app.state.strategy_flag_store_factory = strategy_flag_store_factory or StrategyFlagStore
     app.state.watchlist_store_factory = watchlist_store_factory or WatchlistStore
     app.state.notifier = notifier or build_notifier(app_settings)
+    if market_data_adapter is None:
+        try:
+            from alpaca_bot.execution.alpaca import AlpacaMarketDataAdapter
+            market_data_adapter = AlpacaMarketDataAdapter.from_settings(app_settings)
+        except Exception:
+            market_data_adapter = None
+    app.state.market_data_adapter = market_data_adapter
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request, no_refresh: str = "") -> HTMLResponse:
@@ -788,35 +796,46 @@ def _isoformat(d: date | None) -> str | None:
     return d.isoformat() if d is not None else None
 
 
+def _fetch_latest_prices(*, adapter: object | None, positions: list) -> dict[str, float]:
+    if adapter is None or not positions:
+        return {}
+    symbols = list({p.symbol for p in positions})
+    try:
+        return adapter.get_latest_prices(symbols)  # type: ignore[union-attr]
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("Failed to fetch latest prices", exc_info=True)
+        return {}
+
+
 def _load_dashboard_data(app: FastAPI) -> tuple:
     connection = app.state.connect_postgres(app.state.settings.database_url)
     try:
+        settings = app.state.settings
         order_store = _build_store(app.state.order_store_factory, connection)
         audit_event_store = _build_store(app.state.audit_event_store_factory, connection)
+        position_store = _build_store(app.state.position_store_factory, connection)
+        pre_positions = position_store.list_all(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+        )
+        latest_prices = _fetch_latest_prices(
+            adapter=app.state.market_data_adapter,
+            positions=pre_positions,
+        )
         snapshot = load_dashboard_snapshot(
-            settings=app.state.settings,
+            settings=settings,
             connection=connection,
-            trading_status_store=_build_store(
-                app.state.trading_status_store_factory,
-                connection,
-            ),
-            daily_session_state_store=_build_store(
-                app.state.daily_session_state_store_factory,
-                connection,
-            ),
-            position_store=_build_store(
-                app.state.position_store_factory,
-                connection,
-            ),
+            trading_status_store=_build_store(app.state.trading_status_store_factory, connection),
+            daily_session_state_store=_build_store(app.state.daily_session_state_store_factory, connection),
+            position_store=position_store,
             order_store=order_store,
             audit_event_store=audit_event_store,
-            strategy_flag_store=_build_store(
-                app.state.strategy_flag_store_factory,
-                connection,
-            ),
+            strategy_flag_store=_build_store(app.state.strategy_flag_store_factory, connection),
+            latest_prices=latest_prices,
         )
         metrics = load_metrics_snapshot(
-            settings=app.state.settings,
+            settings=settings,
             connection=connection,
             order_store=order_store,
             audit_event_store=audit_event_store,

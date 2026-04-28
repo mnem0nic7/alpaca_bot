@@ -140,6 +140,7 @@ class DashboardSnapshot:
     worker_health: WorkerHealth
     strategy_flags: list[tuple[str, StrategyFlag | None]]
     strategy_entries_disabled: dict[str, bool] = dc_field(default_factory=dict)
+    latest_prices: dict[str, float] = dc_field(default_factory=dict)
 
 
 def load_dashboard_snapshot(
@@ -153,6 +154,7 @@ def load_dashboard_snapshot(
     audit_event_store: AuditEventStore | None = None,
     strategy_flag_store: StrategyFlagStore | None = None,
     now: datetime | None = None,
+    latest_prices: dict[str, float] | None = None,
 ) -> DashboardSnapshot:
     generated_at = now or datetime.now(timezone.utc)
     session_date = generated_at.astimezone(settings.market_timezone).date()
@@ -216,6 +218,7 @@ def load_dashboard_snapshot(
         ),
         strategy_flags=strategy_flags,
         strategy_entries_disabled=strategy_entries_disabled,
+        latest_prices=latest_prices or {},
     )
 
 

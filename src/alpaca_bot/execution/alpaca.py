@@ -124,6 +124,7 @@ class TradingClientProtocol(Protocol):
 
 class HistoricalDataClientProtocol(Protocol):
     def get_stock_bars(self, request_params: Any) -> Any: ...
+    def get_latest_stock_trades(self, request_params: Any) -> Any: ...
 
 
 class TradingStreamProtocol(Protocol):
@@ -468,6 +469,13 @@ class AlpacaMarketDataAdapter:
         raw = _retry_with_backoff(lambda: self._historical.get_stock_bars(request))
         return _parse_barset(raw)
 
+    def get_latest_prices(self, symbols: Sequence[str]) -> dict[str, float]:
+        if not symbols:
+            return {}
+        request = _latest_trade_request(symbols=symbols)
+        raw = _retry_with_backoff(lambda: self._historical.get_latest_stock_trades(request))
+        return _parse_latest_trades(raw)
+
     @staticmethod
     def _build_historical_client(settings: Settings) -> HistoricalDataClientProtocol:
         api_key, secret_key, _paper = resolve_alpaca_credentials(settings)
@@ -586,6 +594,26 @@ def _stock_bars_request(
         timeframe=timeframe,
         feed=feed,
     )
+
+
+def _latest_trade_request(*, symbols: Sequence[str]) -> Any:
+    try:
+        from alpaca.data.requests import StockLatestTradeRequest
+    except ModuleNotFoundError:
+        return {"symbol_or_symbols": list(symbols)}
+    return StockLatestTradeRequest(symbol_or_symbols=list(symbols))
+
+
+def _parse_latest_trades(raw: Any) -> dict[str, float]:
+    data = raw.data if hasattr(raw, "data") else raw
+    if not isinstance(data, Mapping):
+        return {}
+    result: dict[str, float] = {}
+    for symbol, trade in data.items():
+        price = getattr(trade, "price", None)
+        if price is not None:
+            result[str(symbol).upper()] = float(price)
+    return result
 
 
 def _parse_barset(raw: Any) -> dict[str, list[Bar]]:

@@ -1730,3 +1730,98 @@ def test_notifier_failure_does_not_abort_redirect() -> None:
     response = client.post("/admin/halt", data={"_csrf_token": token, "reason": "test"})
 
     assert response.status_code == 303
+
+
+# ---------------------------------------------------------------------------
+# Live prices: market data adapter injection
+# ---------------------------------------------------------------------------
+
+
+class _FakeMarketDataAdapter:
+    def __init__(self, prices: dict[str, float]) -> None:
+        self._prices = prices
+        self.calls: list[list[str]] = []
+
+    def get_latest_prices(self, symbols: list[str]) -> dict[str, float]:
+        self.calls.append(list(symbols))
+        return {s: self._prices[s] for s in symbols if s in self._prices}
+
+
+def _make_app_with_position(settings, market_data_adapter=None):
+    now = datetime(2026, 4, 28, 15, 0, tzinfo=timezone.utc)
+    return create_app(
+        settings=settings,
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(
+            load=lambda **_: None,
+        ),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(
+            load=lambda **_: None,
+            list_by_session=lambda **_: [],
+        ),
+        position_store_factory=lambda _c: SimpleNamespace(
+            list_all=lambda **_: [
+                PositionRecord(
+                    symbol="AAPL",
+                    trading_mode=TradingMode.PAPER,
+                    strategy_version=settings.strategy_version,
+                    quantity=10,
+                    entry_price=170.00,
+                    stop_price=168.00,
+                    initial_stop_price=168.00,
+                    opened_at=now,
+                    updated_at=now,
+                )
+            ]
+        ),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+        strategy_flag_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        market_data_adapter=market_data_adapter,
+    )
+
+
+def test_dashboard_includes_live_prices_when_adapter_present() -> None:
+    settings = make_settings()
+    adapter = _FakeMarketDataAdapter({"AAPL": 175.50})
+    app = _make_app_with_position(settings, market_data_adapter=adapter)
+    client = TestClient(app)
+
+    response = client.get("/", headers={"Authorization": f"Basic {b64encode(b'admin:secret').decode()}"})
+
+    assert response.status_code == 200
+    assert "175.50" in response.text
+    assert adapter.calls == [["AAPL"]]
+
+
+def test_dashboard_degrades_gracefully_when_adapter_raises() -> None:
+    settings = make_settings()
+
+    class _RaisingAdapter:
+        def get_latest_prices(self, symbols: list[str]) -> dict[str, float]:
+            raise RuntimeError("Alpaca unavailable")
+
+    app = _make_app_with_position(settings, market_data_adapter=_RaisingAdapter())
+    client = TestClient(app)
+
+    response = client.get("/", headers={"Authorization": f"Basic {b64encode(b'admin:secret').decode()}"})
+
+    assert response.status_code == 200
+
+
+def test_dashboard_skips_price_fetch_when_no_adapter() -> None:
+    settings = make_settings()
+    app = _make_app_with_position(settings, market_data_adapter=None)
+    client = TestClient(app)
+
+    response = client.get("/", headers={"Authorization": f"Basic {b64encode(b'admin:secret').decode()}"})
+
+    assert response.status_code == 200
