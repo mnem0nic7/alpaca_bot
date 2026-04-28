@@ -96,6 +96,14 @@ class Settings:
     notify_smtp_port: int = 587
     notify_smtp_user: str | None = None
     notify_smtp_password: str | None = field(default=None, repr=False)
+    # Extended hours trading
+    extended_hours_enabled: bool = False
+    pre_market_entry_window_start: time = time(4, 0)
+    pre_market_entry_window_end: time = time(9, 20)
+    after_hours_entry_window_start: time = time(16, 5)
+    after_hours_entry_window_end: time = time(19, 30)
+    extended_hours_flatten_time: time = time(19, 45)
+    extended_hours_limit_offset_pct: float = 0.001
 
     def __post_init__(self) -> None:
         self.validate()
@@ -165,6 +173,32 @@ class Settings:
             notify_smtp_port=int(values.get("NOTIFY_SMTP_PORT", "587")),
             notify_smtp_user=values.get("NOTIFY_SMTP_USER"),
             notify_smtp_password=values.get("NOTIFY_SMTP_PASSWORD"),
+            extended_hours_enabled=_parse_bool(
+                "EXTENDED_HOURS_ENABLED", values.get("EXTENDED_HOURS_ENABLED", "false")
+            ),
+            pre_market_entry_window_start=_parse_time(
+                "PRE_MARKET_ENTRY_WINDOW_START",
+                values.get("PRE_MARKET_ENTRY_WINDOW_START", "04:00"),
+            ),
+            pre_market_entry_window_end=_parse_time(
+                "PRE_MARKET_ENTRY_WINDOW_END",
+                values.get("PRE_MARKET_ENTRY_WINDOW_END", "09:20"),
+            ),
+            after_hours_entry_window_start=_parse_time(
+                "AFTER_HOURS_ENTRY_WINDOW_START",
+                values.get("AFTER_HOURS_ENTRY_WINDOW_START", "16:05"),
+            ),
+            after_hours_entry_window_end=_parse_time(
+                "AFTER_HOURS_ENTRY_WINDOW_END",
+                values.get("AFTER_HOURS_ENTRY_WINDOW_END", "19:30"),
+            ),
+            extended_hours_flatten_time=_parse_time(
+                "EXTENDED_HOURS_FLATTEN_TIME",
+                values.get("EXTENDED_HOURS_FLATTEN_TIME", "19:45"),
+            ),
+            extended_hours_limit_offset_pct=float(
+                values.get("EXTENDED_HOURS_LIMIT_OFFSET_PCT", "0.001")
+            ),
         )
         return settings
 
@@ -249,6 +283,29 @@ class Settings:
                     raise ValueError(
                         f"{name} is required when any NOTIFY_EMAIL_* var is set"
                     )
+        if self.extended_hours_limit_offset_pct <= 0:
+            raise ValueError("EXTENDED_HOURS_LIMIT_OFFSET_PCT must be positive")
+        if self.extended_hours_enabled:
+            if self.pre_market_entry_window_start >= self.pre_market_entry_window_end:
+                raise ValueError(
+                    "PRE_MARKET_ENTRY_WINDOW_START must be before PRE_MARKET_ENTRY_WINDOW_END"
+                )
+            if self.pre_market_entry_window_end >= time(9, 30):
+                raise ValueError(
+                    "PRE_MARKET_ENTRY_WINDOW_END must be before 09:30 (regular open)"
+                )
+            if self.after_hours_entry_window_start <= time(16, 0):
+                raise ValueError(
+                    "AFTER_HOURS_ENTRY_WINDOW_START must be after 16:00 (regular close)"
+                )
+            if self.after_hours_entry_window_start >= self.after_hours_entry_window_end:
+                raise ValueError(
+                    "AFTER_HOURS_ENTRY_WINDOW_START must be before AFTER_HOURS_ENTRY_WINDOW_END"
+                )
+            if self.after_hours_entry_window_end >= self.extended_hours_flatten_time:
+                raise ValueError(
+                    "EXTENDED_HOURS_FLATTEN_TIME must be after AFTER_HOURS_ENTRY_WINDOW_END"
+                )
 
 
 def _validate_positive_fraction(name: str, value: float) -> None:

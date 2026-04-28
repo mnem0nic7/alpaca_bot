@@ -15,8 +15,10 @@ from alpaca_bot.strategy.session import (
 
 def _make_ts(hour: int, minute: int = 0) -> datetime:
     """UTC timestamp that maps to the given ET wall clock time on 2026-04-28."""
+    from datetime import timedelta
     # ET is UTC-4 on 2026-04-28 (EDT)
-    return datetime(2026, 4, 28, hour + 4, minute, tzinfo=timezone.utc)
+    base = datetime(2026, 4, 28, 0, 0, tzinfo=timezone.utc)
+    return base + timedelta(hours=hour + 4, minutes=minute)
 
 
 def _settings(**overrides) -> Settings:
