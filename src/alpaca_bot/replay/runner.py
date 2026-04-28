@@ -40,9 +40,11 @@ class ReplayRunner:
         self,
         settings: Settings,
         signal_evaluator: StrategySignalEvaluator | None = None,
+        strategy_name: str = "breakout",
     ):
         self.settings = settings
         self.signal_evaluator = signal_evaluator
+        self.strategy_name = strategy_name
 
     @staticmethod
     def load_scenario(path: str | Path) -> ReplayScenario:
@@ -154,7 +156,7 @@ class ReplayRunner:
             final_position=state.position,
             traded_symbols=state.traded_symbols,
         )
-        result.backtest_report = build_backtest_report(result)
+        result.backtest_report = build_backtest_report(result, strategy_name=self.strategy_name)
         return result
 
     def _process_existing_order(

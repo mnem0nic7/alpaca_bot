@@ -255,7 +255,8 @@ def test_cli_csv_output() -> None:
         max_drawdown_pct=None,
     )
     output = _format_report(report, "csv")
-    reader = csv.DictReader(io.StringIO(output))
+    data_lines = "\n".join(line for line in output.splitlines() if not line.startswith("#"))
+    reader = csv.DictReader(io.StringIO(data_lines))
     rows = list(reader)
     assert len(rows) == 1
     assert rows[0]["symbol"] == "AAPL"
@@ -276,7 +277,8 @@ def test_cli_csv_empty_report() -> None:
         max_drawdown_pct=None,
     )
     output = _format_report(report, "csv")
-    reader = csv.DictReader(io.StringIO(output))
+    data_lines = "\n".join(line for line in output.splitlines() if not line.startswith("#"))
+    reader = csv.DictReader(io.StringIO(data_lines))
     rows = list(reader)
     assert rows == []
 

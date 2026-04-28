@@ -419,7 +419,7 @@ class TestAdminCliNotifier:
         subject, _ = notifier.calls[0]
         assert "close" in subject.lower()
 
-    def test_resume_does_not_send_notification(self):
+    def test_resume_sends_notification(self):
         from alpaca_bot.admin.cli import run_admin_command
 
         settings = make_settings()
@@ -434,7 +434,9 @@ class TestAdminCliNotifier:
             now=datetime(2026, 4, 25, 15, 0, tzinfo=timezone.utc),
         )
 
-        assert notifier.calls == []
+        assert len(notifier.calls) == 1
+        subject, _ = notifier.calls[0]
+        assert "resume" in subject.lower()
 
     def test_none_notifier_does_not_raise_on_halt(self):
         from alpaca_bot.admin.cli import run_admin_command

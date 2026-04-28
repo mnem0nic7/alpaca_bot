@@ -228,3 +228,110 @@ def test_main_uses_process_argv_when_invoked_as_console_script(monkeypatch) -> N
 
     assert exit_code == 0
     assert "status=unknown" in stdout.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Notifier calls for close-only and resume in run_admin_command
+# ---------------------------------------------------------------------------
+
+
+class _RecordingNotifier:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def send(self, *, subject: str, body: str) -> None:
+        self.calls.append({"subject": subject, "body": body})
+
+
+def _make_connection():
+    return SimpleNamespace(commit=lambda: None, close=lambda: None)
+
+
+def test_close_only_notifies() -> None:
+    from alpaca_bot.admin.cli import run_admin_command
+    from alpaca_bot.config import Settings
+
+    settings = Settings.from_env({
+        "TRADING_MODE": "paper",
+        "ENABLE_LIVE_TRADING": "false",
+        "STRATEGY_VERSION": "v1-breakout",
+        "DATABASE_URL": "postgresql://example",
+        "MARKET_DATA_FEED": "iex",
+        "SYMBOLS": "AAPL",
+        "DAILY_SMA_PERIOD": "20",
+        "BREAKOUT_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_THRESHOLD": "1.5",
+        "ENTRY_TIMEFRAME_MINUTES": "15",
+        "RISK_PER_TRADE_PCT": "0.0025",
+        "MAX_POSITION_PCT": "0.05",
+        "MAX_OPEN_POSITIONS": "3",
+        "DAILY_LOSS_LIMIT_PCT": "0.01",
+        "STOP_LIMIT_BUFFER_PCT": "0.001",
+        "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+        "ENTRY_STOP_PRICE_BUFFER": "0.01",
+        "ENTRY_WINDOW_START": "10:00",
+        "ENTRY_WINDOW_END": "15:30",
+        "FLATTEN_TIME": "15:45",
+    })
+    notifier = _RecordingNotifier()
+    connection = SimpleNamespace(
+        commit=lambda: None,
+        close=lambda: None,
+        cursor=lambda: SimpleNamespace(execute=lambda *_a, **_k: None, fetchone=lambda: None),
+    )
+
+    run_admin_command(
+        ["close-only", "--mode", "paper", "--strategy-version", "v1-breakout"],
+        settings=settings,
+        connection=connection,
+        notifier=notifier,
+    )
+
+    assert len(notifier.calls) == 1
+    assert notifier.calls[0]["subject"] == "Trading set to close-only"
+
+
+def test_resume_notifies() -> None:
+    from alpaca_bot.admin.cli import run_admin_command
+    from alpaca_bot.config import Settings
+
+    settings = Settings.from_env({
+        "TRADING_MODE": "paper",
+        "ENABLE_LIVE_TRADING": "false",
+        "STRATEGY_VERSION": "v1-breakout",
+        "DATABASE_URL": "postgresql://example",
+        "MARKET_DATA_FEED": "iex",
+        "SYMBOLS": "AAPL",
+        "DAILY_SMA_PERIOD": "20",
+        "BREAKOUT_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_THRESHOLD": "1.5",
+        "ENTRY_TIMEFRAME_MINUTES": "15",
+        "RISK_PER_TRADE_PCT": "0.0025",
+        "MAX_POSITION_PCT": "0.05",
+        "MAX_OPEN_POSITIONS": "3",
+        "DAILY_LOSS_LIMIT_PCT": "0.01",
+        "STOP_LIMIT_BUFFER_PCT": "0.001",
+        "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+        "ENTRY_STOP_PRICE_BUFFER": "0.01",
+        "ENTRY_WINDOW_START": "10:00",
+        "ENTRY_WINDOW_END": "15:30",
+        "FLATTEN_TIME": "15:45",
+    })
+    notifier = _RecordingNotifier()
+    connection = SimpleNamespace(
+        commit=lambda: None,
+        close=lambda: None,
+        cursor=lambda: SimpleNamespace(execute=lambda *_a, **_k: None, fetchone=lambda: None),
+    )
+
+    run_admin_command(
+        ["resume", "--mode", "paper", "--strategy-version", "v1-breakout"],
+        settings=settings,
+        connection=connection,
+        notifier=notifier,
+    )
+
+    assert len(notifier.calls) == 1
+    assert notifier.calls[0]["subject"] == "Trading resumed"

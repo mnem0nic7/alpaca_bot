@@ -1612,3 +1612,121 @@ def test_watchlist_page_renders_ignored_badge() -> None:
     assert response.status_code == 200
     assert "ignored" in response.text
     assert "badge-ignored" in response.text
+
+
+# ---------------------------------------------------------------------------
+# /healthz — strategy_flags in response
+# ---------------------------------------------------------------------------
+
+
+def test_healthz_includes_strategy_flags() -> None:
+    from alpaca_bot.strategy import STRATEGY_REGISTRY
+
+    now = datetime.now(timezone.utc)
+    enabled_flag = SimpleNamespace(strategy_name="breakout", enabled=True)
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: SimpleNamespace(
+                event_type="supervisor_idle",
+                symbol=None,
+                payload={},
+                created_at=now,
+            ),
+        ),
+        strategy_flag_store_factory=lambda _c: SimpleNamespace(
+            list_all=lambda **_: [enabled_flag]
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    payload = response.json()
+    assert "strategy_flags" in payload
+    flags = {f["name"]: f["enabled"] for f in payload["strategy_flags"]}
+    assert set(flags.keys()) == set(STRATEGY_REGISTRY.keys())
+    assert flags["breakout"] is True
+
+
+# ---------------------------------------------------------------------------
+# Notifier is called on admin status changes
+# ---------------------------------------------------------------------------
+
+
+class _RecordingNotifier:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+        self.raise_on_send: bool = False
+
+    def send(self, *, subject: str, body: str) -> None:
+        if self.raise_on_send:
+            raise RuntimeError("send failed")
+        self.calls.append({"subject": subject, "body": body})
+
+
+def _make_admin_app_with_notifier(notifier):
+    """Admin app wired with an explicit notifier for testing."""
+    return create_app(
+        settings=make_settings(),
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(
+            load=lambda **_: None,
+            save=lambda *_a, **_k: None,
+        ),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+            append=lambda *_a, **_k: None,
+        ),
+        strategy_flag_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        notifier=notifier,
+    )
+
+
+def test_admin_halt_calls_notifier() -> None:
+    notifier = _RecordingNotifier()
+    app = _make_admin_app_with_notifier(notifier)
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "admin")
+
+    client.post("/admin/halt", data={"_csrf_token": token, "reason": "eod"})
+
+    assert len(notifier.calls) == 1
+    assert notifier.calls[0]["subject"] == "Trading halted"
+    assert "eod" in notifier.calls[0]["body"]
+
+
+def test_admin_resume_calls_notifier() -> None:
+    notifier = _RecordingNotifier()
+    app = _make_admin_app_with_notifier(notifier)
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "admin")
+
+    client.post("/admin/resume", data={"_csrf_token": token, "reason": ""})
+
+    assert len(notifier.calls) == 1
+    assert notifier.calls[0]["subject"] == "Trading resumed"
+
+
+def test_notifier_failure_does_not_abort_redirect() -> None:
+    notifier = _RecordingNotifier()
+    notifier.raise_on_send = True
+    app = _make_admin_app_with_notifier(notifier)
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "admin")
+
+    response = client.post("/admin/halt", data={"_csrf_token": token, "reason": "test"})
+
+    assert response.status_code == 303

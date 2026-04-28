@@ -7,6 +7,7 @@ from typing import Callable, Sequence, TextIO
 
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.notifications import Notifier
+from alpaca_bot.notifications.factory import build_notifier
 from alpaca_bot.storage import (
     AuditEvent,
     AuditEventStore,
@@ -137,7 +138,7 @@ def run_admin_command(
         return result
 
     if args.command == "resume":
-        return _write_status_change(
+        result = _write_status_change(
             connection=connection,
             settings=settings,
             status_store=status_store,
@@ -150,6 +151,12 @@ def run_admin_command(
             now=timestamp,
             kill_switch_enabled=False,
         )
+        if notifier is not None:
+            notifier.send(
+                subject="Trading resumed",
+                body=f"mode={trading_mode.value} strategy={strategy_version} reason={args.reason or '-'}",
+            )
+        return result
 
     if args.command in ("enable-strategy", "disable-strategy"):
         enabled = args.command == "enable-strategy"
@@ -285,6 +292,7 @@ def main(
     now: Callable[[], datetime] | None = None,
     stdout: TextIO | None = None,
     settings: Settings | None = None,
+    notifier: Notifier | None = None,
 ) -> int:
     parsed_argv = list(sys.argv[1:] if argv is None else argv)
     if settings is not None:
@@ -293,6 +301,7 @@ def main(
         resolved_settings = _fallback_settings()
     else:
         resolved_settings = Settings.from_env()
+    _notifier = notifier if notifier is not None else build_notifier(resolved_settings)
     output: str | None = None
     connection = connect() if connect is not None else connect_postgres(resolved_settings.database_url)
     try:
@@ -358,6 +367,20 @@ def main(
                 now=timestamp,
                 kill_switch_enabled=kill_switch_enabled,
             )
+            if _notifier is not None:
+                _subjects = {
+                    "halt": "Trading halted",
+                    "close-only": "Trading set to close-only",
+                    "resume": "Trading resumed",
+                }
+                try:
+                    _notifier.send(
+                        subject=_subjects.get(args.command, f"Trading status changed: {args.command}"),
+                        body=f"mode={trading_mode.value} strategy={strategy_version} reason={command_reason or '-'}",
+                    )
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("Notifier send failed in admin CLI")
     finally:
         close = getattr(connection, "close", None)
         if callable(close):

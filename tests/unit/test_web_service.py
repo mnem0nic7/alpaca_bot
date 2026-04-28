@@ -227,9 +227,30 @@ def test_load_health_snapshot_requests_12_events() -> None:
             list_recent=recording_list_recent,
             load_latest=lambda **_: None,
         ),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
     )
 
     assert limits == [12]
+
+
+def test_load_health_snapshot_includes_strategy_flags() -> None:
+    from alpaca_bot.strategy import STRATEGY_REGISTRY
+
+    enabled_flag = SimpleNamespace(strategy_name="breakout", enabled=True)
+    snapshot = load_health_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        trading_status_store=SimpleNamespace(load=lambda **_: None),
+        audit_event_store=SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+        ),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: [enabled_flag]),
+    )
+
+    flag_dict = dict(snapshot.strategy_flags)
+    assert set(flag_dict.keys()) == set(STRATEGY_REGISTRY.keys())
+    assert flag_dict["breakout"] is True
 
 
 # ---------------------------------------------------------------------------

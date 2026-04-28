@@ -90,6 +90,7 @@ class WorkerHealth:
 class HealthSnapshot:
     trading_status: TradingStatus | None
     worker_health: WorkerHealth
+    strategy_flags: list[tuple[str, bool]] = dc_field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -223,11 +224,21 @@ def load_health_snapshot(
     connection: ConnectionProtocol,
     trading_status_store: TradingStatusStore | None = None,
     audit_event_store: AuditEventStore | None = None,
+    strategy_flag_store: StrategyFlagStore | None = None,
 ) -> HealthSnapshot:
     store = trading_status_store or TradingStatusStore(connection)
     audit_event_store = audit_event_store or AuditEventStore(connection)
+    strategy_flag_store = strategy_flag_store or StrategyFlagStore(connection)
     now = datetime.now(timezone.utc)
     recent_events = audit_event_store.list_recent(limit=12)
+    flags_by_name = {
+        f.strategy_name: f.enabled
+        for f in strategy_flag_store.list_all(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+        )
+    }
+    strategy_flags = [(name, flags_by_name.get(name, False)) for name in STRATEGY_REGISTRY]
     return HealthSnapshot(
         trading_status=store.load(
             trading_mode=settings.trading_mode,
@@ -238,6 +249,7 @@ def load_health_snapshot(
             recent_events=recent_events,
             now=now,
         ),
+        strategy_flags=strategy_flags,
     )
 
 

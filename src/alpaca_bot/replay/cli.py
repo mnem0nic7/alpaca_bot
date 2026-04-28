@@ -9,6 +9,7 @@ from pathlib import Path
 from alpaca_bot.config import Settings
 from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord
 from alpaca_bot.replay.runner import ReplayRunner
+from alpaca_bot.strategy import STRATEGY_REGISTRY
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -16,10 +17,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scenario", required=True, metavar="FILE")
     parser.add_argument("--output", metavar="FILE", default="-", help="output file (default: stdout)")
     parser.add_argument("--format", choices=["json", "csv"], default="json")
+    parser.add_argument(
+        "--strategy",
+        choices=list(STRATEGY_REGISTRY),
+        default=None,
+        help="strategy to backtest (default: breakout)",
+    )
     args = parser.parse_args(argv)
 
     settings = Settings.from_env()
-    runner = ReplayRunner(settings)
+    strategy_name = args.strategy or "breakout"
+    signal_evaluator = STRATEGY_REGISTRY[args.strategy] if args.strategy else None
+    runner = ReplayRunner(settings, signal_evaluator=signal_evaluator, strategy_name=strategy_name)
     scenario = runner.load_scenario(args.scenario)
     result = runner.run(scenario)
     report: BacktestReport = result.backtest_report  # type: ignore[assignment]
@@ -40,6 +49,7 @@ def _format_report(report: BacktestReport, fmt: str) -> str:
 
 def _report_to_dict(report: BacktestReport) -> dict:
     return {
+        "strategy": report.strategy_name,
         "total_trades": report.total_trades,
         "winning_trades": report.winning_trades,
         "losing_trades": report.losing_trades,
@@ -68,6 +78,7 @@ def _trade_to_dict(t: ReplayTradeRecord) -> dict:
 def _report_to_csv(report: BacktestReport) -> str:
     import io
     buf = io.StringIO()
+    buf.write(f"# strategy: {report.strategy_name}\n")
     writer = csv.DictWriter(
         buf,
         fieldnames=[

@@ -11,6 +11,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.templating import Jinja2Templates
 
 from alpaca_bot.config import Settings
+from alpaca_bot.notifications import Notifier
+from alpaca_bot.notifications.factory import build_notifier
 import re
 
 from alpaca_bot.storage import (
@@ -69,6 +71,7 @@ def create_app(
     audit_event_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     strategy_flag_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     watchlist_store_factory: Callable[[ConnectionProtocol], object] | None = None,
+    notifier: Notifier | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings.from_env()
     fixed_connection = connection or db_connection
@@ -108,6 +111,7 @@ def create_app(
     app.state.audit_event_store_factory = audit_event_store_factory or AuditEventStore
     app.state.strategy_flag_store_factory = strategy_flag_store_factory or StrategyFlagStore
     app.state.watchlist_store_factory = watchlist_store_factory or WatchlistStore
+    app.state.notifier = notifier or build_notifier(app_settings)
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request, no_refresh: str = "") -> HTMLResponse:
@@ -282,6 +286,10 @@ def create_app(
                     else health_snapshot.worker_health.last_event_at.isoformat()
                 ),
                 "worker_age_seconds": health_snapshot.worker_health.age_seconds,
+                "strategy_flags": [
+                    {"name": name, "enabled": enabled}
+                    for name, enabled in health_snapshot.strategy_flags
+                ],
             },
             status_code=http_status,
         )
@@ -349,6 +357,7 @@ def create_app(
             kill_switch_enabled=True,
             reason=reason,
             operator=operator,
+            notifier=app.state.notifier,
         )
 
     @app.post("/admin/resume")
@@ -370,6 +379,7 @@ def create_app(
             kill_switch_enabled=False,
             reason=reason or None,
             operator=operator,
+            notifier=app.state.notifier,
         )
 
     @app.post("/admin/close-only")
@@ -391,6 +401,7 @@ def create_app(
             kill_switch_enabled=False,
             reason=reason or None,
             operator=operator,
+            notifier=app.state.notifier,
         )
 
     @app.post("/strategies/{strategy_name}/toggle-entries")
@@ -696,6 +707,7 @@ def _execute_admin_status_change(
     kill_switch_enabled: bool,
     reason: str | None,
     operator: str | None,
+    notifier: "Notifier",
 ) -> Response:
     app_settings = app.state.settings
     now = datetime.now(timezone.utc)
@@ -731,6 +743,24 @@ def _execute_admin_status_change(
             commit=False,
         )
         connection.commit()
+        _subjects = {
+            "halt": "Trading halted",
+            "close-only": "Trading set to close-only",
+            "resume": "Trading resumed",
+        }
+        try:
+            notifier.send(
+                subject=_subjects.get(command_name, f"Trading status changed: {command_name}"),
+                body=(
+                    f"mode={app_settings.trading_mode.value} "
+                    f"strategy={app_settings.strategy_version} "
+                    f"reason={reason or '-'} "
+                    f"operator={operator or 'web'}"
+                ),
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("Notifier send failed after status change")
     finally:
         close = getattr(connection, "close", None)
         if callable(close):
@@ -810,6 +840,10 @@ def _load_health(app: FastAPI):
             ),
             audit_event_store=_build_store(
                 app.state.audit_event_store_factory,
+                connection,
+            ),
+            strategy_flag_store=_build_store(
+                app.state.strategy_flag_store_factory,
                 connection,
             ),
         )
