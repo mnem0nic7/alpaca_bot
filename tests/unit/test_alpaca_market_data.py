@@ -65,7 +65,7 @@ class HistoricalClientStub:
             }
         )
 
-    def get_latest_stock_trades(self, request_params: object) -> SimpleNamespace:
+    def get_stock_latest_trade(self, request_params: object) -> SimpleNamespace:
         self.requests.append(request_params)
         return SimpleNamespace(
             data={

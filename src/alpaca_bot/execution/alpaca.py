@@ -517,7 +517,7 @@ class AlpacaMarketDataAdapter:
         if not symbols:
             return {}
         request = _latest_trade_request(symbols=symbols)
-        raw = _retry_with_backoff(lambda: self._historical.get_latest_stock_trades(request))
+        raw = _retry_with_backoff(lambda: self._historical.get_stock_latest_trade(request))
         return _parse_latest_trades(raw)
 
     @staticmethod
