@@ -6,13 +6,15 @@ from typing import Any
 
 import pytest
 
+from enum import Enum
+
 from alpaca_bot.config import Settings
 from alpaca_bot.execution import (
     AlpacaBroker,
     AlpacaExecutionAdapter,
     AlpacaCredentialsError,
 )
-from alpaca_bot.execution.alpaca import _retry_with_backoff, resolve_alpaca_credentials
+from alpaca_bot.execution.alpaca import _parse_broker_order, _retry_with_backoff, resolve_alpaca_credentials
 
 
 @dataclass
@@ -460,3 +462,85 @@ def test_keyboard_interrupt_propagates_immediately_without_retry(
 
     assert calls == 1, "fn should have been called exactly once before propagating"
     assert slept == [], "time.sleep must never be called when KeyboardInterrupt fires"
+
+
+# ---------------------------------------------------------------------------
+# _parse_broker_order tests
+# ---------------------------------------------------------------------------
+
+
+class _OrderSide(str, Enum):
+    BUY = "buy"
+
+
+class _OrderStatus(str, Enum):
+    NEW = "new"
+    ACCEPTED = "accepted"
+
+
+@dataclass
+class EnumOrderStub:
+    client_order_id: str
+    id: str
+    symbol: str
+    side: _OrderSide
+    status: _OrderStatus
+    qty: str
+
+
+@dataclass
+class StringOrderStub:
+    client_order_id: str
+    id: str
+    symbol: str
+    side: str
+    status: str
+    qty: str
+
+
+def test_parse_broker_order_enum_side_and_status_uses_value() -> None:
+    """Enum fields must produce their raw string values, not 'OrderSide.BUY'."""
+    raw = EnumOrderStub(
+        client_order_id="paper:v1:AAPL:entry",
+        id="broker-1",
+        symbol="aapl",
+        side=_OrderSide.BUY,
+        status=_OrderStatus.NEW,
+        qty="10",
+    )
+    order = _parse_broker_order(raw)
+    assert order.side == "buy"
+    assert order.status == "new"
+    assert order.symbol == "AAPL"
+    assert order.quantity == 10
+
+
+def test_parse_broker_order_str_side_and_status_passes_through() -> None:
+    """Plain string fields must pass through unchanged."""
+    raw = StringOrderStub(
+        client_order_id="paper:v1:AAPL:entry",
+        id="broker-2",
+        symbol="AAPL",
+        side="buy",
+        status="accepted",
+        qty="5",
+    )
+    order = _parse_broker_order(raw)
+    assert order.side == "buy"
+    assert order.status == "accepted"
+
+
+def test_parse_broker_order_enum_status_not_string_enum_prefix() -> None:
+    """str(Enum) returns 'ClassName.VALUE'; _parse_broker_order must not use str()."""
+    raw = EnumOrderStub(
+        client_order_id="paper:v1:MSFT:entry",
+        id="broker-3",
+        symbol="MSFT",
+        side=_OrderSide.BUY,
+        status=_OrderStatus.ACCEPTED,
+        qty="3",
+    )
+    order = _parse_broker_order(raw)
+    assert order.status == "accepted"
+    assert "OrderStatus" not in order.status
+    assert "_OrderStatus" not in order.status
