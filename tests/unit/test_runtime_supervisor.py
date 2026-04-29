@@ -1027,6 +1027,7 @@ def test_runtime_supervisor_run_forever_starts_once_loops_until_stop_and_sleeps(
         should_stop=lambda: next(stop_sequence),
         sleep_fn=lambda seconds: sleep_calls.append(seconds),
         poll_interval_seconds=12.5,
+        cycle_now=lambda: datetime(2026, 4, 24, 14, 30, tzinfo=timezone.utc),
     )
 
     assert startup_calls == [{}]
