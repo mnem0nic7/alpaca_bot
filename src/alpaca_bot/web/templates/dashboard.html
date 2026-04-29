@@ -570,6 +570,7 @@
               <thead>
                 <tr>
                   <th>Symbol</th>
+                  <th>Strategy</th>
                   <th>Qty</th>
                   <th>Entry</th>
                   <th>Exit</th>
@@ -581,6 +582,7 @@
                 {% for trade in metrics.trades %}
                   <tr>
                     <td class="mono">{{ trade.symbol }}</td>
+                    <td class="muted">{{ trade.strategy_name }}</td>
                     <td>{{ trade.quantity }}</td>
                     <td>{{ format_price(trade.entry_price) }}</td>
                     <td>{{ format_price(trade.exit_price) }}</td>
@@ -592,11 +594,38 @@
                     </td>
                   </tr>
                 {% else %}
-                  <tr><td colspan="6" class="muted">No closed trades today.</td></tr>
+                  <tr><td colspan="7" class="muted">No closed trades today.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
+          {% if metrics.trades_by_strategy and metrics.trades_by_strategy | length > 1 %}
+          <h3 style="margin-top:1rem">By Strategy</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Strategy</th>
+                  <th>Trades</th>
+                  <th>P&amp;L</th>
+                  <th>Win Rate</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for strat_name, strat_trades in metrics.trades_by_strategy.items() %}
+                {% set strat_pnl = strat_trades | map(attribute='pnl') | sum %}
+                {% set wins = strat_trades | selectattr('pnl', 'gt', 0) | list | length %}
+                <tr>
+                  <td>{{ strat_name }}</td>
+                  <td>{{ strat_trades | length }}</td>
+                  <td class="{% if strat_pnl < 0 %}warn{% endif %}">{{ format_price(strat_pnl) }}</td>
+                  <td>{{ "%.0f%%" | format(wins / (strat_trades | length) * 100) }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% endif %}
         </div>
 
         <div class="panel">
