@@ -682,12 +682,14 @@ def _parse_barset(raw: Any) -> dict[str, list[Bar]]:
 
 
 def _parse_broker_order(raw: Any) -> BrokerOrder:
+    raw_side = getattr(raw, "side")
+    raw_status = getattr(raw, "status")
     return BrokerOrder(
         client_order_id=str(getattr(raw, "client_order_id", "")),
         broker_order_id=str(getattr(raw, "id", "")) or None,
         symbol=str(getattr(raw, "symbol")).upper(),
-        side=str(getattr(raw, "side")),
-        status=str(getattr(raw, "status")),
+        side=raw_side.value if hasattr(raw_side, "value") else str(raw_side),
+        status=raw_status.value if hasattr(raw_status, "value") else str(raw_status),
         quantity=int(float(getattr(raw, "qty"))),
     )
 

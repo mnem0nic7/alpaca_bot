@@ -261,9 +261,9 @@ class OrderStore:
             DO UPDATE SET
                 status = EXCLUDED.status,
                 quantity = EXCLUDED.quantity,
-                stop_price = EXCLUDED.stop_price,
-                limit_price = EXCLUDED.limit_price,
-                initial_stop_price = EXCLUDED.initial_stop_price,
+                stop_price = COALESCE(EXCLUDED.stop_price, orders.stop_price),
+                limit_price = COALESCE(EXCLUDED.limit_price, orders.limit_price),
+                initial_stop_price = COALESCE(EXCLUDED.initial_stop_price, orders.initial_stop_price),
                 broker_order_id = EXCLUDED.broker_order_id,
                 signal_timestamp = EXCLUDED.signal_timestamp,
                 fill_price = EXCLUDED.fill_price,

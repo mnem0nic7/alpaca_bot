@@ -190,6 +190,13 @@ def _apply_trade_update_locked(
             protective_stop_client_order_id = _protective_stop_client_order_id(
                 matched_order.client_order_id
             )
+        else:
+            logger.error(
+                "Entry fill for %s has no initial_stop_price — protective stop will not be queued. "
+                "Check order %s for missing prices (possible enum serialization bug).",
+                matched_order.symbol,
+                matched_order.client_order_id,
+            )
     elif (
         matched_order.intent_type in {"stop", "exit"}
         and normalized.status in {"filled", "partially_filled"}
@@ -237,6 +244,14 @@ def _apply_trade_update_locked(
             and normalized.filled_avg_price is not None
             and matched_order.status not in {"filled"}
         ):
+            if matched_order.initial_stop_price is None:
+                logger.critical(
+                    "trade_updates: fill received but order has no initial_stop_price — "
+                    "position for %s will open with stop=0. "
+                    "client_order_id=%s",
+                    matched_order.symbol,
+                    matched_order.client_order_id,
+                )
             initial_stop_price = matched_order.initial_stop_price or 0.0
             runtime.position_store.save(
                 PositionRecord(

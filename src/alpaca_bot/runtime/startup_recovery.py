@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Protocol, Sequence
+
+_log = logging.getLogger(__name__)
 
 from alpaca_bot.config import Settings
 from alpaca_bot.execution import BrokerOrder, BrokerPosition
@@ -242,6 +245,14 @@ def recover_startup_state(
                 existing = local_orders_by_broker_id.get(broker_order.broker_order_id)
             if existing is None:
                 existing = local_orders_by_client_id.get(broker_order.client_order_id)
+            if existing is None:
+                _log.critical(
+                    "startup_recovery: broker order has no local record — stop prices unknown. "
+                    "Position for %s may open without stop protection. "
+                    "client_order_id=%s",
+                    broker_order.symbol,
+                    broker_order.client_order_id,
+                )
             runtime.order_store.save(
                 OrderRecord(
                     client_order_id=broker_order.client_order_id,
