@@ -68,6 +68,10 @@ def _daily(close: float, high: float = 102.0, low: float = 98.0, day: int = 1) -
 #   window = daily_bars[-6:-1] = Jan 9–13, SMA = (99*4 + 101)/5 = 99.4
 #   daily_bars[-2].close = Jan 13 close = 101.0 > 99.4  ✓
 DAILY_BARS = [
+    _daily(close=99.0, day=4),
+    _daily(close=99.0, day=5),
+    _daily(close=99.0, day=6),
+    _daily(close=99.0, day=7),
     _daily(close=99.0, day=8),
     _daily(close=99.0, day=9),
     _daily(close=99.0, day=10),

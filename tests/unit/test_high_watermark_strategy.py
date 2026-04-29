@@ -37,6 +37,7 @@ def _make_settings(**overrides):
         flatten_time=time(15, 45),
         prior_day_high_lookback_bars=1,
         high_watermark_lookback_days=10,
+        atr_period=3,
     )
     defaults.update(overrides)
     return Settings(**defaults)
@@ -319,7 +320,7 @@ def test_high_watermark_initial_stop_uses_atr_when_enough_daily_bars():
     assert result.initial_stop_price == expected_stop
 
 
-def test_high_watermark_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
+def test_high_watermark_returns_none_when_atr_insufficient():
     from alpaca_bot.risk.atr import calculate_atr
     # atr_period=50 with 11 bars (11 < 51) → ATR returns None; high_watermark_lookback_days >= 5 min
     settings = _make_settings(atr_period=50)
@@ -327,8 +328,6 @@ def test_high_watermark_initial_stop_falls_back_to_buffer_pct_when_atr_returns_n
     intraday_bars, signal_index = _make_intraday_bars(signal_high=155.0, signal_close=154.0)
 
     assert calculate_atr(daily_bars, 50) is None
-    historical_high = 150.0
-    expected_stop = round(historical_high - max(0.01, historical_high * 0.001), 2)
 
     result = evaluate_high_watermark_signal(
         symbol="AAPL",
@@ -337,8 +336,7 @@ def test_high_watermark_initial_stop_falls_back_to_buffer_pct_when_atr_returns_n
         daily_bars=daily_bars,
         settings=settings,
     )
-    assert result is not None
-    assert result.initial_stop_price == expected_stop
+    assert result is None
 
 
 def test_high_watermark_entry_stop_price_at_historical_high_not_signal_bar_high():

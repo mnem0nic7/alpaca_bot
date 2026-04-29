@@ -111,8 +111,8 @@ def test_breakout_entry_stop_anchored_to_breakout_level_not_signal_bar_high():
     When the signal bar runs up well above the breakout level, using signal_bar.high
     would inflate the trigger price and reduce fill rate on subsequent bars.
     """
-    settings = _make_settings()
-    daily_bars = _make_daily_bars(n=6)
+    settings = _make_settings(atr_period=3)
+    daily_bars = _make_daily_bars(n=6)  # 6 >= atr_period+1=4 → ATR guard passes
     # Signal bar high (102.0) is 2.0 above breakout_level (100.0)
     intraday_bars, signal_index = _make_breakout_intraday_bars(
         lookback_high=100.0, signal_high=102.0, signal_close=101.5
@@ -138,8 +138,8 @@ def test_breakout_volume_lookback_uses_relative_volume_lookback_bars_not_breakou
     relative_volume_lookback_bars window.
     """
     # Use a short vol lookback (2) and a longer price lookback (5)
-    settings = _make_settings(breakout_lookback_bars=5, relative_volume_lookback_bars=2)
-    daily_bars = _make_daily_bars(n=6)
+    settings = _make_settings(atr_period=3, breakout_lookback_bars=5, relative_volume_lookback_bars=2)
+    daily_bars = _make_daily_bars(n=6)  # 6 >= atr_period+1=4 → ATR guard passes
     ny = ZoneInfo("America/New_York")
     base = datetime(2026, 1, 2, 10, 0, tzinfo=ny)
 
@@ -173,14 +173,12 @@ def test_breakout_volume_lookback_uses_relative_volume_lookback_bars_not_breakou
     assert result.relative_volume == pytest.approx(300_000.0 / 85_000.0, rel=1e-3)
 
 
-def test_breakout_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
+def test_breakout_returns_none_when_atr_insufficient():
     settings = _make_settings(atr_period=3, daily_sma_period=2)
     daily_bars = _make_daily_bars(n=3)  # 3 < atr_period+1=4 → ATR returns None; 3 >= sma_period+1=3 → trend filter passes
     intraday_bars, signal_index = _make_breakout_intraday_bars()
 
     assert calculate_atr(daily_bars, 3) is None
-    breakout_level = 100.0
-    expected_stop = round(breakout_level - max(0.01, breakout_level * 0.001), 2)
 
     result = evaluate_breakout_signal(
         symbol="AAPL",
@@ -189,5 +187,4 @@ def test_breakout_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
         daily_bars=daily_bars,
         settings=settings,
     )
-    assert result is not None
-    assert result.initial_stop_price == expected_stop
+    assert result is None

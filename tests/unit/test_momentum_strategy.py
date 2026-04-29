@@ -34,6 +34,7 @@ def _make_settings(**overrides):
         entry_window_end=time(15, 30),
         flatten_time=time(15, 45),
         prior_day_high_lookback_bars=1,
+        atr_period=3,
     )
     defaults.update(overrides)
     return Settings(**defaults)
@@ -321,7 +322,7 @@ def test_momentum_initial_stop_uses_atr_when_enough_daily_bars():
     assert result.initial_stop_price == expected_stop
 
 
-def test_momentum_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
+def test_momentum_returns_none_when_atr_insufficient():
     from alpaca_bot.strategy.momentum import evaluate_momentum_signal
     from alpaca_bot.risk.atr import calculate_atr
     settings = _make_settings(atr_period=3, daily_sma_period=2)
@@ -329,8 +330,6 @@ def test_momentum_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
     intraday_bars = _make_intraday_bars(n=6, high=102.0, close=101.5)
 
     assert calculate_atr(daily_bars, 3) is None
-    yesterday_high = daily_bars[-1].high
-    expected_stop = round(yesterday_high - max(0.01, yesterday_high * 0.001), 2)
 
     result = evaluate_momentum_signal(
         symbol="AAPL",
@@ -339,8 +338,7 @@ def test_momentum_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
         daily_bars=daily_bars,
         settings=settings,
     )
-    assert result is not None
-    assert result.initial_stop_price == expected_stop
+    assert result is None
 
 
 def test_momentum_returns_none_when_close_at_or_below_yesterday_high():

@@ -37,6 +37,7 @@ def _make_settings(**overrides):
         flatten_time=time(15, 45),
         prior_day_high_lookback_bars=1,
         orb_opening_bars=2,
+        atr_period=3,
     )
     defaults.update(overrides)
     return Settings(**defaults)
@@ -331,15 +332,13 @@ def test_orb_initial_stop_uses_atr_when_enough_daily_bars():
     assert result.initial_stop_price == expected_stop
 
 
-def test_orb_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
+def test_orb_returns_none_when_atr_insufficient():
     from alpaca_bot.risk.atr import calculate_atr
     settings = _make_settings(atr_period=3, daily_sma_period=2)
     daily_bars = _make_daily_bars(n=3)  # 3 < atr_period+1=4 → ATR returns None; 3 >= sma_period+1=3 → trend filter passes
     intraday_bars, signal_index = _make_intraday_bars_with_orb(orb_low=99.0)
 
     assert calculate_atr(daily_bars, 3) is None
-    orb_low = 99.0
-    expected_stop = round(orb_low - max(0.01, orb_low * 0.001), 2)
 
     result = evaluate_orb_signal(
         symbol="AAPL",
@@ -348,5 +347,4 @@ def test_orb_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
         daily_bars=daily_bars,
         settings=settings,
     )
-    assert result is not None
-    assert result.initial_stop_price == expected_stop
+    assert result is None

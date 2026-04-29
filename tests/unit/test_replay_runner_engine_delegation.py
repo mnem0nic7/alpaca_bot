@@ -50,7 +50,7 @@ def make_settings(**overrides: str) -> Settings:
         "ENTRY_WINDOW_START": "10:00",
         "ENTRY_WINDOW_END": "15:30",
         "FLATTEN_TIME": "15:45",
-        "ATR_PERIOD": "50",
+        "ATR_PERIOD": "14",
     }
     values.update(overrides)
     return Settings.from_env(values)
@@ -273,14 +273,15 @@ def test_runner_emits_stop_hit_when_bar_low_crosses_stop_price() -> None:
             volume=2000,
         )
     )
-    # Fill happens here (open=110.05 fills at breakout_level+buffer=110.01, limit=110.12)
+    # Fill happens here (open=110.05 fills at breakout_level+buffer=110.01).
+    # low=107.9 is below initial_stop (110.0 - 1.5*ATR≈108.05) → STOP_HIT fires.
     bars.append(
         Bar(
             symbol="AAPL",
             timestamp=bars[-1].timestamp.replace(hour=18, minute=45),
             open=110.05,
             high=111.2,
-            low=108.5,
+            low=107.9,
             close=108.8,
             volume=1800,
         )

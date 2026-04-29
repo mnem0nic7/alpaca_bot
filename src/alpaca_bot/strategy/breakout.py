@@ -5,7 +5,7 @@ from datetime import date, datetime
 
 from alpaca_bot.config import Settings
 from alpaca_bot.domain.models import Bar, EntrySignal
-from alpaca_bot.risk.atr import atr_stop_buffer
+from alpaca_bot.risk.atr import atr_stop_buffer, calculate_atr
 from alpaca_bot.strategy.session import SessionType, detect_session_type
 from alpaca_bot.strategy.session import is_entry_window as _is_entry_window
 from alpaca_bot.strategy.session import is_flatten_time as _is_flatten_time
@@ -73,6 +73,8 @@ def evaluate_breakout_signal(
     if signal_bar.close <= breakout_level:
         return None
     if relative_volume < settings.relative_volume_threshold:
+        return None
+    if calculate_atr(daily_bars, settings.atr_period) is None:
         return None
 
     stop_price = round(breakout_level + settings.entry_stop_price_buffer, 2)

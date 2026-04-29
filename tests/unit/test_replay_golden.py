@@ -33,7 +33,7 @@ def make_settings(**overrides: str) -> Settings:
         "ENTRY_WINDOW_START": "10:00",
         "ENTRY_WINDOW_END": "15:30",
         "FLATTEN_TIME": "15:45",
-        "ATR_PERIOD": "50",
+        "ATR_PERIOD": "14",
     }
     values.update(overrides)
     return Settings.from_env(values)
@@ -116,7 +116,7 @@ def test_replay_runner_limits_symbol_to_one_trade_per_day() -> None:
                 timestamp=bars[-1].timestamp.replace(hour=18, minute=45),
                 open=110.05,
                 high=111.2,
-                low=109.4,
+                low=107.9,
                 close=109.5,
                 volume=1800,
             ),

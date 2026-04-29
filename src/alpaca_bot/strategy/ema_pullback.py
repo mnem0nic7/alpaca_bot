@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 from alpaca_bot.config import Settings
 from alpaca_bot.domain.models import Bar, EntrySignal
-from alpaca_bot.risk.atr import atr_stop_buffer
+from alpaca_bot.risk.atr import atr_stop_buffer, calculate_atr
 from alpaca_bot.strategy.breakout import daily_trend_filter_passes, is_entry_session_time
 
 
@@ -89,6 +89,8 @@ def evaluate_ema_pullback_signal(
     avg_volume = sum(bar.volume for bar in prior_bars) / len(prior_bars)
     relative_volume = signal_bar.volume / avg_volume if avg_volume > 0 else 0.0
     if relative_volume < settings.relative_volume_threshold:
+        return None
+    if calculate_atr(daily_bars, settings.atr_period) is None:
         return None
 
     prior_bar = intraday_bars[signal_index - 1]

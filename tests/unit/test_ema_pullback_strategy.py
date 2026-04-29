@@ -37,6 +37,7 @@ def _make_settings(**overrides):
         flatten_time=time(15, 45),
         prior_day_high_lookback_bars=1,
         ema_period=3,
+        atr_period=3,
     )
     defaults.update(overrides)
     return Settings(**defaults)
@@ -271,7 +272,7 @@ def test_ema_pullback_initial_stop_uses_atr_when_enough_daily_bars():
     assert result.initial_stop_price == expected_stop
 
 
-def test_ema_pullback_initial_stop_falls_back_to_buffer_pct_when_atr_returns_none():
+def test_ema_pullback_returns_none_when_atr_insufficient():
     from alpaca_bot.risk.atr import calculate_atr
     settings = _make_settings(atr_period=3, daily_sma_period=2)
     daily_bars = _make_daily_bars(n=3)  # 3 < atr_period+1=4 → ATR returns None; 3 >= sma_period+1=3 → trend filter passes
@@ -280,8 +281,6 @@ def test_ema_pullback_initial_stop_falls_back_to_buffer_pct_when_atr_returns_non
     )
 
     assert calculate_atr(daily_bars, 3) is None
-    prior_bar_low = intraday_bars[signal_index - 1].low  # pullback_close - 1.0 = 105.0
-    expected_stop = round(prior_bar_low - max(0.01, prior_bar_low * 0.001), 2)
 
     result = evaluate_ema_pullback_signal(
         symbol="AAPL",
@@ -290,5 +289,4 @@ def test_ema_pullback_initial_stop_falls_back_to_buffer_pct_when_atr_returns_non
         daily_bars=daily_bars,
         settings=settings,
     )
-    assert result is not None
-    assert result.initial_stop_price == expected_stop
+    assert result is None
