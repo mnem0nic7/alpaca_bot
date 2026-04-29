@@ -1346,3 +1346,159 @@ def test_rollback_called_when_connection_commit_raises_on_entry_fill() -> None:
         f"rollback must be called when connection.commit raises on entry fill; "
         f"got rollback_count={connection.rollback_count}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Alpaca SDK nested-order normalization
+# ---------------------------------------------------------------------------
+
+class _FakeOrder:
+    """Minimal stand-in for alpaca.trading.models.Order (a Pydantic object)."""
+
+    class _StrEnum(str):
+        """Mimics Pydantic enum: str(val) gives 'EnumClass.VALUE', .value gives 'value'."""
+        def __new__(cls, display: str, value: str):
+            obj = str.__new__(cls, display)
+            obj.value = value
+            return obj
+
+    def __init__(
+        self,
+        *,
+        id: str = "broker-uuid-1234",
+        client_order_id: str = "v1-breakout:2026-04-25:AAPL:entry:2026-04-25T14:00:00+00:00",
+        symbol: str = "AAPL",
+        side: str = "buy",
+        status: str = "filled",
+        qty: str = "10",
+        filled_qty: str = "10",
+        filled_avg_price: str = "112.00",
+    ) -> None:
+        self.id = id
+        self.client_order_id = client_order_id
+        self.symbol = symbol
+        self.side = self._StrEnum(f"OrderSide.{side.upper()}", side)
+        self.status = self._StrEnum(f"OrderStatus.{status.upper()}", status)
+        self.qty = qty
+        self.filled_qty = filled_qty
+        self.filled_avg_price = filled_avg_price
+
+
+class _FakeSdkTradeUpdate:
+    """Mimics alpaca.trading.models.TradeUpdate Pydantic model structure."""
+
+    class _StrEnum(str):
+        def __new__(cls, display: str, value: str):
+            obj = str.__new__(cls, display)
+            obj.value = value
+            return obj
+
+    def __init__(
+        self,
+        *,
+        event: str = "fill",
+        order: _FakeOrder | None = None,
+        timestamp: datetime = NOW,
+    ) -> None:
+        self.event = self._StrEnum(f"TradeEvent.{event.upper()}", event)
+        self.order = order or _FakeOrder()
+        self.timestamp = timestamp
+        self.qty = None
+        self.price = None
+        self.position_qty = None
+        self.execution_id = None
+
+
+class TestAlpacaSdkNormalization:
+    """_normalize_trade_update must handle the Alpaca SDK nested .order structure."""
+
+    def _normalize(self, sdk_update):
+        from alpaca_bot.runtime.trade_updates import _normalize_trade_update
+        return _normalize_trade_update(sdk_update)
+
+    def test_extracts_client_order_id_from_nested_order(self):
+        sdk = _FakeSdkTradeUpdate()
+        tu = self._normalize(sdk)
+        assert tu.client_order_id == "v1-breakout:2026-04-25:AAPL:entry:2026-04-25T14:00:00+00:00"
+
+    def test_extracts_broker_order_id_from_order_id_uuid(self):
+        sdk = _FakeSdkTradeUpdate()
+        tu = self._normalize(sdk)
+        assert tu.broker_order_id == "broker-uuid-1234"
+
+    def test_extracts_symbol_from_nested_order(self):
+        sdk = _FakeSdkTradeUpdate(order=_FakeOrder(symbol="MSFT"))
+        tu = self._normalize(sdk)
+        assert tu.symbol == "MSFT"
+
+    def test_coerces_status_enum_to_lowercase_string(self):
+        # OrderStatus enum serializes as "OrderStatus.FILLED"; .value gives "filled"
+        sdk = _FakeSdkTradeUpdate(order=_FakeOrder(status="filled"))
+        tu = self._normalize(sdk)
+        assert tu.status == "filled"
+
+    def test_coerces_side_enum_to_lowercase_string(self):
+        sdk = _FakeSdkTradeUpdate(order=_FakeOrder(side="buy"))
+        tu = self._normalize(sdk)
+        assert tu.side == "buy"
+
+    def test_extracts_filled_qty_from_nested_order(self):
+        sdk = _FakeSdkTradeUpdate(order=_FakeOrder(filled_qty="7"))
+        tu = self._normalize(sdk)
+        assert tu.filled_qty == 7
+
+    def test_extracts_filled_avg_price_from_nested_order(self):
+        sdk = _FakeSdkTradeUpdate(order=_FakeOrder(filled_avg_price="112.50"))
+        tu = self._normalize(sdk)
+        assert tu.filled_avg_price == pytest.approx(112.50)
+
+    def test_coerces_event_enum_to_lowercase_string(self):
+        sdk = _FakeSdkTradeUpdate(event="fill")
+        tu = self._normalize(sdk)
+        assert tu.event == "fill"
+
+    def test_full_fill_applies_correctly_via_sdk_object(self):
+        """End-to-end: SDK-shaped update must match order and write fill_price."""
+        from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+        entry_order = _make_entry_order()
+        runtime = _make_runtime(orders=[entry_order])
+
+        sdk = _FakeSdkTradeUpdate(
+            event="fill",
+            order=_FakeOrder(
+                client_order_id=entry_order.client_order_id,
+                symbol="AAPL",
+                status="filled",
+                filled_qty="10",
+                filled_avg_price="112.00",
+            ),
+        )
+
+        result = apply_trade_update(
+            settings=make_settings(),
+            runtime=runtime,
+            update=sdk,
+            now=NOW,
+        )
+
+        assert result["unmatched"] is False, "SDK update must match the entry order"
+        assert result["position_updated"] is True
+
+        updated_orders = [o for o in runtime.order_store.saved if o.intent_type == "entry"]
+        assert len(updated_orders) >= 1
+        assert updated_orders[-1].fill_price == pytest.approx(112.00)
+        assert updated_orders[-1].status == "filled"
+
+    def test_dict_update_still_works_after_fix(self):
+        """Existing dict-based update path must be unchanged."""
+        from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+        entry_order = _make_entry_order()
+        runtime = _make_runtime(orders=[entry_order])
+
+        update = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+        result = apply_trade_update(settings=make_settings(), runtime=runtime, update=update, now=NOW)
+
+        assert result["unmatched"] is False
+        assert result["position_updated"] is True

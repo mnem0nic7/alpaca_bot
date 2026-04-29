@@ -385,24 +385,57 @@ def _apply_trade_update_locked(
 
 
 def _normalize_trade_update(update: Any) -> TradeUpdate:
-    payload = update if isinstance(update, dict) else update.__dict__
+    if isinstance(update, dict):
+        payload: dict[str, Any] = dict(update)
+    else:
+        payload = dict(vars(update)) if hasattr(update, "__dict__") else {}
+
+    # Alpaca SDK wraps all order-level fields (client_order_id, symbol, status,
+    # filled_qty, etc.) inside a nested .order attribute.  Merge them into the
+    # flat payload so the rest of the function works unchanged for both dict
+    # payloads (tests/webhooks) and live SDK objects.
+    order_obj = payload.get("order")
+    if order_obj is not None:
+        order_dict: dict[str, Any] = (
+            order_obj if isinstance(order_obj, dict)
+            else (dict(vars(order_obj)) if hasattr(order_obj, "__dict__") else {})
+        )
+        for key, val in order_dict.items():
+            if key not in payload or payload[key] is None:
+                payload[key] = val
+
     timestamp_value = payload.get("timestamp") or payload.get("at")
     if timestamp_value is None:
         raise ValueError("trade update timestamp is required")
+
+    # SDK enum fields (TradeEvent, OrderStatus, OrderSide) serialize to
+    # "EnumClass.VALUE" — use .value when available to get the raw string.
+    broker_id_raw = (
+        payload.get("broker_order_id")
+        or payload.get("order_id")
+        or payload.get("id")  # SDK Order.id is a UUID
+    )
     return TradeUpdate(
-        event=str(payload.get("event", "")).lower(),
+        event=_enum_str(payload.get("event", "")).lower(),
         client_order_id=_optional_str(payload.get("client_order_id")),
-        broker_order_id=_optional_str(
-            payload.get("broker_order_id") or payload.get("order_id") or payload.get("id")
-        ),
-        symbol=str(payload.get("symbol", "")).upper(),
-        side=_optional_str(payload.get("side")),
-        status=str(payload.get("status", payload.get("event", ""))).lower(),
+        broker_order_id=_optional_str(broker_id_raw),
+        symbol=_enum_str(payload.get("symbol", "")).upper(),
+        side=_optional_str(_enum_str(payload.get("side")) or None),
+        status=_enum_str(payload.get("status") or payload.get("event") or "").lower(),
         quantity=_optional_int(payload.get("qty")),
         filled_qty=_optional_int(payload.get("filled_qty")),
         filled_avg_price=_optional_float(payload.get("filled_avg_price")),
         timestamp=_as_datetime(timestamp_value),
     )
+
+
+def _enum_str(value: Any) -> str:
+    """Return the string value from an enum or coerce to str, never None."""
+    if value is None:
+        return ""
+    if hasattr(value, "value"):
+        return str(value.value)
+    return str(value)
 
 
 def _find_order(order_store: OrderStoreProtocol, update: TradeUpdate) -> OrderRecord | None:
