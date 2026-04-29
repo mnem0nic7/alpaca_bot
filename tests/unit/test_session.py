@@ -116,14 +116,20 @@ def test_is_entry_window_closed_always_false():
 # --- is_flatten_time ---
 
 def test_is_flatten_time_after_hours_before():
-    settings = _settings()
+    settings = _settings(EXTENDED_HOURS_ENABLED="true")
     ts = _make_ts(19, 30)  # before 19:45
     assert is_flatten_time(ts, settings, SessionType.AFTER_HOURS) is False
 
 
 def test_is_flatten_time_after_hours_at():
-    settings = _settings()
+    settings = _settings(EXTENDED_HOURS_ENABLED="true")
     ts = _make_ts(19, 45)
+    assert is_flatten_time(ts, settings, SessionType.AFTER_HOURS) is True
+
+
+def test_is_flatten_time_after_hours_disabled_always_flattens():
+    settings = _settings(EXTENDED_HOURS_ENABLED="false")
+    ts = _make_ts(16, 5)  # just after regular close
     assert is_flatten_time(ts, settings, SessionType.AFTER_HOURS) is True
 
 

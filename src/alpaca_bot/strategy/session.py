@@ -50,5 +50,7 @@ def is_flatten_time(
     if session is SessionType.REGULAR:
         return local_time >= settings.flatten_time
     if session is SessionType.AFTER_HOURS:
+        if not settings.extended_hours_enabled:
+            return True
         return local_time >= settings.extended_hours_flatten_time
     return False

@@ -6,16 +6,19 @@ from datetime import date, datetime
 from alpaca_bot.config import Settings
 from alpaca_bot.domain.models import Bar, EntrySignal
 from alpaca_bot.risk.atr import atr_stop_buffer
+from alpaca_bot.strategy.session import SessionType, detect_session_type
+from alpaca_bot.strategy.session import is_entry_window as _is_entry_window
+from alpaca_bot.strategy.session import is_flatten_time as _is_flatten_time
 
 
 def is_entry_session_time(timestamp: datetime, settings: Settings) -> bool:
-    local_time = timestamp.astimezone(settings.market_timezone).time()
-    return settings.entry_window_start <= local_time <= settings.entry_window_end
+    session = detect_session_type(timestamp, settings)
+    return _is_entry_window(timestamp, settings, session)
 
 
 def is_past_flatten_time(timestamp: datetime, settings: Settings) -> bool:
-    local_time = timestamp.astimezone(settings.market_timezone).time()
-    return local_time >= settings.flatten_time
+    session = detect_session_type(timestamp, settings)
+    return _is_flatten_time(timestamp, settings, session)
 
 
 def session_day(timestamp: datetime, settings: Settings) -> date:
