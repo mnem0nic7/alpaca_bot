@@ -328,6 +328,50 @@ class AlpacaExecutionAdapter:
             _retry_with_backoff(lambda: self._trading.submit_order(request))
         )
 
+    def submit_limit_entry(
+        self,
+        *,
+        symbol: str,
+        quantity: int | None = None,
+        qty: int | None = None,
+        limit_price: float,
+        client_order_id: str,
+    ) -> BrokerOrder:
+        """Extended-hours limit buy. Alpaca requires extended_hours=True and TIF=DAY."""
+        q = _resolve_order_quantity(quantity=quantity, qty=qty)
+        request = _build_extended_hours_limit_order(
+            symbol=symbol,
+            quantity=q,
+            limit_price=limit_price,
+            client_order_id=client_order_id,
+            side="buy",
+        )
+        return _parse_broker_order(
+            _retry_with_backoff(lambda: self._trading.submit_order(request))
+        )
+
+    def submit_limit_exit(
+        self,
+        *,
+        symbol: str,
+        quantity: int | None = None,
+        qty: int | None = None,
+        limit_price: float,
+        client_order_id: str,
+    ) -> BrokerOrder:
+        """Extended-hours limit sell. Alpaca requires extended_hours=True and TIF=DAY."""
+        q = _resolve_order_quantity(quantity=quantity, qty=qty)
+        request = _build_extended_hours_limit_order(
+            symbol=symbol,
+            quantity=q,
+            limit_price=limit_price,
+            client_order_id=client_order_id,
+            side="sell",
+        )
+        return _parse_broker_order(
+            _retry_with_backoff(lambda: self._trading.submit_order(request))
+        )
+
     def replace_order(
         self,
         *,
@@ -774,6 +818,48 @@ def _market_order_request(
         time_in_force=TimeInForce.DAY,
         client_order_id=client_order_id,
     )
+
+
+def _build_extended_hours_limit_order(
+    symbol: str,
+    quantity: int,
+    limit_price: float,
+    client_order_id: str,
+    side: str,
+) -> Any:
+    try:
+        from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
+        from alpaca.trading.requests import LimitOrderRequest
+    except ModuleNotFoundError:
+        return {
+            "symbol": symbol,
+            "qty": quantity,
+            "side": side,
+            "type": "limit",
+            "time_in_force": "day",
+            "extended_hours": True,
+            "limit_price": limit_price,
+            "client_order_id": client_order_id,
+        }
+    return LimitOrderRequest(
+        symbol=symbol,
+        qty=quantity,
+        side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
+        type=OrderType.LIMIT,
+        time_in_force=TimeInForce.DAY,
+        extended_hours=True,
+        limit_price=limit_price,
+        client_order_id=client_order_id,
+    )
+
+
+def extended_hours_limit_price(side: str, ref_price: float, offset_pct: float) -> float:
+    """Pure helper: compute the limit price for an extended-hours order."""
+    if side == "buy":
+        return round(ref_price * (1 + offset_pct), 2)
+    if side == "sell":
+        return round(ref_price * (1 - offset_pct), 2)
+    raise ValueError(f"extended_hours_limit_price: side must be 'buy' or 'sell', got {side!r}")
 
 
 def _resolve_order_quantity(*, quantity: int | None, qty: int | None) -> int:

@@ -62,6 +62,8 @@ class BrokerProtocol(Protocol):
 
     def submit_market_exit(self, **kwargs): ...
 
+    def submit_limit_exit(self, **kwargs): ...
+
     def cancel_order(self, order_id: str) -> None: ...
 
 
@@ -153,6 +155,7 @@ def execute_cycle_intents(
                 now=timestamp,
                 strategy_name=strategy_name,
                 lock_ctx=lock_ctx,
+                limit_price=getattr(intent, "limit_price", None),
             )
             canceled_stop_count += canceled
             submitted_exit_count += submitted
@@ -344,6 +347,7 @@ def _execute_exit(
     now: datetime,
     strategy_name: str = "breakout",
     lock_ctx: Any = None,
+    limit_price: float | None = None,
 ) -> tuple[int, int, int]:
     # Returns (canceled_stop_count, submitted_exit_count, hard_failed).
     # hard_failed=1 when a broker call failed with an unrecognized error (stop cancel
@@ -565,18 +569,28 @@ def _execute_exit(
     )
     # Submit exit outside the lock.
     try:
-        broker_order = broker.submit_market_exit(
-            symbol=symbol,
-            quantity=position.quantity,
-            client_order_id=client_order_id,
-        )
+        if limit_price is not None:
+            broker_order = broker.submit_limit_exit(
+                symbol=symbol,
+                quantity=position.quantity,
+                limit_price=limit_price,
+                client_order_id=client_order_id,
+            )
+        else:
+            broker_order = broker.submit_market_exit(
+                symbol=symbol,
+                quantity=position.quantity,
+                client_order_id=client_order_id,
+            )
     except Exception:
         # Stops are already canceled at the broker (position is unprotected). Persist
         # canceled stop records and an audit event unconditionally so the next cycle
         # doesn't re-cancel them, hit "already canceled", and permanently abandon the exit.
+        exit_method = "submit_limit_exit" if limit_price is not None else "submit_market_exit"
         logger.exception(
-            "cycle_intent_execution: submit_market_exit failed for %s/%s; "
+            "cycle_intent_execution: %s failed for %s/%s; "
             "position is unprotected — manual intervention required",
+            exit_method,
             symbol,
             strategy_name,
         )
@@ -590,7 +604,7 @@ def _execute_exit(
                         symbol=symbol,
                         payload={
                             "intent_type": "exit",
-                            "action": "submit_market_exit_failed",
+                            "action": f"{exit_method}_failed",
                             "reason": reason,
                             "canceled_stop_count": canceled_stop_count,
                         },
@@ -605,7 +619,7 @@ def _execute_exit(
                 except Exception:
                     pass
                 raise
-        return canceled_stop_count, 0, 1  # hard_failed: submit_market_exit raised
+        return canceled_stop_count, 0, 1  # hard_failed: exit submission raised
 
     # Write all results under lock.
     with lock_ctx:

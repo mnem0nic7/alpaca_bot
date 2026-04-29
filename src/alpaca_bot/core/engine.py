@@ -14,6 +14,7 @@ from alpaca_bot.strategy.breakout import (
     is_past_flatten_time,
     session_day,
 )
+from alpaca_bot.strategy.session import SessionType, is_flatten_time as _session_flatten_time
 
 if TYPE_CHECKING:
     from alpaca_bot.storage import DailySessionState
@@ -63,6 +64,7 @@ def evaluate_cycle(
     strategy_name: str = "breakout",
     global_open_count: int | None = None,
     symbols: tuple[str, ...] | None = None,
+    session_type: SessionType | None = None,
 ) -> CycleResult:
     if signal_evaluator is None:
         signal_evaluator = evaluate_breakout_signal
@@ -87,17 +89,28 @@ def evaluate_cycle(
 
     intents: list[CycleIntent] = []
     open_position_symbols = {position.symbol for position in open_positions}
-    past_flatten = is_past_flatten_time(now, settings)
+    is_extended = session_type in (SessionType.PRE_MARKET, SessionType.AFTER_HOURS)
+    if session_type is not None:
+        past_flatten = _session_flatten_time(now, settings, session_type)
+    else:
+        past_flatten = is_past_flatten_time(now, settings)
 
     for position in open_positions:
         if past_flatten:
             if not flatten_complete:
+                bars = intraday_bars_by_symbol.get(position.symbol, ())
+                limit_price_for_exit: float | None = None
+                if is_extended and bars:
+                    limit_price_for_exit = round(
+                        bars[-1].close * (1 - settings.extended_hours_limit_offset_pct), 2
+                    )
                 intents.append(
                     CycleIntent(
                         intent_type=CycleIntentType.EXIT,
                         symbol=position.symbol,
                         timestamp=now,
                         reason="eod_flatten",
+                        limit_price=limit_price_for_exit,
                         strategy_name=strategy_name,
                     )
                 )
@@ -110,6 +123,9 @@ def evaluate_cycle(
 
         bar_age_seconds = (now - latest_bar.timestamp.astimezone(timezone.utc)).total_seconds()
         if bar_age_seconds > 2 * settings.entry_timeframe_minutes * 60:
+            continue
+
+        if is_extended:
             continue
 
         if latest_bar.high >= position.entry_price + position.risk_per_share:

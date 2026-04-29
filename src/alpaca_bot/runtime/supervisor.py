@@ -41,6 +41,7 @@ from alpaca_bot.runtime.trader import TraderStartupReport, start_trader
 from alpaca_bot.storage import AuditEvent, DailySessionState, PositionRecord, TradingStatusValue
 from alpaca_bot.strategy import STRATEGY_REGISTRY, StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import evaluate_breakout_signal as _default_evaluator
+from alpaca_bot.strategy.session import SessionType, detect_session_type
 
 
 @dataclass(frozen=True)
@@ -162,6 +163,7 @@ class RuntimeSupervisor:
         self,
         *,
         now: Callable[[], datetime] | None = None,
+        session_type: SessionType | None = None,
     ) -> SupervisorCycleReport:
         if self._closed:
             raise RuntimeError("Supervisor is closed")
@@ -400,6 +402,7 @@ class RuntimeSupervisor:
                     strategy_name=strategy_name,
                     global_open_count=global_occupied_slots,
                     symbols=entry_symbols,
+                    session_type=session_type,
                 )
                 all_cycle_results.append((strategy_name, cycle_result))
                 # Consume slots and symbols taken by entries this strategy emitted so
@@ -501,6 +504,7 @@ class RuntimeSupervisor:
             "now": timestamp,
             "blocked_strategy_names": entries_disabled_strategies,
             "notifier": self._notifier,
+            "session_type": session_type,
         }
         if status is TradingStatusValue.HALTED:
             return SupervisorCycleReport(
@@ -556,10 +560,11 @@ class RuntimeSupervisor:
 
                 timestamp = _resolve_now(cycle_now)
                 session_date = _session_date(timestamp, self.settings)
-                if self._market_is_open():
+                session_type = self._current_session(timestamp)
+                if session_type is not SessionType.CLOSED:
                     self._session_had_active_cycle.add(session_date)
                     try:
-                        cycle_report = self.run_cycle_once(now=lambda: timestamp)
+                        cycle_report = self.run_cycle_once(now=lambda: timestamp, session_type=session_type)
                         self._consecutive_cycle_failures = 0
                     except Exception as exc:
                         self._consecutive_cycle_failures += 1
@@ -926,6 +931,22 @@ class RuntimeSupervisor:
             "Broker has no clock method (get_clock or get_market_clock); "
             "cannot determine market hours — refusing to proceed"
         )
+
+    def _current_session(self, timestamp: datetime) -> SessionType:
+        session = detect_session_type(timestamp, self.settings)
+        if session is SessionType.REGULAR:
+            try:
+                clock = (
+                    self.broker.get_clock()
+                    if hasattr(self.broker, "get_clock")
+                    else self.broker.get_market_clock()
+                )
+                return SessionType.REGULAR if clock.is_open else SessionType.CLOSED
+            except Exception:
+                return SessionType.REGULAR
+        if session in (SessionType.PRE_MARKET, SessionType.AFTER_HOURS):
+            return session if self.settings.extended_hours_enabled else SessionType.CLOSED
+        return SessionType.CLOSED
 
     def _start_stream_thread(self, *, now: Callable[[], datetime]) -> None:
         if self.stream is None or self._stream_thread is not None:

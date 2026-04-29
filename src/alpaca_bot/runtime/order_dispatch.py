@@ -43,6 +43,8 @@ class RuntimeProtocol(Protocol):
 class BrokerProtocol(Protocol):
     def submit_stop_limit_entry(self, **kwargs) -> BrokerOrder: ...
 
+    def submit_limit_entry(self, **kwargs) -> BrokerOrder: ...
+
     def submit_stop_order(self, **kwargs) -> BrokerOrder: ...
 
 
@@ -65,6 +67,7 @@ def dispatch_pending_orders(
     allowed_intent_types: set[str] | None = None,
     blocked_strategy_names: set[str] | None = None,
     notifier: Notifier | None = None,
+    session_type: "SessionType | None" = None,
 ) -> OrderDispatchReport:
     timestamp = _resolve_now(now)
 
@@ -104,7 +107,7 @@ def dispatch_pending_orders(
         try:
             # Broker submission stays outside the lock — it is slow network I/O
             # and must not block the trade-update stream thread.
-            broker_order = _submit_order(order=order, broker=broker)
+            broker_order = _submit_order(order=order, broker=broker, session_type=session_type, settings=settings)
         except Exception as exc:
             logger.warning(
                 "order_dispatch: broker submission failed for %s %s: %s",
@@ -219,8 +222,28 @@ def dispatch_pending_orders(
     return OrderDispatchReport(submitted_count=submitted_count)
 
 
-def _submit_order(*, order: OrderRecord, broker: BrokerProtocol) -> BrokerOrder:
+def _submit_order(
+    *,
+    order: OrderRecord,
+    broker: BrokerProtocol,
+    session_type: "SessionType | None" = None,
+    settings: Settings | None = None,
+) -> BrokerOrder:
+    from alpaca_bot.execution.alpaca import extended_hours_limit_price
+    from alpaca_bot.strategy.session import SessionType
+
+    is_extended = session_type in (SessionType.PRE_MARKET, SessionType.AFTER_HOURS)
+    offset_pct = settings.extended_hours_limit_offset_pct if settings is not None else 0.001
+
     if order.intent_type == "entry":
+        if is_extended:
+            lp = extended_hours_limit_price("buy", ref_price=order.stop_price or 0.0, offset_pct=offset_pct)
+            return broker.submit_limit_entry(
+                symbol=order.symbol,
+                quantity=order.quantity,
+                limit_price=lp,
+                client_order_id=order.client_order_id,
+            )
         return broker.submit_stop_limit_entry(
             symbol=order.symbol,
             quantity=order.quantity,

@@ -46,6 +46,8 @@ ALL_AUDIT_EVENT_TYPES = [
     "WATCHLIST_REMOVE",
     "WATCHLIST_IGNORE",
     "WATCHLIST_UNIGNORE",
+    "extended_hours_cycle",
+    "stop_update_skipped_extended_hours",
 ]
 
 WORKING_ORDER_STATUSES = [

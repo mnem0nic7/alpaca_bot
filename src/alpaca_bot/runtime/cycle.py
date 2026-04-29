@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import contextlib
 from datetime import date, datetime
-from typing import Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Mapping, Protocol, Sequence
 
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType, CycleResult, evaluate_cycle
 from alpaca_bot.domain import Bar, OpenPosition
 from alpaca_bot.storage import AuditEvent, DailySessionState, OrderRecord
 from alpaca_bot.strategy import StrategySignalEvaluator
+
+if TYPE_CHECKING:
+    from alpaca_bot.strategy.session import SessionType
 
 
 class OrderStoreProtocol(Protocol):
@@ -47,6 +50,7 @@ def run_cycle(
     strategy_name: str = "breakout",
     global_open_count: int | None = None,
     symbols: tuple[str, ...] | None = None,
+    session_type: "SessionType | None" = None,
 ) -> CycleResult:
     result = evaluate_cycle(
         settings=settings,
@@ -64,6 +68,7 @@ def run_cycle(
         strategy_name=strategy_name,
         global_open_count=global_open_count,
         symbols=symbols,
+        session_type=session_type,
     )
 
     _store_lock = getattr(runtime, "store_lock", None)
