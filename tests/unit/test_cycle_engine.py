@@ -326,15 +326,11 @@ def test_entries_disabled_produces_no_entry_intents_even_when_signals_exist() ->
     assert all(intent.intent_type != CycleIntentType.ENTRY for intent in result.intents)
 
 
-# ---------------------------------------------------------------------------
-# Fix #4: flatten_complete flag suppresses EXIT intents
-# ---------------------------------------------------------------------------
-
-
-def test_evaluate_cycle_emits_no_exits_when_flatten_already_complete() -> None:
-    """When session_state.flatten_complete is True, evaluate_cycle must not emit
-    any EXIT intents — prevents duplicate market orders when the trade stream
-    is down and the fill hasn't been recorded yet."""
+def test_evaluate_cycle_emits_exits_for_late_positions_when_flatten_already_complete() -> None:
+    """flatten_complete=True must NOT suppress EXIT intents for positions that
+    exist after flatten_time. A position present here means it arrived after the
+    initial flatten (e.g., late fill from a restart cascade). Duplicate broker
+    submissions are prevented by _execute_exit's active_exit_orders idempotency guard."""
     from alpaca_bot.storage import DailySessionState
     from alpaca_bot.config import TradingMode
 
@@ -385,8 +381,8 @@ def test_evaluate_cycle_emits_no_exits_when_flatten_already_complete() -> None:
     )
 
     exit_intents = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
-    assert exit_intents == [], (
-        f"Expected no EXIT intents when flatten_complete=True, got: {exit_intents}"
+    assert len(exit_intents) == 1, (
+        f"Expected EXIT intent for position even when flatten_complete=True, got: {exit_intents}"
     )
 
 

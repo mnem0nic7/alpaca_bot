@@ -83,10 +83,6 @@ def evaluate_cycle(
         intents.sort(key=lambda intent: (intent.timestamp, intent.symbol, intent.intent_type.value))
         return CycleResult(as_of=now, intents=intents)
 
-    flatten_complete = (
-        session_state is not None and session_state.flatten_complete
-    )
-
     intents: list[CycleIntent] = []
     open_position_symbols = {position.symbol for position in open_positions}
     is_extended = session_type in (SessionType.PRE_MARKET, SessionType.AFTER_HOURS)
@@ -97,23 +93,22 @@ def evaluate_cycle(
 
     for position in open_positions:
         if past_flatten:
-            if not flatten_complete:
-                bars = intraday_bars_by_symbol.get(position.symbol, ())
-                limit_price_for_exit: float | None = None
-                if is_extended and bars:
-                    limit_price_for_exit = round(
-                        bars[-1].close * (1 - settings.extended_hours_limit_offset_pct), 2
-                    )
-                intents.append(
-                    CycleIntent(
-                        intent_type=CycleIntentType.EXIT,
-                        symbol=position.symbol,
-                        timestamp=now,
-                        reason="eod_flatten",
-                        limit_price=limit_price_for_exit,
-                        strategy_name=strategy_name,
-                    )
+            bars = intraday_bars_by_symbol.get(position.symbol, ())
+            limit_price_for_exit: float | None = None
+            if is_extended and bars:
+                limit_price_for_exit = round(
+                    bars[-1].close * (1 - settings.extended_hours_limit_offset_pct), 2
                 )
+            intents.append(
+                CycleIntent(
+                    intent_type=CycleIntentType.EXIT,
+                    symbol=position.symbol,
+                    timestamp=now,
+                    reason="eod_flatten",
+                    limit_price=limit_price_for_exit,
+                    strategy_name=strategy_name,
+                )
+            )
             continue
 
         bars = intraday_bars_by_symbol.get(position.symbol, ())
