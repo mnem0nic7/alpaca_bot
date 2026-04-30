@@ -252,6 +252,18 @@ def _apply_trade_update_locked(
                     matched_order.symbol,
                     matched_order.client_order_id,
                 )
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="entry_fill_no_stop_price",
+                        symbol=matched_order.symbol,
+                        payload={
+                            "client_order_id": matched_order.client_order_id,
+                            "fill_price": normalized.filled_avg_price,
+                        },
+                        created_at=timestamp,
+                    ),
+                    commit=False,
+                )
             initial_stop_price = matched_order.initial_stop_price or 0.0
             runtime.position_store.save(
                 PositionRecord(

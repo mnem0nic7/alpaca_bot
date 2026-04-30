@@ -945,3 +945,88 @@ def test_evaluate_cycle_symbols_param_excludes_symbols_not_in_list() -> None:
 
     # No intents because AAPL is excluded and MSFT has no bars
     assert result.intents == []
+
+
+# ---------------------------------------------------------------------------
+# Deduplication guards
+# ---------------------------------------------------------------------------
+
+
+def test_flatten_all_deduplicates_exits_when_same_symbol_appears_twice() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    dup_position = make_open_position("AAPL")
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=now,
+        equity=100000.0,
+        intraday_bars_by_symbol={},
+        daily_bars_by_symbol={},
+        open_positions=[dup_position, dup_position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        flatten_all=True,
+    )
+
+    aapl_exits = [i for i in result.intents if i.symbol == "AAPL"]
+    assert len(aapl_exits) == 1, "flatten_all must emit at most one EXIT per symbol"
+
+
+def test_eod_flatten_deduplicates_exits_when_same_symbol_appears_twice() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    past_flatten_now = datetime(2026, 4, 24, 20, 0, tzinfo=timezone.utc)
+
+    dup_position = make_open_position("AAPL")
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=past_flatten_now,
+        equity=100000.0,
+        intraday_bars_by_symbol={},
+        daily_bars_by_symbol={},
+        open_positions=[dup_position, dup_position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+    )
+
+    aapl_exits = [i for i in result.intents if i.symbol == "AAPL"]
+    assert len(aapl_exits) == 1, "EOD flatten must emit at most one EXIT per symbol"
+
+
+def test_min_stop_distance_guard_rejects_signal_with_penny_spread() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    from alpaca_bot.domain import EntrySignal
+
+    def _tight_signal_evaluator(**_kwargs):
+        bar = Bar(
+            symbol="AAPL",
+            timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+            open=110.0, high=111.0, low=109.5, close=110.5, volume=5000,
+        )
+        return EntrySignal(
+            symbol="AAPL",
+            signal_bar=bar,
+            entry_level=110.50,
+            limit_price=110.509,
+            stop_price=110.500,
+            initial_stop_price=110.500,  # spread = 0.009 < 0.01
+            relative_volume=2.0,
+        )
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=_tight_signal_evaluator,
+    )
+
+    entry_intents = [i for i in result.intents if i.intent_type == CycleIntentType.ENTRY]
+    assert entry_intents == [], "Signals with stop spread < $0.01 must be rejected"

@@ -1502,3 +1502,36 @@ class TestAlpacaSdkNormalization:
 
         assert result["unmatched"] is False
         assert result["position_updated"] is True
+
+
+# ---------------------------------------------------------------------------
+# Audit event for missing stop price on entry fill
+# ---------------------------------------------------------------------------
+
+
+def test_entry_fill_with_no_initial_stop_price_appends_audit_event() -> None:
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    entry_order = _make_entry_order(initial_stop_price=None)
+    runtime = _make_runtime(orders=[entry_order])
+
+    update = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+    apply_trade_update(settings=make_settings(), runtime=runtime, update=update, now=NOW)
+
+    audit_types = [e.event_type for e in runtime.audit_event_store.appended]
+    assert "entry_fill_no_stop_price" in audit_types, (
+        "Missing initial_stop_price on fill must append an entry_fill_no_stop_price audit event"
+    )
+
+
+def test_entry_fill_with_valid_stop_price_does_not_append_no_stop_audit_event() -> None:
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    entry_order = _make_entry_order(initial_stop_price=109.50)
+    runtime = _make_runtime(orders=[entry_order])
+
+    update = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+    apply_trade_update(settings=make_settings(), runtime=runtime, update=update, now=NOW)
+
+    audit_types = [e.event_type for e in runtime.audit_event_store.appended]
+    assert "entry_fill_no_stop_price" not in audit_types

@@ -593,6 +593,12 @@ class RuntimeSupervisor:
                                 )
                             except Exception:
                                 logger.exception("Notifier failed to send cycle failure alert")
+                        if self._consecutive_cycle_failures >= 10:
+                            logger.critical(
+                                "Supervisor: %d consecutive cycle failures — exiting for Docker restart",
+                                self._consecutive_cycle_failures,
+                            )
+                            raise SystemExit(1)
                         iterations += 1
                         sleeper(poll_interval_seconds)
                         continue

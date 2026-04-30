@@ -2782,3 +2782,52 @@ def test_entry_symbols_excludes_ignored_but_market_data_includes_all(monkeypatch
     symbols_arg = cycle_calls[0]["symbols"]
     assert "TSLA" not in symbols_arg
     assert "AAPL" in symbols_arg
+
+
+# ---------------------------------------------------------------------------
+# Supervisor exits after 10 consecutive cycle failures
+# ---------------------------------------------------------------------------
+
+
+def test_supervisor_exits_after_10_consecutive_cycle_failures(monkeypatch) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker(market_is_open=True)
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream()
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    monkeypatch.setattr(
+        supervisor,
+        "startup",
+        lambda **kwargs: make_startup_report(),
+    )
+
+    call_count = 0
+
+    def _always_fail(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        raise RuntimeError("simulated cycle failure")
+
+    monkeypatch.setattr(supervisor, "run_cycle_once", _always_fail)
+
+    import pytest
+    with pytest.raises(SystemExit) as exc_info:
+        supervisor.run_forever(
+            max_iterations=20,
+            sleep_fn=lambda _seconds: None,
+            cycle_now=lambda: datetime(2026, 4, 24, 14, 30, tzinfo=timezone.utc),
+        )
+
+    assert exc_info.value.code == 1, "Supervisor must exit with code 1 after 10 consecutive failures"
+    assert call_count == 10, f"Supervisor must exit exactly on the 10th failure, got {call_count}"

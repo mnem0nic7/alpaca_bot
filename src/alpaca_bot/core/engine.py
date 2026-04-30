@@ -70,21 +70,27 @@ def evaluate_cycle(
         signal_evaluator = evaluate_breakout_signal
 
     if flatten_all:
-        intents = [
-            CycleIntent(
-                intent_type=CycleIntentType.EXIT,
-                symbol=position.symbol,
-                timestamp=now,
-                reason="loss_limit_flatten",
-                strategy_name=strategy_name,
+        seen_symbols: set[str] = set()
+        intents = []
+        for position in open_positions:
+            if position.symbol in seen_symbols:
+                continue
+            seen_symbols.add(position.symbol)
+            intents.append(
+                CycleIntent(
+                    intent_type=CycleIntentType.EXIT,
+                    symbol=position.symbol,
+                    timestamp=now,
+                    reason="loss_limit_flatten",
+                    strategy_name=strategy_name,
+                )
             )
-            for position in open_positions
-        ]
         intents.sort(key=lambda intent: (intent.timestamp, intent.symbol, intent.intent_type.value))
         return CycleResult(as_of=now, intents=intents)
 
     intents: list[CycleIntent] = []
     open_position_symbols = {position.symbol for position in open_positions}
+    emitted_exit_symbols: set[str] = set()
     is_extended = session_type in (SessionType.PRE_MARKET, SessionType.AFTER_HOURS)
     if session_type is not None:
         past_flatten = _session_flatten_time(now, settings, session_type)
@@ -93,6 +99,9 @@ def evaluate_cycle(
 
     for position in open_positions:
         if past_flatten:
+            if position.symbol in emitted_exit_symbols:
+                continue
+            emitted_exit_symbols.add(position.symbol)
             bars = intraday_bars_by_symbol.get(position.symbol, ())
             limit_price_for_exit: float | None = None
             if is_extended and bars:
@@ -177,6 +186,8 @@ def evaluate_cycle(
                     continue
 
                 if signal.initial_stop_price >= signal.limit_price:
+                    continue
+                if signal.limit_price - signal.initial_stop_price < 0.01:
                     continue
                 quantity = calculate_position_size(
                     equity=equity,
