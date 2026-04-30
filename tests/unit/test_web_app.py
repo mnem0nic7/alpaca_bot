@@ -215,6 +215,7 @@ def test_healthz_route_reports_runtime_status() -> None:
                 payload={"reason": "market_closed"},
                 created_at=now,
             ),
+            list_by_event_types=lambda **_kwargs: [],
         ),
     )
 
@@ -263,6 +264,7 @@ def test_healthz_route_reports_missing_worker_when_no_heartbeat_exists() -> None
         audit_event_store_factory=lambda _connection: SimpleNamespace(
             list_recent=lambda **_kwargs: [],
             load_latest=lambda **_kwargs: None,
+            list_by_event_types=lambda **_kwargs: [],
         ),
     )
 
@@ -289,6 +291,7 @@ def test_healthz_route_reports_stale_worker_when_last_event_is_old() -> None:
                 payload={"reason": "market_closed"},
                 created_at=stale_now,
             ),
+            list_by_event_types=lambda **_kwargs: [],
         ),
     )
 
@@ -852,6 +855,7 @@ def test_healthz_returns_null_trading_status_and_false_kill_switch_when_none() -
         audit_event_store_factory=lambda _c: SimpleNamespace(
             list_recent=lambda **_: [],
             load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
         ),
     )
 
@@ -872,6 +876,7 @@ def test_healthz_returns_null_worker_event_fields_when_no_heartbeat() -> None:
         audit_event_store_factory=lambda _c: SimpleNamespace(
             list_recent=lambda **_: [],
             load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
         ),
     )
 
@@ -893,6 +898,7 @@ def test_healthz_closes_connection_after_health_load() -> None:
         audit_event_store_factory=lambda _c: SimpleNamespace(
             list_recent=lambda **_: [],
             load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
         ),
     )
 
@@ -1636,6 +1642,7 @@ def test_healthz_includes_strategy_flags() -> None:
                 payload={},
                 created_at=now,
             ),
+            list_by_event_types=lambda **_: [],
         ),
         strategy_flag_store_factory=lambda _c: SimpleNamespace(
             list_all=lambda **_: [enabled_flag]
@@ -1825,3 +1832,72 @@ def test_dashboard_skips_price_fetch_when_no_adapter() -> None:
     response = client.get("/", headers={"Authorization": f"Basic {b64encode(b'admin:secret').decode()}"})
 
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# /healthz — stream_stale and stream_last_stale_at fields
+# ---------------------------------------------------------------------------
+
+
+def test_healthz_includes_stream_fields() -> None:
+    """GET /healthz response includes stream_stale and stream_last_stale_at keys."""
+    now = datetime.now(timezone.utc)
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+        strategy_flag_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    payload = response.json()
+    assert "stream_stale" in payload
+    assert "stream_last_stale_at" in payload
+    assert payload["stream_stale"] is False
+    assert payload["stream_last_stale_at"] is None
+
+
+def test_healthz_200_when_stream_stale_but_worker_fresh() -> None:
+    """HTTP 200 when stream_stale=True but worker is fresh (stream_stale is informational only)."""
+    now = datetime.now(timezone.utc)
+    stale_event = SimpleNamespace(
+        event_type="stream_heartbeat_stale",
+        created_at=now - timedelta(seconds=60),  # recent stale event
+        symbol=None,
+        payload={},
+    )
+    fresh_worker_event = SimpleNamespace(
+        event_type="supervisor_cycle",
+        created_at=now - timedelta(seconds=30),
+        symbol=None,
+        payload={},
+    )
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: fresh_worker_event,
+            list_by_event_types=lambda **_: [stale_event],
+        ),
+        strategy_flag_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/healthz")
+
+    assert response.status_code == 200, (
+        "stream_stale must not cause HTTP 503 — it is informational only"
+    )
+    payload = response.json()
+    assert payload["stream_stale"] is True
+    assert payload["stream_last_stale_at"] is not None
+    assert payload["status"] == "ok"

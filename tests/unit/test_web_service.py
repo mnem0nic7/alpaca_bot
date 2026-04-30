@@ -54,10 +54,11 @@ def make_event(event_type: str, created_at: datetime) -> SimpleNamespace:
     return SimpleNamespace(event_type=event_type, created_at=created_at, symbol=None, payload={})
 
 
-def make_audit_store(events: list | None = None, latest=None) -> SimpleNamespace:
+def make_audit_store(events: list | None = None, latest=None, stale_events: list | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         list_recent=lambda **_: events if events is not None else [],
         load_latest=lambda **_: latest,
+        list_by_event_types=lambda **_: stale_events if stale_events is not None else [],
     )
 
 
@@ -226,6 +227,7 @@ def test_load_health_snapshot_requests_12_events() -> None:
         audit_event_store=SimpleNamespace(
             list_recent=recording_list_recent,
             load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
         ),
         strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
     )
@@ -244,6 +246,7 @@ def test_load_health_snapshot_includes_strategy_flags() -> None:
         audit_event_store=SimpleNamespace(
             list_recent=lambda **_: [],
             load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
         ),
         strategy_flag_store=SimpleNamespace(list_all=lambda **_: [enabled_flag]),
     )
@@ -819,3 +822,76 @@ def test_load_dashboard_snapshot_latest_prices_defaults_to_empty() -> None:
     )
 
     assert snapshot.latest_prices == {}
+
+
+# ---------------------------------------------------------------------------
+# load_health_snapshot — stream staleness fields
+# ---------------------------------------------------------------------------
+
+from alpaca_bot.web.service import STREAM_STALE_WINDOW_SECONDS
+
+
+def test_health_snapshot_stream_stale_when_recent_stale_event() -> None:
+    """stream_stale=True when stream_heartbeat_stale event within 600s."""
+    real_now = datetime.now(timezone.utc)
+    stale_event = SimpleNamespace(
+        event_type="stream_heartbeat_stale",
+        created_at=real_now - timedelta(seconds=300),  # 5 minutes ago — within window
+        symbol=None,
+        payload={},
+    )
+    snapshot = load_health_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        trading_status_store=SimpleNamespace(load=lambda **_: None),
+        audit_event_store=SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [stale_event],
+        ),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
+    )
+    assert snapshot.stream_stale is True
+    assert snapshot.stream_last_stale_at == stale_event.created_at
+
+
+def test_health_snapshot_stream_fresh_when_no_recent_stale_event() -> None:
+    """stream_stale=False when no stream_heartbeat_stale within STREAM_STALE_WINDOW_SECONDS."""
+    real_now = datetime.now(timezone.utc)
+    # Event is older than the staleness window
+    old_stale_event = SimpleNamespace(
+        event_type="stream_heartbeat_stale",
+        created_at=real_now - timedelta(seconds=STREAM_STALE_WINDOW_SECONDS + 60),
+        symbol=None,
+        payload={},
+    )
+    snapshot = load_health_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        trading_status_store=SimpleNamespace(load=lambda **_: None),
+        audit_event_store=SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [old_stale_event],
+        ),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
+    )
+    assert snapshot.stream_stale is False
+    assert snapshot.stream_last_stale_at is None
+
+
+def test_health_snapshot_stream_fresh_when_empty_stale_events() -> None:
+    """stream_stale=False when list_by_event_types returns empty list."""
+    snapshot = load_health_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        trading_status_store=SimpleNamespace(load=lambda **_: None),
+        audit_event_store=SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
+    )
+    assert snapshot.stream_stale is False
+    assert snapshot.stream_last_stale_at is None

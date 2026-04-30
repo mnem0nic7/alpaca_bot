@@ -1134,7 +1134,7 @@ def test_runtime_supervisor_run_forever_skips_cycle_when_market_is_closed_and_au
         },
         created_at=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
     )
-    assert runtime.audit_event_store.appended[-1] == AuditEvent(
+    assert runtime.audit_event_store.appended[-2] == AuditEvent(
         event_type="supervisor_idle",
         payload={
             "reason": "market_closed",
@@ -1142,6 +1142,7 @@ def test_runtime_supervisor_run_forever_skips_cycle_when_market_is_closed_and_au
         },
         created_at=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
     )
+    assert runtime.audit_event_store.appended[-1].event_type == "supervisor_exited"
 
 
 def test_runtime_supervisor_run_forever_runs_cycle_when_market_is_open_and_audits_heartbeat(
@@ -1187,8 +1188,9 @@ def test_runtime_supervisor_run_forever_runs_cycle_when_market_is_open_and_audit
     assert report.iterations == 1
     assert report.active_iterations == 1
     assert report.idle_iterations == 0
-    assert runtime.audit_event_store.appended[-1].event_type == "supervisor_cycle"
-    assert runtime.audit_event_store.appended[-1].payload["entries_disabled"] is True
+    assert runtime.audit_event_store.appended[-2].event_type == "supervisor_cycle"
+    assert runtime.audit_event_store.appended[-2].payload["entries_disabled"] is True
+    assert runtime.audit_event_store.appended[-1].event_type == "supervisor_exited"
 
 
 # ---------------------------------------------------------------------------
@@ -3098,4 +3100,212 @@ def test_lock_acquisition_error_halts_supervisor_immediately(monkeypatch) -> Non
     assert exc_info.value.code == 1, "LockAcquisitionError must cause SystemExit(1)"
     assert call_count == 1, (
         f"Supervisor must halt on the first LockAcquisitionError, not retry; got {call_count} call(s)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Supervisor lifecycle observability
+# ---------------------------------------------------------------------------
+
+
+def test_supervisor_started_event_emitted(monkeypatch) -> None:
+    """supervisor_started audit event is appended after startup and before first cycle."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker(market_is_open=True)
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream()
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
+    monkeypatch.setattr(
+        supervisor,
+        "run_cycle_once",
+        lambda **kwargs: SupervisorCycleReport(
+            entries_disabled=False,
+            cycle_result=SimpleNamespace(intents=[]),
+            dispatch_report={"submitted_count": 0},
+        ),
+    )
+
+    supervisor.run_forever(
+        max_iterations=1,
+        sleep_fn=lambda _: None,
+        cycle_now=lambda: datetime(2026, 4, 30, 14, 30, tzinfo=timezone.utc),
+    )
+
+    event_types = [e.event_type for e in runtime.audit_event_store.appended]
+    assert "supervisor_started" in event_types, (
+        f"Expected 'supervisor_started' in {event_types}"
+    )
+    # supervisor_started must appear before any supervisor_cycle event
+    started_idx = event_types.index("supervisor_started")
+    cycle_indices = [i for i, t in enumerate(event_types) if t == "supervisor_cycle"]
+    if cycle_indices:
+        assert started_idx < min(cycle_indices), (
+            "supervisor_started must be emitted before the first supervisor_cycle"
+        )
+
+
+def test_supervisor_exited_event_emitted_on_close() -> None:
+    """supervisor_exited audit event is appended when close() is called directly."""
+    _module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker()
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=None,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.close()
+
+    event_types = [e.event_type for e in runtime.audit_event_store.appended]
+    assert "supervisor_exited" in event_types, (
+        f"Expected 'supervisor_exited' in {event_types}"
+    )
+
+
+def test_supervisor_exited_not_emitted_twice_on_double_close() -> None:
+    """close() is idempotent — supervisor_exited is only emitted once."""
+    _module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker()
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=None,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.close()
+    supervisor.close()  # second call must be a no-op
+
+    exited_count = sum(
+        1 for e in runtime.audit_event_store.appended if e.event_type == "supervisor_exited"
+    )
+    assert exited_count == 1, f"Expected exactly one supervisor_exited, got {exited_count}"
+
+
+def test_shutdown_flag_stops_loop(monkeypatch) -> None:
+    """Setting _shutdown_requested=True causes run_forever to exit cleanly."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker(market_is_open=True)
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream()
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    call_count = 0
+
+    def _cycle_and_set_flag(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        supervisor._shutdown_requested = True
+        return SupervisorCycleReport(
+            entries_disabled=False,
+            cycle_result=SimpleNamespace(intents=[]),
+            dispatch_report={"submitted_count": 0},
+        )
+
+    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
+    monkeypatch.setattr(supervisor, "run_cycle_once", _cycle_and_set_flag)
+
+    report = supervisor.run_forever(
+        max_iterations=100,  # would run forever without shutdown_requested
+        sleep_fn=lambda _: None,
+        cycle_now=lambda: datetime(2026, 4, 30, 14, 30, tzinfo=timezone.utc),
+    )
+
+    assert call_count == 1, "Loop should exit after exactly 1 cycle"
+    assert report.iterations == 1
+
+    event_types = [e.event_type for e in runtime.audit_event_store.appended]
+    assert "supervisor_exited" in event_types
+
+
+def test_heartbeat_file_written_each_cycle(monkeypatch, tmp_path) -> None:
+    """Heartbeat file is written on each cycle iteration."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker(market_is_open=True)
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream()
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    heartbeat_path = tmp_path / "supervisor_heartbeat"
+    write_calls: list[str] = []
+
+    import alpaca_bot.runtime.supervisor as supervisor_module
+    original_path_class = supervisor_module.Path
+
+    class _PatchedPath:
+        def __init__(self, p):
+            self._p = str(p)
+
+        def write_text(self, content):
+            if "supervisor_heartbeat" in self._p:
+                write_calls.append(content)
+            else:
+                original_path_class(self._p).write_text(content)
+
+    monkeypatch.setattr(supervisor_module, "Path", _PatchedPath)
+    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
+    monkeypatch.setattr(
+        supervisor,
+        "run_cycle_once",
+        lambda **kwargs: SupervisorCycleReport(
+            entries_disabled=False,
+            cycle_result=SimpleNamespace(intents=[]),
+            dispatch_report={"submitted_count": 0},
+        ),
+    )
+
+    supervisor.run_forever(
+        max_iterations=2,
+        sleep_fn=lambda _: None,
+        cycle_now=lambda: datetime(2026, 4, 30, 14, 30, tzinfo=timezone.utc),
+    )
+
+    assert len(write_calls) == 2, f"Expected 2 heartbeat writes, got {len(write_calls)}"
+    assert all("2026-04-30" in w for w in write_calls), (
+        f"Heartbeat should contain cycle timestamp; got {write_calls}"
     )
