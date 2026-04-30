@@ -252,7 +252,8 @@ class TestProtectiveStopOnPartialFill:
         assert stop.quantity == 10
 
     def test_apply_trade_update_does_not_duplicate_stop_if_already_pending(self):
-        """If a pending stop already exists for this entry, do not queue a second one."""
+        """If a pending stop already exists for this entry, do not queue a second one.
+        The existing stop's quantity IS updated to match the new filled_qty."""
         entry_order = _make_entry_order()
         stop_id = _expected_stop_order_id(entry_order.client_order_id)
 
@@ -274,7 +275,7 @@ class TestProtectiveStopOnPartialFill:
 
         runtime = _make_runtime(orders=[entry_order, existing_stop])
 
-        # Second partial fill (e.g. more shares fill)
+        # Second partial fill — more shares filled than the existing stop covers
         update = _make_trade_update(
             status="partially_filled",
             qty=10,
@@ -284,15 +285,53 @@ class TestProtectiveStopOnPartialFill:
         result = _apply(runtime, update)
 
         assert result["position_updated"] is True
-        # No new stop should have been queued
+        # No NEW stop was queued (existing one was updated in-place)
         assert result["protective_stop_queued"] is False
         assert result["protective_stop_client_order_id"] is None
 
-        new_stop_saves = [
-            o for o in runtime.order_store.saved if o.intent_type == "stop"
-        ]
-        assert new_stop_saves == [], (
-            "No new stop order should be saved when one is already pending"
+        # The existing stop IS saved with the updated quantity to stay in sync
+        stop_saves = [o for o in runtime.order_store.saved if o.intent_type == "stop"]
+        assert len(stop_saves) == 1, (
+            "Existing pending stop should be saved with updated quantity"
+        )
+        assert stop_saves[0].client_order_id == stop_id
+        assert stop_saves[0].quantity == 8, (
+            "Stop quantity must be updated to match the new filled_qty (8), not remain stale (5)"
+        )
+
+    def test_existing_pending_stop_quantity_not_saved_when_already_matching(self):
+        """When an existing pending stop's quantity already matches filled_qty, no redundant save."""
+        entry_order = _make_entry_order()
+        stop_id = _expected_stop_order_id(entry_order.client_order_id)
+
+        existing_stop = OrderRecord(
+            client_order_id=stop_id,
+            symbol="AAPL",
+            side="sell",
+            intent_type="stop",
+            status="pending_submit",
+            quantity=10,  # already matches what the fill will report
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            created_at=NOW,
+            updated_at=NOW,
+            stop_price=entry_order.initial_stop_price,
+            initial_stop_price=entry_order.initial_stop_price,
+            signal_timestamp=NOW,
+        )
+        runtime = _make_runtime(orders=[entry_order, existing_stop])
+
+        update = _make_trade_update(
+            status="filled",
+            qty=10,
+            filled_qty=10,
+            filled_avg_price=112.00,
+        )
+        _apply(runtime, update)
+
+        stop_saves = [o for o in runtime.order_store.saved if o.intent_type == "stop"]
+        assert stop_saves == [], (
+            "No stop save should occur when quantity already matches filled_qty"
         )
 
 

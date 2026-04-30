@@ -576,7 +576,12 @@ def test_runtime_supervisor_startup_runs_reconciliation_syncs_positions_and_atta
     assert attach_calls[0]["now"]() == now
     assert stream.run_started.wait(timeout=1.0)
     assert stream.run_calls == 1
-    assert runtime.audit_event_store.appended[0] == AuditEvent(
+    completed_events = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "startup_recovery_completed"
+    ]
+    assert len(completed_events) == 1
+    assert completed_events[0] == AuditEvent(
         event_type="startup_recovery_completed",
         payload={
             "mismatch_count": 2,
@@ -2787,6 +2792,86 @@ def test_entry_symbols_excludes_ignored_but_market_data_includes_all(monkeypatch
 # ---------------------------------------------------------------------------
 # Supervisor exits after 10 consecutive cycle failures
 # ---------------------------------------------------------------------------
+
+
+def test_run_cycle_once_returns_proper_report_on_empty_watchlist(monkeypatch) -> None:
+    """When watchlist_store.list_enabled() returns empty, run_cycle_once must return a
+    SupervisorCycleReport (not None) so run_forever can safely access report.entries_disabled."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+
+    class EmptyWatchlistStore:
+        def list_enabled(self, trading_mode: str) -> list[str]:
+            return []
+
+        def list_ignored(self, trading_mode: str) -> list[str]:
+            return []
+
+    runtime = make_runtime_context(settings)
+    # Inject a watchlist_store that reports zero enabled symbols
+    object.__setattr__(runtime, "watchlist_store", EmptyWatchlistStore())
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    assert report is not None, "run_cycle_once must not return None on empty watchlist"
+    assert isinstance(report, SupervisorCycleReport), (
+        "run_cycle_once must return a SupervisorCycleReport, not None, when watchlist is empty"
+    )
+    # run_forever accesses report.entries_disabled — must not AttributeError
+    _ = report.entries_disabled
+
+
+def test_strategy_cycle_error_sends_notifier_alert(monkeypatch) -> None:
+    """When _cycle_runner raises for a strategy, supervisor must send a notifier alert
+    so an operator is immediately aware that positions may be unprotected."""
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    notifier_calls: list[dict[str, str]] = []
+
+    class RecordingNotifier:
+        def send(self, *, subject: str, body: str) -> None:
+            notifier_calls.append({"subject": subject, "body": body})
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=make_runtime_context(settings),
+        broker=FakeBroker(),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("cycle exploded")),
+        cycle_intent_executor=lambda **kwargs: None,
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+        notifier=RecordingNotifier(),
+    )
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    assert report is not None
+    assert len(notifier_calls) >= 1, (
+        "Notifier must be called when _cycle_runner raises so the operator is alerted"
+    )
+    assert any("cycle" in c["subject"].lower() or "strategy" in c["subject"].lower() for c in notifier_calls), (
+        "Notifier subject must reference the cycle/strategy error"
+    )
 
 
 def test_supervisor_exits_after_10_consecutive_cycle_failures(monkeypatch) -> None:

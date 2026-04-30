@@ -317,7 +317,12 @@ class RuntimeSupervisor:
             watchlist_symbols = tuple(watchlist_store.list_enabled(self.settings.trading_mode.value))
             if not watchlist_symbols:
                 logger.warning("Symbol watchlist is empty — skipping cycle")
-                return
+                from types import SimpleNamespace as _SN
+                return SupervisorCycleReport(
+                    entries_disabled=entries_disabled,
+                    cycle_result=_SN(intents=[]),
+                    dispatch_report={"submitted_count": 0},
+                )
             ignored_set = set(watchlist_store.list_ignored(self.settings.trading_mode.value))
             entry_symbols = tuple(s for s in watchlist_symbols if s not in ignored_set)
         else:
@@ -494,6 +499,19 @@ class RuntimeSupervisor:
                         created_at=timestamp,
                     )
                 )
+                if self._notifier is not None:
+                    try:
+                        self._notifier.send(
+                            subject=f"Strategy cycle error: {strategy_name}",
+                            body=(
+                                f"_cycle_runner raised for strategy {strategy_name}. "
+                                "Open positions may be unprotected — check positions and stops immediately."
+                            ),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Notifier failed to send strategy cycle error alert for %s", strategy_name
+                        )
 
         from types import SimpleNamespace as _SN
         cycle_result = all_cycle_results[-1][1] if all_cycle_results else _SN(intents=[])

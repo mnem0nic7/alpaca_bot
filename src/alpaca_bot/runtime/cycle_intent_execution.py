@@ -291,7 +291,7 @@ def _execute_update_stop(
             action = "submitted"
     except Exception as exc:
         exc_msg = str(exc).lower()
-        if any(phrase in exc_msg for phrase in ("not found", "already filled", "already canceled", "does not exist")):
+        if any(phrase in exc_msg for phrase in ("not found", "already filled", "already canceled", "does not exist", "has been filled", "is filled", "order is", "order was")):
             logger.debug("update_stop skipped for %s — order already gone: %s", symbol, exc)
         else:
             logger.exception("Broker call failed for update_stop on %s; skipping", symbol)

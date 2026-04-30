@@ -6,6 +6,8 @@ from importlib import import_module
 import io
 import json
 
+import pytest
+
 from types import SimpleNamespace
 
 from alpaca_bot.config import Settings, TradingMode
@@ -307,21 +309,30 @@ def test_main_runs_trader_startup_and_persists_positions_with_summary() -> None:
         },
         created_at=now,
     )
-    assert order_store.saved == [
-        OrderRecord(
-            client_order_id="entry-1",
-            symbol="AAPL",
-            side="buy",
-            intent_type="entry",
-            status="new",
-            quantity=10,
-            trading_mode=TradingMode.PAPER,
-            strategy_version="v1-breakout",
-            created_at=now,
-            updated_at=now,
-            broker_order_id="alpaca-1",
-        )
-    ]
+    # C-2 fix: startup recovery now queues pending_submit stops for brand-new positions
+    aapl_stop_saves = [r for r in order_store.saved if r.symbol == "AAPL" and r.intent_type == "stop"]
+    msft_stop_saves = [r for r in order_store.saved if r.symbol == "MSFT" and r.intent_type == "stop"]
+    entry_saves = [r for r in order_store.saved if r.client_order_id == "entry-1"]
+    assert len(aapl_stop_saves) == 1
+    assert aapl_stop_saves[0].status == "pending_submit"
+    assert aapl_stop_saves[0].stop_price == pytest.approx(189.06075)
+    assert len(msft_stop_saves) == 1
+    assert msft_stop_saves[0].status == "pending_submit"
+    assert msft_stop_saves[0].stop_price == pytest.approx(420.6789)
+    assert len(entry_saves) == 1
+    assert entry_saves[0] == OrderRecord(
+        client_order_id="entry-1",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="new",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        broker_order_id="alpaca-1",
+    )
     assert json.loads(stdout.getvalue()) == {
         "effective_status": "halted",
         "open_order_count": 1,

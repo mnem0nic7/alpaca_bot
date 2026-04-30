@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from importlib import import_module
 
+import pytest
+
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.execution import BrokerOrder, BrokerPosition
 from alpaca_bot.runtime import RuntimeContext
@@ -261,21 +263,20 @@ def test_recover_startup_state_syncs_broker_only_positions_and_orders() -> None:
             "strategy_version": "v1-breakout",
         }
     ]
-    assert order_store.saved == [
-        OrderRecord(
-            client_order_id="v1-breakout:2026-04-24:SPY:entry:2026-04-24T19:00:00+00:00",
-            symbol="SPY",
-            side="buy",
-            intent_type="entry",
-            status="new",
-            quantity=15,
-            trading_mode=TradingMode.PAPER,
-            strategy_version="v1-breakout",
-            created_at=now,
-            updated_at=now,
-            broker_order_id="alpaca-entry-1",
-        )
+    # A recovery stop order for the brand-new AAPL position must also be saved.
+    aapl_stops = [
+        o for o in order_store.saved
+        if o.intent_type == "stop" and o.symbol == "AAPL" and o.status == "pending_submit"
     ]
+    assert len(aapl_stops) == 1, "startup_recovery must queue a stop for the brand-new AAPL position"
+    spy_entry_saves = [
+        o for o in order_store.saved
+        if o.symbol == "SPY" and o.intent_type == "entry"
+    ]
+    assert len(spy_entry_saves) == 1
+    assert spy_entry_saves[0].client_order_id == "v1-breakout:2026-04-24:SPY:entry:2026-04-24T19:00:00+00:00"
+    assert spy_entry_saves[0].status == "new"
+    assert spy_entry_saves[0].broker_order_id == "alpaca-entry-1"
     assert audit_event_store.appended[-1] == AuditEvent(
         event_type="startup_recovery_completed",
         payload={
@@ -699,4 +700,116 @@ def test_recover_startup_state_preserves_pending_submit_stop_with_no_broker_id()
     assert reconciled_saves == [], (
         "pending_submit stop must remain pending_submit so dispatch_pending_orders "
         "can submit it and keep the position protected after restart"
+    )
+
+
+def test_brand_new_broker_position_without_local_record_gets_stop_queued() -> None:
+    """When broker has a position not tracked locally (e.g. manual trade during downtime),
+    startup_recovery must synthesize a PositionRecord AND queue a pending_submit stop order
+    so the position gets protection immediately on the next dispatch cycle."""
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    broker_position = BrokerPosition(
+        symbol="TSLA",
+        quantity=20,
+        entry_price=175.00,
+    )
+    position_store = RecordingPositionStore()  # no existing local positions
+    order_store = RecordingOrderStore()  # no existing local orders
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+    )
+
+    report = recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    # A mismatch must be reported (brand-new position)
+    assert any("broker position missing locally" in m for m in report.mismatches), (
+        "Brand-new broker position must be reported as a mismatch"
+    )
+
+    # A pending_submit stop order must have been saved
+    stop_saves = [
+        o for o in order_store.saved
+        if getattr(o, "intent_type", None) == "stop"
+        and getattr(o, "status", None) == "pending_submit"
+        and getattr(o, "symbol", None) == "TSLA"
+    ]
+    assert len(stop_saves) == 1, (
+        "startup_recovery must queue exactly one pending_submit stop for a brand-new position"
+    )
+    stop = stop_saves[0]
+    expected_stop_price = 175.00 * (1 - settings.breakout_stop_buffer_pct)
+    assert stop.stop_price == pytest.approx(expected_stop_price), (
+        "stop_price must be computed from entry_price * (1 - breakout_stop_buffer_pct)"
+    )
+    assert stop.quantity == 20
+    assert stop.side == "sell"
+
+    # An audit event must be appended for the queued stop
+    audit_event_store = runtime.audit_event_store
+    stop_queued_events = [
+        e for e in audit_event_store.appended
+        if getattr(e, "event_type", None) == "startup_recovery_stop_queued"
+    ]
+    assert len(stop_queued_events) == 1, (
+        "startup_recovery must append a startup_recovery_stop_queued audit event"
+    )
+
+
+def test_brand_new_broker_position_does_not_queue_stop_when_one_already_active() -> None:
+    """If a pending_submit stop for the symbol already exists locally, no duplicate stop is queued."""
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    broker_position = BrokerPosition(symbol="TSLA", quantity=20, entry_price=175.00)
+    existing_stop = OrderRecord(
+        client_order_id="startup_recovery:v1-breakout:2026-04-24:TSLA:stop",
+        symbol="TSLA",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=20,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=174.0,
+        initial_stop_price=174.0,
+        signal_timestamp=None,
+        broker_order_id=None,
+    )
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore(existing_orders=[existing_stop])
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    new_stops = [
+        o for o in order_store.saved
+        if getattr(o, "intent_type", None) == "stop"
+        and getattr(o, "status", None) == "pending_submit"
+        and getattr(o, "symbol", None) == "TSLA"
+        and getattr(o, "client_order_id", None) != existing_stop.client_order_id
+    ]
+    assert new_stops == [], (
+        "No duplicate stop must be queued when an active stop for the symbol already exists"
     )

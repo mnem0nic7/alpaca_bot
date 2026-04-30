@@ -2203,3 +2203,77 @@ def test_execute_update_stop_no_op_when_stop_not_improving() -> None:
     assert order_store.saved == [], (
         "No DB write must occur when stop_price does not improve"
     )
+
+
+def test_execute_update_stop_skips_write_on_extended_already_filled_phrases() -> None:
+    """_execute_update_stop must treat Alpaca's alternate 'has been filled' and 'is filled'
+    phrases as known-gone conditions (skip write, no exception) — not unrecognized errors."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-25:AAPL:stop:2026-04-25T14:00:00+00:00",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-1",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    for phrase in ("order has been filled", "order is filled", "order is already gone"):
+        class ExplodingBroker(RecordingBroker):
+            _phrase = phrase
+
+            def replace_order(self, **kwargs):
+                raise RuntimeError(self._phrase)
+
+        order_store = RecordingOrderStore(orders=[active_stop])
+        runtime = SimpleNamespace(
+            order_store=order_store,
+            position_store=RecordingPositionStore(positions=[position]),
+            audit_event_store=RecordingAuditEventStore(),
+            connection=FakeConnection(),
+        )
+
+        report = execute_cycle_intents(
+            settings=settings,
+            runtime=runtime,
+            broker=ExplodingBroker(),
+            cycle_result=CycleResult(
+                as_of=now,
+                intents=[CycleIntent(
+                    intent_type=CycleIntentType.UPDATE_STOP,
+                    symbol="AAPL",
+                    timestamp=now,
+                    stop_price=111.00,
+                )],
+            ),
+            now=now,
+        )
+
+        assert order_store.saved == [], (
+            f"No DB write expected for known-gone phrase {phrase!r}; got {order_store.saved}"
+        )
+        assert report.replaced_stop_count == 0, (
+            f"replaced_stop_count must be 0 for known-gone phrase {phrase!r}"
+        )

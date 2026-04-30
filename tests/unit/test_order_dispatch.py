@@ -903,6 +903,92 @@ def test_dispatch_broker_failure_path_rollback_on_db_failure() -> None:
     )
 
 
+def test_dispatch_entry_order_with_none_stop_price_records_error_status() -> None:
+    """Entry order missing stop_price/limit_price raises ValueError inside _submit_order.
+    dispatch_pending_orders must catch it, record status='error' in the DB, and continue."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    bad_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:no-prices",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=None,   # missing — must raise ValueError
+        limit_price=None,  # missing
+        initial_stop_price=None,
+        signal_timestamp=now,
+    )
+    order_store = RecordingOrderStore([bad_entry])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=RecordingBroker(), now=now)
+
+    # Order must be saved with status="error" (not crash the loop)
+    assert len(order_store.saved) == 1
+    assert order_store.saved[0].status == "error"
+    assert order_store.saved[0].client_order_id == bad_entry.client_order_id
+    # Audit event must be appended
+    assert len(audit_store.appended) == 1
+    assert audit_store.appended[0].event_type == "order_dispatch_failed"
+    # Dispatch loop continued — 0 orders submitted (broker call never made)
+    assert report["submitted_count"] == 0
+
+
+def test_dispatch_stale_stop_order_expires_with_prior_day_created_at() -> None:
+    """A pending_submit stop order created on a prior trading day must be expired instead
+    of submitted — submitting it would create a naked short against a closed position."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    # now is 10:00 ET on 2026-04-25 (14:00 UTC)
+    now = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)
+    # Stop was created yesterday
+    yesterday = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    stale_stop = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:stop:stale",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=yesterday,
+        updated_at=yesterday,
+        stop_price=99.75,
+        initial_stop_price=99.75,
+        signal_timestamp=None,
+        broker_order_id=None,
+    )
+    order_store = RecordingOrderStore([stale_stop])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
+    broker = RecordingBroker()
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    # Broker must NOT be called
+    assert broker.stop_calls == []
+    # Order must be saved with status="expired"
+    assert len(order_store.saved) == 1
+    assert order_store.saved[0].status == "expired"
+    assert order_store.saved[0].client_order_id == stale_stop.client_order_id
+    # Audit event must be appended
+    assert len(audit_store.appended) == 1
+    assert audit_store.appended[0].event_type == "order_expired_stale_stop"
+    assert audit_store.appended[0].symbol == "AAPL"
+    assert audit_store.appended[0].payload["created_date"] == "2026-04-24"
+    assert audit_store.appended[0].payload["session_date"] == "2026-04-25"
+    assert report["submitted_count"] == 0
+
+
 def test_dispatch_notifier_send_failure_is_swallowed() -> None:
     """If notifier.send() raises, dispatch must NOT re-raise — a notification failure
     must never abort the dispatch loop and leave subsequent orders unsubmitted."""

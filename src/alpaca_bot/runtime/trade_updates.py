@@ -305,7 +305,7 @@ def _apply_trade_update_locked(
                     protective_stop_queued = True
                 else:
                     if (
-                        normalized.status == "filled"
+                        normalized.status in {"filled", "partially_filled"}
                         and existing_stop.status == "pending_submit"
                         and normalized.filled_qty is not None
                         and existing_stop.quantity != normalized.filled_qty

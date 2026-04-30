@@ -95,6 +95,8 @@ def recover_startup_state(
     broker_positions_by_symbol = {position.symbol: position for position in broker_open_positions}
 
     synced_positions: list[PositionRecord] = []
+    # Tracks brand-new positions (no prior local record) that need a stop order queued.
+    new_positions_needing_stop: list[tuple[str, int, float, str]] = []  # (symbol, qty, stop_price, strategy_name)
     for broker_position in broker_open_positions:
         local_for_symbol = local_positions_by_symbol.get(broker_position.symbol, [])
 
@@ -123,6 +125,10 @@ def recover_startup_state(
                     updated_at=timestamp,
                 )
             )
+            if stop_price > 0.0:
+                new_positions_needing_stop.append(
+                    (broker_position.symbol, broker_position.quantity, stop_price, default_strategy_name)
+                )
         elif len(local_for_symbol) == 1:
             existing = local_for_symbol[0]
             if existing.quantity != broker_position.quantity or (
@@ -232,6 +238,11 @@ def recover_startup_state(
             body="\n".join(report.mismatches),
         )
 
+    # Index active local stop orders by symbol for the stop-queuing step below.
+    active_stop_symbols = {
+        o.symbol for o in local_active_orders if o.intent_type == "stop"
+    }
+
     try:
         runtime.position_store.replace_all(
             positions=synced_positions,
@@ -239,6 +250,45 @@ def recover_startup_state(
             strategy_version=settings.strategy_version,
             commit=False,
         )
+        # For brand-new synthesized positions, queue a conservative stop order if none exists.
+        for sym, qty, stop_price, strategy_name_sr in new_positions_needing_stop:
+            if sym not in active_stop_symbols:
+                recovery_stop_id = (
+                    f"startup_recovery:{settings.strategy_version}:"
+                    f"{timestamp.date().isoformat()}:{sym}:stop"
+                )
+                runtime.order_store.save(
+                    OrderRecord(
+                        client_order_id=recovery_stop_id,
+                        symbol=sym,
+                        side="sell",
+                        intent_type="stop",
+                        status="pending_submit",
+                        quantity=qty,
+                        trading_mode=settings.trading_mode,
+                        strategy_version=settings.strategy_version,
+                        strategy_name=strategy_name_sr,
+                        created_at=timestamp,
+                        updated_at=timestamp,
+                        stop_price=stop_price,
+                        initial_stop_price=stop_price,
+                        signal_timestamp=None,
+                    ),
+                    commit=False,
+                )
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="startup_recovery_stop_queued",
+                        symbol=sym,
+                        payload={
+                            "client_order_id": recovery_stop_id,
+                            "stop_price": stop_price,
+                            "quantity": qty,
+                        },
+                        created_at=timestamp,
+                    ),
+                    commit=False,
+                )
         for broker_order in broker_open_orders:
             existing = None
             if broker_order.broker_order_id is not None:
