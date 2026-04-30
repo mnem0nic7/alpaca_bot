@@ -298,6 +298,12 @@ def create_app(
                     {"name": name, "enabled": enabled}
                     for name, enabled in health_snapshot.strategy_flags
                 ],
+                "stream_stale": health_snapshot.stream_stale,
+                "stream_last_stale_at": (
+                    None
+                    if health_snapshot.stream_last_stale_at is None
+                    else health_snapshot.stream_last_stale_at.isoformat()
+                ),
             },
             status_code=http_status,
         )

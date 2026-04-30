@@ -65,6 +65,7 @@ WORKER_ACTIVITY_EVENT_TYPES = (
     "trader_startup_completed",
 )
 WORKER_STALE_AFTER_SECONDS = 180
+STREAM_STALE_WINDOW_SECONDS = 600
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,8 @@ class HealthSnapshot:
     trading_status: TradingStatus | None
     worker_health: WorkerHealth
     strategy_flags: list[tuple[str, bool]] = dc_field(default_factory=list)
+    stream_stale: bool = False
+    stream_last_stale_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -236,6 +239,18 @@ def load_health_snapshot(
     audit_event_store = audit_event_store or AuditEventStore(connection)
     strategy_flag_store = strategy_flag_store or StrategyFlagStore(connection)
     now = datetime.now(timezone.utc)
+    from datetime import timedelta
+    stale_cutoff = now - timedelta(seconds=STREAM_STALE_WINDOW_SECONDS)
+    _recent_stale = audit_event_store.list_by_event_types(
+        event_types=["stream_heartbeat_stale"],
+        limit=1,
+    )
+    _stream_last_stale_at = (
+        _recent_stale[0].created_at
+        if _recent_stale and _recent_stale[0].created_at >= stale_cutoff
+        else None
+    )
+    _stream_stale = _stream_last_stale_at is not None
     recent_events = audit_event_store.list_recent(limit=12)
     flags_by_name = {
         f.strategy_name: f.enabled
@@ -256,6 +271,8 @@ def load_health_snapshot(
             now=now,
         ),
         strategy_flags=strategy_flags,
+        stream_stale=_stream_stale,
+        stream_last_stale_at=_stream_last_stale_at,
     )
 
 

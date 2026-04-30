@@ -4,6 +4,8 @@ import contextlib
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import logging
+from pathlib import Path
+import signal
 import threading
 import time
 from typing import Any, Callable
@@ -111,6 +113,7 @@ class RuntimeSupervisor:
         self._summary_sent: set[date] = set()
         # Dates on which at least one active cycle ran this process lifetime.
         self._session_had_active_cycle: set[date] = set()
+        self._shutdown_requested: bool = False
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
@@ -551,6 +554,10 @@ class RuntimeSupervisor:
     def close(self) -> None:
         if self._closed:
             return
+        try:
+            self._append_audit(AuditEvent(event_type="supervisor_exited", payload={}))
+        except Exception:
+            pass  # best-effort: DB may be gone on unclean exit
         if self.stream is not None and hasattr(self.stream, "stop"):
             self.stream.stop()
         if self._stream_thread is not None and self._stream_thread.is_alive():
@@ -574,18 +581,29 @@ class RuntimeSupervisor:
         idle_iterations = 0
         sleeper = sleep_fn if sleep_fn is not None else time.sleep
 
+        def _request_shutdown(signum: int, frame: object) -> None:
+            self._shutdown_requested = True
+
+        signal.signal(signal.SIGTERM, _request_shutdown)
+        signal.signal(signal.SIGINT, _request_shutdown)
+
         try:
             if startup_now is None:
                 self.startup()
             else:
                 self.startup(now=startup_now)
+            self._append_audit(AuditEvent(event_type="supervisor_started", payload={}))
             while True:
-                if should_stop is not None and should_stop():
+                if (should_stop is not None and should_stop()) or self._shutdown_requested:
                     break
                 if max_iterations is not None and iterations >= max_iterations:
                     break
 
                 timestamp = _resolve_now(cycle_now)
+                try:
+                    Path("/tmp/supervisor_heartbeat").write_text(timestamp.isoformat())
+                except OSError:
+                    pass
                 session_date = _session_date(timestamp, self.settings)
                 session_type = self._current_session(timestamp)
                 if session_type is not SessionType.CLOSED:
@@ -770,7 +788,7 @@ class RuntimeSupervisor:
                     )
                 iterations += 1
 
-                if should_stop is not None and should_stop():
+                if (should_stop is not None and should_stop()) or self._shutdown_requested:
                     break
                 if max_iterations is not None and iterations >= max_iterations:
                     break

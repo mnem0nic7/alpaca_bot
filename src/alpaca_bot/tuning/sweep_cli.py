@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from alpaca_bot.replay.runner import ReplayRunner
+from alpaca_bot.strategy import STRATEGY_REGISTRY
 from alpaca_bot.tuning.sweep import DEFAULT_GRID, ParameterGrid, _parse_grid, run_sweep
 
 
@@ -20,6 +21,12 @@ def main() -> None:
     parser.add_argument(
         "--min-trades", type=int, default=3,
         help="Minimum trades required to score a candidate (default: 3)",
+    )
+    parser.add_argument(
+        "--strategy",
+        default="breakout",
+        choices=list(STRATEGY_REGISTRY),
+        help="Strategy to sweep (default: breakout)",
     )
     parser.add_argument(
         "--grid", nargs="*", default=[],
@@ -45,6 +52,7 @@ def main() -> None:
             base_env=base_env,
             grid=grid,
             min_trades=args.min_trades,
+            signal_evaluator=STRATEGY_REGISTRY[args.strategy],
         )
         top = [c for c in candidates if c.score is not None][:10]
         if not top:
