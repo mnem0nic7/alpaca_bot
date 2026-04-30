@@ -428,6 +428,7 @@ class RuntimeSupervisor:
                             broker=self.broker,
                             cycle_result=cycle_result,
                             now=timestamp,
+                            session_type=session_type,
                         )
                     except Exception:
                         logger.exception(

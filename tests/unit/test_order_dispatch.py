@@ -397,7 +397,16 @@ def test_dispatch_skips_entry_orders_with_stale_signal_date() -> None:
     report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
 
     assert broker.entry_calls == []
-    assert order_store.saved == []
+    # Stale order must be persisted with status="expired"
+    assert len(order_store.saved) == 1
+    assert order_store.saved[0].status == "expired"
+    assert order_store.saved[0].client_order_id == stale_entry.client_order_id
+    # Audit event must be appended
+    assert len(audit_store.appended) == 1
+    assert audit_store.appended[0].event_type == "order_expired_stale_signal"
+    assert audit_store.appended[0].symbol == "AAPL"
+    assert audit_store.appended[0].payload["signal_date"] == "2026-04-24"
+    assert audit_store.appended[0].payload["session_date"] == "2026-04-25"
     assert report["submitted_count"] == 0
 
 

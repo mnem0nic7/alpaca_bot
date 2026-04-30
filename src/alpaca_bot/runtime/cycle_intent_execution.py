@@ -4,7 +4,10 @@ import contextlib
 import logging
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timezone
-from typing import Any, Callable, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Protocol, Sequence
+
+if TYPE_CHECKING:
+    from alpaca_bot.strategy.session import SessionType
 
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType
@@ -87,6 +90,7 @@ def execute_cycle_intents(
     broker: BrokerProtocol,
     cycle_result: object,
     now: datetime | Callable[[], datetime] | None = None,
+    session_type: "SessionType | None" = None,
 ) -> CycleIntentExecutionReport:
     timestamp = _resolve_now(now)
     positions_by_symbol: dict[str, PositionRecord] | None = None
@@ -110,6 +114,15 @@ def execute_cycle_intents(
         strategy_name = getattr(intent, "strategy_name", "breakout")
 
         if intent_type is CycleIntentType.UPDATE_STOP:
+            if session_type is not None:
+                from alpaca_bot.strategy.session import SessionType as _SessionType
+                if session_type in (_SessionType.AFTER_HOURS, _SessionType.PRE_MARKET):
+                    logger.debug(
+                        "execute_cycle_intents: skipping UPDATE_STOP for %s during %s session",
+                        symbol,
+                        session_type,
+                    )
+                    continue
             if positions_by_symbol is None:
                 with lock_ctx:
                     positions_by_symbol = _positions_by_symbol(runtime, settings)

@@ -103,6 +103,49 @@ def dispatch_pending_orders(
                     signal_date_et,
                     session_date_et,
                 )
+                with lock_ctx:
+                    try:
+                        runtime.order_store.save(
+                            OrderRecord(
+                                client_order_id=order.client_order_id,
+                                symbol=order.symbol,
+                                side=order.side,
+                                intent_type=order.intent_type,
+                                status="expired",
+                                quantity=order.quantity,
+                                trading_mode=order.trading_mode,
+                                strategy_version=order.strategy_version,
+                                strategy_name=order.strategy_name,
+                                created_at=order.created_at,
+                                updated_at=timestamp,
+                                stop_price=order.stop_price,
+                                limit_price=order.limit_price,
+                                initial_stop_price=order.initial_stop_price,
+                                broker_order_id=order.broker_order_id,
+                                signal_timestamp=order.signal_timestamp,
+                            ),
+                            commit=False,
+                        )
+                        runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="order_expired_stale_signal",
+                                symbol=order.symbol,
+                                payload={
+                                    "client_order_id": order.client_order_id,
+                                    "signal_date": signal_date_et.isoformat(),
+                                    "session_date": session_date_et.isoformat(),
+                                },
+                                created_at=timestamp,
+                            ),
+                            commit=False,
+                        )
+                        runtime.connection.commit()
+                    except Exception:
+                        try:
+                            runtime.connection.rollback()
+                        except Exception:
+                            pass
+                        raise
                 continue
         try:
             # Broker submission stays outside the lock — it is slow network I/O
