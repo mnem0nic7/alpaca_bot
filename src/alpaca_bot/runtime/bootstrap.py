@@ -20,6 +20,10 @@ from alpaca_bot.storage import (
 from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres, connect_postgres_with_retry
 
 
+class LockAcquisitionError(Exception):
+    """Raised when the advisory lock cannot be acquired or re-acquired after reconnect."""
+
+
 @dataclass
 class RuntimeContext:
     settings: Settings
@@ -119,7 +123,7 @@ def reconnect_runtime_connection(
             new_conn.close()
         except Exception:
             pass
-        raise RuntimeError(
+        raise LockAcquisitionError(
             "Could not re-acquire singleton trader lock after reconnect for "
             f"{context.settings.trading_mode.value}/{context.settings.strategy_version}"
         )

@@ -7,7 +7,7 @@ import pytest
 
 from alpaca_bot.config import Settings
 from alpaca_bot.runtime import bootstrap_runtime
-from alpaca_bot.runtime.bootstrap import RuntimeContext, reconnect_runtime_connection
+from alpaca_bot.runtime.bootstrap import LockAcquisitionError, RuntimeContext, reconnect_runtime_connection
 
 
 class FakeCursor:
@@ -196,5 +196,5 @@ def test_reconnect_raises_if_lock_cannot_be_reacquired(tmp_path: Path) -> None:
     lock = FakeLock(old_conn, acquire_result=False)
     context = _make_context(old_conn, lock)
 
-    with pytest.raises(RuntimeError, match="re-acquire singleton trader lock"):
+    with pytest.raises(LockAcquisitionError, match="re-acquire singleton trader lock"):
         reconnect_runtime_connection(context, _new_conn=new_conn)

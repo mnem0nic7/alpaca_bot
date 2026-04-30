@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType
+from alpaca_bot.notifications import Notifier
 from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ def execute_cycle_intents(
     cycle_result: object,
     now: datetime | Callable[[], datetime] | None = None,
     session_type: "SessionType | None" = None,
+    notifier: Notifier | None = None,
 ) -> CycleIntentExecutionReport:
     timestamp = _resolve_now(now)
     positions_by_symbol: dict[str, PositionRecord] | None = None
@@ -137,6 +139,7 @@ def execute_cycle_intents(
                 now=timestamp,
                 strategy_name=strategy_name,
                 lock_ctx=lock_ctx,
+                notifier=notifier,
             )
             if action == "replaced":
                 replaced_stop_count += 1
@@ -196,6 +199,7 @@ def _execute_update_stop(
     now: datetime,
     strategy_name: str = "breakout",
     lock_ctx: Any = None,
+    notifier: Notifier | None = None,
 ) -> str | None:
     if position is None or stop_price is None:
         return None
@@ -295,6 +299,35 @@ def _execute_update_stop(
             logger.debug("update_stop skipped for %s — order already gone: %s", symbol, exc)
         else:
             logger.exception("Broker call failed for update_stop on %s; skipping", symbol)
+            with lock_ctx:
+                try:
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="stop_update_failed",
+                            symbol=symbol,
+                            payload={
+                                "error": str(exc),
+                                "symbol": symbol,
+                                "timestamp": now.isoformat(),
+                            },
+                            created_at=now,
+                        ),
+                        commit=True,
+                    )
+                except Exception:
+                    logger.exception("Failed to write stop_update_failed audit event for %s", symbol)
+            if notifier is not None:
+                try:
+                    notifier.send(
+                        subject=f"Stop update failed: {symbol}",
+                        body=(
+                            f"Broker call failed for UPDATE_STOP on {symbol}.\n"
+                            f"Position may be losing stop protection.\n"
+                            f"Error: {exc}"
+                        ),
+                    )
+                except Exception:
+                    logger.exception("Notifier failed to send stop_update_failed alert for %s", symbol)
         return None
 
     # All store writes under lock — serializes with the trade-update stream thread.

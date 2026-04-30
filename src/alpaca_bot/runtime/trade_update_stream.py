@@ -31,9 +31,15 @@ def attach_trade_update_stream(
     stream: TradeUpdateStreamProtocol,
     now: Callable[[], datetime] | None = None,
     notifier: Notifier | None = None,
+    on_event: Callable[[], None] | None = None,
 ):
     async def handler(update: Any) -> None:
         timestamp = (now or (lambda: datetime.now(timezone.utc)))()
+        if on_event is not None:
+            try:
+                on_event()
+            except Exception:
+                pass
         try:
             apply_trade_update(
                 settings=settings,

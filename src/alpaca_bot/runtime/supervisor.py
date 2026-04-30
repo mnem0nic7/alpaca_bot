@@ -21,6 +21,7 @@ from alpaca_bot.execution import (
 from alpaca_bot.notifications import Notifier
 from alpaca_bot.notifications.factory import build_notifier
 from alpaca_bot.runtime.bootstrap import (
+    LockAcquisitionError,
     RuntimeContext,
     bootstrap_runtime,
     close_runtime,
@@ -42,6 +43,9 @@ from alpaca_bot.storage import AuditEvent, DailySessionState, PositionRecord, Tr
 from alpaca_bot.strategy import STRATEGY_REGISTRY, StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import evaluate_breakout_signal as _default_evaluator
 from alpaca_bot.strategy.session import SessionType, detect_session_type
+
+
+STREAM_HEARTBEAT_TIMEOUT_SECONDS = 300
 
 
 @dataclass(frozen=True)
@@ -96,6 +100,8 @@ class RuntimeSupervisor:
         self._closed = False
         self._stream_restart_attempts: int = 0
         self._next_stream_restart_at: datetime | None = None
+        self._last_stream_event_at: datetime | None = None
+        self._stream_heartbeat_alerted: bool = False
         self._consecutive_cycle_failures: int = 0
         # Keyed by session_date (ET); populated on the first cycle of each day.
         self._session_equity_baseline: dict[date, float] = {}
@@ -154,6 +160,7 @@ class RuntimeSupervisor:
                 stream=self.stream,
                 now=lambda: timestamp,
                 notifier=self._notifier,
+                on_event=self._record_stream_event,
             )
             self._stream_attached = True
             self._start_stream_thread(now=lambda: timestamp)
@@ -434,6 +441,7 @@ class RuntimeSupervisor:
                             cycle_result=cycle_result,
                             now=timestamp,
                             session_type=session_type,
+                            notifier=self._notifier,
                         )
                     except Exception:
                         logger.exception(
@@ -585,6 +593,12 @@ class RuntimeSupervisor:
                     try:
                         cycle_report = self.run_cycle_once(now=lambda: timestamp, session_type=session_type)
                         self._consecutive_cycle_failures = 0
+                    except LockAcquisitionError:
+                        logger.critical(
+                            "Advisory lock lost after reconnect — halting supervisor to prevent "
+                            "concurrent instance from running without exclusive DB access"
+                        )
+                        raise SystemExit(1)
                     except Exception as exc:
                         self._consecutive_cycle_failures += 1
                         log_fn = logger.error if self._consecutive_cycle_failures >= 5 else logger.warning
@@ -680,6 +694,49 @@ class RuntimeSupervisor:
                                         )
                                     except Exception:
                                         logger.exception("Notifier failed to send stream restart alert")
+                    # Heartbeat staleness guard — catches silent clean-close disconnects
+                    # that leave the thread alive but no longer receiving events.
+                    _stream_thread_alive = (
+                        self._stream_thread is not None and self._stream_thread.is_alive()
+                    )
+                    if (
+                        _stream_thread_alive
+                        and self._last_stream_event_at is not None
+                        and (timestamp - self._last_stream_event_at)
+                        > timedelta(seconds=STREAM_HEARTBEAT_TIMEOUT_SECONDS)
+                    ):
+                        if not self._stream_heartbeat_alerted:
+                            self._stream_heartbeat_alerted = True
+                            logger.critical(
+                                "Trade update stream heartbeat stale: no event in %ds",
+                                STREAM_HEARTBEAT_TIMEOUT_SECONDS,
+                            )
+                            self._append_audit(
+                                AuditEvent(
+                                    event_type="stream_heartbeat_stale",
+                                    payload={
+                                        "last_event_at": self._last_stream_event_at.isoformat(),
+                                        "timestamp": timestamp.isoformat(),
+                                        "timeout_seconds": STREAM_HEARTBEAT_TIMEOUT_SECONDS,
+                                    },
+                                    created_at=timestamp,
+                                )
+                            )
+                            if self._notifier is not None:
+                                try:
+                                    self._notifier.send(
+                                        subject="Trade stream heartbeat stale",
+                                        body=(
+                                            f"No trade update event received in "
+                                            f"{STREAM_HEARTBEAT_TIMEOUT_SECONDS}s. "
+                                            f"Fill events may be missed."
+                                        ),
+                                    )
+                                except Exception:
+                                    logger.exception("Notifier failed to send heartbeat stale alert")
+                    else:
+                        self._stream_heartbeat_alerted = False
+
                     active_iterations += 1
                     self._append_audit(
                         AuditEvent(
@@ -1049,6 +1106,9 @@ class RuntimeSupervisor:
             daemon=True,
         )
         self._stream_thread.start()
+
+    def _record_stream_event(self) -> None:
+        self._last_stream_event_at = datetime.now(timezone.utc)
 
 
 TraderSupervisor = RuntimeSupervisor

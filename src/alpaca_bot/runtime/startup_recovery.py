@@ -13,7 +13,7 @@ from alpaca_bot.notifications import Notifier
 from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord
 
 
-ACTIVE_ORDER_STATUSES = ["pending_submit", "new", "accepted", "submitted", "partially_filled"]
+ACTIVE_ORDER_STATUSES = ["pending_submit", "submitting", "new", "accepted", "submitted", "partially_filled"]
 
 
 class OrderStoreProtocol(Protocol):
@@ -242,6 +242,14 @@ def recover_startup_state(
     active_stop_symbols = {
         o.symbol for o in local_active_orders if o.intent_type == "stop"
     }
+    # Also exclude symbols that already have a pending_submit entry order — queuing
+    # a recovery stop alongside an unsubmitted entry would leave the stop orphaned if
+    # the entry subsequently fails or is cancelled.
+    pending_entry_symbols = {
+        o.symbol
+        for o in local_active_orders
+        if o.intent_type == "entry" and o.status == "pending_submit"
+    }
 
     try:
         runtime.position_store.replace_all(
@@ -252,6 +260,12 @@ def recover_startup_state(
         )
         # For brand-new synthesized positions, queue a conservative stop order if none exists.
         for sym, qty, stop_price, strategy_name_sr in new_positions_needing_stop:
+            if sym in pending_entry_symbols:
+                _log.warning(
+                    "startup_recovery: skipping recovery stop for %s — pending_submit entry order exists",
+                    sym,
+                )
+                continue
             if sym not in active_stop_symbols:
                 recovery_stop_id = (
                     f"startup_recovery:{settings.strategy_version}:"
@@ -338,9 +352,43 @@ def recover_startup_state(
         for order in local_active_orders:
             if order.client_order_id in matched_local_client_ids:
                 continue
-            # Never-submitted orders must remain pending_submit so dispatch_pending_orders
-            # can submit them on the next cycle and the position retains stop protection.
+            # Never-submitted orders (pending_submit or submitting with no broker ID) are
+            # absent from the broker because dispatch hadn't completed when we crashed.
+            # submitting orders need an explicit reset to pending_submit so
+            # dispatch_pending_orders will retry them. Alpaca's client_order_id idempotency
+            # ensures re-submission is safe even if the broker already received the order.
             if _is_never_submitted(order):
+                if order.status == "submitting":
+                    runtime.order_store.save(
+                        OrderRecord(
+                            client_order_id=order.client_order_id,
+                            symbol=order.symbol,
+                            side=order.side,
+                            intent_type=order.intent_type,
+                            status="pending_submit",
+                            quantity=order.quantity,
+                            trading_mode=order.trading_mode,
+                            strategy_version=order.strategy_version,
+                            strategy_name=order.strategy_name,
+                            created_at=order.created_at,
+                            updated_at=timestamp,
+                            stop_price=order.stop_price,
+                            limit_price=order.limit_price,
+                            initial_stop_price=order.initial_stop_price,
+                            broker_order_id=None,
+                            signal_timestamp=order.signal_timestamp,
+                        ),
+                        commit=False,
+                    )
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="startup_recovery_submitting_reset",
+                            symbol=order.symbol,
+                            payload={"client_order_id": order.client_order_id},
+                            created_at=timestamp,
+                        ),
+                        commit=False,
+                    )
                 continue
             runtime.order_store.save(
                 OrderRecord(
@@ -438,13 +486,12 @@ def _infer_intent_type(*, client_order_id: str, side: str) -> str:
 def _is_never_submitted(order: "OrderRecord") -> bool:
     """Return True when an order was queued locally but never sent to the broker.
 
-    These orders have status='pending_submit' and no broker_order_id because
-    the process crashed before dispatch_pending_orders ran.  Their absence
-    from the broker's open-orders list is expected — they must remain
-    pending_submit so the next dispatch cycle submits them and the position
-    retains stop protection.
+    Covers both pending_submit (not yet attempted) and submitting (dispatch
+    started but process died before broker confirmation was written).  Both
+    statuses have no broker_order_id and are expected to be absent from the
+    broker's open-orders list.
     """
-    return order.status == "pending_submit" and not order.broker_order_id
+    return order.status in ("pending_submit", "submitting") and not order.broker_order_id
 
 
 def _resolve_now(now: datetime | Callable[[], datetime] | None) -> datetime:

@@ -813,3 +813,191 @@ def test_brand_new_broker_position_does_not_queue_stop_when_one_already_active()
     assert new_stops == [], (
         "No duplicate stop must be queued when an active stop for the symbol already exists"
     )
+
+
+# ---------------------------------------------------------------------------
+# Gap 1: submitting status — startup recovery reset tests
+# ---------------------------------------------------------------------------
+
+def test_startup_recovery_resets_submitting_order_to_pending_submit() -> None:
+    """A 'submitting' order with no broker_order_id that isn't found at the broker
+    must be reset to 'pending_submit' so dispatch_pending_orders retries it.
+    This handles the crash-between-stamp-and-broker-confirmation scenario."""
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+    position_store = RecordingPositionStore()
+    audit_event_store = RecordingAuditEventStore()
+
+    # Local order stamped 'submitting' but never received a broker response
+    in_flight_order = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:inflight",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="submitting",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=100.0,
+        limit_price=100.5,
+        initial_stop_price=100.0,
+        broker_order_id=None,  # no confirmation received before crash
+        signal_timestamp=now,
+    )
+    order_store = RecordingOrderStore(existing_orders=[in_flight_order])
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+        audit_event_store=audit_event_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[],
+        broker_open_orders=[],  # not found at broker
+        now=now,
+    )
+
+    reset_saves = [
+        r for r in order_store.saved
+        if r.client_order_id == "paper:v1-breakout:AAPL:entry:inflight"
+    ]
+    assert len(reset_saves) == 1, "submitting order must be reset exactly once"
+    assert reset_saves[0].status == "pending_submit", (
+        f"submitting order must be reset to pending_submit, got {reset_saves[0].status}"
+    )
+    assert reset_saves[0].broker_order_id is None
+
+    reset_audits = [
+        e for e in audit_event_store.appended
+        if e.event_type == "startup_recovery_submitting_reset"
+    ]
+    assert len(reset_audits) == 1
+    assert reset_audits[0].symbol == "AAPL"
+
+
+def test_startup_recovery_does_not_reset_submitting_order_found_at_broker() -> None:
+    """A 'submitting' order that IS found at the broker (broker confirmed it)
+    must NOT be reset to pending_submit — it was successfully received."""
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+    position_store = RecordingPositionStore()
+    audit_event_store = RecordingAuditEventStore()
+
+    in_flight_order = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:confirmed",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="submitting",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=100.0,
+        limit_price=100.5,
+        initial_stop_price=100.0,
+        broker_order_id=None,
+        signal_timestamp=now,
+    )
+    order_store = RecordingOrderStore(existing_orders=[in_flight_order])
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+        audit_event_store=audit_event_store,
+    )
+
+    broker_order = BrokerOrder(
+        client_order_id="paper:v1-breakout:AAPL:entry:confirmed",
+        broker_order_id="alpaca-123",
+        symbol="AAPL",
+        side="buy",
+        status="new",
+        quantity=10,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[],
+        broker_open_orders=[broker_order],
+        now=now,
+    )
+
+    reset_audits = [
+        e for e in audit_event_store.appended
+        if e.event_type == "startup_recovery_submitting_reset"
+    ]
+    assert reset_audits == [], "confirmed broker order must not be reset to pending_submit"
+
+    confirmed_saves = [
+        r for r in order_store.saved
+        if r.client_order_id == "paper:v1-breakout:AAPL:entry:confirmed"
+    ]
+    assert all(r.status != "pending_submit" for r in confirmed_saves), (
+        "broker-confirmed order must not be reset to pending_submit"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gap 6: pending_submit entry guard — no orphan stop when entry not yet sent
+# ---------------------------------------------------------------------------
+
+def test_startup_recovery_does_not_queue_stop_when_pending_entry_exists() -> None:
+    """When a pending_submit entry order exists for a symbol, startup recovery must NOT
+    queue a recovery stop — doing so would leave an orphaned stop if the entry is later
+    cancelled or fails."""
+    settings = make_settings()
+    now = datetime(2026, 4, 30, 14, 0, tzinfo=timezone.utc)
+
+    # Broker has a position for MSFT that isn't in our local DB
+    broker_position = BrokerPosition(symbol="MSFT", quantity=10, entry_price=400.0)
+
+    # Local DB has a pending_submit entry order for MSFT (not yet sent)
+    pending_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:MSFT:entry:pending",
+        symbol="MSFT",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=395.0,
+        limit_price=400.5,
+        initial_stop_price=395.0,
+        broker_order_id=None,
+        signal_timestamp=now,
+    )
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore(existing_orders=[pending_entry])
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    stop_saves = [
+        o for o in order_store.saved
+        if getattr(o, "intent_type", None) == "stop"
+        and getattr(o, "symbol", None) == "MSFT"
+    ]
+    assert stop_saves == [], (
+        "Recovery must not queue a stop for a symbol that already has a pending_submit entry order"
+    )

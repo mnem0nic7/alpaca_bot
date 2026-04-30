@@ -283,10 +283,11 @@ class TestDailyRealizedPnl:
         )
         assert pnl == 0.0
 
-    def test_exit_with_null_entry_fill_excluded(self):
-        """Rows where entry_fill (row[1]) is None must be skipped — no correlated entry found."""
+    def test_exit_with_null_entry_fill_treated_as_full_loss(self):
+        """Rows where entry_fill (row[1]) is None must be counted as -(exit_fill × qty)
+        to fail safe on the loss-limit check rather than silently understate losses."""
         rows = [
-            ("AAPL", None, 155.00, 10),   # no entry fill → skipped
+            ("AAPL", None, 155.00, 10),   # no entry fill → -(155 × 10) = -1550
             ("MSFT", 400.00, 405.00, 5),  # +25
         ]
         store = self._store(rows)
@@ -295,7 +296,21 @@ class TestDailyRealizedPnl:
             strategy_version=self.STRATEGY,
             session_date=self.SESSION_DATE,
         )
-        assert pnl == pytest.approx(25.00)
+        assert pnl == pytest.approx(-1525.00)
+
+    def test_all_exits_null_entry_fill_returns_total_full_loss(self):
+        """When every row lacks an entry fill the entire session P&L is negative."""
+        rows = [
+            ("AAPL", None, 100.00, 5),   # -(100 × 5) = -500
+            ("MSFT", None, 200.00, 3),   # -(200 × 3) = -600
+        ]
+        store = self._store(rows)
+        pnl = store.daily_realized_pnl(
+            trading_mode=self.MODE,
+            strategy_version=self.STRATEGY,
+            session_date=self.SESSION_DATE,
+        )
+        assert pnl == pytest.approx(-1100.00)
 
 
 # ---------------------------------------------------------------------------

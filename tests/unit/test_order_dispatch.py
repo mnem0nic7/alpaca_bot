@@ -163,7 +163,25 @@ def test_dispatch_pending_orders_submits_entry_and_stop_orders_and_persists_upda
             "client_order_id": "paper:v1-breakout:AAPL:stop:1",
         }
     ]
+    # submitting stamp is written before broker call; confirmed status written after
     assert order_store.saved == [
+        OrderRecord(
+            client_order_id="paper:v1-breakout:AAPL:entry:1",
+            symbol="AAPL",
+            side="buy",
+            intent_type="entry",
+            status="submitting",
+            quantity=25,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            created_at=now,
+            updated_at=now,
+            stop_price=101.25,
+            limit_price=101.5,
+            initial_stop_price=99.75,
+            broker_order_id=None,
+            signal_timestamp=now,
+        ),
         OrderRecord(
             client_order_id="paper:v1-breakout:AAPL:entry:1",
             symbol="AAPL",
@@ -186,6 +204,21 @@ def test_dispatch_pending_orders_submits_entry_and_stop_orders_and_persists_upda
             symbol="AAPL",
             side="sell",
             intent_type="stop",
+            status="submitting",
+            quantity=25,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            created_at=now,
+            updated_at=now,
+            stop_price=99.75,
+            broker_order_id=None,
+            signal_timestamp=now,
+        ),
+        OrderRecord(
+            client_order_id="paper:v1-breakout:AAPL:stop:1",
+            symbol="AAPL",
+            side="sell",
+            intent_type="stop",
             status="new",
             quantity=25,
             trading_mode=TradingMode.PAPER,
@@ -199,6 +232,12 @@ def test_dispatch_pending_orders_submits_entry_and_stop_orders_and_persists_upda
     ]
     assert audit_store.appended == [
         AuditEvent(
+            event_type="order_dispatch_submitting",
+            symbol="AAPL",
+            payload={"client_order_id": "paper:v1-breakout:AAPL:entry:1", "intent_type": "entry"},
+            created_at=now,
+        ),
+        AuditEvent(
             event_type="order_submitted",
             symbol="AAPL",
             payload={
@@ -207,6 +246,12 @@ def test_dispatch_pending_orders_submits_entry_and_stop_orders_and_persists_upda
                 "intent_type": "entry",
                 "status": "accepted",
             },
+            created_at=now,
+        ),
+        AuditEvent(
+            event_type="order_dispatch_submitting",
+            symbol="AAPL",
+            payload={"client_order_id": "paper:v1-breakout:AAPL:stop:1", "intent_type": "stop"},
             created_at=now,
         ),
         AuditEvent(
@@ -300,10 +345,15 @@ def test_dispatch_pending_orders_filters_out_disallowed_intent_types() -> None:
             "client_order_id": "paper:v1-breakout:AAPL:stop:2",
         }
     ]
+    # submitting stamp + confirmed status = 2 saves for the stop order
     assert [saved.client_order_id for saved in order_store.saved] == [
-        "paper:v1-breakout:AAPL:stop:2"
+        "paper:v1-breakout:AAPL:stop:2",
+        "paper:v1-breakout:AAPL:stop:2",
     ]
-    assert [event.payload["intent_type"] for event in audit_store.appended] == ["stop"]
+    assert [event.event_type for event in audit_store.appended] == [
+        "order_dispatch_submitting",
+        "order_submitted",
+    ]
     assert report["submitted_count"] == 1
 
 
@@ -353,14 +403,16 @@ def test_dispatch_records_error_status_on_broker_failure() -> None:
         settings=settings, runtime=runtime, broker=FailingBroker(), now=now
     )
 
-    # Order must be saved with status="error"
-    assert len(order_store.saved) == 1
-    assert order_store.saved[0].status == "error"
-    assert order_store.saved[0].client_order_id == entry_order.client_order_id
-    # Audit event for the failure must be appended
-    assert len(audit_store.appended) == 1
-    assert audit_store.appended[0].event_type == "order_dispatch_failed"
-    assert audit_store.appended[0].symbol == "AAPL"
+    # submitting stamp written before broker call, then error status after failure
+    assert len(order_store.saved) == 2
+    assert order_store.saved[0].status == "submitting"
+    assert order_store.saved[1].status == "error"
+    assert order_store.saved[1].client_order_id == entry_order.client_order_id
+    # submitting audit first, then failure audit
+    assert len(audit_store.appended) == 2
+    assert audit_store.appended[0].event_type == "order_dispatch_submitting"
+    assert audit_store.appended[1].event_type == "order_dispatch_failed"
+    assert audit_store.appended[1].symbol == "AAPL"
     # No orders counted as submitted
     assert report["submitted_count"] == 0
 
@@ -735,9 +787,12 @@ def test_dispatch_unsupported_intent_type_sets_order_to_error_status() -> None:
     )
 
     assert report["submitted_count"] == 0
-    assert len(order_store.saved) == 1
-    assert order_store.saved[0].status == "error"
-    assert audit_store.appended[0].event_type == "order_dispatch_failed"
+    # submitting stamp written first; error written after _submit_order raises for unsupported intent
+    assert len(order_store.saved) == 2
+    assert order_store.saved[0].status == "submitting"
+    assert order_store.saved[1].status == "error"
+    assert audit_store.appended[0].event_type == "order_dispatch_submitting"
+    assert audit_store.appended[1].event_type == "order_dispatch_failed"
 
 
 # ---------------------------------------------------------------------------
@@ -839,8 +894,8 @@ def test_dispatch_success_path_uses_commit_false_for_all_writes() -> None:
     assert all(not c for c in audit_store.commit_args), (
         f"audit_event_store.append() must use commit=False; got {audit_store.commit_args}"
     )
-    assert connection.commit_count == 1, (
-        f"Exactly one connection.commit() per order; got {connection.commit_count}"
+    assert connection.commit_count == 2, (
+        f"Two connection.commit() per order (submitting stamp + confirmed status); got {connection.commit_count}"
     )
 
 
@@ -931,13 +986,15 @@ def test_dispatch_entry_order_with_none_stop_price_records_error_status() -> Non
 
     report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=RecordingBroker(), now=now)
 
-    # Order must be saved with status="error" (not crash the loop)
-    assert len(order_store.saved) == 1
-    assert order_store.saved[0].status == "error"
-    assert order_store.saved[0].client_order_id == bad_entry.client_order_id
-    # Audit event must be appended
-    assert len(audit_store.appended) == 1
-    assert audit_store.appended[0].event_type == "order_dispatch_failed"
+    # submitting stamp written first; error written after _submit_order raises
+    assert len(order_store.saved) == 2
+    assert order_store.saved[0].status == "submitting"
+    assert order_store.saved[1].status == "error"
+    assert order_store.saved[1].client_order_id == bad_entry.client_order_id
+    # submitting audit first, then failure audit
+    assert len(audit_store.appended) == 2
+    assert audit_store.appended[0].event_type == "order_dispatch_submitting"
+    assert audit_store.appended[1].event_type == "order_dispatch_failed"
     # Dispatch loop continued — 0 orders submitted (broker call never made)
     assert report["submitted_count"] == 0
 
@@ -1023,4 +1080,68 @@ def test_dispatch_notifier_send_failure_is_swallowed() -> None:
         now=now,
         notifier=ExplodingNotifier(),
     )
+
+
+# ---------------------------------------------------------------------------
+# Gap 1: submitting intermediate status tests
+# ---------------------------------------------------------------------------
+
+def test_dispatch_submitting_stamp_written_before_broker_call() -> None:
+    """The order must be stamped 'submitting' in the DB before the broker call.
+    On crash between stamp and broker confirmation, startup_recovery can detect
+    and reset the in-flight order rather than re-submitting it blindly."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 27, 14, 30, tzinfo=timezone.utc)
+    order = _make_entry_order(now=now)
+
+    broker_call_order: list[str] = []
+
+    class OrderingOrderStore(RecordingOrderStore):
+        def save(self, rec: OrderRecord, *, commit: bool = True) -> None:
+            broker_call_order.append(f"save:{rec.status}")
+            super().save(rec, commit=commit)
+
+    class OrderingBroker(RecordingBroker):
+        def submit_stop_limit_entry(self, **kwargs):
+            broker_call_order.append("broker_call")
+            return super().submit_stop_limit_entry(**kwargs)
+
+    runtime = SimpleNamespace(
+        order_store=OrderingOrderStore([order]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    dispatch_pending_orders(settings=settings, runtime=runtime, broker=OrderingBroker(), now=now)
+
+    assert broker_call_order[0] == "save:submitting", (
+        "submitting stamp must be the first save before the broker call"
+    )
+    assert "broker_call" in broker_call_order
+    submitting_idx = broker_call_order.index("save:submitting")
+    broker_idx = broker_call_order.index("broker_call")
+    assert submitting_idx < broker_idx, "submitting stamp must precede broker call"
+
+
+def test_dispatch_submitting_stamp_has_no_broker_order_id() -> None:
+    """The submitting stamp must set broker_order_id=None — the audit checkpoint
+    that signals the order was in-flight when the process last died."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 27, 14, 35, tzinfo=timezone.utc)
+    order = _make_entry_order(now=now)
+    order_store = RecordingOrderStore([order])
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    dispatch_pending_orders(settings=settings, runtime=runtime, broker=RecordingBroker(), now=now)
+
+    submitting_saves = [r for r in order_store.saved if r.status == "submitting"]
+    assert len(submitting_saves) == 1
+    assert submitting_saves[0].broker_order_id is None
+    assert submitting_saves[0].client_order_id == order.client_order_id
 

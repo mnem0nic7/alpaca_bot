@@ -2277,3 +2277,158 @@ def test_execute_update_stop_skips_write_on_extended_already_filled_phrases() ->
         assert report.replaced_stop_count == 0, (
             f"replaced_stop_count must be 0 for known-gone phrase {phrase!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Gap 2: UPDATE_STOP unrecognized exception — audit + notifier
+# ---------------------------------------------------------------------------
+
+def test_update_stop_unrecognized_exception_writes_audit_and_fires_notifier() -> None:
+    """An unrecognized exception from replace_order() must emit stop_update_failed
+    audit event and fire notifier alert so operator knows the position lost stop protection."""
+    from alpaca_bot.runtime.cycle_intent_execution import execute_cycle_intents
+
+    settings = make_settings()
+    now = datetime(2026, 4, 27, 14, 30, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:stop:1",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="new",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        broker_order_id="alpaca-stop-1",
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=112.0,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    audit_event_store = RecordingAuditEventStore()
+
+    class UnknownErrorBroker(RecordingBroker):
+        def replace_order(self, **kwargs):
+            raise RuntimeError("connection_timeout_unknown_error_xyz")
+
+    notifier_calls: list[dict] = []
+
+    class RecordingNotifier:
+        def send(self, *, subject: str, body: str) -> None:
+            notifier_calls.append({"subject": subject, "body": body})
+
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=audit_event_store,
+        connection=FakeConnection(),
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=UnknownErrorBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="AAPL",
+                timestamp=now,
+                stop_price=111.00,
+            )],
+        ),
+        now=now,
+        notifier=RecordingNotifier(),
+    )
+
+    failed_audits = [e for e in audit_event_store.appended if e.event_type == "stop_update_failed"]
+    assert len(failed_audits) == 1, "stop_update_failed audit event must be appended"
+    assert failed_audits[0].symbol == "AAPL"
+    assert "connection_timeout_unknown_error_xyz" in failed_audits[0].payload["error"]
+
+    assert len(notifier_calls) == 1, "notifier must be called for unrecognized exception"
+    assert "AAPL" in notifier_calls[0]["subject"]
+
+
+def test_update_stop_known_gone_phrase_does_not_fire_audit_or_notifier() -> None:
+    """Known 'order already gone' phrases must NOT emit stop_update_failed or fire notifier."""
+    from alpaca_bot.runtime.cycle_intent_execution import execute_cycle_intents
+
+    settings = make_settings()
+    now = datetime(2026, 4, 27, 14, 35, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:stop:gone",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="new",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        broker_order_id="alpaca-stop-gone",
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=112.0,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    audit_event_store = RecordingAuditEventStore()
+
+    class GoneBroker(RecordingBroker):
+        def replace_order(self, **kwargs):
+            raise RuntimeError("order not found")
+
+    notifier_calls: list[dict] = []
+
+    class RecordingNotifier:
+        def send(self, *, subject: str, body: str) -> None:
+            notifier_calls.append({"subject": subject, "body": body})
+
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=audit_event_store,
+        connection=FakeConnection(),
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=GoneBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="AAPL",
+                timestamp=now,
+                stop_price=111.00,
+            )],
+        ),
+        now=now,
+        notifier=RecordingNotifier(),
+    )
+
+    failed_audits = [e for e in audit_event_store.appended if e.event_type == "stop_update_failed"]
+    assert failed_audits == [], "known-gone phrase must not emit stop_update_failed audit"
+    assert notifier_calls == [], "known-gone phrase must not fire notifier"

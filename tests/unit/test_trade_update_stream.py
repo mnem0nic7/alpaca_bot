@@ -226,3 +226,67 @@ def test_run_trade_update_stream_registers_handler_and_starts_stream(monkeypatch
 
     assert stream.handler is not None
     assert stream.run_calls == 1
+
+
+def test_attach_trade_update_stream_calls_on_event_before_apply(monkeypatch) -> None:
+    attach_trade_update_stream, _ = load_streaming_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 30, 14, 0, tzinfo=timezone.utc)
+    runtime = SimpleNamespace(audit_event_store=RecordingAuditEventStore())
+    stream = RecordingStream()
+
+    call_order: list[str] = []
+
+    def fake_on_event() -> None:
+        call_order.append("on_event")
+
+    def fake_apply_trade_update(**kwargs) -> None:
+        call_order.append("apply")
+
+    monkeypatch.setattr(
+        "alpaca_bot.runtime.trade_update_stream.apply_trade_update",
+        fake_apply_trade_update,
+    )
+
+    handler = attach_trade_update_stream(
+        settings=settings,
+        runtime=runtime,
+        stream=stream,
+        now=lambda: now,
+        on_event=fake_on_event,
+    )
+    asyncio.run(handler({"event": "fill", "symbol": "AAPL", "client_order_id": "cid-1"}))
+
+    assert call_order == ["on_event", "apply"], "on_event must be called before apply_trade_update"
+
+
+def test_attach_trade_update_stream_on_event_exception_does_not_prevent_apply(monkeypatch) -> None:
+    attach_trade_update_stream, _ = load_streaming_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 30, 14, 1, tzinfo=timezone.utc)
+    runtime = SimpleNamespace(audit_event_store=RecordingAuditEventStore())
+    stream = RecordingStream()
+
+    apply_called: list[bool] = []
+
+    def raising_on_event() -> None:
+        raise RuntimeError("callback boom")
+
+    def fake_apply_trade_update(**kwargs) -> None:
+        apply_called.append(True)
+
+    monkeypatch.setattr(
+        "alpaca_bot.runtime.trade_update_stream.apply_trade_update",
+        fake_apply_trade_update,
+    )
+
+    handler = attach_trade_update_stream(
+        settings=settings,
+        runtime=runtime,
+        stream=stream,
+        now=lambda: now,
+        on_event=raising_on_event,
+    )
+    asyncio.run(handler({"event": "fill", "symbol": "AAPL", "client_order_id": "cid-2"}))
+
+    assert apply_called == [True], "apply_trade_update must still run when on_event raises"

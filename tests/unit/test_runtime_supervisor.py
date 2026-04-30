@@ -2532,10 +2532,7 @@ def test_stream_thread_started_audit_rollback_on_failure() -> None:
     )
 
     supervisor._start_stream_thread(now=lambda: now)
-    assert supervisor._stream_thread is not None
-    stream.run_started.wait(timeout=2.0)
-    if supervisor._stream_thread is not None:
-        supervisor._stream_thread.join(timeout=2.0)
+    assert stream.run_started.wait(timeout=2.0), "stream.run() was never called — thread did not start"
 
     assert rollback_counter["count"] >= 1, (
         "rollback() must be called when trade_update_stream_started audit append fails"
@@ -2916,3 +2913,189 @@ def test_supervisor_exits_after_10_consecutive_cycle_failures(monkeypatch) -> No
 
     assert exc_info.value.code == 1, "Supervisor must exit with code 1 after 10 consecutive failures"
     assert call_count == 10, f"Supervisor must exit exactly on the 10th failure, got {call_count}"
+
+
+def test_stream_heartbeat_stale_fires_audit_and_notifier(monkeypatch) -> None:
+    """When the stream thread is alive but no event has arrived in >300s, supervisor must
+    append a stream_heartbeat_stale audit event and fire the notifier exactly once."""
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    settings = make_settings()
+    runtime = make_runtime_context(settings)
+    notifier_calls: list[dict[str, str]] = []
+
+    class RecordingNotifier:
+        def send(self, *, subject: str, body: str) -> None:
+            notifier_calls.append({"subject": subject, "body": body})
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(market_is_open=True),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        notifier=RecordingNotifier(),
+    )
+    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
+
+    # Simulate: stream thread alive, last event was 310s ago
+    base_now = datetime(2026, 4, 30, 14, 30, tzinfo=timezone.utc)
+    stale_ts = base_now - timedelta(seconds=310)
+    supervisor._last_stream_event_at = stale_ts
+    fake_thread = threading.Thread(target=lambda: None)  # never started → not alive
+    # We need an alive thread — use a blocking event
+    _alive_event = threading.Event()
+    alive_thread = threading.Thread(target=lambda: _alive_event.wait(timeout=5.0), daemon=True)
+    alive_thread.start()
+    supervisor._stream_thread = alive_thread
+
+    iteration = 0
+
+    def fake_run_cycle_once(**kwargs):
+        nonlocal iteration
+        iteration += 1
+        if iteration >= 2:
+            _alive_event.set()  # unblock the thread so test cleanup is fast
+            raise SystemExit(0)
+        return SimpleNamespace(entries_disabled=False, cycle_result=None, dispatch_report=None)
+
+    monkeypatch.setattr(supervisor, "run_cycle_once", fake_run_cycle_once)
+
+    with pytest.raises(SystemExit):
+        supervisor.run_forever(
+            max_iterations=3,
+            sleep_fn=lambda _: None,
+            cycle_now=lambda: base_now,
+        )
+
+    audit_events = runtime.audit_event_store.appended
+    stale_events = [e for e in audit_events if e.event_type == "stream_heartbeat_stale"]
+    assert len(stale_events) >= 1, "stream_heartbeat_stale audit event must be appended"
+    assert any("heartbeat" in c["subject"].lower() or "stream" in c["subject"].lower() for c in notifier_calls), (
+        "Notifier must be fired when heartbeat is stale"
+    )
+
+
+def test_stream_heartbeat_alert_fires_only_once_per_stale_window(monkeypatch) -> None:
+    """Heartbeat alert must not repeat on every cycle while the stream remains stale."""
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    settings = make_settings()
+    runtime = make_runtime_context(settings)
+    notifier_calls: list[dict[str, str]] = []
+
+    class RecordingNotifier:
+        def send(self, *, subject: str, body: str) -> None:
+            notifier_calls.append({"subject": subject, "body": body})
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(market_is_open=True),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        notifier=RecordingNotifier(),
+    )
+    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
+
+    base_now = datetime(2026, 4, 30, 14, 30, tzinfo=timezone.utc)
+    stale_ts = base_now - timedelta(seconds=310)
+    supervisor._last_stream_event_at = stale_ts
+
+    _alive_event = threading.Event()
+    alive_thread = threading.Thread(target=lambda: _alive_event.wait(timeout=5.0), daemon=True)
+    alive_thread.start()
+    supervisor._stream_thread = alive_thread
+
+    cycle_count = 0
+
+    def fake_run_cycle_once(**kwargs):
+        nonlocal cycle_count
+        cycle_count += 1
+        if cycle_count >= 4:
+            _alive_event.set()
+            raise SystemExit(0)
+        return SimpleNamespace(entries_disabled=False, cycle_result=None, dispatch_report=None)
+
+    monkeypatch.setattr(supervisor, "run_cycle_once", fake_run_cycle_once)
+
+    with pytest.raises(SystemExit):
+        supervisor.run_forever(
+            max_iterations=5,
+            sleep_fn=lambda _: None,
+            cycle_now=lambda: base_now,
+        )
+
+    heartbeat_notifier_calls = [
+        c for c in notifier_calls
+        if "heartbeat" in c["subject"].lower() or "stream" in c["subject"].lower()
+    ]
+    assert len(heartbeat_notifier_calls) == 1, (
+        f"Heartbeat alert must fire exactly once per stale window, got {len(heartbeat_notifier_calls)}"
+    )
+
+
+def test_record_stream_event_updates_last_event_timestamp() -> None:
+    """_record_stream_event must update _last_stream_event_at to the current UTC time."""
+    _, RuntimeSupervisor, _ = load_supervisor_api()
+    settings = make_settings()
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=make_runtime_context(settings),
+        broker=FakeBroker(),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    assert supervisor._last_stream_event_at is None
+    supervisor._record_stream_event()
+    assert supervisor._last_stream_event_at is not None
+    before = supervisor._last_stream_event_at
+    supervisor._record_stream_event()
+    after = supervisor._last_stream_event_at
+    assert after >= before, "_record_stream_event must advance the timestamp"
+
+
+def test_lock_acquisition_error_halts_supervisor_immediately(monkeypatch) -> None:
+    """When LockAcquisitionError is raised during a cycle (e.g. reconnect lost the lock),
+    the supervisor must exit with code 1 immediately — not retry like a regular cycle error."""
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    from alpaca_bot.runtime.bootstrap import LockAcquisitionError
+
+    settings = make_settings()
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=make_runtime_context(settings),
+        broker=FakeBroker(market_is_open=True),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
+
+    call_count = 0
+
+    def _raise_lock_error(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        raise LockAcquisitionError("lock stolen by another instance")
+
+    monkeypatch.setattr(supervisor, "run_cycle_once", _raise_lock_error)
+
+    with pytest.raises(SystemExit) as exc_info:
+        supervisor.run_forever(
+            max_iterations=10,
+            sleep_fn=lambda _: None,
+            cycle_now=lambda: datetime(2026, 4, 30, 14, 30, tzinfo=timezone.utc),
+        )
+
+    assert exc_info.value.code == 1, "LockAcquisitionError must cause SystemExit(1)"
+    assert call_count == 1, (
+        f"Supervisor must halt on the first LockAcquisitionError, not retry; got {call_count} call(s)"
+    )

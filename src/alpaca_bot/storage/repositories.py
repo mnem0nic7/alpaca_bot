@@ -441,16 +441,18 @@ class OrderStore:
         )
         missing_entry = [row for row in rows if row[1] is None]
         if missing_entry:
-            logger.warning(
-                "daily_realized_pnl: %d exit row(s) skipped — no correlated entry fill "
-                "(symbols: %s); PnL may be understated and loss-limit check may miss losses",
+            logger.error(
+                "daily_realized_pnl: %d exit row(s) have no correlated entry fill "
+                "(symbols: %s); treating as full loss to fail safe on loss-limit check",
                 len(missing_entry),
                 [row[0] for row in missing_entry],
             )
         return sum(
             (float(row[2]) - float(row[1])) * int(row[3])
+            if row[1] is not None
+            else -(float(row[2]) * int(row[3]))
             for row in rows
-            if row[1] is not None and row[2] is not None
+            if row[2] is not None
         )
 
     def list_closed_trades(
