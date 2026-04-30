@@ -81,6 +81,8 @@ class Settings:
     ema_period: int = 9
     atr_period: int = 14
     atr_stop_multiplier: float = 1.5
+    trailing_stop_atr_multiplier: float = 0.0
+    trailing_stop_profit_trigger_r: float = 1.0
     market_timezone: ZoneInfo = ZoneInfo("America/New_York")
     dashboard_auth_enabled: bool = False
     dashboard_auth_username: str | None = None
@@ -145,6 +147,12 @@ class Settings:
             ema_period=int(values.get("EMA_PERIOD", "9")),
             atr_period=int(values.get("ATR_PERIOD", "14")),
             atr_stop_multiplier=float(values.get("ATR_STOP_MULTIPLIER", "1.5")),
+            trailing_stop_atr_multiplier=float(
+                values.get("TRAILING_STOP_ATR_MULTIPLIER", "0.0")
+            ),
+            trailing_stop_profit_trigger_r=float(
+                values.get("TRAILING_STOP_PROFIT_TRIGGER_R", "1.0")
+            ),
             stop_limit_buffer_pct=float(values.get("STOP_LIMIT_BUFFER_PCT", "0.001")),
             breakout_stop_buffer_pct=float(
                 values.get("BREAKOUT_STOP_BUFFER_PCT", "0.001")
@@ -252,6 +260,14 @@ class Settings:
             raise ValueError("ATR_STOP_MULTIPLIER must be positive")
         if self.atr_stop_multiplier > 10.0:
             raise ValueError("ATR_STOP_MULTIPLIER must be <= 10.0 (got a suspiciously large value)")
+        if self.trailing_stop_atr_multiplier < 0:
+            raise ValueError("TRAILING_STOP_ATR_MULTIPLIER must be >= 0")
+        if self.trailing_stop_atr_multiplier > 10.0:
+            raise ValueError(
+                "TRAILING_STOP_ATR_MULTIPLIER must be <= 10.0 (got a suspiciously large value)"
+            )
+        if self.trailing_stop_profit_trigger_r <= 0:
+            raise ValueError("TRAILING_STOP_PROFIT_TRIGGER_R must be > 0")
         if self.max_open_positions < 1:
             raise ValueError("MAX_OPEN_POSITIONS must be at least 1")
         if self.max_open_positions > 20:

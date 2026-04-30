@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Mapping, Sequence
 from alpaca_bot.config import Settings
 from alpaca_bot.domain import Bar, OpenPosition
 from alpaca_bot.risk import calculate_position_size
+from alpaca_bot.risk.atr import calculate_atr
 from alpaca_bot.strategy import StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import (
     evaluate_breakout_signal,
@@ -132,8 +133,30 @@ def evaluate_cycle(
         if is_extended:
             continue
 
-        if latest_bar.high >= position.entry_price + position.risk_per_share:
-            new_stop = round(max(position.stop_price, position.entry_price, latest_bar.low), 2)
+        profit_trigger = (
+            position.entry_price
+            + settings.trailing_stop_profit_trigger_r * position.risk_per_share
+        )
+        if latest_bar.high >= profit_trigger:
+            atr = (
+                calculate_atr(
+                    daily_bars_by_symbol.get(position.symbol, ()),
+                    settings.atr_period,
+                )
+                if settings.trailing_stop_atr_multiplier > 0
+                else None
+            )
+            if atr is not None:
+                trailing_candidate = (
+                    latest_bar.high - settings.trailing_stop_atr_multiplier * atr
+                )
+                new_stop = round(
+                    max(position.stop_price, position.entry_price, trailing_candidate), 2
+                )
+            else:
+                new_stop = round(
+                    max(position.stop_price, position.entry_price, latest_bar.low), 2
+                )
             if new_stop > position.stop_price:
                 intents.append(
                     CycleIntent(
