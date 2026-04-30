@@ -106,6 +106,9 @@ class Settings:
     after_hours_entry_window_end: time = time(19, 30)
     extended_hours_flatten_time: time = time(19, 45)
     extended_hours_limit_offset_pct: float = 0.001
+    vwap_dip_threshold_pct: float = 0.015
+    gap_threshold_pct: float = 0.02
+    gap_volume_threshold: float = 2.0
 
     def __post_init__(self) -> None:
         self.validate()
@@ -207,6 +210,11 @@ class Settings:
             extended_hours_limit_offset_pct=float(
                 values.get("EXTENDED_HOURS_LIMIT_OFFSET_PCT", "0.001")
             ),
+            vwap_dip_threshold_pct=float(
+                values.get("VWAP_DIP_THRESHOLD_PCT", "0.015")
+            ),
+            gap_threshold_pct=float(values.get("GAP_THRESHOLD_PCT", "0.02")),
+            gap_volume_threshold=float(values.get("GAP_VOLUME_THRESHOLD", "2.0")),
         )
         return settings
 
@@ -301,6 +309,16 @@ class Settings:
                     )
         if self.extended_hours_limit_offset_pct <= 0:
             raise ValueError("EXTENDED_HOURS_LIMIT_OFFSET_PCT must be positive")
+        if self.vwap_dip_threshold_pct <= 0:
+            raise ValueError("VWAP_DIP_THRESHOLD_PCT must be positive")
+        if self.vwap_dip_threshold_pct >= 1.0:
+            raise ValueError("VWAP_DIP_THRESHOLD_PCT must be less than 1.0")
+        if self.gap_threshold_pct <= 0:
+            raise ValueError("GAP_THRESHOLD_PCT must be positive")
+        if self.gap_threshold_pct >= 1.0:
+            raise ValueError("GAP_THRESHOLD_PCT must be less than 1.0")
+        if self.gap_volume_threshold <= 0:
+            raise ValueError("GAP_VOLUME_THRESHOLD must be positive")
         if self.extended_hours_enabled:
             if self.pre_market_entry_window_start >= self.pre_market_entry_window_end:
                 raise ValueError(

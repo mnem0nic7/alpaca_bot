@@ -393,6 +393,8 @@ def test_load_dashboard_snapshot_sets_none_for_missing_flag_row() -> None:
         ("orb", None),
         ("high_watermark", None),
         ("ema_pullback", None),
+        ("vwap_reversion", None),
+        ("gap_and_go", None),
     ]
 
 
