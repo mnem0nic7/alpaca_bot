@@ -17,6 +17,7 @@ _T = TypeVar("_T")
 
 _RETRY_WAIT_SECONDS = [1, 2]  # wait before attempt 2, then attempt 3
 _MAX_ATTEMPTS = 3
+_SYMBOL_CHUNK_SIZE = 200
 
 
 def _is_transient_error(exc: BaseException) -> bool:
@@ -486,15 +487,12 @@ class AlpacaMarketDataAdapter:
         end: datetime,
         timeframe_minutes: int,
     ) -> dict[str, list[Bar]]:
-        request = _stock_bars_request(
+        return self._fetch_bars_chunked(
             symbols=symbols,
             start=start,
             end=end,
             timeframe_minutes=timeframe_minutes,
-            settings=self._settings if self._settings is not None else _fallback_settings(),
         )
-        raw = _retry_with_backoff(lambda: self._historical.get_stock_bars(request))
-        return _parse_barset(raw)
 
     def get_daily_bars(
         self,
@@ -503,15 +501,38 @@ class AlpacaMarketDataAdapter:
         start: datetime,
         end: datetime,
     ) -> dict[str, list[Bar]]:
-        request = _stock_bars_request(
+        return self._fetch_bars_chunked(
             symbols=symbols,
             start=start,
             end=end,
             timeframe_minutes=None,
-            settings=self._settings if self._settings is not None else _fallback_settings(),
         )
-        raw = _retry_with_backoff(lambda: self._historical.get_stock_bars(request))
-        return _parse_barset(raw)
+
+    def _fetch_bars_chunked(
+        self,
+        *,
+        symbols: Sequence[str],
+        start: datetime,
+        end: datetime,
+        timeframe_minutes: int | None,
+    ) -> dict[str, list[Bar]]:
+        if not symbols:
+            return {}
+        settings = self._settings if self._settings is not None else _fallback_settings()
+        result: dict[str, list[Bar]] = {}
+        sym_list = list(symbols)
+        for i in range(0, len(sym_list), _SYMBOL_CHUNK_SIZE):
+            chunk = sym_list[i : i + _SYMBOL_CHUNK_SIZE]
+            request = _stock_bars_request(
+                symbols=chunk,
+                start=start,
+                end=end,
+                timeframe_minutes=timeframe_minutes,
+                settings=settings,
+            )
+            raw = _retry_with_backoff(lambda req=request: self._historical.get_stock_bars(req))
+            result.update(_parse_barset(raw))
+        return result
 
     def get_latest_prices(self, symbols: Sequence[str]) -> dict[str, float]:
         if not symbols:
