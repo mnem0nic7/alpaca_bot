@@ -283,8 +283,9 @@ def test_settings_rejects_enable_live_trading_without_live_mode():
 
 
 def test_settings_validates_max_open_positions_upper_bound():
-    with pytest.raises(ValueError, match="MAX_OPEN_POSITIONS"):
-        _make_settings(max_open_positions=21)
+    # No upper ceiling — large values are allowed
+    settings = _make_settings(max_open_positions=500)
+    assert settings.max_open_positions == 500
 
 
 def test_settings_rejects_max_position_pct_exceeding_portfolio_exposure():

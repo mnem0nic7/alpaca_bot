@@ -322,8 +322,6 @@ class Settings:
             raise ValueError("TRAILING_STOP_PROFIT_TRIGGER_R must be > 0")
         if self.max_open_positions < 1:
             raise ValueError("MAX_OPEN_POSITIONS must be at least 1")
-        if self.max_open_positions > 20:
-            raise ValueError("MAX_OPEN_POSITIONS must be at most 20")
         if not 1 <= self.notify_smtp_port <= 65535:
             raise ValueError("NOTIFY_SMTP_PORT must be between 1 and 65535")
         if self.max_position_pct > self.max_portfolio_exposure_pct:
