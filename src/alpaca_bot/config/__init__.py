@@ -123,6 +123,7 @@ class Settings:
     vwap_breakdown_min_bars: int = 1
     viability_daily_bar_max_age_days: int = 5
     viability_min_hold_minutes: int = 0
+    per_symbol_loss_limit_pct: float = 0.0
 
     def __post_init__(self) -> None:
         self.validate()
@@ -257,6 +258,7 @@ class Settings:
                 values.get("VIABILITY_DAILY_BAR_MAX_AGE_DAYS", "5")
             ),
             viability_min_hold_minutes=int(values.get("VIABILITY_MIN_HOLD_MINUTES", "0")),
+            per_symbol_loss_limit_pct=float(values.get("PER_SYMBOL_LOSS_LIMIT_PCT", "0.0")),
         )
         return settings
 
@@ -388,6 +390,10 @@ class Settings:
             or self.failed_breakdown_recapture_buffer_pct >= 1.0
         ):
             raise ValueError("FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT must be > 0 and < 1.0")
+        if self.per_symbol_loss_limit_pct < 0:
+            raise ValueError("PER_SYMBOL_LOSS_LIMIT_PCT must be >= 0")
+        if self.per_symbol_loss_limit_pct >= 1.0:
+            raise ValueError("PER_SYMBOL_LOSS_LIMIT_PCT must be < 1.0")
         if self.extended_hours_enabled:
             if self.pre_market_entry_window_start >= self.pre_market_entry_window_end:
                 raise ValueError(

@@ -455,6 +455,89 @@ class OrderStore:
             if row[2] is not None
         )
 
+    def daily_realized_pnl_by_symbol(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        session_date: date,
+        strategy_name: str | None = None,
+        market_timezone: str = "America/New_York",
+    ) -> dict[str, float]:
+        """Return realized PnL keyed by symbol for a session date.
+
+        Uses the same correlated-subquery pattern as daily_realized_pnl.
+        Symbols with no correlated entry fill are treated as full losses (fail-safe).
+        Returns an empty dict when no completed round-trip trades exist.
+        """
+        if strategy_name is not None:
+            strategy_clause = "AND x.strategy_name IS NOT DISTINCT FROM %s"
+            strategy_params: tuple = (strategy_name,)
+        else:
+            strategy_clause = ""
+            strategy_params = ()
+        rows = fetch_all(
+            self._connection,
+            f"""
+            SELECT
+                x.symbol,
+                (
+                    SELECT e.fill_price
+                    FROM orders e
+                    WHERE e.symbol = x.symbol
+                      AND e.trading_mode = x.trading_mode
+                      AND e.strategy_version = x.strategy_version
+                      AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
+                      AND e.intent_type = 'entry'
+                      AND e.fill_price IS NOT NULL
+                      AND e.status = 'filled'
+                      AND e.updated_at <= x.updated_at
+                    ORDER BY e.updated_at DESC
+                    LIMIT 1
+                ) AS entry_fill,
+                x.fill_price AS exit_fill,
+                COALESCE(x.filled_quantity, x.quantity) AS qty
+            FROM orders x
+            WHERE x.trading_mode = %s
+              AND x.strategy_version = %s
+              AND x.intent_type IN ('stop', 'exit')
+              AND x.fill_price IS NOT NULL
+              AND x.status = 'filled'
+              AND DATE(x.updated_at AT TIME ZONE %s) = %s
+              {strategy_clause}
+            """,
+            (
+                trading_mode.value,
+                strategy_version,
+                market_timezone,
+                session_date,
+                *strategy_params,
+            ),
+        )
+        missing_entry = [row for row in rows if row[1] is None]
+        if missing_entry:
+            logger.error(
+                "daily_realized_pnl_by_symbol: %d exit row(s) have no correlated entry fill "
+                "(symbols: %s); treating as full loss to fail safe on per-symbol loss-limit check",
+                len(missing_entry),
+                [row[0] for row in missing_entry],
+            )
+        result: dict[str, float] = {}
+        for row in rows:
+            if row[2] is None:
+                continue
+            symbol = row[0]
+            entry_fill = row[1]
+            exit_fill = float(row[2])
+            qty = int(row[3])
+            pnl = (
+                (exit_fill - float(entry_fill)) * qty
+                if entry_fill is not None
+                else -(exit_fill * qty)
+            )
+            result[symbol] = result.get(symbol, 0.0) + pnl
+        return result
+
     def list_closed_trades(
         self,
         *,

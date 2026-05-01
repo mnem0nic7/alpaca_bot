@@ -189,6 +189,17 @@ class RecordingOrderStore:
     ) -> float:
         return self._daily_pnl
 
+    def daily_realized_pnl_by_symbol(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        session_date: date,
+        market_timezone: str = "America/New_York",
+        strategy_name: str | None = None,
+    ) -> dict[str, float]:
+        return {}
+
 
 def make_runtime_context(
     settings: Settings,

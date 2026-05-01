@@ -236,7 +236,7 @@ class AlpacaExecutionAdapter:
                 broker_order_id=str(getattr(order, "id", "")) or None,
                 symbol=str(order.symbol).upper(),
                 side=str(order.side),
-                status=str(order.status),
+                status=order.status.value if hasattr(order.status, "value") else str(order.status),
                 quantity=int(float(order.qty)),
             )
             for order in raw_orders

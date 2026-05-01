@@ -109,6 +109,10 @@ class RuntimeSupervisor:
         self._session_equity_baseline: dict[date, float] = {}
         # Dates for which the daily loss limit alert has already been sent (once per day).
         self._loss_limit_alerted: set[date] = set()
+        # Dates for which the daily loss limit has ever fired; sticky — never cleared on recovery.
+        self._loss_limit_fired: set[date] = set()
+        # Per-symbol loss limit: dict[session_date, set[symbol]] — prevents duplicate alerts.
+        self._per_symbol_limit_alerted: dict[date, set[str]] = {}
         # Dates for which the daily session summary has already been sent.
         self._summary_sent: set[date] = set()
         # Dates on which at least one active cycle ran this process lifetime.
@@ -265,6 +269,8 @@ class RuntimeSupervisor:
             persisted = self._load_session_state(session_date=session_date, strategy_name="_equity")
             if persisted is not None and persisted.equity_baseline is not None:
                 self._session_equity_baseline[session_date] = persisted.equity_baseline
+                if persisted.entries_disabled:
+                    self._loss_limit_fired.add(session_date)
             else:
                 self._session_equity_baseline[session_date] = account.equity
                 self._save_session_state(
@@ -284,9 +290,23 @@ class RuntimeSupervisor:
         # Include unrealized losses via broker-reported equity delta so open
         # positions with large drawdowns trigger the limit before stops fill.
         total_pnl = account.equity - baseline_equity
-        daily_loss_limit_breached = total_pnl < -loss_limit
+        if total_pnl < -loss_limit:
+            self._loss_limit_fired.add(session_date)
+        daily_loss_limit_breached = session_date in self._loss_limit_fired
         if daily_loss_limit_breached and session_date not in self._loss_limit_alerted:
             self._loss_limit_alerted.add(session_date)
+            self._save_session_state(
+                DailySessionState(
+                    session_date=session_date,
+                    trading_mode=self.settings.trading_mode,
+                    strategy_version=self.settings.strategy_version,
+                    strategy_name="_equity",
+                    entries_disabled=True,
+                    flatten_complete=False,
+                    equity_baseline=baseline_equity,
+                    updated_at=timestamp,
+                )
+            )
             self._append_audit(
                 AuditEvent(
                     event_type="daily_loss_limit_breached",
@@ -322,6 +342,55 @@ class RuntimeSupervisor:
         open_positions = self._load_open_positions()
         working_order_symbols = {order.symbol for order in broker_open_orders}
         working_order_symbols.update(order.symbol for order in self._list_pending_submit_orders())
+        # Per-symbol loss limit: compute blocked symbols from today's realized PnL.
+        # Applied per-strategy below via strategy_working_symbols — NOT added to
+        # working_order_symbols to avoid inflating global_occupied_slots with
+        # symbols that hold no open position.
+        per_symbol_blocked_symbols: set[str] = set()
+        if self.settings.per_symbol_loss_limit_pct > 0:
+            _sym_pnl_lock = getattr(self.runtime, "store_lock", None)
+            with _sym_pnl_lock if _sym_pnl_lock is not None else contextlib.nullcontext():
+                sym_pnl_map = self.runtime.order_store.daily_realized_pnl_by_symbol(
+                    trading_mode=self.settings.trading_mode,
+                    strategy_version=self.settings.strategy_version,
+                    session_date=session_date,
+                    market_timezone=str(self.settings.market_timezone),
+                )
+            per_sym_limit = self.settings.per_symbol_loss_limit_pct * baseline_equity
+            day_alerted = self._per_symbol_limit_alerted.setdefault(session_date, set())
+            for sym, sym_pnl in sym_pnl_map.items():
+                if sym_pnl < -per_sym_limit:
+                    per_symbol_blocked_symbols.add(sym)
+                    if sym not in day_alerted:
+                        day_alerted.add(sym)
+                        self._append_audit(
+                            AuditEvent(
+                                event_type="per_symbol_loss_limit_breached",
+                                payload={
+                                    "symbol": sym,
+                                    "realized_pnl": sym_pnl,
+                                    "limit": per_sym_limit,
+                                    "timestamp": timestamp.isoformat(),
+                                },
+                                symbol=sym,
+                                created_at=timestamp,
+                            )
+                        )
+                        if self._notifier is not None:
+                            try:
+                                self._notifier.send(
+                                    subject=f"Per-symbol loss limit breached: {sym}",
+                                    body=(
+                                        f"{sym} realized PnL {sym_pnl:.2f} exceeded "
+                                        f"per-symbol limit {-per_sym_limit:.2f}. "
+                                        f"New entries for {sym} disabled for the session."
+                                    ),
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "Notifier failed to send per-symbol loss limit alert for %s",
+                                    sym,
+                                )
         watchlist_store = getattr(self.runtime, "watchlist_store", None)
         if watchlist_store is not None:
             watchlist_symbols = tuple(watchlist_store.list_enabled(self.settings.trading_mode.value))
@@ -382,6 +451,8 @@ class RuntimeSupervisor:
                 strategy_working_symbols |= (
                     global_position_symbols - {p.symbol for p in strategy_positions}
                 )
+                # Block symbols that have breached their per-symbol daily loss limit.
+                strategy_working_symbols |= per_symbol_blocked_symbols
                 strategy_traded_symbols = self._load_traded_symbols(
                     session_date=session_date,
                     strategy_name=strategy_name,
