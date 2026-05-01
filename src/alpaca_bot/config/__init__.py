@@ -120,6 +120,9 @@ class Settings:
     failed_breakdown_recapture_buffer_pct: float = 0.001
     enable_trend_filter_exit: bool = False
     enable_vwap_breakdown_exit: bool = False
+    vwap_breakdown_min_bars: int = 1
+    viability_daily_bar_max_age_days: int = 5
+    viability_min_hold_minutes: int = 0
 
     def __post_init__(self) -> None:
         self.validate()
@@ -249,6 +252,11 @@ class Settings:
             enable_vwap_breakdown_exit=_parse_bool(
                 "ENABLE_VWAP_BREAKDOWN_EXIT", values.get("ENABLE_VWAP_BREAKDOWN_EXIT", "false")
             ),
+            vwap_breakdown_min_bars=int(values.get("VWAP_BREAKDOWN_MIN_BARS", "1")),
+            viability_daily_bar_max_age_days=int(
+                values.get("VIABILITY_DAILY_BAR_MAX_AGE_DAYS", "5")
+            ),
+            viability_min_hold_minutes=int(values.get("VIABILITY_MIN_HOLD_MINUTES", "0")),
         )
         return settings
 

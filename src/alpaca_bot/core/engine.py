@@ -132,31 +132,40 @@ def evaluate_cycle(
         if bar_age_seconds > 2 * settings.entry_timeframe_minutes * 60:
             continue
 
-        if settings.enable_trend_filter_exit:
-            daily_bars = daily_bars_by_symbol.get(position.symbol, ())
-            if len(daily_bars) >= settings.daily_sma_period + 1:
-                if not daily_trend_filter_passes(daily_bars, settings):
-                    intents.append(
-                        CycleIntent(
-                            intent_type=CycleIntentType.EXIT,
-                            symbol=position.symbol,
-                            timestamp=now,
-                            reason="viability_trend_filter_failed",
-                            strategy_name=strategy_name,
-                        )
-                    )
-                    continue
-
         if is_extended:
             continue
 
-        if settings.enable_vwap_breakdown_exit:
+        position_age_s = (
+            now - position.entry_timestamp.astimezone(timezone.utc)
+        ).total_seconds()
+        is_too_young = position_age_s < settings.viability_min_hold_minutes * 60
+
+        if settings.enable_trend_filter_exit and not is_too_young:
+            daily_bars_pos = daily_bars_by_symbol.get(position.symbol, ())
+            if len(daily_bars_pos) >= settings.daily_sma_period + 1:
+                daily_bar_age_days = (
+                    now - daily_bars_pos[-1].timestamp.astimezone(timezone.utc)
+                ).days
+                if daily_bar_age_days <= settings.viability_daily_bar_max_age_days:
+                    if not daily_trend_filter_passes(daily_bars_pos, settings):
+                        intents.append(
+                            CycleIntent(
+                                intent_type=CycleIntentType.EXIT,
+                                symbol=position.symbol,
+                                timestamp=now,
+                                reason="viability_trend_filter_failed",
+                                strategy_name=strategy_name,
+                            )
+                        )
+                        continue
+
+        if settings.enable_vwap_breakdown_exit and not is_too_young:
             session_date = now.astimezone(settings.market_timezone).date()
             today_bars = [
                 b for b in bars
                 if b.timestamp.astimezone(settings.market_timezone).date() == session_date
             ]
-            if today_bars:
+            if len(today_bars) >= settings.vwap_breakdown_min_bars:
                 vwap = calculate_vwap(today_bars)
                 if vwap is not None and latest_bar.close < vwap:
                     intents.append(

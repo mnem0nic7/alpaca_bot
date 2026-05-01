@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType, evaluate_cycle
 from alpaca_bot.domain import Bar, OpenPosition
+from alpaca_bot.strategy.session import SessionType
 
 
 def _make_settings(**overrides: str) -> Settings:
@@ -31,15 +32,32 @@ def _make_settings(**overrides: str) -> Settings:
         "ENTRY_WINDOW_END": "15:30",
         "FLATTEN_TIME": "15:45",
         "ATR_PERIOD": "5",
+        "VWAP_BREAKDOWN_MIN_BARS": "1",
+        "VIABILITY_DAILY_BAR_MAX_AGE_DAYS": "5",
+        "VIABILITY_MIN_HOLD_MINUTES": "0",
     }
     values.update(overrides)
     return Settings.from_env(values)
 
 
 def _make_position(symbol: str = "AAPL") -> OpenPosition:
+    # Entered at 10:00 ET — 15 min old at _NOW, well past any min-hold default.
     return OpenPosition(
         symbol=symbol,
         entry_timestamp=datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        entry_price=100.0,
+        quantity=10,
+        entry_level=100.0,
+        initial_stop_price=98.0,
+        stop_price=98.0,
+    )
+
+
+def _make_young_position(symbol: str = "AAPL") -> OpenPosition:
+    # Entered at 10:05 ET — only 10 min old at _NOW, triggers min-hold guards.
+    return OpenPosition(
+        symbol=symbol,
+        entry_timestamp=datetime(2026, 5, 1, 14, 5, tzinfo=timezone.utc),
         entry_price=100.0,
         quantity=10,
         entry_level=100.0,
@@ -72,11 +90,11 @@ def _fresh_bar(
 
 
 def _falling_daily_bars(n: int = 6) -> list[Bar]:
-    """n daily bars with declining closes — trend filter fails (close < SMA)."""
+    """n recent daily bars (Apr 25–30) with declining closes — trend filter fails."""
     return [
         Bar(
             symbol="AAPL",
-            timestamp=datetime(2026, 4, 1 + i, 21, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 4, 25 + i, 21, 0, tzinfo=timezone.utc),
             open=100.0 - i,
             high=100.5 - i,
             low=99.0 - i,
@@ -88,15 +106,31 @@ def _falling_daily_bars(n: int = 6) -> list[Bar]:
 
 
 def _rising_daily_bars(n: int = 6) -> list[Bar]:
-    """n daily bars with rising closes — trend filter passes (close > SMA)."""
+    """n recent daily bars (Apr 25–30) with rising closes — trend filter passes."""
     return [
         Bar(
             symbol="AAPL",
-            timestamp=datetime(2026, 4, 1 + i, 21, 0, tzinfo=timezone.utc),
+            timestamp=datetime(2026, 4, 25 + i, 21, 0, tzinfo=timezone.utc),
             open=90.0 + i,
             high=91.0 + i,
             low=89.0 + i,
             close=90.0 + i,
+            volume=1_000_000,
+        )
+        for i in range(n)
+    ]
+
+
+def _stale_daily_bars(n: int = 6) -> list[Bar]:
+    """n daily bars from early April — most recent is 25 days old, exceeds max age."""
+    return [
+        Bar(
+            symbol="AAPL",
+            timestamp=datetime(2026, 4, 1 + i, 21, 0, tzinfo=timezone.utc),
+            open=100.0 - i,
+            high=100.5 - i,
+            low=99.0 - i,
+            close=100.0 - i,
             volume=1_000_000,
         )
         for i in range(n)
@@ -369,3 +403,126 @@ def test_settings_enable_trend_filter_exit_can_be_enabled() -> None:
 
 def test_settings_enable_vwap_breakdown_exit_can_be_enabled() -> None:
     assert _make_settings(ENABLE_VWAP_BREAKDOWN_EXIT="true").enable_vwap_breakdown_exit is True
+
+
+def test_settings_vwap_breakdown_min_bars_defaults_to_1() -> None:
+    assert _make_settings().vwap_breakdown_min_bars == 1
+
+
+def test_settings_viability_daily_bar_max_age_days_defaults_to_5() -> None:
+    assert _make_settings().viability_daily_bar_max_age_days == 5
+
+
+def test_settings_viability_min_hold_minutes_defaults_to_0() -> None:
+    assert _make_settings().viability_min_hold_minutes == 0
+
+
+# ─── Safeguard: VWAP minimum bar count ───────────────────────────────────────
+
+def test_vwap_breakdown_exit_does_not_fire_when_insufficient_today_bars() -> None:
+    # 2 today bars but min=3 → guard prevents exit even though close < VWAP
+    settings = _make_settings(ENABLE_VWAP_BREAKDOWN_EXIT="true", VWAP_BREAKDOWN_MIN_BARS="3")
+    bar1 = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        open=101.0, high=101.0, low=99.0, close=102.0, volume=50_000.0,
+    )
+    bar2 = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 5, 1, 14, 15, tzinfo=timezone.utc),
+        open=101.0, high=101.0, low=97.0, close=98.0, volume=1_000.0,
+    )
+    result = evaluate_cycle(
+        settings=settings,
+        now=_NOW,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar1, bar2]},
+        daily_bars_by_symbol={"AAPL": _rising_daily_bars()},
+        open_positions=[_make_position()],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    exits = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert len(exits) == 0
+
+
+# ─── Safeguard: Daily bar recency ─────────────────────────────────────────────
+
+def test_trend_filter_exit_does_not_fire_when_daily_bars_are_stale() -> None:
+    # Most recent daily bar is 25 days old — exceeds viability_daily_bar_max_age_days=5
+    settings = _make_settings(ENABLE_TREND_FILTER_EXIT="true")
+    result = evaluate_cycle(
+        settings=settings,
+        now=_NOW,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [_fresh_bar(101.0)]},
+        daily_bars_by_symbol={"AAPL": _stale_daily_bars()},
+        open_positions=[_make_position()],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    exits = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert len(exits) == 0
+
+
+# ─── Safeguard: Minimum position hold time ────────────────────────────────────
+
+def test_viability_checks_do_not_fire_when_position_too_young() -> None:
+    # Position is 10 min old; min_hold=30 → both trend filter and VWAP suppressed.
+    settings = _make_settings(
+        ENABLE_TREND_FILTER_EXIT="true",
+        ENABLE_VWAP_BREAKDOWN_EXIT="true",
+        VIABILITY_MIN_HOLD_MINUTES="30",
+    )
+    bar1 = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        open=101.0, high=101.0, low=99.0, close=102.0, volume=50_000.0,
+    )
+    bar2 = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 5, 1, 14, 15, tzinfo=timezone.utc),
+        open=101.0, high=101.0, low=97.0, close=98.0, volume=1_000.0,
+    )
+    result = evaluate_cycle(
+        settings=settings,
+        now=_NOW,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar1, bar2]},
+        daily_bars_by_symbol={"AAPL": _falling_daily_bars()},
+        open_positions=[_make_young_position()],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    exits = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert len(exits) == 0
+
+
+# ─── Safeguard: Extended hours blocks all viability checks ────────────────────
+
+def test_trend_filter_exit_does_not_fire_during_extended_hours() -> None:
+    # Trend filter would fire (falling daily bars) but is_extended=True gates it.
+    settings = _make_settings(ENABLE_TREND_FILTER_EXIT="true")
+    pre_market_now = datetime(2026, 5, 1, 12, 30, tzinfo=timezone.utc)  # 8:30 AM ET
+    pre_market_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 5, 1, 12, 15, tzinfo=timezone.utc),
+        open=99.0, high=102.0, low=98.0, close=101.0, volume=10_000.0,
+    )
+    result = evaluate_cycle(
+        settings=settings,
+        now=pre_market_now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [pre_market_bar]},
+        daily_bars_by_symbol={"AAPL": _falling_daily_bars()},
+        open_positions=[_make_position()],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+        session_type=SessionType.PRE_MARKET,
+    )
+    exits = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert len(exits) == 0
