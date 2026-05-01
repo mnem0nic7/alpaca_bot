@@ -84,6 +84,7 @@ def _make_runtime(
         order_store=SimpleNamespace(
             list_by_status=_list_by_status,
             save=_save,
+            load=lambda _client_order_id: None,
         ),
         audit_event_store=SimpleNamespace(append=lambda e, *, commit=True: events.append(e)),
         connection=SimpleNamespace(commit=lambda: None),

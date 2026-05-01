@@ -200,6 +200,15 @@ class RecordingOrderStore:
     ) -> dict[str, float]:
         return {}
 
+    def load(self, client_order_id: str) -> object | None:
+        for order in reversed(self.saved):
+            if hasattr(order, "client_order_id") and order.client_order_id == client_order_id:
+                return order
+        for order in self.existing_orders:
+            if order.client_order_id == client_order_id:
+                return order
+        return None
+
 
 def make_runtime_context(
     settings: Settings,

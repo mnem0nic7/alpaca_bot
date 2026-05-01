@@ -38,6 +38,7 @@ from alpaca_bot.runtime.order_dispatch import dispatch_pending_orders
 from alpaca_bot.runtime.startup_recovery import (
     compose_startup_mismatch_detector,
     recover_startup_state,
+    StartupRecoveryReport,
 )
 from alpaca_bot.runtime.trade_update_stream import attach_trade_update_stream
 from alpaca_bot.runtime.trader import TraderStartupReport, start_trader
@@ -209,15 +210,31 @@ class RuntimeSupervisor:
         broker_open_positions = list(_list_open_positions(self.broker))
         _rec_lock = getattr(self.runtime, "store_lock", None)
         _rec_lock_ctx = _rec_lock if _rec_lock is not None else contextlib.nullcontext()
+        _recovery_exception_occurred = False
         with _rec_lock_ctx:
-            recovery_report = recover_startup_state(
-                settings=self.settings,
-                runtime=self.runtime,
-                broker_open_positions=broker_open_positions,
-                broker_open_orders=broker_open_orders,
-                now=timestamp,
-                audit_event_type=None,
-            )
+            try:
+                recovery_report = recover_startup_state(
+                    settings=self.settings,
+                    runtime=self.runtime,
+                    broker_open_positions=broker_open_positions,
+                    broker_open_orders=broker_open_orders,
+                    now=timestamp,
+                    audit_event_type=None,
+                )
+            except Exception:
+                logger.exception("run_cycle_once: startup recovery raised — treating as empty report")
+                try:
+                    self.runtime.connection.rollback()
+                except Exception:
+                    pass
+                recovery_report = StartupRecoveryReport(
+                    mismatches=(),
+                    synced_position_count=0,
+                    synced_order_count=0,
+                    cleared_position_count=0,
+                    cleared_order_count=0,
+                )
+                _recovery_exception_occurred = True
             if recovery_report.mismatches:
                 try:
                     self.runtime.audit_event_store.append(
@@ -245,6 +262,14 @@ class RuntimeSupervisor:
                         self.runtime.connection.rollback()
                     except Exception:
                         pass
+        if _recovery_exception_occurred:
+            self._append_audit(
+                AuditEvent(
+                    event_type="recovery_exception",
+                    payload={"timestamp": timestamp.isoformat()},
+                    created_at=timestamp,
+                )
+            )
         account = self.broker.get_account()
         session_date = _session_date(timestamp, self.settings)
 

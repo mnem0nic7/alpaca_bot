@@ -13,7 +13,10 @@ from alpaca_bot.notifications import Notifier
 from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord
 
 
-ACTIVE_ORDER_STATUSES = ["pending_submit", "submitting", "new", "accepted", "submitted", "partially_filled"]
+ACTIVE_ORDER_STATUSES = [
+    "pending_submit", "submitting", "new", "accepted", "submitted",
+    "partially_filled", "held", "pending_new",
+]
 
 
 class OrderStoreProtocol(Protocol):
@@ -26,6 +29,8 @@ class OrderStoreProtocol(Protocol):
         strategy_version: str,
         statuses: list[str],
     ) -> list[OrderRecord]: ...
+
+    def load(self, client_order_id: str) -> OrderRecord | None: ...
 
 
 class PositionStoreProtocol(Protocol):
@@ -303,6 +308,77 @@ def recover_startup_state(
                     ),
                     commit=False,
                 )
+        # Second pass: queue recovery stops for any open position with no active stop.
+        # Covers positions whose prior-day pending stop was expired by order_dispatch.
+        for pos in synced_positions:
+            if pos.symbol in active_stop_symbols:
+                continue
+            if pos.symbol in pending_entry_symbols:
+                _log.warning(
+                    "startup_recovery: skipping recovery stop for %s — pending_submit entry order exists",
+                    pos.symbol,
+                )
+                continue
+            if pos.stop_price <= 0:
+                _log.error(
+                    "startup_recovery: position %s has no valid stop_price (%.4f) — "
+                    "cannot queue recovery stop; position is unprotected",
+                    pos.symbol,
+                    pos.stop_price,
+                )
+                continue
+            recovery_stop_id = (
+                f"startup_recovery:{settings.strategy_version}:"
+                f"{timestamp.date().isoformat()}:{pos.symbol}:stop"
+            )
+            # Belt-and-suspenders: don't re-queue if a non-terminal stop already exists
+            # for this exact recovery ID (prevents duplicate write on repeated cycles
+            # before dispatch, and prevents duplicating the new_positions_needing_stop pass).
+            existing_recovery_stop = runtime.order_store.load(recovery_stop_id)
+            if existing_recovery_stop is not None and existing_recovery_stop.status not in {
+                "expired", "cancelled", "canceled", "error"
+            }:
+                continue
+            _log.warning(
+                "startup_recovery: position %s has no active stop — "
+                "queuing recovery stop at %.4f (qty=%d)",
+                pos.symbol,
+                pos.stop_price,
+                pos.quantity,
+            )
+            runtime.order_store.save(
+                OrderRecord(
+                    client_order_id=recovery_stop_id,
+                    symbol=pos.symbol,
+                    side="sell",
+                    intent_type="stop",
+                    status="pending_submit",
+                    quantity=pos.quantity,
+                    trading_mode=settings.trading_mode,
+                    strategy_version=settings.strategy_version,
+                    strategy_name=pos.strategy_name,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    stop_price=pos.stop_price,
+                    initial_stop_price=pos.stop_price,
+                    signal_timestamp=None,
+                ),
+                commit=False,
+            )
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="recovery_stop_queued_for_open_position",
+                    symbol=pos.symbol,
+                    payload={
+                        "client_order_id": recovery_stop_id,
+                        "stop_price": pos.stop_price,
+                        "quantity": pos.quantity,
+                    },
+                    created_at=timestamp,
+                ),
+                commit=False,
+            )
+            active_stop_symbols.add(pos.symbol)
         for broker_order in broker_open_orders:
             existing = None
             if broker_order.broker_order_id is not None:

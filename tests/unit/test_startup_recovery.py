@@ -134,6 +134,17 @@ class RecordingOrderStore:
             and order.status in statuses
         ]
 
+    def load(self, client_order_id: str) -> OrderRecord | None:
+        # Check saved first so stops queued in the current recovery call are visible
+        # to the Task 3 belt-and-suspenders check within the same call.
+        for order in reversed(self.saved):
+            if order.client_order_id == client_order_id:
+                return order
+        for order in self.existing_orders:
+            if order.client_order_id == client_order_id:
+                return order
+        return None
+
 
 class FakeConnection:
     def commit(self) -> None:

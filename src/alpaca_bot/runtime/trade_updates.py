@@ -169,6 +169,13 @@ def _apply_trade_update_locked(
         position_updated = True
         fill_price = normalized.filled_avg_price
         qty = normalized.filled_qty if normalized.filled_qty is not None else matched_order.quantity
+        logger.info(
+            "trade_updates: entry fill %s — order_qty=%d filled_qty=%s fill_price=%s",
+            matched_order.symbol,
+            matched_order.quantity,
+            normalized.filled_qty,
+            normalized.filled_avg_price,
+        )
         slippage = (
             (matched_order.limit_price - fill_price)
             if matched_order.limit_price is not None and fill_price is not None

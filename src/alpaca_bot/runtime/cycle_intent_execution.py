@@ -17,7 +17,9 @@ from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord
 logger = logging.getLogger(__name__)
 
 
-ACTIVE_STOP_STATUSES = ("pending_submit", "new", "accepted", "submitted", "partially_filled")
+ACTIVE_STOP_STATUSES = (
+    "pending_submit", "new", "accepted", "submitted", "partially_filled", "held",
+)
 
 
 class OrderStoreProtocol(Protocol):

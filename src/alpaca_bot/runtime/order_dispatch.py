@@ -324,6 +324,13 @@ def dispatch_pending_orders(
                 except Exception:
                     logger.exception("Notifier failed to send order dispatch failure alert")
             continue
+        if order.intent_type == "entry":
+            logger.info(
+                "order_dispatch: entry submitted for %s — submitted_qty=%d broker_confirmed_qty=%s",
+                order.symbol,
+                order.quantity,
+                broker_order.quantity,
+            )
         normalized_status = str(broker_order.status).lower()
         with lock_ctx:
             try:

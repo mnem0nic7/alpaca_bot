@@ -141,6 +141,15 @@ class RecordingOrderStore:
             and order.status in statuses
         ]
 
+    def load(self, client_order_id: str) -> OrderRecord | None:
+        for order in reversed(self.saved):
+            if order.client_order_id == client_order_id:
+                return order
+        for order in self.existing_orders:
+            if order.client_order_id == client_order_id:
+                return order
+        return None
+
 
 class RecordingAuditEventStore:
     def __init__(self) -> None:
