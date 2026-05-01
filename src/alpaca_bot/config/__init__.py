@@ -118,6 +118,8 @@ class Settings:
     bb_squeeze_min_bars: int = 5
     failed_breakdown_volume_ratio: float = 2.0
     failed_breakdown_recapture_buffer_pct: float = 0.001
+    enable_trend_filter_exit: bool = False
+    enable_vwap_breakdown_exit: bool = False
 
     def __post_init__(self) -> None:
         self.validate()
@@ -240,6 +242,12 @@ class Settings:
             ),
             failed_breakdown_recapture_buffer_pct=float(
                 values.get("FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT", "0.001")
+            ),
+            enable_trend_filter_exit=_parse_bool(
+                "ENABLE_TREND_FILTER_EXIT", values.get("ENABLE_TREND_FILTER_EXIT", "false")
+            ),
+            enable_vwap_breakdown_exit=_parse_bool(
+                "ENABLE_VWAP_BREAKDOWN_EXIT", values.get("ENABLE_VWAP_BREAKDOWN_EXIT", "false")
             ),
         )
         return settings
