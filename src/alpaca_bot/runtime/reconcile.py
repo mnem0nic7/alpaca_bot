@@ -7,6 +7,7 @@ from typing import Callable, Protocol, Sequence
 from alpaca_bot.runtime.bootstrap import RuntimeContext
 from alpaca_bot.storage import (
     DailySessionState,
+    GLOBAL_SESSION_STATE_STRATEGY_NAME,
 )
 
 
@@ -82,6 +83,7 @@ def reconcile_startup(
         session_date=session.session_date,
         trading_mode=context.settings.trading_mode,
         strategy_version=context.settings.strategy_version,
+        strategy_name=GLOBAL_SESSION_STATE_STRATEGY_NAME,
         entries_disabled=final_entries_disabled,
         flatten_complete=False,
         last_reconciled_at=timestamp,

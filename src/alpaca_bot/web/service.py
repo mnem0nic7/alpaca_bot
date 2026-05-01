@@ -9,6 +9,7 @@ from alpaca_bot.storage import (
     AuditEventStore,
     DailySessionState,
     DailySessionStateStore,
+    GLOBAL_SESSION_STATE_STRATEGY_NAME,
     OrderRecord,
     OrderStore,
     PositionRecord,
@@ -200,6 +201,7 @@ def load_dashboard_snapshot(
             session_date=session_date,
             trading_mode=settings.trading_mode,
             strategy_version=settings.strategy_version,
+            strategy_name=GLOBAL_SESSION_STATE_STRATEGY_NAME,
         ),
         positions=position_store.list_all(
             trading_mode=settings.trading_mode,

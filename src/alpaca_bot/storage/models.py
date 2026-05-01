@@ -8,6 +8,10 @@ from typing import Any
 from alpaca_bot.config import TradingMode
 
 
+GLOBAL_SESSION_STATE_STRATEGY_NAME = "_global"
+EQUITY_SESSION_STATE_STRATEGY_NAME = "_equity"
+
+
 class TradingStatusValue(StrEnum):
     ENABLED = "enabled"
     HALTED = "halted"

@@ -158,7 +158,7 @@ def test_blocked_strategy_entries_not_dispatched():
         return {"submitted_count": 0}
 
     session_date = date(2026, 1, 2)
-    momentum_session = DailySessionState(
+    breakout_session = DailySessionState(
         session_date=session_date,
         trading_mode=TradingMode.PAPER,
         strategy_version="v1",
@@ -168,8 +168,14 @@ def test_blocked_strategy_entries_not_dispatched():
     )
 
     runtime = _make_runtime()
+
+    def load_session_state(**kwargs):
+        if kwargs.get("strategy_name") == "breakout":
+            return breakout_session
+        return None
+
     runtime.daily_session_state_store = SimpleNamespace(
-        load=lambda **_: momentum_session,
+        load=load_session_state,
         save=lambda _: None,
     )
 
@@ -201,12 +207,19 @@ def test_blocked_strategy_entries_not_dispatched():
         connection_checker=lambda _: True,
     )
 
-    supervisor.run_cycle_once(now=lambda: datetime(2026, 1, 2, 16, 0, tzinfo=timezone.utc))
+    report = supervisor.run_cycle_once(now=lambda: datetime(2026, 1, 2, 16, 0, tzinfo=timezone.utc))
+    assert report.entries_disabled is False
+    entries_by_strategy = {
+        call["strategy_name"]: call["entries_disabled"] for call in cycle_calls
+    }
+    assert entries_by_strategy["breakout"] is True
+    assert entries_by_strategy["momentum"] is False
     # The dispatcher should have been called with blocked_strategy_names containing "breakout"
     assert len(dispatch_calls) >= 1
     last_call = dispatch_calls[-1]
     assert "blocked_strategy_names" in last_call
     assert "breakout" in last_call["blocked_strategy_names"]
+    assert "momentum" not in last_call["blocked_strategy_names"]
 
 
 def test_cross_strategy_symbol_dedup_blocks_second_strategy_entry():

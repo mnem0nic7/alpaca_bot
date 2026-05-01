@@ -42,7 +42,14 @@ from alpaca_bot.runtime.startup_recovery import (
 )
 from alpaca_bot.runtime.trade_update_stream import attach_trade_update_stream
 from alpaca_bot.runtime.trader import TraderStartupReport, start_trader
-from alpaca_bot.storage import AuditEvent, DailySessionState, PositionRecord, TradingStatusValue
+from alpaca_bot.storage import (
+    AuditEvent,
+    DailySessionState,
+    EQUITY_SESSION_STATE_STRATEGY_NAME,
+    GLOBAL_SESSION_STATE_STRATEGY_NAME,
+    PositionRecord,
+    TradingStatusValue,
+)
 from alpaca_bot.strategy import STRATEGY_REGISTRY, StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import evaluate_breakout_signal as _default_evaluator
 from alpaca_bot.strategy.session import SessionType, detect_session_type
@@ -274,7 +281,10 @@ class RuntimeSupervisor:
         session_date = _session_date(timestamp, self.settings)
 
         # Load session state once and apply staleness check (Task 7).
-        session_state = self._load_session_state(session_date=session_date)
+        session_state = self._load_session_state(
+            session_date=session_date,
+            strategy_name=GLOBAL_SESSION_STATE_STRATEGY_NAME,
+        )
         if session_state is not None and session_state.session_date != session_date:
             session_state = None
 
@@ -291,7 +301,10 @@ class RuntimeSupervisor:
         # On mid-day restart the in-memory dict is empty, so we recover the
         # baseline from Postgres (written on the first cycle of the day).
         if session_date not in self._session_equity_baseline:
-            persisted = self._load_session_state(session_date=session_date, strategy_name="_equity")
+            persisted = self._load_session_state(
+                session_date=session_date,
+                strategy_name=EQUITY_SESSION_STATE_STRATEGY_NAME,
+            )
             if persisted is not None and persisted.equity_baseline is not None:
                 self._session_equity_baseline[session_date] = persisted.equity_baseline
                 if persisted.entries_disabled:
@@ -303,7 +316,7 @@ class RuntimeSupervisor:
                         session_date=session_date,
                         trading_mode=self.settings.trading_mode,
                         strategy_version=self.settings.strategy_version,
-                        strategy_name="_equity",
+                        strategy_name=EQUITY_SESSION_STATE_STRATEGY_NAME,
                         entries_disabled=False,
                         flatten_complete=False,
                         equity_baseline=account.equity,
@@ -325,7 +338,7 @@ class RuntimeSupervisor:
                     session_date=session_date,
                     trading_mode=self.settings.trading_mode,
                     strategy_version=self.settings.strategy_version,
-                    strategy_name="_equity",
+                    strategy_name=EQUITY_SESSION_STATE_STRATEGY_NAME,
                     entries_disabled=True,
                     flatten_complete=False,
                     equity_baseline=baseline_equity,
@@ -451,6 +464,47 @@ class RuntimeSupervisor:
             )),
             end=daily_bars_end,
         )
+        # Regime filter: reuse already-fetched daily bars if regime_symbol is on the
+        # watchlist, otherwise fetch separately to avoid a duplicate API call.
+        regime_bars: list[Bar] | None = None
+        if self.settings.enable_regime_filter:
+            if self.settings.regime_symbol in watchlist_symbols:
+                regime_bars = list(daily_bars_by_symbol.get(self.settings.regime_symbol) or []) or None
+            else:
+                try:
+                    regime_daily = self.market_data.get_daily_bars(
+                        symbols=[self.settings.regime_symbol],
+                        start=timestamp - timedelta(days=max(self.settings.regime_sma_period * 3, 60)),
+                        end=daily_bars_end,
+                    )
+                    regime_bars = regime_daily.get(self.settings.regime_symbol)
+                except Exception:
+                    logger.warning(
+                        "Failed to fetch regime bars for %s; regime filter disabled this cycle",
+                        self.settings.regime_symbol,
+                        exc_info=True,
+                    )
+
+        # News filter data — fetched once per cycle, shared across all strategies.
+        news_by_symbol: dict[str, list] | None = None
+        if self.settings.enable_news_filter:
+            try:
+                news_by_symbol = self.market_data.get_news(
+                    symbols=list(watchlist_symbols),
+                    lookback_hours=self.settings.news_filter_lookback_hours,
+                    now=timestamp,
+                )
+            except Exception:
+                logger.warning("Failed to fetch news; news filter disabled this cycle", exc_info=True)
+
+        # Spread filter data — fetched once per cycle, shared across all strategies.
+        quotes_by_symbol: dict[str, object] | None = None
+        if self.settings.enable_spread_filter:
+            try:
+                quotes_by_symbol = self.market_data.get_latest_quotes(list(watchlist_symbols))
+            except Exception:
+                logger.warning("Failed to fetch quotes; spread filter disabled this cycle", exc_info=True)
+
         active_strategies = self._resolve_active_strategies()
         all_cycle_results: list[tuple[str, object]] = []
         entries_disabled_strategies: set[str] = set()
@@ -514,6 +568,9 @@ class RuntimeSupervisor:
                     global_open_count=global_occupied_slots,
                     symbols=entry_symbols,
                     session_type=session_type,
+                    regime_bars=regime_bars,
+                    news_by_symbol=news_by_symbol,
+                    quotes_by_symbol=quotes_by_symbol,
                 )
                 all_cycle_results.append((strategy_name, cycle_result))
                 # Consume slots and symbols taken by entries this strategy emitted so
@@ -979,7 +1036,7 @@ class RuntimeSupervisor:
         self,
         *,
         session_date: date,
-        strategy_name: str = "breakout",
+        strategy_name: str = GLOBAL_SESSION_STATE_STRATEGY_NAME,
     ) -> DailySessionState | None:
         if self.runtime.daily_session_state_store is None or not hasattr(
             self.runtime.daily_session_state_store, "load"
@@ -1236,5 +1293,4 @@ def _resolve_now(now: Callable[[], datetime] | None) -> datetime:
 
 def _session_date(timestamp: datetime, settings: Settings) -> date:
     return timestamp.astimezone(settings.market_timezone).date()
-
 

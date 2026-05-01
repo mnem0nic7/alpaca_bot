@@ -124,6 +124,17 @@ class Settings:
     viability_daily_bar_max_age_days: int = 5
     viability_min_hold_minutes: int = 0
     per_symbol_loss_limit_pct: float = 0.0
+    # Data source filters
+    enable_regime_filter: bool = True
+    regime_symbol: str = "SPY"
+    regime_sma_period: int = 20
+    enable_news_filter: bool = True
+    news_filter_lookback_hours: int = 24
+    news_filter_keywords: tuple[str, ...] = (
+        "earnings", "revenue", "fda", "clinical", "trial", "guidance"
+    )
+    enable_spread_filter: bool = True
+    max_spread_pct: float = 0.002
 
     def __post_init__(self) -> None:
         self.validate()
@@ -259,6 +270,27 @@ class Settings:
             ),
             viability_min_hold_minutes=int(values.get("VIABILITY_MIN_HOLD_MINUTES", "0")),
             per_symbol_loss_limit_pct=float(values.get("PER_SYMBOL_LOSS_LIMIT_PCT", "0.0")),
+            enable_regime_filter=_parse_bool(
+                "ENABLE_REGIME_FILTER", values.get("ENABLE_REGIME_FILTER", "false")
+            ),
+            regime_symbol=values.get("REGIME_SYMBOL", "SPY"),
+            regime_sma_period=int(values.get("REGIME_SMA_PERIOD", "20")),
+            enable_news_filter=_parse_bool(
+                "ENABLE_NEWS_FILTER", values.get("ENABLE_NEWS_FILTER", "false")
+            ),
+            news_filter_lookback_hours=int(values.get("NEWS_FILTER_LOOKBACK_HOURS", "24")),
+            news_filter_keywords=tuple(
+                kw.strip().lower()
+                for kw in values.get(
+                    "NEWS_FILTER_KEYWORDS",
+                    "earnings,revenue,fda,clinical,trial,guidance",
+                ).split(",")
+                if kw.strip()
+            ),
+            enable_spread_filter=_parse_bool(
+                "ENABLE_SPREAD_FILTER", values.get("ENABLE_SPREAD_FILTER", "false")
+            ),
+            max_spread_pct=float(values.get("MAX_SPREAD_PCT", "0.002")),
         )
         return settings
 
@@ -392,6 +424,8 @@ class Settings:
             raise ValueError("PER_SYMBOL_LOSS_LIMIT_PCT must be >= 0")
         if self.per_symbol_loss_limit_pct >= 1.0:
             raise ValueError("PER_SYMBOL_LOSS_LIMIT_PCT must be < 1.0")
+        if self.regime_sma_period < 2:
+            raise ValueError("REGIME_SMA_PERIOD must be >= 2")
         if self.extended_hours_enabled:
             if self.pre_market_entry_window_start >= self.pre_market_entry_window_end:
                 raise ValueError(

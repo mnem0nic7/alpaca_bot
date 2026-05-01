@@ -13,7 +13,7 @@ from alpaca_bot.runtime.reconcile import (
     reconcile_startup,
     resolve_current_session,
 )
-from alpaca_bot.storage import DailySessionState
+from alpaca_bot.storage import DailySessionState, GLOBAL_SESSION_STATE_STRATEGY_NAME
 
 
 def _make_settings() -> Settings:
@@ -163,6 +163,7 @@ def test_reconcile_startup_saves_session_state() -> None:
     assert isinstance(outcome, ReconciliationOutcome)
     assert len(store.saved) == 1
     assert store.saved[0].session_date == date(2024, 6, 3)
+    assert store.saved[0].strategy_name == GLOBAL_SESSION_STATE_STRATEGY_NAME
     assert store.saved[0].entries_disabled is False
 
 

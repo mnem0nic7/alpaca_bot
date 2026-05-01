@@ -101,3 +101,23 @@ class ReplayResult:
     final_position: OpenPosition | None
     traded_symbols: set[tuple[str, date]]
     backtest_report: object | None = None  # BacktestReport; typed as object to avoid circular import
+
+
+@dataclass(frozen=True)
+class NewsItem:
+    symbol: str
+    headline: str
+    published_at: datetime
+
+
+@dataclass(frozen=True)
+class Quote:
+    symbol: str
+    bid_price: float
+    ask_price: float
+
+    @property
+    def spread_pct(self) -> float:
+        if self.ask_price <= 0:
+            return 0.0
+        return (self.ask_price - self.bid_price) / self.ask_price

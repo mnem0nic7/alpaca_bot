@@ -305,8 +305,10 @@ def test_run_cycle_passes_signal_evaluator_to_engine() -> None:
     captured: list = []
 
     def fake_evaluate_cycle(**kwargs):
+        from alpaca_bot.core.engine import CycleResult
+
         captured.append(kwargs.get("signal_evaluator"))
-        return SimpleNamespace(intents=[])
+        return CycleResult(as_of=kwargs["now"], intents=[])
 
     settings = make_settings()
     runtime = SimpleNamespace(

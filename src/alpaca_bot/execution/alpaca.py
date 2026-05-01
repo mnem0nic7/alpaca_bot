@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from datetime import time as time_type
 from typing import Any, Callable, Mapping, Protocol, Sequence, TypeVar
 
@@ -464,6 +464,7 @@ class AlpacaMarketDataAdapter:
         self._historical = historical_client or self._build_historical_client(
             settings if settings is not None else _fallback_settings()
         )
+        self._news_client: object | None = None
 
     @classmethod
     def from_settings(
@@ -551,6 +552,82 @@ class AlpacaMarketDataAdapter:
                 "alpaca-py is required for runtime Alpaca market data access. Install dependencies first."
             ) from exc
         return StockHistoricalDataClient(api_key, secret_key)
+
+    @staticmethod
+    def _build_news_client(settings: Settings) -> object:
+        api_key, secret_key, _paper = resolve_alpaca_credentials(settings)
+        try:
+            from alpaca.data.historical.news import NewsClient
+        except (ModuleNotFoundError, ImportError) as exc:
+            raise RuntimeError(
+                "alpaca-py is required for news data access. Install dependencies first."
+            ) from exc
+        return NewsClient(api_key, secret_key)
+
+    def get_news(
+        self,
+        *,
+        symbols: Sequence[str],
+        lookback_hours: int,
+        now: datetime,
+    ) -> dict[str, list]:
+        """Return news headlines per symbol for the past lookback_hours. Fail-open."""
+        from alpaca_bot.domain import NewsItem
+        if not symbols:
+            return {}
+        settings = self._settings if self._settings is not None else _fallback_settings()
+        try:
+            from alpaca.data.requests import NewsRequest
+        except (ModuleNotFoundError, ImportError):
+            _logger.warning("alpaca-py NewsRequest not available; news filter disabled")
+            return {}
+        try:
+            if self._news_client is None:
+                self._news_client = self._build_news_client(settings)
+            start = now - timedelta(hours=lookback_hours)
+            # NewsRequest.symbols is Optional[str] — comma-separated, NOT a list.
+            request = NewsRequest(symbols=",".join(symbols), start=start, end=now, limit=50)
+            raw = self._news_client.get_news(request)  # type: ignore[union-attr]
+            # NewsSet.data is Dict[str, List[News]] with key "news".
+            result: dict[str, list[NewsItem]] = {}
+            upper_symbols = {s.upper() for s in symbols}
+            for item in raw.data.get("news", []):
+                for sym in (item.symbols or []):
+                    if sym in upper_symbols:
+                        result.setdefault(sym, []).append(
+                            NewsItem(
+                                symbol=sym,
+                                headline=item.headline or "",
+                                published_at=item.created_at,
+                            )
+                        )
+            return result
+        except Exception:
+            _logger.warning("Failed to fetch news; news filter disabled for this cycle", exc_info=True)
+            return {}
+
+    def get_latest_quotes(self, symbols: Sequence[str]) -> dict[str, object]:
+        """Return latest NBBO quote per symbol. Fail-open."""
+        from alpaca_bot.domain import Quote
+        if not symbols:
+            return {}
+        try:
+            from alpaca.data.requests import StockLatestQuoteRequest
+        except (ModuleNotFoundError, ImportError):
+            _logger.warning("alpaca-py StockLatestQuoteRequest not available; spread filter disabled")
+            return {}
+        try:
+            request = StockLatestQuoteRequest(symbol_or_symbols=list(symbols))
+            raw = _retry_with_backoff(lambda: self._historical.get_stock_latest_quote(request))
+            result: dict[str, Quote] = {}
+            for sym, alpaca_quote in raw.items():
+                bid = float(getattr(alpaca_quote, "bid_price", 0.0) or 0.0)
+                ask = float(getattr(alpaca_quote, "ask_price", 0.0) or 0.0)
+                result[sym] = Quote(symbol=sym, bid_price=bid, ask_price=ask)
+            return result
+        except Exception:
+            _logger.warning("Failed to fetch quotes; spread filter disabled for this cycle", exc_info=True)
+            return {}
 
 
 class AlpacaTradingStreamAdapter:

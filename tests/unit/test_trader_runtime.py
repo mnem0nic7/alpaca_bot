@@ -8,7 +8,12 @@ import pytest
 
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.runtime import RuntimeContext
-from alpaca_bot.storage import DailySessionState, TradingStatus, TradingStatusValue
+from alpaca_bot.storage import (
+    DailySessionState,
+    GLOBAL_SESSION_STATE_STRATEGY_NAME,
+    TradingStatus,
+    TradingStatusValue,
+)
 
 
 def load_reconcile_api() -> tuple[type[object], type[object], object, object]:
@@ -233,6 +238,7 @@ def test_reconcile_startup_saves_daily_session_state_and_marks_mismatch_close_on
         session_date=date(2026, 4, 24),
         trading_mode=TradingMode.PAPER,
         strategy_version="v1-breakout",
+        strategy_name=GLOBAL_SESSION_STATE_STRATEGY_NAME,
         entries_disabled=True,
         flatten_complete=False,
         last_reconciled_at=now,
@@ -296,6 +302,7 @@ def test_start_trader_reports_status_from_stored_status_and_mismatches(
         session_date=date(2026, 4, 24),
         trading_mode=TradingMode.PAPER,
         strategy_version="v1-breakout",
+        strategy_name=GLOBAL_SESSION_STATE_STRATEGY_NAME,
         entries_disabled=expected_entries_disabled,
         flatten_complete=False,
         last_reconciled_at=now,

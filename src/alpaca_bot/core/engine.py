@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Mapping, Sequence
 
 from alpaca_bot.config import Settings
-from alpaca_bot.domain import Bar, OpenPosition
+from alpaca_bot.domain import Bar, NewsItem, OpenPosition, Quote
 from alpaca_bot.risk import calculate_position_size
 from alpaca_bot.risk.atr import calculate_atr
 from alpaca_bot.strategy import StrategySignalEvaluator
@@ -48,6 +48,9 @@ class CycleIntent:
 class CycleResult:
     as_of: datetime
     intents: list[CycleIntent] = field(default_factory=list)
+    regime_blocked: bool = False
+    news_blocked_symbols: tuple[str, ...] = ()
+    spread_blocked_symbols: tuple[str, ...] = ()
 
 
 def evaluate_cycle(
@@ -68,6 +71,9 @@ def evaluate_cycle(
     global_open_count: int | None = None,
     symbols: tuple[str, ...] | None = None,
     session_type: SessionType | None = None,
+    regime_bars: Sequence[Bar] | None = None,
+    news_by_symbol: Mapping[str, Sequence[NewsItem]] | None = None,
+    quotes_by_symbol: Mapping[str, Quote] | None = None,
 ) -> CycleResult:
     if signal_evaluator is None:
         signal_evaluator = evaluate_breakout_signal
@@ -214,7 +220,21 @@ def evaluate_cycle(
                     )
                 )
 
-    if not entries_disabled:
+    # Regime filter: block all entries when broad market is in a downtrend.
+    # Mirrors daily_trend_filter_passes(): window[-1] is the most recent completed
+    # bar (second-to-last), excluding today's potentially partial bar.
+    _regime_entries_blocked = False
+    if settings.enable_regime_filter and regime_bars is not None:
+        if len(regime_bars) >= settings.regime_sma_period + 1:
+            window = regime_bars[-settings.regime_sma_period - 1 : -1]
+            sma = sum(b.close for b in window) / len(window)
+            if window[-1].close <= sma:
+                _regime_entries_blocked = True
+
+    _news_blocked: list[str] = []
+    _spread_blocked: list[str] = []
+
+    if not entries_disabled and not _regime_entries_blocked:
         if global_open_count is not None:
             # Caller has pre-computed the total occupied slots across ALL strategies.
             available_slots = max(settings.max_open_positions - global_open_count, 0)
@@ -243,6 +263,23 @@ def evaluate_cycle(
                 bar_age_seconds = (now - latest_bar.timestamp.astimezone(timezone.utc)).total_seconds()
                 if bar_age_seconds > 2 * settings.entry_timeframe_minutes * 60:
                     continue
+
+                # News filter: skip entry if catalyst headline detected for this symbol.
+                if settings.enable_news_filter and news_by_symbol is not None:
+                    symbol_news = news_by_symbol.get(symbol, [])
+                    if any(
+                        any(kw in item.headline.lower() for kw in settings.news_filter_keywords)
+                        for item in symbol_news
+                    ):
+                        _news_blocked.append(symbol)
+                        continue
+
+                # Spread filter: skip entry if NBBO spread exceeds threshold.
+                if settings.enable_spread_filter and quotes_by_symbol is not None:
+                    quote = quotes_by_symbol.get(symbol)
+                    if quote is not None and quote.spread_pct > settings.max_spread_pct:
+                        _spread_blocked.append(symbol)
+                        continue
 
                 signal = signal_evaluator(
                     symbol=symbol,
@@ -310,7 +347,13 @@ def evaluate_cycle(
             intents.extend(selected)
 
     intents.sort(key=lambda intent: (intent.timestamp, intent.symbol, intent.intent_type.value))
-    return CycleResult(as_of=now, intents=intents)
+    return CycleResult(
+        as_of=now,
+        intents=intents,
+        regime_blocked=_regime_entries_blocked,
+        news_blocked_symbols=tuple(sorted(_news_blocked)),
+        spread_blocked_symbols=tuple(sorted(_spread_blocked)),
+    )
 
 
 def _client_order_id(

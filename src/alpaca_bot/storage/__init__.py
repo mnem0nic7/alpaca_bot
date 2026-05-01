@@ -8,6 +8,8 @@ from alpaca_bot.storage.migrations import (
 from alpaca_bot.storage.models import (
     AuditEvent,
     DailySessionState,
+    EQUITY_SESSION_STATE_STRATEGY_NAME,
+    GLOBAL_SESSION_STATE_STRATEGY_NAME,
     OrderRecord,
     PositionRecord,
     StrategyFlag,
@@ -31,6 +33,8 @@ __all__ = [
     "DailySessionState",
     "DailySessionStateStore",
     "discover_migrations",
+    "EQUITY_SESSION_STATE_STRATEGY_NAME",
+    "GLOBAL_SESSION_STATE_STRATEGY_NAME",
     "Migration",
     "MigrationRunner",
     "OrderRecord",

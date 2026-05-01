@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from alpaca_bot.config import Settings
+from alpaca_bot.storage import GLOBAL_SESSION_STATE_STRATEGY_NAME
 from alpaca_bot.web.service import (
     WORKER_ACTIVITY_EVENT_TYPES,
     WORKER_STALE_AFTER_SECONDS,
@@ -94,10 +95,10 @@ def test_load_dashboard_snapshot_uses_provided_now() -> None:
 def test_load_dashboard_snapshot_session_date_uses_market_timezone() -> None:
     # 03:00 UTC on Apr 25 = 23:00 ET on Apr 24 (daylight saving, UTC-4)
     now = datetime(2026, 4, 25, 3, 0, tzinfo=timezone.utc)
-    captured: list[date] = []
+    captured: list[dict[str, object]] = []
 
     def state_load(**kwargs: object) -> None:
-        captured.append(kwargs["session_date"])  # type: ignore[arg-type]
+        captured.append(dict(kwargs))
         return None
 
     load_dashboard_snapshot(
@@ -112,7 +113,8 @@ def test_load_dashboard_snapshot_session_date_uses_market_timezone() -> None:
         strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
     )
 
-    assert captured == [date(2026, 4, 24)]
+    assert captured[0]["session_date"] == date(2026, 4, 24)
+    assert captured[0]["strategy_name"] == GLOBAL_SESSION_STATE_STRATEGY_NAME
 
 
 def test_load_dashboard_snapshot_passes_trading_mode_and_strategy_to_stores() -> None:

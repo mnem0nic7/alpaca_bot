@@ -11,6 +11,7 @@ from alpaca_bot.storage import AuditEvent, DailySessionState, OrderRecord
 from alpaca_bot.strategy import StrategySignalEvaluator
 
 if TYPE_CHECKING:
+    from alpaca_bot.domain import NewsItem, Quote
     from alpaca_bot.strategy.session import SessionType
 
 
@@ -51,6 +52,9 @@ def run_cycle(
     global_open_count: int | None = None,
     symbols: tuple[str, ...] | None = None,
     session_type: "SessionType | None" = None,
+    regime_bars: "Sequence[Bar] | None" = None,
+    news_by_symbol: "Mapping[str, Sequence[NewsItem]] | None" = None,
+    quotes_by_symbol: "Mapping[str, Quote] | None" = None,
     _evaluate_fn=None,
 ) -> CycleResult:
     result = (_evaluate_fn or evaluate_cycle)(
@@ -70,6 +74,9 @@ def run_cycle(
         global_open_count=global_open_count,
         symbols=symbols,
         session_type=session_type,
+        regime_bars=regime_bars,
+        news_by_symbol=news_by_symbol,
+        quotes_by_symbol=quotes_by_symbol,
     )
 
     _store_lock = getattr(runtime, "store_lock", None)
@@ -108,6 +115,11 @@ def run_cycle(
                         "intent_count": len(result.intents),
                         "intent_types": [intent.intent_type.value for intent in result.intents],
                         "cycle_timestamp": now.isoformat(),
+                        "regime_blocked": getattr(result, "regime_blocked", False),
+                        "news_blocked_count": len(getattr(result, "news_blocked_symbols", ())),
+                        "news_blocked_symbols": list(getattr(result, "news_blocked_symbols", ())),
+                        "spread_blocked_count": len(getattr(result, "spread_blocked_symbols", ())),
+                        "spread_blocked_symbols": list(getattr(result, "spread_blocked_symbols", ())),
                     },
                     created_at=now,
                 ),
