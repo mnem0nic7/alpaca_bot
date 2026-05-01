@@ -66,9 +66,13 @@ from alpaca_bot.strategy.breakout import (
 from alpaca_bot.strategy.indicators import calculate_vwap
 ```
 
-**2b. Insert viability check block in the per-position loop**
+**2b. Insert viability check blocks in the per-position loop**
 
-The block is inserted **after** the stale bar guard (`continue` on the `bar_age_seconds` check) and **before** the `if is_extended: continue` guard. In the current code, this is between lines 131 and 133.
+Two separate insertions:
+
+1. **Trend filter check** — inserted AFTER the stale bar guard, BEFORE `if is_extended: continue`. Daily SMA data is valid at any time of day (pre-market, regular, after-hours).
+
+2. **VWAP breakdown check** — inserted AFTER `if is_extended: continue`. Pre-market and after-hours bars produce a misleading VWAP (few bars, unrepresentative volume). Placing it after the `is_extended` guard ensures the check only runs during regular session hours.
 
 Replace this section:
 ```python
@@ -101,6 +105,9 @@ With:
                     )
                     continue
 
+        if is_extended:
+            continue
+
         if settings.enable_vwap_breakdown_exit:
             session_date = now.astimezone(settings.market_timezone).date()
             today_bars = [
@@ -120,9 +127,6 @@ With:
                         )
                     )
                     continue
-
-        if is_extended:
-            continue
 ```
 
 ---
@@ -522,8 +526,10 @@ pytest
 - [x] `evaluate_cycle()` remains pure — no I/O introduced
 - [x] Both checks default to `False` — zero behavior change for existing deployments
 - [x] Data guards prevent exit when bars are missing or insufficient
-- [x] Viability checks placed AFTER EOD flatten block — no double-EXIT per symbol possible
-- [x] Viability checks placed AFTER stale bar guard — data always fresh when checks run
+- [x] Both checks placed AFTER EOD flatten block — no double-EXIT per symbol possible
+- [x] Both checks placed AFTER stale bar guard — data always fresh when checks run
+- [x] Trend filter check placed BEFORE extended-hours guard — daily SMA valid at any session time
+- [x] VWAP breakdown check placed AFTER extended-hours guard — pre-market/after-hours VWAP safely skipped
 - [x] `_execute_exit()` duplicate-exit guard provides a second layer of protection
 - [x] No new DB tables, columns, or migrations
 - [x] `reason` strings propagate automatically to `cycle_intent_executed` audit events
