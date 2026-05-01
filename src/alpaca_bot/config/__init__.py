@@ -109,6 +109,15 @@ class Settings:
     vwap_dip_threshold_pct: float = 0.015
     gap_threshold_pct: float = 0.02
     gap_volume_threshold: float = 2.0
+    bull_flag_min_run_pct: float = 0.02
+    bull_flag_consolidation_volume_ratio: float = 0.6
+    bull_flag_consolidation_range_pct: float = 0.5
+    bb_period: int = 20
+    bb_std_dev: float = 2.0
+    bb_squeeze_threshold_pct: float = 0.03
+    bb_squeeze_min_bars: int = 5
+    failed_breakdown_volume_ratio: float = 2.0
+    failed_breakdown_recapture_buffer_pct: float = 0.001
 
     def __post_init__(self) -> None:
         self.validate()
@@ -215,6 +224,23 @@ class Settings:
             ),
             gap_threshold_pct=float(values.get("GAP_THRESHOLD_PCT", "0.02")),
             gap_volume_threshold=float(values.get("GAP_VOLUME_THRESHOLD", "2.0")),
+            bull_flag_min_run_pct=float(values.get("BULL_FLAG_MIN_RUN_PCT", "0.02")),
+            bull_flag_consolidation_volume_ratio=float(
+                values.get("BULL_FLAG_CONSOLIDATION_VOLUME_RATIO", "0.6")
+            ),
+            bull_flag_consolidation_range_pct=float(
+                values.get("BULL_FLAG_CONSOLIDATION_RANGE_PCT", "0.5")
+            ),
+            bb_period=int(values.get("BB_PERIOD", "20")),
+            bb_std_dev=float(values.get("BB_STD_DEV", "2.0")),
+            bb_squeeze_threshold_pct=float(values.get("BB_SQUEEZE_THRESHOLD_PCT", "0.03")),
+            bb_squeeze_min_bars=int(values.get("BB_SQUEEZE_MIN_BARS", "5")),
+            failed_breakdown_volume_ratio=float(
+                values.get("FAILED_BREAKDOWN_VOLUME_RATIO", "2.0")
+            ),
+            failed_breakdown_recapture_buffer_pct=float(
+                values.get("FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT", "0.001")
+            ),
         )
         return settings
 
@@ -319,6 +345,33 @@ class Settings:
             raise ValueError("GAP_THRESHOLD_PCT must be less than 1.0")
         if self.gap_volume_threshold <= 0:
             raise ValueError("GAP_VOLUME_THRESHOLD must be positive")
+        if self.bull_flag_min_run_pct <= 0 or self.bull_flag_min_run_pct >= 1.0:
+            raise ValueError("BULL_FLAG_MIN_RUN_PCT must be > 0 and < 1.0")
+        if (
+            self.bull_flag_consolidation_volume_ratio <= 0
+            or self.bull_flag_consolidation_volume_ratio >= 1.0
+        ):
+            raise ValueError("BULL_FLAG_CONSOLIDATION_VOLUME_RATIO must be > 0 and < 1.0")
+        if (
+            self.bull_flag_consolidation_range_pct <= 0
+            or self.bull_flag_consolidation_range_pct >= 1.0
+        ):
+            raise ValueError("BULL_FLAG_CONSOLIDATION_RANGE_PCT must be > 0 and < 1.0")
+        if self.bb_period < 2:
+            raise ValueError("BB_PERIOD must be >= 2")
+        if self.bb_std_dev <= 0 or self.bb_std_dev > 5.0:
+            raise ValueError("BB_STD_DEV must be > 0 and <= 5.0")
+        if self.bb_squeeze_threshold_pct <= 0 or self.bb_squeeze_threshold_pct >= 1.0:
+            raise ValueError("BB_SQUEEZE_THRESHOLD_PCT must be > 0 and < 1.0")
+        if self.bb_squeeze_min_bars < 1:
+            raise ValueError("BB_SQUEEZE_MIN_BARS must be >= 1")
+        if self.failed_breakdown_volume_ratio <= 0:
+            raise ValueError("FAILED_BREAKDOWN_VOLUME_RATIO must be > 0")
+        if (
+            self.failed_breakdown_recapture_buffer_pct <= 0
+            or self.failed_breakdown_recapture_buffer_pct >= 1.0
+        ):
+            raise ValueError("FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT must be > 0 and < 1.0")
         if self.extended_hours_enabled:
             if self.pre_market_entry_window_start >= self.pre_market_entry_window_end:
                 raise ValueError(

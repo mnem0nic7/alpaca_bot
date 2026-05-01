@@ -316,25 +316,20 @@ def test_run_cycle_passes_signal_evaluator_to_engine() -> None:
     )
     sentinel_evaluator = lambda **_: None  # noqa: E731
 
-    import alpaca_bot.runtime.cycle as cycle_module
-    original = cycle_module.evaluate_cycle
-    cycle_module.evaluate_cycle = fake_evaluate_cycle
-    try:
-        run_cycle(
-            settings=settings,
-            runtime=runtime,  # type: ignore[arg-type]
-            now=datetime.now(timezone.utc),
-            equity=100_000.0,
-            intraday_bars_by_symbol={},
-            daily_bars_by_symbol={},
-            open_positions=[],
-            working_order_symbols=set(),
-            traded_symbols_today=set(),
-            entries_disabled=False,
-            signal_evaluator=sentinel_evaluator,  # type: ignore[arg-type]
-        )
-    finally:
-        cycle_module.evaluate_cycle = original
+    run_cycle(
+        settings=settings,
+        runtime=runtime,  # type: ignore[arg-type]
+        now=datetime.now(timezone.utc),
+        equity=100_000.0,
+        intraday_bars_by_symbol={},
+        daily_bars_by_symbol={},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=sentinel_evaluator,  # type: ignore[arg-type]
+        _evaluate_fn=fake_evaluate_cycle,
+    )
 
     assert len(captured) == 1
     assert captured[0] is sentinel_evaluator
@@ -367,10 +362,9 @@ def test_load_dashboard_snapshot_includes_strategy_flags_from_store() -> None:
     )
 
     assert len(snapshot.strategy_flags) == len(STRATEGY_REGISTRY)
-    name, returned_flag = snapshot.strategy_flags[0]
-    assert name == "breakout"
-    assert returned_flag is flag
-    assert returned_flag.enabled is False
+    flag_map = dict(snapshot.strategy_flags)
+    assert flag_map["breakout"] is flag
+    assert flag_map["breakout"].enabled is False
 
 
 def test_load_dashboard_snapshot_sets_none_for_missing_flag_row() -> None:
@@ -395,6 +389,10 @@ def test_load_dashboard_snapshot_sets_none_for_missing_flag_row() -> None:
         ("ema_pullback", None),
         ("vwap_reversion", None),
         ("gap_and_go", None),
+        ("bull_flag", None),
+        ("vwap_cross", None),
+        ("bb_squeeze", None),
+        ("failed_breakdown", None),
     ]
 
 

@@ -12,7 +12,7 @@ from alpaca_bot.strategy.breakout import (
 )
 
 
-def evaluate_gap_and_go_signal(
+def evaluate_failed_breakdown_signal(
     *,
     symbol: str,
     intraday_bars: Sequence[Bar],
@@ -32,34 +32,27 @@ def evaluate_gap_and_go_signal(
         return None
 
     today = session_day(signal_bar.timestamp, settings)
-    today_bars = [
-        b for b in intraday_bars[: signal_index + 1]
-        if session_day(b.timestamp, settings) == today
+    prior_daily = [
+        b for b in daily_bars
+        if b.timestamp.astimezone(settings.market_timezone).date() < today
     ]
-
-    # Only fire on the first bar of today's session
-    if len(today_bars) != 1:
-        return None
-
-    prior_daily = [b for b in daily_bars if b.timestamp.astimezone(settings.market_timezone).date() < today]
     if not prior_daily:
         return None
-    prior_day_close = prior_daily[-1].close
-    prior_day_high = prior_daily[-1].high
 
-    if signal_bar.open <= prior_day_close * (1 + settings.gap_threshold_pct):
+    prior_session_low = prior_daily[-1].low
+    if signal_bar.low >= prior_session_low:
         return None
-    if signal_bar.close <= prior_day_high:
+    if signal_bar.close < prior_session_low * (1 + settings.failed_breakdown_recapture_buffer_pct):
         return None
 
     if signal_index < settings.relative_volume_lookback_bars:
         return None
-    prior_bars = intraday_bars[
+    lookback_bars = intraday_bars[
         signal_index - settings.relative_volume_lookback_bars : signal_index
     ]
-    avg_volume = sum(b.volume for b in prior_bars) / len(prior_bars)
+    avg_volume = sum(b.volume for b in lookback_bars) / len(lookback_bars)
     relative_volume = signal_bar.volume / avg_volume if avg_volume > 0 else 0.0
-    if relative_volume < settings.gap_volume_threshold:
+    if relative_volume < settings.failed_breakdown_volume_ratio:
         return None
 
     if calculate_atr(daily_bars, settings.atr_period) is None:
@@ -69,13 +62,13 @@ def evaluate_gap_and_go_signal(
         daily_bars,
         settings.atr_period,
         settings.atr_stop_multiplier,
-        prior_day_high,
+        signal_bar.low,
         settings.breakout_stop_buffer_pct,
     )
-    initial_stop_price = round(max(0.01, prior_day_high - stop_buffer), 2)
+    initial_stop_price = round(max(0.01, signal_bar.low - stop_buffer), 2)
     stop_price = round(signal_bar.high + settings.entry_stop_price_buffer, 2)
     limit_price = round(stop_price * (1 + settings.stop_limit_buffer_pct), 2)
-    entry_level = prior_day_high
+    entry_level = round(prior_session_low, 2)
 
     return EntrySignal(
         symbol=symbol,

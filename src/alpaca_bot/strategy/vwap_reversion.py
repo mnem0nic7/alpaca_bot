@@ -10,12 +10,9 @@ from alpaca_bot.strategy.breakout import (
     is_entry_session_time,
     session_day,
 )
+from alpaca_bot.strategy.indicators import calculate_vwap
 
-
-def _calculate_vwap(bars: Sequence[Bar]) -> float | None:
-    total_vp = sum((b.high + b.low + b.close) / 3 * b.volume for b in bars)
-    total_v = sum(b.volume for b in bars)
-    return total_vp / total_v if total_v > 0 else None
+_calculate_vwap = calculate_vwap  # backward compat — test_vwap_reversion_strategy.py imports _calculate_vwap from here
 
 
 def evaluate_vwap_reversion_signal(

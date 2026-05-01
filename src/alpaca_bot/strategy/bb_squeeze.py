@@ -8,11 +8,11 @@ from alpaca_bot.risk.atr import atr_stop_buffer, calculate_atr
 from alpaca_bot.strategy.breakout import (
     daily_trend_filter_passes,
     is_entry_session_time,
-    session_day,
 )
+from alpaca_bot.strategy.indicators import calculate_bollinger_bands
 
 
-def evaluate_gap_and_go_signal(
+def evaluate_bb_squeeze_signal(
     *,
     symbol: str,
     intraday_bars: Sequence[Bar],
@@ -31,35 +31,40 @@ def evaluate_gap_and_go_signal(
     if not daily_trend_filter_passes(daily_bars, settings):
         return None
 
-    today = session_day(signal_bar.timestamp, settings)
-    today_bars = [
-        b for b in intraday_bars[: signal_index + 1]
-        if session_day(b.timestamp, settings) == today
-    ]
-
-    # Only fire on the first bar of today's session
-    if len(today_bars) != 1:
+    min_required = settings.bb_period + settings.bb_squeeze_min_bars - 1
+    if signal_index < min_required:
         return None
 
-    prior_daily = [b for b in daily_bars if b.timestamp.astimezone(settings.market_timezone).date() < today]
-    if not prior_daily:
-        return None
-    prior_day_close = prior_daily[-1].close
-    prior_day_high = prior_daily[-1].high
+    for i in range(signal_index - settings.bb_squeeze_min_bars, signal_index):
+        bands = calculate_bollinger_bands(
+            intraday_bars[: i + 1], settings.bb_period, settings.bb_std_dev
+        )
+        if bands is None:
+            return None
+        lower, midline, upper = bands
+        if midline <= 0:
+            return None
+        band_width_pct = (upper - lower) / midline
+        if band_width_pct >= settings.bb_squeeze_threshold_pct:
+            return None
 
-    if signal_bar.open <= prior_day_close * (1 + settings.gap_threshold_pct):
+    prior_bands = calculate_bollinger_bands(
+        intraday_bars[:signal_index], settings.bb_period, settings.bb_std_dev
+    )
+    if prior_bands is None:
         return None
-    if signal_bar.close <= prior_day_high:
+    _lower_prior, _midline_prior, upper_prior = prior_bands
+    if signal_bar.close <= upper_prior:
         return None
 
     if signal_index < settings.relative_volume_lookback_bars:
         return None
-    prior_bars = intraday_bars[
+    lookback_bars = intraday_bars[
         signal_index - settings.relative_volume_lookback_bars : signal_index
     ]
-    avg_volume = sum(b.volume for b in prior_bars) / len(prior_bars)
+    avg_volume = sum(b.volume for b in lookback_bars) / len(lookback_bars)
     relative_volume = signal_bar.volume / avg_volume if avg_volume > 0 else 0.0
-    if relative_volume < settings.gap_volume_threshold:
+    if relative_volume < settings.relative_volume_threshold:
         return None
 
     if calculate_atr(daily_bars, settings.atr_period) is None:
@@ -69,13 +74,13 @@ def evaluate_gap_and_go_signal(
         daily_bars,
         settings.atr_period,
         settings.atr_stop_multiplier,
-        prior_day_high,
+        signal_bar.low,
         settings.breakout_stop_buffer_pct,
     )
-    initial_stop_price = round(max(0.01, prior_day_high - stop_buffer), 2)
+    initial_stop_price = round(max(0.01, signal_bar.low - stop_buffer), 2)
     stop_price = round(signal_bar.high + settings.entry_stop_price_buffer, 2)
     limit_price = round(stop_price * (1 + settings.stop_limit_buffer_pct), 2)
-    entry_level = prior_day_high
+    entry_level = round(upper_prior, 2)
 
     return EntrySignal(
         symbol=symbol,

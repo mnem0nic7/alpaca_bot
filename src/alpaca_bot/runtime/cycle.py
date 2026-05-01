@@ -51,8 +51,9 @@ def run_cycle(
     global_open_count: int | None = None,
     symbols: tuple[str, ...] | None = None,
     session_type: "SessionType | None" = None,
+    _evaluate_fn=None,
 ) -> CycleResult:
-    result = evaluate_cycle(
+    result = (_evaluate_fn or evaluate_cycle)(
         settings=settings,
         now=now,
         equity=equity,

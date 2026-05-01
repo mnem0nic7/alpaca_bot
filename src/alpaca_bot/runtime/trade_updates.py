@@ -282,6 +282,12 @@ def _apply_trade_update_locked(
             )
             if protective_stop_client_order_id is not None:
                 existing_stop = runtime.order_store.load(protective_stop_client_order_id)
+                # A terminated stop (expired/cancelled/error) is treated as absent —
+                # the entry fill must queue a fresh stop order.
+                if existing_stop is not None and existing_stop.status in {
+                    "expired", "cancelled", "canceled", "error"
+                }:
+                    existing_stop = None
                 if existing_stop is None:
                     runtime.order_store.save(
                         OrderRecord(

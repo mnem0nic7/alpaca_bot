@@ -1000,13 +1000,13 @@ def test_dispatch_entry_order_with_none_stop_price_records_error_status() -> Non
 
 
 def test_dispatch_stale_stop_order_expires_with_prior_day_created_at() -> None:
-    """A pending_submit stop order created on a prior trading day must be expired instead
-    of submitted — submitting it would create a naked short against a closed position."""
+    """A pending_submit stop order with no signal_timestamp and yesterday's created_at
+    must be expired — it corresponds to a position that should have been flattened at EOD."""
     _, dispatch_pending_orders = load_order_dispatch_api()
     settings = make_settings()
     # now is 10:00 ET on 2026-04-25 (14:00 UTC)
     now = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)
-    # Stop was created yesterday
+    # Stop was created yesterday, no signal_timestamp → falls back to created_at
     yesterday = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
     stale_stop = OrderRecord(
         client_order_id="paper:v1-breakout:AAPL:stop:stale",
@@ -1044,6 +1044,43 @@ def test_dispatch_stale_stop_order_expires_with_prior_day_created_at() -> None:
     assert audit_store.appended[0].payload["created_date"] == "2026-04-24"
     assert audit_store.appended[0].payload["session_date"] == "2026-04-25"
     assert report["submitted_count"] == 0
+
+
+def test_dispatch_stop_order_with_today_signal_timestamp_is_not_expired() -> None:
+    """A stop written yesterday but with today's signal_timestamp must NOT be expired —
+    ORB pre-computes entry+stop intents the evening before the session."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)  # 10:00 ET Apr 25
+    yesterday = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    today_signal = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)  # 10:00 ET same session
+    stop = OrderRecord(
+        client_order_id="orb:v1-breakout:2026-04-25:AAPL:stop:2026-04-25T14:00:00+00:00",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=yesterday,    # written to DB yesterday evening
+        updated_at=yesterday,
+        stop_price=99.75,
+        initial_stop_price=99.75,
+        signal_timestamp=today_signal,  # belongs to today's session
+        broker_order_id=None,
+    )
+    order_store = RecordingOrderStore([stop])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
+    broker = RecordingBroker()
+
+    dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    # Stop must be submitted, not expired
+    assert len(broker.stop_calls) == 1
+    assert broker.stop_calls[0]["symbol"] == "AAPL"
+    assert len(audit_store.appended) == 0 or audit_store.appended[0].event_type != "order_expired_stale_stop"
 
 
 def test_dispatch_notifier_send_failure_is_swallowed() -> None:

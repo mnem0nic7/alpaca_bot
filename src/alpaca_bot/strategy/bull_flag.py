@@ -12,7 +12,7 @@ from alpaca_bot.strategy.breakout import (
 )
 
 
-def evaluate_gap_and_go_signal(
+def evaluate_bull_flag_signal(
     *,
     symbol: str,
     intraday_bars: Sequence[Bar],
@@ -37,29 +37,41 @@ def evaluate_gap_and_go_signal(
         if session_day(b.timestamp, settings) == today
     ]
 
-    # Only fire on the first bar of today's session
-    if len(today_bars) != 1:
+    pole_bars = today_bars[:-1]
+    if not pole_bars:
         return None
 
-    prior_daily = [b for b in daily_bars if b.timestamp.astimezone(settings.market_timezone).date() < today]
-    if not prior_daily:
-        return None
-    prior_day_close = prior_daily[-1].close
-    prior_day_high = prior_daily[-1].high
-
-    if signal_bar.open <= prior_day_close * (1 + settings.gap_threshold_pct):
-        return None
-    if signal_bar.close <= prior_day_high:
+    pole_open = pole_bars[0].open
+    pole_high = max(b.high for b in pole_bars)
+    pole_run_pct = (pole_high - pole_open) / pole_open if pole_open > 0 else 0.0
+    if pole_run_pct < settings.bull_flag_min_run_pct:
         return None
 
-    if signal_index < settings.relative_volume_lookback_bars:
+    pole_low = min(b.low for b in pole_bars)
+    pole_range = pole_high - pole_low
+    if pole_range <= 0:
         return None
-    prior_bars = intraday_bars[
-        signal_index - settings.relative_volume_lookback_bars : signal_index
+
+    signal_range = signal_bar.high - signal_bar.low
+    if signal_range > pole_range * settings.bull_flag_consolidation_range_pct:
+        return None
+
+    pole_avg_volume = sum(b.volume for b in pole_bars) / len(pole_bars)
+    if signal_bar.volume > pole_avg_volume * settings.bull_flag_consolidation_volume_ratio:
+        return None
+
+    first_today_index = signal_index - len(today_bars) + 1
+    if first_today_index < settings.relative_volume_lookback_bars:
+        return None
+    baseline_bars = intraday_bars[
+        first_today_index - settings.relative_volume_lookback_bars : first_today_index
     ]
-    avg_volume = sum(b.volume for b in prior_bars) / len(prior_bars)
-    relative_volume = signal_bar.volume / avg_volume if avg_volume > 0 else 0.0
-    if relative_volume < settings.gap_volume_threshold:
+    baseline_avg_volume = sum(b.volume for b in baseline_bars) / len(baseline_bars) if baseline_bars else 0.0
+    if baseline_avg_volume <= 0:
+        return None
+
+    relative_volume = pole_avg_volume / baseline_avg_volume
+    if relative_volume < settings.relative_volume_threshold:
         return None
 
     if calculate_atr(daily_bars, settings.atr_period) is None:
@@ -69,13 +81,13 @@ def evaluate_gap_and_go_signal(
         daily_bars,
         settings.atr_period,
         settings.atr_stop_multiplier,
-        prior_day_high,
+        signal_bar.low,
         settings.breakout_stop_buffer_pct,
     )
-    initial_stop_price = round(max(0.01, prior_day_high - stop_buffer), 2)
-    stop_price = round(signal_bar.high + settings.entry_stop_price_buffer, 2)
+    initial_stop_price = round(max(0.01, signal_bar.low - stop_buffer), 2)
+    stop_price = round(pole_high + settings.entry_stop_price_buffer, 2)
     limit_price = round(stop_price * (1 + settings.stop_limit_buffer_pct), 2)
-    entry_level = prior_day_high
+    entry_level = pole_high
 
     return EntrySignal(
         symbol=symbol,

@@ -1574,3 +1574,74 @@ def test_entry_fill_with_valid_stop_price_does_not_append_no_stop_audit_event() 
 
     audit_types = [e.event_type for e in runtime.audit_event_store.appended]
     assert "entry_fill_no_stop_price" not in audit_types
+
+
+def test_entry_fill_creates_stop_when_existing_stop_is_expired() -> None:
+    """If the protective stop record exists but is already expired (e.g. stale-stop expiry
+    ran before the entry filled), a new pending_submit stop must still be created.
+
+    This is the ORB scenario: intents are pre-written the evening before, the stale-stop
+    expiry fires on the morning dispatch, then the entry fills — without this fix the code
+    would find the expired record, skip creation, and leave the position unprotected."""
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    entry_order = _make_entry_order(initial_stop_price=109.50)
+    stop_id = _expected_stop_order_id(entry_order.client_order_id)
+    # Expired stop already exists in the store
+    expired_stop = OrderRecord(
+        client_order_id=stop_id,
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="expired",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=NOW,
+        updated_at=NOW,
+        stop_price=109.50,
+        initial_stop_price=109.50,
+        signal_timestamp=NOW,
+    )
+    runtime = _make_runtime(orders=[entry_order, expired_stop])
+
+    update = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+    apply_trade_update(settings=make_settings(), runtime=runtime, update=update, now=NOW)
+
+    saved_ids = [o.client_order_id for o in runtime.order_store.saved]
+    assert stop_id in saved_ids, "Expired stop must be replaced by a new pending_submit stop"
+    new_stop = next(o for o in runtime.order_store.saved if o.client_order_id == stop_id)
+    assert new_stop.status == "pending_submit"
+
+
+def test_entry_fill_does_not_duplicate_stop_when_existing_stop_is_pending() -> None:
+    """If the protective stop is already pending_submit (normal path — no stale expiry),
+    a second stop must NOT be created on fill."""
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    entry_order = _make_entry_order(initial_stop_price=109.50)
+    stop_id = _expected_stop_order_id(entry_order.client_order_id)
+    pending_stop = OrderRecord(
+        client_order_id=stop_id,
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=NOW,
+        updated_at=NOW,
+        stop_price=109.50,
+        initial_stop_price=109.50,
+        signal_timestamp=NOW,
+    )
+    runtime = _make_runtime(orders=[entry_order, pending_stop])
+
+    update = _make_trade_update(status="filled", qty=10, filled_qty=10, filled_avg_price=112.00)
+    apply_trade_update(settings=make_settings(), runtime=runtime, update=update, now=NOW)
+
+    # The pending stop should only be saved at most once (quantity update), not re-created
+    stop_saves = [o for o in runtime.order_store.saved if o.client_order_id == stop_id]
+    for s in stop_saves:
+        assert s.status == "pending_submit", "Existing pending stop must not be changed to a new status"

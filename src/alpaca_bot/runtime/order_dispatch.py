@@ -150,12 +150,20 @@ def dispatch_pending_orders(
         # Expire pending stop orders from a prior trading day — they correspond to
         # positions that should have been flattened at EOD.  Submitting them now
         # would create a naked short against a position that no longer exists.
-        if order.intent_type == "stop" and order.created_at is not None:
-            created_ts = order.created_at
-            if created_ts.tzinfo is None:
-                created_ts = created_ts.replace(tzinfo=timezone.utc)
-            created_date_et = created_ts.astimezone(settings.market_timezone).date()
-            if created_date_et < session_date_et:
+        # Use signal_timestamp (the session the order was generated for) when
+        # available — created_at reflects when the record was written to the DB,
+        # which may be the evening before for pre-computed ORB intents.
+        if order.intent_type == "stop":
+            ref_ts = order.signal_timestamp if order.signal_timestamp is not None else order.created_at
+            if ref_ts is None:
+                ref_ts = order.created_at
+            if ref_ts is None:
+                pass  # no timestamp to compare — fall through to dispatch
+            else:
+                if ref_ts.tzinfo is None:
+                    ref_ts = ref_ts.replace(tzinfo=timezone.utc)
+                created_date_et = ref_ts.astimezone(settings.market_timezone).date()
+            if ref_ts is not None and created_date_et < session_date_et:
                 logger.warning(
                     "order_dispatch: expiring stale stop order for %s (created %s, today %s)",
                     order.symbol,

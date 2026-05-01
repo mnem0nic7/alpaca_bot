@@ -10,9 +10,10 @@ from alpaca_bot.strategy.breakout import (
     is_entry_session_time,
     session_day,
 )
+from alpaca_bot.strategy.indicators import calculate_vwap
 
 
-def evaluate_gap_and_go_signal(
+def evaluate_vwap_cross_signal(
     *,
     symbol: str,
     intraday_bars: Sequence[Bar],
@@ -37,29 +38,30 @@ def evaluate_gap_and_go_signal(
         if session_day(b.timestamp, settings) == today
     ]
 
-    # Only fire on the first bar of today's session
-    if len(today_bars) != 1:
+    if len(today_bars) < 3:
         return None
 
-    prior_daily = [b for b in daily_bars if b.timestamp.astimezone(settings.market_timezone).date() < today]
-    if not prior_daily:
+    prior_today_bars = today_bars[:-1]
+    prior_vwap = calculate_vwap(prior_today_bars[:-1])
+    if prior_vwap is None:
         return None
-    prior_day_close = prior_daily[-1].close
-    prior_day_high = prior_daily[-1].high
+    if prior_today_bars[-1].close >= prior_vwap:
+        return None
 
-    if signal_bar.open <= prior_day_close * (1 + settings.gap_threshold_pct):
+    current_vwap = calculate_vwap(today_bars)
+    if current_vwap is None:
         return None
-    if signal_bar.close <= prior_day_high:
+    if signal_bar.close < current_vwap:
         return None
 
     if signal_index < settings.relative_volume_lookback_bars:
         return None
-    prior_bars = intraday_bars[
+    lookback_bars = intraday_bars[
         signal_index - settings.relative_volume_lookback_bars : signal_index
     ]
-    avg_volume = sum(b.volume for b in prior_bars) / len(prior_bars)
+    avg_volume = sum(b.volume for b in lookback_bars) / len(lookback_bars)
     relative_volume = signal_bar.volume / avg_volume if avg_volume > 0 else 0.0
-    if relative_volume < settings.gap_volume_threshold:
+    if relative_volume < settings.relative_volume_threshold:
         return None
 
     if calculate_atr(daily_bars, settings.atr_period) is None:
@@ -69,13 +71,13 @@ def evaluate_gap_and_go_signal(
         daily_bars,
         settings.atr_period,
         settings.atr_stop_multiplier,
-        prior_day_high,
+        signal_bar.low,
         settings.breakout_stop_buffer_pct,
     )
-    initial_stop_price = round(max(0.01, prior_day_high - stop_buffer), 2)
+    initial_stop_price = round(max(0.01, signal_bar.low - stop_buffer), 2)
     stop_price = round(signal_bar.high + settings.entry_stop_price_buffer, 2)
     limit_price = round(stop_price * (1 + settings.stop_limit_buffer_pct), 2)
-    entry_level = prior_day_high
+    entry_level = round(current_vwap, 2)
 
     return EntrySignal(
         symbol=symbol,

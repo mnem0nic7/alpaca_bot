@@ -343,6 +343,8 @@
                   <th>Opened</th>
                   <th>Updated</th>
                   <th>Last</th>
+                  <th>Init Val</th>
+                  <th>Curr Val</th>
                   <th>Unreal P&amp;L $</th>
                   <th>Unreal P&amp;L %</th>
                 </tr>
@@ -377,6 +379,12 @@
                     <td>{{ format_timestamp(position.opened_at) }}</td>
                     <td class="muted">{{ format_timestamp(position.updated_at) }}</td>
                     <td>{{ format_price(last_price) if last_price is not none else "—" }}</td>
+                    <td>
+                      {% if position.entry_price %}{{ "$%.0f" | format(position.entry_price * position.quantity) }}{% else %}n/a{% endif %}
+                    </td>
+                    <td>
+                      {% if last_price is not none %}{{ "$%.0f" | format(last_price * position.quantity) }}{% else %}—{% endif %}
+                    </td>
                     {% if last_price is not none and position.entry_price %}
                       {% set upnl = (last_price - position.entry_price) * position.quantity %}
                       {% set upnl_pct = (last_price - position.entry_price) / position.entry_price * 100 %}
@@ -392,7 +400,7 @@
                     {% endif %}
                   </tr>
                 {% else %}
-                  <tr><td colspan="14" class="muted">No open positions.</td></tr>
+                  <tr><td colspan="16" class="muted">No open positions.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
