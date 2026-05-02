@@ -33,7 +33,7 @@ from alpaca_bot.storage.db import check_connection
 from alpaca_bot.runtime.cli import _list_open_orders, _list_open_positions
 from alpaca_bot.core.engine import CycleIntentType
 from alpaca_bot.runtime.cycle import run_cycle
-from alpaca_bot.runtime.cycle_intent_execution import execute_cycle_intents
+from alpaca_bot.runtime.cycle_intent_execution import ACTIVE_STOP_STATUSES, execute_cycle_intents
 from alpaca_bot.runtime.order_dispatch import dispatch_pending_orders
 from alpaca_bot.runtime.startup_recovery import (
     compose_startup_mismatch_detector,
@@ -380,6 +380,22 @@ class RuntimeSupervisor:
         open_positions = self._load_open_positions()
         working_order_symbols = {order.symbol for order in broker_open_orders}
         working_order_symbols.update(order.symbol for order in self._list_pending_submit_orders())
+        # Include symbols with active local stop-sell orders so evaluate_cycle()
+        # never emits an entry for a symbol already covered by a stop.  Without this,
+        # a symbol whose local stop was cleared by reconciliation (RC-2) could get a
+        # new entry submitted, triggering Alpaca wash-trade rejection (RC-5).
+        _stop_lock = getattr(self.runtime, "store_lock", None)
+        with _stop_lock if _stop_lock is not None else contextlib.nullcontext():
+            _active_stop_sell_orders = self.runtime.order_store.list_by_status(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+                statuses=list(ACTIVE_STOP_STATUSES),
+            )
+        working_order_symbols.update(
+            o.symbol
+            for o in _active_stop_sell_orders
+            if o.intent_type == "stop" and o.side == "sell"
+        )
         # Per-symbol loss limit: compute blocked symbols from today's realized PnL.
         # Applied per-strategy below via strategy_working_symbols — NOT added to
         # working_order_symbols to avoid inflating global_occupied_slots with

@@ -1267,3 +1267,30 @@ def test_min_stop_distance_guard_rejects_signal_with_penny_spread() -> None:
 
     entry_intents = [i for i in result.intents if i.intent_type == CycleIntentType.ENTRY]
     assert entry_intents == [], "Signals with stop spread < $0.01 must be rejected"
+
+
+def test_evaluate_cycle_skips_entry_when_symbol_has_active_stop_in_working_order_symbols() -> None:
+    """Symbols already in working_order_symbols are excluded from entry candidates.
+
+    This documents the existing engine behavior that Fix 5 relies on: the supervisor
+    adds active stop-sell symbols to working_order_symbols BEFORE calling run_cycle(),
+    so evaluate_cycle() naturally skips entry for any symbol already covered by a stop.
+    """
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols={"AAPL"},  # AAPL has an active stop-sell at the broker
+        traded_symbols_today=set(),
+        entries_disabled=False,
+    )
+
+    entry_intents = [i for i in result.intents if i.intent_type == CycleIntentType.ENTRY]
+    assert entry_intents == [], (
+        "evaluate_cycle must skip entry for any symbol already in working_order_symbols"
+    )
