@@ -110,7 +110,7 @@ def test_exit_submission_failure_fires_notifier() -> None:
     assert report.failed_exit_count == 1
     assert len(notifier_calls) == 1, "notifier.send must be called exactly once on exit submission failure"
     assert "AAPL" in notifier_calls[0]["subject"]
-    assert "HARD FAILED" in notifier_calls[0]["subject"].upper() or "hard fail" in notifier_calls[0]["subject"].lower()
+    assert "HARD FAILED" in notifier_calls[0]["subject"]
 
 
 def test_stop_cancel_failure_fires_notifier() -> None:
@@ -315,11 +315,11 @@ with:
     if notifier is not None:
         try:
             notifier.send(
-                subject=f"Exit hard failed: {symbol}/{strategy_name} — stop cancel error, position UNPROTECTED",
+                subject=f"Exit HARD FAILED: {symbol}/{strategy_name} — stop state UNKNOWN, exit aborted",
                 body=(
                     f"cancel_order raised an unrecognized error for {symbol} ({strategy_name}).\n"
                     f"The stop order status at the broker is unknown. Exit was aborted to prevent double-sell.\n"
-                    f"Position may be unprotected. Manual verification required.\n"
+                    f"Position may still be protected (stop may be live). Manual verification required.\n"
                     f"Reason: {reason}"
                 ),
             )
@@ -345,7 +345,7 @@ with:
     if notifier is not None:
         try:
             notifier.send(
-                subject=f"Exit hard failed: {symbol}/{strategy_name} — position UNPROTECTED",
+                subject=f"Exit HARD FAILED: {symbol}/{strategy_name} — position UNPROTECTED",
                 body=(
                     f"Stop cancel succeeded but {exit_method} raised for {symbol} ({strategy_name}).\n"
                     f"Position is live and unprotected. A recovery stop has been queued.\n"
