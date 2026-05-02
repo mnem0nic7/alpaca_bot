@@ -660,6 +660,44 @@ def _execute_exit(
                     ),
                     commit=False,
                 )
+                # Re-queue a protective stop: we cancelled the broker stop but failed to
+                # submit the exit, leaving the position unprotected. Queue a recovery stop
+                # so the next dispatch cycle restores protection immediately.
+                if canceled_stop_count > 0 and position.stop_price is not None and position.stop_price > 0:
+                    _recovery_stop_id = (
+                        f"exit_failed_recovery:{settings.strategy_version}:"
+                        f"{now.date().isoformat()}:{symbol}:stop"
+                    )
+                    runtime.order_store.save(
+                        OrderRecord(
+                            client_order_id=_recovery_stop_id,
+                            symbol=symbol,
+                            side="sell",
+                            intent_type="stop",
+                            status="pending_submit",
+                            quantity=position.quantity,
+                            trading_mode=settings.trading_mode,
+                            strategy_version=settings.strategy_version,
+                            strategy_name=strategy_name,
+                            created_at=now,
+                            updated_at=now,
+                            stop_price=position.stop_price,
+                            initial_stop_price=position.initial_stop_price,
+                        ),
+                        commit=False,
+                    )
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="recovery_stop_queued_after_exit_failure",
+                            symbol=symbol,
+                            payload={
+                                "client_order_id": _recovery_stop_id,
+                                "stop_price": position.stop_price,
+                            },
+                            created_at=now,
+                        ),
+                        commit=False,
+                    )
                 runtime.connection.commit()
             except Exception:
                 try:
