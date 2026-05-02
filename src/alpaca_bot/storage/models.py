@@ -56,6 +56,7 @@ class OrderRecord:
     signal_timestamp: datetime | None = None
     fill_price: float | None = None
     filled_quantity: int | None = None
+    reconciliation_miss_count: int = 0
 
 
 @dataclass(frozen=True)

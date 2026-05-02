@@ -356,14 +356,15 @@ def test_recover_startup_state_clears_local_state_missing_at_broker() -> None:
         now=now,
     )
 
+    # The stop order is in its grace period (miss count 0→1 < threshold 3).
+    # Only the position mismatch appears; the stop mismatch is suppressed.
     assert report.mismatches == (
         "local position missing at broker: MSFT",
-        "local order missing at broker: v1-breakout:2026-04-24:MSFT:stop:2026-04-24T19:00:00+00:00",
     )
     assert report.synced_position_count == 0
     assert report.synced_order_count == 0
     assert report.cleared_position_count == 1
-    assert report.cleared_order_count == 1
+    assert report.cleared_order_count == 0  # stop not cleared — grace period active
     assert position_store.replace_all_calls == [
         {
             "positions": [],
@@ -377,7 +378,7 @@ def test_recover_startup_state_clears_local_state_missing_at_broker() -> None:
             symbol="MSFT",
             side="sell",
             intent_type="stop",
-            status="reconciled_missing",
+            status="submitted",  # status preserved — not yet cleared
             quantity=5,
             trading_mode=TradingMode.PAPER,
             strategy_version="v1-breakout",
@@ -386,6 +387,7 @@ def test_recover_startup_state_clears_local_state_missing_at_broker() -> None:
             stop_price=417.50,
             initial_stop_price=417.50,
             broker_order_id="alpaca-stop-1",
+            reconciliation_miss_count=1,
         )
     ]
 
@@ -1084,3 +1086,251 @@ def test_recovery_stop_suppressed_when_broker_has_sell_order_for_symbol() -> Non
     assert len(suppressed_events) == 1, (
         "Must emit exactly one recovery_stop_suppressed_broker_has_stop event for MRVL"
     )
+
+
+# ── Grace-period tests (Fix 3) ─────────────────────────────────────────────
+
+
+def test_reconciliation_grace_period_first_miss_increments_count() -> None:
+    """First consecutive miss: count 0→1, status unchanged, audit event emitted, no mismatch."""
+    settings = make_settings()
+    now = datetime(2026, 5, 2, 14, 0, tzinfo=timezone.utc)
+    stop = OrderRecord(
+        client_order_id="orb:v1-breakout:2026-05-02:MRVL:stop:original",
+        symbol="MRVL",
+        side="sell",
+        intent_type="stop",
+        status="new",
+        quantity=50,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        broker_order_id="broker-stop-1",
+        stop_price=75.0,
+        initial_stop_price=75.0,
+        reconciliation_miss_count=0,
+    )
+    order_store = RecordingOrderStore(existing_orders=[stop])
+    audit_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=RecordingPositionStore(),
+        order_store=order_store,
+        audit_event_store=audit_store,
+    )
+
+    report = recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    saved = next((o for o in order_store.saved if o.client_order_id == stop.client_order_id), None)
+    assert saved is not None, "Expected a saved record for the stop"
+    assert saved.status == "new", f"Expected status='new', got {saved.status!r}"
+    assert saved.reconciliation_miss_count == 1, (
+        f"Expected reconciliation_miss_count=1, got {saved.reconciliation_miss_count}"
+    )
+    miss_events = [e for e in audit_store.appended if e.event_type == "reconciliation_miss_count_incremented"]
+    assert len(miss_events) == 1, f"Expected 1 miss event, got {len(miss_events)}"
+    assert miss_events[0].payload["reconciliation_miss_count"] == 1
+    assert miss_events[0].payload["threshold"] == 3
+    assert not any(e.event_type == "reconciled_missing_stop_cleared" for e in audit_store.appended)
+    assert not any(o.status == "reconciled_missing" for o in order_store.saved), (
+        "Stop must NOT be cleared to reconciled_missing on first miss"
+    )
+    assert not any(stop.client_order_id in m for m in report.mismatches), (
+        "Grace-period stop must not appear in report.mismatches on first miss"
+    )
+
+
+def test_reconciliation_grace_period_second_miss_increments_count() -> None:
+    """Second consecutive miss: count 1→2, status unchanged, audit event emitted, no mismatch."""
+    settings = make_settings()
+    now = datetime(2026, 5, 2, 14, 0, tzinfo=timezone.utc)
+    stop = OrderRecord(
+        client_order_id="orb:v1-breakout:2026-05-02:MRVL:stop:original",
+        symbol="MRVL",
+        side="sell",
+        intent_type="stop",
+        status="new",
+        quantity=50,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        broker_order_id="broker-stop-1",
+        stop_price=75.0,
+        initial_stop_price=75.0,
+        reconciliation_miss_count=1,
+    )
+    order_store = RecordingOrderStore(existing_orders=[stop])
+    audit_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=RecordingPositionStore(),
+        order_store=order_store,
+        audit_event_store=audit_store,
+    )
+
+    report = recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    saved = next((o for o in order_store.saved if o.client_order_id == stop.client_order_id), None)
+    assert saved is not None
+    assert saved.status == "new"
+    assert saved.reconciliation_miss_count == 2, (
+        f"Expected reconciliation_miss_count=2, got {saved.reconciliation_miss_count}"
+    )
+    miss_events = [e for e in audit_store.appended if e.event_type == "reconciliation_miss_count_incremented"]
+    assert len(miss_events) == 1
+    assert miss_events[0].payload["reconciliation_miss_count"] == 2
+    assert not any(e.event_type == "reconciled_missing_stop_cleared" for e in audit_store.appended)
+    assert not any(o.status == "reconciled_missing" for o in order_store.saved)
+    assert not any(stop.client_order_id in m for m in report.mismatches), (
+        "Grace-period stop must not appear in report.mismatches on second miss"
+    )
+
+
+def test_reconciliation_grace_period_third_miss_clears_to_reconciled_missing() -> None:
+    """Third consecutive miss: count=2 → threshold reached → status='reconciled_missing'."""
+    settings = make_settings()
+    now = datetime(2026, 5, 2, 14, 0, tzinfo=timezone.utc)
+    stop = OrderRecord(
+        client_order_id="orb:v1-breakout:2026-05-02:MRVL:stop:original",
+        symbol="MRVL",
+        side="sell",
+        intent_type="stop",
+        status="new",
+        quantity=50,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        broker_order_id="broker-stop-1",
+        stop_price=75.0,
+        initial_stop_price=75.0,
+        reconciliation_miss_count=2,
+    )
+    order_store = RecordingOrderStore(existing_orders=[stop])
+    audit_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=RecordingPositionStore(),
+        order_store=order_store,
+        audit_event_store=audit_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    saved = next((o for o in order_store.saved if o.client_order_id == stop.client_order_id), None)
+    assert saved is not None
+    assert saved.status == "reconciled_missing", (
+        f"Expected status='reconciled_missing' on 3rd miss, got {saved.status!r}"
+    )
+    cleared_events = [e for e in audit_store.appended if e.event_type == "reconciled_missing_stop_cleared"]
+    assert len(cleared_events) == 1, f"Expected 1 cleared event, got {len(cleared_events)}"
+    assert cleared_events[0].payload["client_order_id"] == stop.client_order_id
+    assert not any(e.event_type == "reconciliation_miss_count_incremented" for e in audit_store.appended)
+
+
+def test_reconciliation_grace_period_does_not_apply_to_entry_orders() -> None:
+    """Entry orders must be cleared to reconciled_missing immediately on the first miss."""
+    settings = make_settings()
+    now = datetime(2026, 5, 2, 14, 0, tzinfo=timezone.utc)
+    entry = OrderRecord(
+        client_order_id="orb:v1-breakout:2026-05-02:MRVL:entry:2026-05-02T14:00:00+00:00",
+        symbol="MRVL",
+        side="buy",
+        intent_type="entry",
+        status="new",
+        quantity=50,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        broker_order_id="broker-entry-1",
+        reconciliation_miss_count=0,
+    )
+    order_store = RecordingOrderStore(existing_orders=[entry])
+    audit_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=RecordingPositionStore(),
+        order_store=order_store,
+        audit_event_store=audit_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    saved = next((o for o in order_store.saved if o.client_order_id == entry.client_order_id), None)
+    assert saved is not None
+    assert saved.status == "reconciled_missing", (
+        f"Entry orders must be cleared immediately; got {saved.status!r}"
+    )
+    assert not any(e.event_type == "reconciliation_miss_count_incremented" for e in audit_store.appended)
+    assert not any(e.event_type == "reconciled_missing_stop_cleared" for e in audit_store.appended)
+
+
+def test_reconciliation_grace_period_resets_count_when_stop_found_at_broker() -> None:
+    """When broker confirms the stop exists, reconciliation_miss_count resets to 0."""
+    settings = make_settings()
+    now = datetime(2026, 5, 2, 14, 0, tzinfo=timezone.utc)
+    stop = OrderRecord(
+        client_order_id="orb:v1-breakout:2026-05-02:MRVL:stop:original",
+        symbol="MRVL",
+        side="sell",
+        intent_type="stop",
+        status="new",
+        quantity=50,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        broker_order_id="broker-stop-1",
+        stop_price=75.0,
+        initial_stop_price=75.0,
+        reconciliation_miss_count=2,
+    )
+    order_store = RecordingOrderStore(existing_orders=[stop])
+    audit_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=RecordingPositionStore(),
+        order_store=order_store,
+        audit_event_store=audit_store,
+    )
+    broker_stop = BrokerOrder(
+        client_order_id=stop.client_order_id,
+        broker_order_id="broker-stop-1",
+        symbol="MRVL",
+        side="sell",
+        status="new",
+        quantity=50,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[],
+        broker_open_orders=[broker_stop],
+        now=now,
+    )
+
+    saved = next((o for o in order_store.saved if o.client_order_id == stop.client_order_id), None)
+    assert saved is not None
+    assert saved.reconciliation_miss_count == 0, (
+        f"Expected reset to 0 when broker confirms stop; got {saved.reconciliation_miss_count}"
+    )
+    assert not any(e.event_type == "reconciliation_miss_count_incremented" for e in audit_store.appended)
+    assert not any(e.event_type == "reconciled_missing_stop_cleared" for e in audit_store.appended)

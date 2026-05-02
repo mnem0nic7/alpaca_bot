@@ -201,7 +201,8 @@ _ORDER_SELECT_COLUMNS = """
     signal_timestamp,
     fill_price,
     filled_quantity,
-    strategy_name
+    strategy_name,
+    reconciliation_miss_count
 """
 
 
@@ -225,6 +226,7 @@ def _row_to_order_record(row: Any) -> OrderRecord:
         fill_price=float(row[15]) if row[15] is not None else None,
         filled_quantity=int(row[16]) if row[16] is not None else None,
         strategy_name=row[17] if row[17] is not None else "breakout",
+        reconciliation_miss_count=int(row[18]) if row[18] is not None else 0,
     )
 
 
@@ -254,9 +256,10 @@ class OrderStore:
                 fill_price,
                 filled_quantity,
                 created_at,
-                updated_at
+                updated_at,
+                reconciliation_miss_count
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (client_order_id)
             DO UPDATE SET
                 status = EXCLUDED.status,
@@ -268,7 +271,8 @@ class OrderStore:
                 signal_timestamp = EXCLUDED.signal_timestamp,
                 fill_price = EXCLUDED.fill_price,
                 filled_quantity = EXCLUDED.filled_quantity,
-                updated_at = EXCLUDED.updated_at
+                updated_at = EXCLUDED.updated_at,
+                reconciliation_miss_count = EXCLUDED.reconciliation_miss_count
             """,
             (
                 order.client_order_id,
@@ -289,6 +293,7 @@ class OrderStore:
                 order.filled_quantity,
                 order.created_at,
                 order.updated_at,
+                order.reconciliation_miss_count,
             ),
             commit=commit,
         )

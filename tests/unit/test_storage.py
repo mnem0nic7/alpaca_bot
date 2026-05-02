@@ -200,6 +200,7 @@ def test_order_store_upserts_and_loads_record() -> None:
                 155.50,  # fill_price
                 45,      # filled_quantity
                 "breakout",  # strategy_name
+                0,       # reconciliation_miss_count
             )
         ]
     )
@@ -256,6 +257,7 @@ def test_order_store_lists_records_by_status() -> None:
                     None,  # fill_price
                     None,  # filled_quantity
                     "breakout",  # strategy_name
+                    0,    # reconciliation_miss_count
                 ),
                 (
                     "paper:v1:AAPL:2026-04-24T19:15:00Z:stop",
@@ -276,6 +278,7 @@ def test_order_store_lists_records_by_status() -> None:
                     None,  # fill_price
                     None,  # filled_quantity
                     "breakout",  # strategy_name
+                    0,    # reconciliation_miss_count
                 ),
             ]
         ]
@@ -319,6 +322,7 @@ def test_order_store_lists_recent_records() -> None:
                     None,  # fill_price
                     None,  # filled_quantity
                     "breakout",  # strategy_name
+                    0,    # reconciliation_miss_count
                 ),
                 (
                     "paper:v1:AAPL:2026-04-24T19:00:00Z:entry",
@@ -339,6 +343,7 @@ def test_order_store_lists_recent_records() -> None:
                     None,  # fill_price
                     None,  # filled_quantity
                     "breakout",  # strategy_name
+                    0,    # reconciliation_miss_count
                 ),
             ]
         ]
