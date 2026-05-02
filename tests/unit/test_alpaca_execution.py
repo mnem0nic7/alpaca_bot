@@ -111,7 +111,10 @@ class TradingClientStub:
 
     def get_orders(self, filter: object | None = None) -> list[OrderStub]:
         if hasattr(filter, "status"):
-            self.order_filter = {"status": str(filter.status.value if hasattr(filter.status, "value") else filter.status)}
+            self.order_filter = {
+                "status": str(filter.status.value if hasattr(filter.status, "value") else filter.status),
+                "limit": getattr(filter, "limit", None),
+            }
         else:
             self.order_filter = filter
         return self.orders
@@ -245,7 +248,19 @@ def test_execution_adapter_exposes_clock_calendar_orders_and_positions() -> None
         "start": date(2026, 4, 24),
         "end": date(2026, 4, 24),
     }
-    assert trading_client.order_filter == {"status": "open"}
+    assert trading_client.order_filter == {"status": "open", "limit": 500}
+
+
+def test_list_open_orders_requests_limit_500() -> None:
+    trading_client = TradingClientStub()
+    broker = AlpacaExecutionAdapter(trading_client)
+
+    broker.list_open_orders()
+
+    assert trading_client.order_filter == {
+        "status": "open",
+        "limit": 500,
+    }, f"list_open_orders must request limit=500; got {trading_client.order_filter}"
 
 
 def test_alpaca_broker_is_backwards_compatible_alias() -> None:
