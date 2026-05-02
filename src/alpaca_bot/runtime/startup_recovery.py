@@ -255,6 +255,10 @@ def recover_startup_state(
         for o in local_active_orders
         if o.intent_type == "entry" and o.status == "pending_submit"
     }
+    # Symbols with any broker sell order (stop or exit) — position is covered at the broker.
+    # Defense-in-depth against RC-3: even if reconciliation clears a stop locally, never
+    # queue a recovery stop when the broker already has a sell order for that symbol.
+    broker_sell_symbols = {o.symbol for o in broker_open_orders if o.side == "sell"}
 
     try:
         runtime.position_store.replace_all(
@@ -269,6 +273,17 @@ def recover_startup_state(
                 _log.warning(
                     "startup_recovery: skipping recovery stop for %s — pending_submit entry order exists",
                     sym,
+                )
+                continue
+            if sym in broker_sell_symbols:
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="recovery_stop_suppressed_broker_has_stop",
+                        symbol=sym,
+                        payload={"symbol": sym},
+                        created_at=timestamp,
+                    ),
+                    commit=False,
                 )
                 continue
             if sym not in active_stop_symbols:
@@ -317,6 +332,17 @@ def recover_startup_state(
                 _log.warning(
                     "startup_recovery: skipping recovery stop for %s — pending_submit entry order exists",
                     pos.symbol,
+                )
+                continue
+            if pos.symbol in broker_sell_symbols:
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="recovery_stop_suppressed_broker_has_stop",
+                        symbol=pos.symbol,
+                        payload={"symbol": pos.symbol},
+                        created_at=timestamp,
+                    ),
+                    commit=False,
                 )
                 continue
             if pos.stop_price <= 0:

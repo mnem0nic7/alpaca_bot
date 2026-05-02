@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.core.engine import CycleIntent, CycleIntentType, CycleResult
 from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord
@@ -1212,9 +1214,10 @@ def test_execute_exit_aborts_when_cancel_order_raises_unrecognized_error() -> No
 
 
 def test_execute_exit_returns_without_db_write_when_submit_market_exit_raises() -> None:
-    """When submit_market_exit raises after stops are already canceled, _execute_exit
-    must return (stop_count, 0) without writing any DB records — the next cycle will
-    detect the missing stop and attempt recovery."""
+    """When submit_market_exit raises after stops are already canceled, _execute_exit must:
+    - NOT write an exit OrderRecord (exit never submitted to broker)
+    - Queue a recovery stop immediately (position was left unprotected when stop was cancelled)
+    - Emit a recovery_stop_queued_after_exit_failure audit event"""
     execute_cycle_intents = load_cycle_intent_execution_api()
     settings = make_settings()
     now = datetime(2026, 4, 24, 20, 0, tzinfo=timezone.utc)
@@ -1280,9 +1283,30 @@ def test_execute_exit_returns_without_db_write_when_submit_market_exit_raises() 
     assert broker.exit_calls == [], "submit_market_exit raised — no exit_calls recorded"
     # canceled_stop_count is returned (the stop WAS canceled), but submitted_exit_count = 0
     assert report.submitted_exit_count == 0
-    # No exit OrderRecord written to DB — next cycle will handle recovery
+    # No exit OrderRecord written to DB
     exit_writes = [o for o in order_store.saved if o.intent_type == "exit"]
     assert exit_writes == [], "No exit record must be written when submit_market_exit raises"
+    # A recovery stop must be queued immediately — position was left unprotected
+    recovery_stops = [
+        o for o in order_store.saved
+        if o.intent_type == "stop"
+        and o.status == "pending_submit"
+        and o.symbol == "AAPL"
+    ]
+    assert len(recovery_stops) == 1, (
+        "Must queue exactly one recovery stop when exit fails after stop cancel"
+    )
+    assert recovery_stops[0].stop_price == pytest.approx(109.89)
+    assert recovery_stops[0].quantity == 25
+    assert recovery_stops[0].side == "sell"
+    recovery_events = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "recovery_stop_queued_after_exit_failure"
+        and e.symbol == "AAPL"
+    ]
+    assert len(recovery_events) == 1, (
+        "Must emit exactly one recovery_stop_queued_after_exit_failure audit event"
+    )
 
 
 def test_execute_exit_saves_exit_record_when_position_disappears_after_submit() -> None:

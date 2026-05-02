@@ -226,9 +226,9 @@ class AlpacaExecutionAdapter:
         try:
             from alpaca.trading.requests import GetOrdersRequest
         except ModuleNotFoundError:
-            filters = {"status": "open"}
+            filters = {"status": "open", "limit": 500}
         else:
-            filters = GetOrdersRequest(status="open")
+            filters = GetOrdersRequest(status="open", limit=500)
         raw_orders = _retry_with_backoff(lambda: self._trading.get_orders(filter=filters))
         return [
             BrokerOrder(

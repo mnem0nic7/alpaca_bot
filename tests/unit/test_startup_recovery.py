@@ -1012,3 +1012,75 @@ def test_startup_recovery_does_not_queue_stop_when_pending_entry_exists() -> Non
     assert stop_saves == [], (
         "Recovery must not queue a stop for a symbol that already has a pending_submit entry order"
     )
+
+
+def test_recovery_stop_suppressed_when_broker_has_sell_order_for_symbol() -> None:
+    """When the broker already has an open sell order for a symbol, startup_recovery must
+    NOT queue a recovery stop for that symbol — even if the local DB has no active stop.
+
+    This is RC-3 defense: after RC-1 truncated list_open_orders to 50, the local DB
+    cleared MRVL's stop as reconciled_missing. Next cycle tried to queue a recovery stop
+    but the broker still had the real stop, causing a 40310000 infinite loop."""
+    settings = make_settings()
+    now = datetime(2026, 5, 1, 19, 0, tzinfo=timezone.utc)
+
+    # MRVL has a local position but NO local active stop order (simulates post-truncation state)
+    mrvl_position = PositionRecord(
+        symbol="MRVL",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="breakout",
+        quantity=10,
+        entry_price=76.0,
+        stop_price=75.0,
+        initial_stop_price=75.0,
+        opened_at=now,
+        updated_at=now,
+    )
+    position_store = RecordingPositionStore(existing_positions=[mrvl_position])
+    audit_event_store = RecordingAuditEventStore()
+    order_store = RecordingOrderStore()  # no active stop order for MRVL locally
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+        audit_event_store=audit_event_store,
+    )
+
+    # Broker has MRVL position AND a sell order (the real stop that was dropped by truncation)
+    broker_position = BrokerPosition(symbol="MRVL", quantity=10, entry_price=76.0)
+    broker_sell_order = BrokerOrder(
+        client_order_id="breakout:v1-breakout:2026-05-01:MRVL:stop:t",
+        broker_order_id="4c9a5044",
+        symbol="MRVL",
+        side="sell",
+        status="accepted",
+        quantity=10,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[broker_sell_order],
+        now=now,
+    )
+
+    stop_saves = [
+        o for o in order_store.saved
+        if getattr(o, "intent_type", None) == "stop"
+        and getattr(o, "status", None) == "pending_submit"
+        and getattr(o, "symbol", None) == "MRVL"
+    ]
+    assert stop_saves == [], (
+        "Must not queue a recovery stop when broker already has a sell order for MRVL"
+    )
+
+    suppressed_events = [
+        e for e in audit_event_store.appended
+        if getattr(e, "event_type", None) == "recovery_stop_suppressed_broker_has_stop"
+        and getattr(e, "symbol", None) == "MRVL"
+    ]
+    assert len(suppressed_events) == 1, (
+        "Must emit exactly one recovery_stop_suppressed_broker_has_stop event for MRVL"
+    )
