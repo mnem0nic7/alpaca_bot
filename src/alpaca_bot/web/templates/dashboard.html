@@ -241,6 +241,26 @@
                 {% endif %}
               </p>
             </div>
+            {% if snapshot.realized_pnl is not none %}
+            <div>
+              <p class="eyebrow">Session P&amp;L</p>
+              <p class="value" style="color: {{ 'var(--accent)' if snapshot.realized_pnl >= 0 else '#c0392b' }}">
+                {% if snapshot.realized_pnl >= 0 %}+{{ format_price(snapshot.realized_pnl) }}{% else %}-{{ format_price(0 - snapshot.realized_pnl) }}{% endif %}
+              </p>
+            </div>
+            {% if snapshot.loss_limit_amount is not none and snapshot.loss_limit_amount > 0 %}
+            <div>
+              {% set limit_used_pct = ((0 - snapshot.realized_pnl) / snapshot.loss_limit_amount * 100) if snapshot.realized_pnl < 0 else 0 %}
+              <p class="eyebrow">Loss Limit</p>
+              <p class="value {% if limit_used_pct >= 75 %}warn{% endif %}">
+                {{ format_price(snapshot.loss_limit_amount) }}
+                {% if limit_used_pct > 0 %}
+                  <span class="muted" style="font-size: 0.85em;">({{ "%.0f"|format(limit_used_pct) }}% used)</span>
+                {% endif %}
+              </p>
+            </div>
+            {% endif %}
+            {% endif %}
           </div>
         </div>
         <div class="panel">
