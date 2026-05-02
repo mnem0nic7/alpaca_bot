@@ -174,6 +174,7 @@ def execute_cycle_intents(
                 strategy_name=strategy_name,
                 lock_ctx=lock_ctx,
                 limit_price=getattr(intent, "limit_price", None),
+                notifier=notifier,
             )
             canceled_stop_count += canceled
             submitted_exit_count += submitted
@@ -396,6 +397,7 @@ def _execute_exit(
     strategy_name: str = "breakout",
     lock_ctx: Any = None,
     limit_price: float | None = None,
+    notifier: Notifier | None = None,
 ) -> tuple[int, int, int]:
     # Returns (canceled_stop_count, submitted_exit_count, hard_failed).
     # hard_failed=1 when a broker call failed with an unrecognized error (stop cancel
@@ -546,6 +548,21 @@ def _execute_exit(
                 # DB, causing every subsequent cycle to re-cancel them, hit
                 # "already_canceled", set position_already_gone, and permanently
                 # abandon the exit for an unprotected position.
+        if notifier is not None:
+            try:
+                notifier.send(
+                    subject=f"Exit HARD FAILED: {symbol}/{strategy_name} — stop state UNKNOWN, exit aborted",
+                    body=(
+                        f"cancel_order raised an unrecognized error for {symbol} ({strategy_name}).\n"
+                        f"The stop order status at the broker is unknown. Exit was aborted to prevent double-sell.\n"
+                        f"Position may still be protected (stop may be live). Manual verification required.\n"
+                        f"Reason: {reason}"
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "cycle_intent_execution: notifier failed for cancel_hard_failed on %s", symbol
+                )
         return canceled_stop_count, 0, 1  # hard_failed: stop cancel had unrecognized error
 
     if position_already_gone:
@@ -705,6 +722,21 @@ def _execute_exit(
                 except Exception:
                     pass
                 raise
+        if notifier is not None:
+            try:
+                notifier.send(
+                    subject=f"Exit HARD FAILED: {symbol}/{strategy_name} — position UNPROTECTED",
+                    body=(
+                        f"Stop cancel succeeded but {exit_method} raised for {symbol} ({strategy_name}).\n"
+                        f"Position is live and unprotected. A recovery stop has been queued.\n"
+                        f"Manual verification required.\n"
+                        f"Reason: {reason}"
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "cycle_intent_execution: notifier failed for exit submission failure on %s", symbol
+                )
         return canceled_stop_count, 0, 1  # hard_failed: exit submission raised
 
     # Write all results under lock.
