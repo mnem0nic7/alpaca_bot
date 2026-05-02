@@ -17,7 +17,7 @@
 | `migrations/011_add_reconciliation_miss_count.sql` | **Create** — ADD COLUMN migration |
 | `src/alpaca_bot/storage/models.py` | **Modify** — add `reconciliation_miss_count: int = 0` to `OrderRecord` |
 | `src/alpaca_bot/storage/repositories.py` | **Modify** — add column to `_ORDER_SELECT_COLUMNS`, `_row_to_order_record`, `OrderStore.save()` |
-| `src/alpaca_bot/runtime/startup_recovery.py` | **Modify** — add `RECONCILIATION_MISS_THRESHOLD = 3`; replace unconditional write with grace-period logic |
+| `src/alpaca_bot/runtime/startup_recovery.py` | **Modify** — add `RECONCILIATION_MISS_THRESHOLD = 3`; add grace-period guard to mismatch loop; replace unconditional write with grace-period logic |
 | `tests/unit/test_startup_recovery.py` | **Modify** — add 5 new tests |
 
 ---
@@ -261,7 +261,7 @@ Add these 5 tests to the bottom of `tests/unit/test_startup_recovery.py`. The fi
 
 
 def test_reconciliation_grace_period_first_miss_increments_count() -> None:
-    """First consecutive miss: count 0→1, status unchanged, audit event emitted."""
+    """First consecutive miss: count 0→1, status unchanged, audit event emitted, no mismatch."""
     settings = make_settings()
     now = datetime(2026, 5, 2, 14, 0, tzinfo=timezone.utc)
     stop = OrderRecord(
@@ -287,7 +287,7 @@ def test_reconciliation_grace_period_first_miss_increments_count() -> None:
         audit_event_store=audit_store,
     )
 
-    recover_startup_state(
+    report = recover_startup_state(
         settings=settings,
         runtime=runtime,
         broker_open_positions=[],
@@ -309,10 +309,13 @@ def test_reconciliation_grace_period_first_miss_increments_count() -> None:
     assert not any(o.status == "reconciled_missing" for o in order_store.saved), (
         "Stop must NOT be cleared to reconciled_missing on first miss"
     )
+    assert not any(stop.client_order_id in m for m in report.mismatches), (
+        "Grace-period stop must not appear in report.mismatches on first miss"
+    )
 
 
 def test_reconciliation_grace_period_second_miss_increments_count() -> None:
-    """Second consecutive miss: count 1→2, status unchanged, audit event emitted."""
+    """Second consecutive miss: count 1→2, status unchanged, audit event emitted, no mismatch."""
     settings = make_settings()
     now = datetime(2026, 5, 2, 14, 0, tzinfo=timezone.utc)
     stop = OrderRecord(
@@ -338,7 +341,7 @@ def test_reconciliation_grace_period_second_miss_increments_count() -> None:
         audit_event_store=audit_store,
     )
 
-    recover_startup_state(
+    report = recover_startup_state(
         settings=settings,
         runtime=runtime,
         broker_open_positions=[],
@@ -357,6 +360,9 @@ def test_reconciliation_grace_period_second_miss_increments_count() -> None:
     assert miss_events[0].payload["reconciliation_miss_count"] == 2
     assert not any(e.event_type == "reconciled_missing_stop_cleared" for e in audit_store.appended)
     assert not any(o.status == "reconciled_missing" for o in order_store.saved)
+    assert not any(stop.client_order_id in m for m in report.mismatches), (
+        "Grace-period stop must not appear in report.mismatches on second miss"
+    )
 
 
 def test_reconciliation_grace_period_third_miss_clears_to_reconciled_missing() -> None:
@@ -538,11 +544,44 @@ ACTIVE_ORDER_STATUSES = [
 RECONCILIATION_MISS_THRESHOLD = 3
 ```
 
-### 4b — Replace the unconditional `reconciled_missing` write
+### 4b — Guard the mismatch reporting loop
+
+The mismatch reporting loop runs **before** the write loop, at lines 222-231. It feeds `report.mismatches` which triggers the notifier. Without a guard here, grace-period cycles 1 and 2 would fire "Startup mismatch detected" alerts for a stop that isn't being cleared.
+
+- [ ] **Step 2: Add grace-period guard to the mismatch reporting loop**
+
+Find the mismatch reporting loop:
+
+```python
+    cleared_order_count = 0
+    for order in local_active_orders:
+        if order.client_order_id not in matched_local_client_ids:
+            if _is_never_submitted(order):
+                continue
+            mismatches.append(f"local order missing at broker: {order.client_order_id}")
+            cleared_order_count += 1
+```
+
+Replace it with:
+
+```python
+    cleared_order_count = 0
+    for order in local_active_orders:
+        if order.client_order_id not in matched_local_client_ids:
+            if _is_never_submitted(order):
+                continue
+            is_stop = order.intent_type == "stop" and order.side == "sell"
+            if is_stop and (order.reconciliation_miss_count + 1) < RECONCILIATION_MISS_THRESHOLD:
+                continue
+            mismatches.append(f"local order missing at broker: {order.client_order_id}")
+            cleared_order_count += 1
+```
+
+### 4c — Replace the unconditional `reconciled_missing` write
 
 The target block is inside the `for order in local_active_orders:` loop, at the very end of that loop body — after the `if _is_never_submitted(order): ... continue` guard. It is the unconditional `runtime.order_store.save(OrderRecord(..., status="reconciled_missing", ...), commit=False)` block.
 
-- [ ] **Step 2: Replace the unconditional `reconciled_missing` save with grace-period logic**
+- [ ] **Step 3: Replace the unconditional `reconciled_missing` save with grace-period logic**
 
 Find this block (the one immediately after the `continue` that follows the `_is_never_submitted` guard):
 
@@ -649,7 +688,7 @@ Replace it with:
                     )
 ```
 
-- [ ] **Step 3: Run the grace-period tests to verify they pass**
+- [ ] **Step 4: Run the grace-period tests to verify they pass**
 
 ```bash
 pytest tests/unit/test_startup_recovery.py -k "grace_period" -v
@@ -657,7 +696,7 @@ pytest tests/unit/test_startup_recovery.py -k "grace_period" -v
 
 Expected: all 5 PASS.
 
-- [ ] **Step 4: Run the full test suite to confirm no regressions**
+- [ ] **Step 5: Run the full test suite to confirm no regressions**
 
 ```bash
 pytest tests/unit/ -x -q
@@ -665,7 +704,7 @@ pytest tests/unit/ -x -q
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/alpaca_bot/runtime/startup_recovery.py tests/unit/test_startup_recovery.py
@@ -711,9 +750,10 @@ Expected: event strings appear in both source and test files, with matching spel
   - `OrderRecord.reconciliation_miss_count`: Task 2a ✓
   - `OrderStore` column (SELECT, INSERT, DO UPDATE SET): Task 2b steps 2–4 ✓
   - `RECONCILIATION_MISS_THRESHOLD = 3`: Task 4a ✓
-  - Grace-period logic (below threshold → increment; at threshold → reconciled_missing): Task 4b ✓
-  - `reconciliation_miss_count_incremented` audit event: Task 4b ✓
-  - `reconciled_missing_stop_cleared` audit event: Task 4b ✓
+  - Mismatch reporting loop suppression (no alert during grace period): Task 4b ✓
+  - Grace-period logic (below threshold → increment; at threshold → reconciled_missing): Task 4c ✓
+  - `reconciliation_miss_count_incremented` audit event: Task 4c ✓
+  - `reconciled_missing_stop_cleared` audit event: Task 4c ✓
   - Reset on broker confirmation (via default=0 in broker_open_orders write loop): covered by existing code + DO UPDATE SET change ✓
   - Test 1 (first miss): ✓ | Test 2 (second miss): ✓ | Test 3 (third miss): ✓ | Test 4 (entry immediate): ✓ | Test 5 (reset): ✓
 
