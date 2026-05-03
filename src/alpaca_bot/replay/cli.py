@@ -191,6 +191,8 @@ def _report_to_dict(report: BacktestReport) -> dict:
         "eod_wins": report.eod_wins,
         "eod_losses": report.eod_losses,
         "avg_hold_minutes": report.avg_hold_minutes,
+        "avg_win_return_pct": report.avg_win_return_pct,
+        "avg_loss_return_pct": report.avg_loss_return_pct,
         "max_consecutive_losses": report.max_consecutive_losses,
         "max_consecutive_wins": report.max_consecutive_wins,
         "trades": [_trade_to_dict(t) for t in report.trades],
@@ -237,6 +239,7 @@ def _format_compare_csv(reports: list[BacktestReport]) -> str:
         "strategy", "total_trades", "win_rate",
         "mean_return_pct", "max_drawdown_pct", "sharpe_ratio", "profit_factor",
         "stop_wins", "stop_losses", "eod_wins", "eod_losses", "avg_hold_minutes",
+        "avg_win_return_pct", "avg_loss_return_pct",
         "max_consecutive_losses", "max_consecutive_wins",
     ]
     buf = io.StringIO()
@@ -262,6 +265,8 @@ def _compare_row(report: BacktestReport) -> dict:
         "eod_wins": report.eod_wins,
         "eod_losses": report.eod_losses,
         "avg_hold_minutes": report.avg_hold_minutes,
+        "avg_win_return_pct": report.avg_win_return_pct,
+        "avg_loss_return_pct": report.avg_loss_return_pct,
         "max_consecutive_losses": report.max_consecutive_losses,
         "max_consecutive_wins": report.max_consecutive_wins,
     }
