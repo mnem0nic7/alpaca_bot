@@ -53,6 +53,34 @@ def score_report(report: BacktestReport, *, min_trades: int = 3) -> float | None
     return report.mean_return_pct / (drawdown + 0.001)
 
 
+def _aggregate_reports(reports: list[BacktestReport | None]) -> BacktestReport | None:
+    """Combine per-scenario reports into one synthetic report for DB storage."""
+    valid = [r for r in reports if r is not None]
+    if not valid:
+        return None
+    total_trades = sum(r.total_trades for r in valid)
+    winning_trades = sum(r.winning_trades for r in valid)
+    losing_trades = sum(r.losing_trades for r in valid)
+    win_rate: float | None = winning_trades / total_trades if total_trades > 0 else None
+    mean_rets = [r.mean_return_pct for r in valid if r.mean_return_pct is not None]
+    mean_return_pct: float | None = sum(mean_rets) / len(mean_rets) if mean_rets else None
+    drawdowns = [r.max_drawdown_pct for r in valid if r.max_drawdown_pct is not None]
+    max_drawdown_pct: float | None = max(drawdowns) if drawdowns else None
+    sharpes = [r.sharpe_ratio for r in valid if r.sharpe_ratio is not None]
+    sharpe_ratio: float | None = sum(sharpes) / len(sharpes) if sharpes else None
+    return BacktestReport(
+        trades=(),
+        total_trades=total_trades,
+        winning_trades=winning_trades,
+        losing_trades=losing_trades,
+        win_rate=win_rate,
+        mean_return_pct=mean_return_pct,
+        max_drawdown_pct=max_drawdown_pct,
+        sharpe_ratio=sharpe_ratio,
+        strategy_name="aggregate",
+    )
+
+
 def run_sweep(
     *,
     scenario: ReplayScenario,
@@ -83,6 +111,64 @@ def run_sweep(
         report: BacktestReport | None = result.backtest_report  # type: ignore[assignment]
         s = score_report(report, min_trades=min_trades) if report is not None else None
         candidates.append(TuningCandidate(params=overrides, report=report, score=s))
+
+    return sorted(
+        candidates,
+        key=lambda c: (c.score is not None, c.score or 0.0),
+        reverse=True,
+    )
+
+
+def run_multi_scenario_sweep(
+    *,
+    scenarios: list[ReplayScenario],
+    base_env: dict[str, str],
+    grid: ParameterGrid | None = None,
+    min_trades_per_scenario: int = 2,
+    aggregate: str = "min",
+    signal_evaluator: "StrategySignalEvaluator | None" = None,
+) -> list[TuningCandidate]:
+    """Run a parameter grid sweep across multiple scenarios.
+
+    Each combination is evaluated against every scenario. The final score is
+    the aggregate (min or mean) of per-scenario scores. A combination is
+    disqualified (score=None) if ANY scenario yields fewer than
+    min_trades_per_scenario trades.
+    """
+    effective_grid = grid if grid is not None else DEFAULT_GRID
+    keys = list(effective_grid.keys())
+    value_lists = [effective_grid[k] for k in keys]
+
+    candidates: list[TuningCandidate] = []
+    for combo in itertools.product(*value_lists):
+        overrides = dict(zip(keys, combo))
+        merged_env = {**base_env, **overrides}
+        try:
+            settings = Settings.from_env(merged_env)
+        except ValueError:
+            continue
+
+        per_scenario_reports: list[BacktestReport | None] = []
+        per_scenario_scores: list[float | None] = []
+        runner = ReplayRunner(settings, signal_evaluator=signal_evaluator)
+        for scenario in scenarios:
+            result = runner.run(scenario)
+            report: BacktestReport | None = result.backtest_report  # type: ignore[assignment]
+            s = score_report(report, min_trades=min_trades_per_scenario) if report is not None else None
+            per_scenario_reports.append(report)
+            per_scenario_scores.append(s)
+
+        if any(s is None for s in per_scenario_scores):
+            agg_score: float | None = None
+        elif aggregate == "mean":
+            scored = [s for s in per_scenario_scores if s is not None]
+            agg_score = sum(scored) / len(scored)
+        else:  # "min"
+            scored = [s for s in per_scenario_scores if s is not None]
+            agg_score = min(scored)
+
+        agg_report = _aggregate_reports(per_scenario_reports)
+        candidates.append(TuningCandidate(params=overrides, report=agg_report, score=agg_score))
 
     return sorted(
         candidates,

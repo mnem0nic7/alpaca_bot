@@ -12,6 +12,7 @@ from alpaca_bot.tuning.sweep import (
     DEFAULT_GRID,
     ParameterGrid,
     TuningCandidate,
+    run_multi_scenario_sweep,
     run_sweep,
     score_report,
 )
@@ -174,3 +175,116 @@ def test_run_sweep_custom_grid_overrides_default() -> None:
     assert candidates[0].params["BREAKOUT_LOOKBACK_BARS"] == "22"
     assert candidates[0].params["RELATIVE_VOLUME_THRESHOLD"] == "1.6"
     assert candidates[0].params["DAILY_SMA_PERIOD"] == "18"
+
+
+# ---------------------------------------------------------------------------
+# run_multi_scenario_sweep
+# ---------------------------------------------------------------------------
+
+def test_run_multi_scenario_sweep_disqualifies_when_any_scenario_fails() -> None:
+    """When one scenario produces no trades, all combos are disqualified."""
+    golden = _make_golden_scenario()
+    quiet = _make_quiet_scenario()
+    small_grid: ParameterGrid = {
+        "BREAKOUT_LOOKBACK_BARS": ["20"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.5"],
+        "DAILY_SMA_PERIOD": ["20"],
+    }
+    candidates = run_multi_scenario_sweep(
+        scenarios=[golden, quiet],
+        base_env=_base_env(),
+        grid=small_grid,
+        min_trades_per_scenario=1,
+    )
+    assert len(candidates) == 1
+    assert candidates[0].score is None
+
+
+def test_run_multi_scenario_sweep_min_aggregate_uses_worst_case(monkeypatch) -> None:
+    """aggregate='min' returns the lowest per-scenario score."""
+    import alpaca_bot.tuning.sweep as sweep_module
+
+    quiet = _make_quiet_scenario()
+    call_results = [2.0, 0.5]
+    call_idx = [0]
+
+    def fake_score(report, *, min_trades):
+        result = call_results[call_idx[0] % len(call_results)]
+        call_idx[0] += 1
+        return result
+
+    monkeypatch.setattr(sweep_module, "score_report", fake_score)
+
+    small_grid: ParameterGrid = {
+        "BREAKOUT_LOOKBACK_BARS": ["20"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.5"],
+        "DAILY_SMA_PERIOD": ["20"],
+    }
+    candidates = run_multi_scenario_sweep(
+        scenarios=[quiet, quiet],
+        base_env=_base_env(),
+        grid=small_grid,
+        min_trades_per_scenario=1,
+        aggregate="min",
+    )
+    assert len(candidates) == 1
+    assert candidates[0].score == pytest.approx(0.5)
+
+
+def test_run_multi_scenario_sweep_mean_aggregate_averages_scores(monkeypatch) -> None:
+    """aggregate='mean' returns the average of per-scenario scores."""
+    import alpaca_bot.tuning.sweep as sweep_module
+
+    quiet = _make_quiet_scenario()
+    call_results = [2.0, 0.5]
+    call_idx = [0]
+
+    def fake_score(report, *, min_trades):
+        result = call_results[call_idx[0] % len(call_results)]
+        call_idx[0] += 1
+        return result
+
+    monkeypatch.setattr(sweep_module, "score_report", fake_score)
+
+    small_grid: ParameterGrid = {
+        "BREAKOUT_LOOKBACK_BARS": ["20"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.5"],
+        "DAILY_SMA_PERIOD": ["20"],
+    }
+    candidates = run_multi_scenario_sweep(
+        scenarios=[quiet, quiet],
+        base_env=_base_env(),
+        grid=small_grid,
+        min_trades_per_scenario=1,
+        aggregate="mean",
+    )
+    assert len(candidates) == 1
+    assert candidates[0].score == pytest.approx(1.25)  # (2.0 + 0.5) / 2
+
+
+def test_run_multi_scenario_sweep_aggregated_report_sums_trades() -> None:
+    """Aggregated report total_trades equals the sum of all per-scenario trades."""
+    from alpaca_bot.domain.models import ReplayScenario
+
+    golden = _make_golden_scenario()
+    golden2 = ReplayScenario(
+        name="golden2",
+        symbol=golden.symbol,
+        starting_equity=golden.starting_equity,
+        daily_bars=golden.daily_bars,
+        intraday_bars=golden.intraday_bars,
+    )
+    small_grid: ParameterGrid = {
+        "BREAKOUT_LOOKBACK_BARS": ["20"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.5"],
+        "DAILY_SMA_PERIOD": ["20"],
+    }
+    candidates = run_multi_scenario_sweep(
+        scenarios=[golden, golden2],
+        base_env=_base_env(),
+        grid=small_grid,
+        min_trades_per_scenario=1,
+    )
+    assert len(candidates) == 1
+    assert candidates[0].report is not None
+    assert candidates[0].report.total_trades == 2
