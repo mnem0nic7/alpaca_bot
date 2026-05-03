@@ -166,3 +166,45 @@ def test_evolve_cli_uses_strategy_grid_not_default(monkeypatch, tmp_path):
     grid = captured[0]["grid"]
     assert "EMA_PERIOD" in grid, "EMA_PERIOD should be in the ema_pullback grid"
     assert "BREAKOUT_LOOKBACK_BARS" not in grid, "BREAKOUT_LOOKBACK_BARS should not be in the ema_pullback grid"
+
+
+def test_validate_pct_errors_with_single_scenario(monkeypatch, tmp_path):
+    """--validate-pct combined with --scenario (single file) must exit with error."""
+    import json
+    from alpaca_bot.tuning import cli as module
+
+    _patch_env(monkeypatch)
+
+    scenario_file = tmp_path / "SYM_252d.json"
+    scenario_file.write_text(json.dumps({
+        "name": "test", "symbol": "SYM", "starting_equity": 100000.0,
+        "daily_bars": [], "intraday_bars": [],
+    }))
+
+    monkeypatch.setattr(sys, "argv", [
+        "evolve", "--scenario", str(scenario_file), "--validate-pct", "0.2", "--no-db",
+    ])
+
+    with pytest.raises(SystemExit):
+        module.main()
+
+
+def test_validate_pct_out_of_range(monkeypatch, tmp_path):
+    """--validate-pct values outside (0.0, 1.0) must exit with error."""
+    import json
+    from alpaca_bot.tuning import cli as module
+
+    _patch_env(monkeypatch)
+
+    for name in ("SYM_A_252d.json", "SYM_B_252d.json"):
+        (tmp_path / name).write_text(json.dumps({
+            "name": name.replace(".json", ""), "symbol": "SYM", "starting_equity": 100000.0,
+            "daily_bars": [], "intraday_bars": [],
+        }))
+
+    monkeypatch.setattr(sys, "argv", [
+        "evolve", "--scenario-dir", str(tmp_path), "--validate-pct", "1.5", "--no-db",
+    ])
+
+    with pytest.raises(SystemExit):
+        module.main()
