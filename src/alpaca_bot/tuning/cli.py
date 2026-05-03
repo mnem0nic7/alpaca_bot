@@ -10,56 +10,101 @@ from typing import Sequence
 
 from alpaca_bot.config import Settings
 from alpaca_bot.replay.runner import ReplayRunner
-from alpaca_bot.tuning.sweep import DEFAULT_GRID, ParameterGrid, TuningCandidate, run_sweep
+from alpaca_bot.strategy import STRATEGY_REGISTRY
+from alpaca_bot.tuning.sweep import (
+    DEFAULT_GRID,
+    ParameterGrid,
+    TuningCandidate,
+    run_multi_scenario_sweep,
+    run_sweep,
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="alpaca-bot-evolve")
-    parser.add_argument("--scenario", required=True, metavar="FILE",
-                        help="Replay scenario (JSON or YAML)")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--scenario", metavar="FILE",
+                       help="Replay scenario (JSON or YAML)")
+    group.add_argument("--scenario-dir", metavar="DIR",
+                       help="Directory of *.json scenario files (multi-scenario sweep)")
     parser.add_argument("--params-grid", metavar="FILE",
                         help="Parameter grid (JSON/YAML); defaults to built-in grid")
     parser.add_argument("--output-env", metavar="FILE",
                         help="Write winning env block to FILE")
     parser.add_argument("--min-trades", type=int, default=3,
                         help="Minimum trades required to score a candidate (default: 3)")
+    parser.add_argument("--strategy", default="breakout",
+                        choices=list(STRATEGY_REGISTRY),
+                        help="Strategy to sweep (default: breakout)")
+    parser.add_argument("--aggregate", default="min", choices=["min", "mean"],
+                        help="Score aggregation across scenarios: min (default) or mean")
     parser.add_argument("--no-db", action="store_true",
                         help="Skip DB persistence (just print results)")
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
-
-    settings = Settings.from_env()
-    runner = ReplayRunner(settings)
-    scenario = runner.load_scenario(args.scenario)
 
     grid: ParameterGrid = DEFAULT_GRID
     if args.params_grid:
         grid = _load_grid(args.params_grid)
 
+    signal_evaluator = STRATEGY_REGISTRY[args.strategy]
     base_env = dict(os.environ)
-    total_combos = 1
-    for vals in grid.values():
-        total_combos *= len(vals)
-    print(f"Running sweep: {total_combos} combinations over scenario '{scenario.name}'...")
-
     now = datetime.now(timezone.utc)
-    candidates = run_sweep(
-        scenario=scenario,
-        base_env=base_env,
-        grid=grid,
-        min_trades=args.min_trades,
-    )
+
+    if args.scenario:
+        scenario = ReplayRunner.load_scenario(args.scenario)
+        total_combos = 1
+        for vals in grid.values():
+            total_combos *= len(vals)
+        print(f"Running sweep: {total_combos} combinations over scenario '{scenario.name}'...")
+        candidates = run_sweep(
+            scenario=scenario,
+            base_env=base_env,
+            grid=grid,
+            min_trades=args.min_trades,
+            signal_evaluator=signal_evaluator,
+        )
+        scenario_name = scenario.name
+    else:
+        scenario_dir = Path(args.scenario_dir)
+        files = sorted(scenario_dir.glob("*.json"))
+        if len(files) < 2:
+            sys.exit(
+                f"--scenario-dir requires at least 2 *.json files; "
+                f"found {len(files)} in {scenario_dir}"
+            )
+        scenarios = [ReplayRunner.load_scenario(f) for f in files]
+        total_combos = 1
+        for vals in grid.values():
+            total_combos *= len(vals)
+        names = ", ".join(s.name for s in scenarios)
+        print(
+            f"Running multi-scenario sweep: {total_combos} combinations "
+            f"× {len(scenarios)} scenarios"
+        )
+        print(f"Scenarios: {names}")
+        candidates = run_multi_scenario_sweep(
+            scenarios=scenarios,
+            base_env=base_env,
+            grid=grid,
+            min_trades_per_scenario=args.min_trades,
+            aggregate=args.aggregate,
+            signal_evaluator=signal_evaluator,
+        )
+        scenario_name = "+".join(s.name for s in scenarios)
 
     scored = [c for c in candidates if c.score is not None]
     unscored = [c for c in candidates if c.score is None]
-    print(f"Scored: {len(scored)} / {len(candidates)} candidates "
-          f"({len(unscored)} disqualified, min_trades={args.min_trades})")
+    print(
+        f"Scored: {len(scored)} / {len(candidates)} candidates "
+        f"({len(unscored)} disqualified, min_trades={args.min_trades})"
+    )
 
     best = scored[0] if scored else None
 
     _print_top_candidates(scored[:10])
 
     if best is None:
-        print("\nNo scored candidates — increase --min-trades or provide a longer scenario.")
+        print("\nNo scored candidates — increase --min-trades or provide longer scenarios.")
         return 1
 
     env_block = _format_env_block(best, now)
@@ -70,10 +115,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Winning env block written to {args.output_env}")
 
     if not args.no_db:
+        settings = Settings.from_env()
         _save_to_db(
             settings=settings,
             candidates=candidates,
-            scenario_name=scenario.name,
+            scenario_name=scenario_name,
             now=now,
         )
 

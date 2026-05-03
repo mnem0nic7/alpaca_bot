@@ -87,3 +87,51 @@ def test_sweep_cli_strategy_flag_passes_evaluator(monkeypatch, tmp_path):
 
     assert captured
     assert captured[0].get("signal_evaluator") is STRATEGY_REGISTRY["momentum"]
+
+
+def test_evolve_cli_scenario_dir_calls_multi_sweep(monkeypatch, tmp_path):
+    """--scenario-dir with 2+ files calls run_multi_scenario_sweep, not run_sweep."""
+    import json
+    from alpaca_bot.tuning import cli as module
+
+    _patch_env(monkeypatch)
+
+    for name in ("SYM_A_252d.json", "SYM_B_252d.json"):
+        (tmp_path / name).write_text(json.dumps({
+            "name": name.replace(".json", ""), "symbol": "SYM", "starting_equity": 100000.0,
+            "daily_bars": [], "intraday_bars": [],
+        }))
+
+    captured_multi: list[dict] = []
+    captured_single: list[dict] = []
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", lambda **kw: captured_multi.append(kw) or [])
+    monkeypatch.setattr(module, "run_sweep", lambda **kw: captured_single.append(kw) or [])
+    monkeypatch.setattr(sys, "argv", ["evolve", "--scenario-dir", str(tmp_path), "--no-db"])
+
+    try:
+        module.main()
+    except SystemExit:
+        pass
+
+    assert captured_multi, "run_multi_scenario_sweep was not called"
+    assert not captured_single, "run_sweep should not be called when --scenario-dir is used"
+    assert len(captured_multi[0]["scenarios"]) == 2
+
+
+def test_evolve_cli_scenario_dir_requires_at_least_two_files(monkeypatch, tmp_path):
+    """--scenario-dir with fewer than 2 JSON files exits with an error."""
+    import json
+    from alpaca_bot.tuning import cli as module
+
+    _patch_env(monkeypatch)
+
+    (tmp_path / "only_one.json").write_text(json.dumps({
+        "name": "only_one", "symbol": "SYM", "starting_equity": 100000.0,
+        "daily_bars": [], "intraday_bars": [],
+    }))
+
+    monkeypatch.setattr(sys, "argv", ["evolve", "--scenario-dir", str(tmp_path), "--no-db"])
+
+    with pytest.raises(SystemExit):
+        module.main()
