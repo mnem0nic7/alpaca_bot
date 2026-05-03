@@ -185,6 +185,7 @@ def _report_to_dict(report: BacktestReport) -> dict:
         "mean_return_pct": report.mean_return_pct,
         "max_drawdown_pct": report.max_drawdown_pct,
         "sharpe_ratio": report.sharpe_ratio,
+        "profit_factor": report.profit_factor,
         "trades": [_trade_to_dict(t) for t in report.trades],
     }
 
@@ -227,7 +228,7 @@ def _format_compare_json(reports: list[BacktestReport]) -> str:
 def _format_compare_csv(reports: list[BacktestReport]) -> str:
     fieldnames = [
         "strategy", "total_trades", "win_rate",
-        "mean_return_pct", "max_drawdown_pct", "sharpe_ratio",
+        "mean_return_pct", "max_drawdown_pct", "sharpe_ratio", "profit_factor",
     ]
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
@@ -246,4 +247,5 @@ def _compare_row(report: BacktestReport) -> dict:
         "mean_return_pct": report.mean_return_pct,
         "max_drawdown_pct": report.max_drawdown_pct,
         "sharpe_ratio": report.sharpe_ratio,
+        "profit_factor": report.profit_factor,
     }

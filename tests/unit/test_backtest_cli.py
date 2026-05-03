@@ -391,7 +391,7 @@ def test_compare_json_output_shape(monkeypatch) -> None:
     row = parsed[0]
     assert set(row.keys()) == {
         "strategy", "total_trades", "win_rate",
-        "mean_return_pct", "max_drawdown_pct", "sharpe_ratio",
+        "mean_return_pct", "max_drawdown_pct", "sharpe_ratio", "profit_factor",
     }
     assert "trades" not in row
 
@@ -423,7 +423,7 @@ def test_compare_csv_output_has_header_and_rows(monkeypatch) -> None:
     assert len(rows) == 2
     assert set(reader.fieldnames) == {
         "strategy", "total_trades", "win_rate",
-        "mean_return_pct", "max_drawdown_pct", "sharpe_ratio",
+        "mean_return_pct", "max_drawdown_pct", "sharpe_ratio", "profit_factor",
     }
 
 

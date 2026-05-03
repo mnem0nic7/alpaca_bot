@@ -100,15 +100,23 @@ def _parse_grid(specs: list[str]) -> ParameterGrid:
 
 
 def score_report(report: BacktestReport, *, min_trades: int = 3) -> float | None:
-    """Sharpe-first composite score; None if disqualified (< min_trades)."""
+    """Sharpe-first composite score; None if disqualified (< min_trades).
+
+    When profit_factor < 1.0 (net-losing strategy), the score is scaled down
+    by profit_factor so that net-profitable strategies rank higher at equal Sharpe.
+    """
     if report.total_trades < min_trades:
         return None
     if report.sharpe_ratio is not None:
-        return report.sharpe_ratio
-    if report.mean_return_pct is None:
+        base = report.sharpe_ratio
+    elif report.mean_return_pct is None:
         return None
-    drawdown = report.max_drawdown_pct or 0.0
-    return report.mean_return_pct / (drawdown + 0.001)
+    else:
+        drawdown = report.max_drawdown_pct or 0.0
+        base = report.mean_return_pct / (drawdown + 0.001)
+    if report.profit_factor is not None and report.profit_factor < 1.0:
+        base *= report.profit_factor
+    return base
 
 
 def _aggregate_reports(reports: list[BacktestReport | None]) -> BacktestReport | None:
@@ -126,6 +134,8 @@ def _aggregate_reports(reports: list[BacktestReport | None]) -> BacktestReport |
     max_drawdown_pct: float | None = max(drawdowns) if drawdowns else None
     sharpes = [r.sharpe_ratio for r in valid if r.sharpe_ratio is not None]
     sharpe_ratio: float | None = sum(sharpes) / len(sharpes) if sharpes else None
+    profit_factors = [r.profit_factor for r in valid if r.profit_factor is not None]
+    profit_factor: float | None = sum(profit_factors) / len(profit_factors) if profit_factors else None
     return BacktestReport(
         trades=(),
         total_trades=total_trades,
@@ -135,6 +145,7 @@ def _aggregate_reports(reports: list[BacktestReport | None]) -> BacktestReport |
         mean_return_pct=mean_return_pct,
         max_drawdown_pct=max_drawdown_pct,
         sharpe_ratio=sharpe_ratio,
+        profit_factor=profit_factor,
         strategy_name="aggregate",
     )
 

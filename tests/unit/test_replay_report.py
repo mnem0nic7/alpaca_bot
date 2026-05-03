@@ -329,3 +329,59 @@ def test_replay_runner_attaches_backtest_report_to_result() -> None:
     # Golden scenario ends with EOD_EXIT — should have 1 trade
     assert result.backtest_report.total_trades == 1
     assert result.backtest_report.trades[0].exit_reason == "eod"
+
+
+# ---------------------------------------------------------------------------
+# profit_factor
+# ---------------------------------------------------------------------------
+
+
+def test_profit_factor_none_for_zero_trades() -> None:
+    result = _make_result([])
+    assert build_backtest_report(result).profit_factor is None
+
+
+def test_profit_factor_none_when_no_losses() -> None:
+    """All winners → no losses to divide by → None (not penalized)."""
+    result = _make_result([
+        _fill(entry_price=150.0, quantity=10, t=_T0),
+        _eod_exit(exit_price=155.0, t=_T1),
+    ])
+    report = build_backtest_report(result)
+    assert report.profit_factor is None
+
+
+def test_profit_factor_zero_when_all_losers() -> None:
+    """All losers → gross_wins = 0 → profit_factor = 0.0."""
+    result = _make_result([
+        _fill(entry_price=150.0, quantity=10, t=_T0),
+        _stop_exit(exit_price=148.0, t=_T1),  # pnl = -20
+    ])
+    report = build_backtest_report(result)
+    assert report.profit_factor == pytest.approx(0.0)
+
+
+def test_profit_factor_correct_with_mixed_trades() -> None:
+    """2 wins (+50 + +50) against 1 loss (-20) → profit_factor = 100/20 = 5.0."""
+    _T3 = datetime(2026, 4, 24, 14, 45, tzinfo=timezone.utc)
+    _T4 = datetime(2026, 4, 24, 15, 0, tzinfo=timezone.utc)
+    result = _make_result([
+        _fill(entry_price=150.0, quantity=10, t=_T0),
+        _eod_exit(exit_price=155.0, t=_T1),  # pnl = +50
+        ReplayEvent(
+            event_type=IntentType.ENTRY_FILLED, symbol="AAPL", timestamp=_T1,
+            details={"entry_price": 155.0, "quantity": 10, "initial_stop_price": 153.0},
+        ),
+        _eod_exit(exit_price=160.0, t=_T2),  # pnl = +50
+        ReplayEvent(
+            event_type=IntentType.ENTRY_FILLED, symbol="AAPL", timestamp=_T3,
+            details={"entry_price": 160.0, "quantity": 10, "initial_stop_price": 158.0},
+        ),
+        ReplayEvent(
+            event_type=IntentType.STOP_HIT, symbol="AAPL", timestamp=_T4,
+            details={"exit_price": 158.0},  # pnl = -20
+        ),
+    ])
+    report = build_backtest_report(result)
+    assert report.total_trades == 3
+    assert report.profit_factor == pytest.approx(100.0 / 20.0)

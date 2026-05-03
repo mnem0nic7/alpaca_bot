@@ -30,6 +30,7 @@ class BacktestReport:
     mean_return_pct: float | None   # None when total_trades == 0
     max_drawdown_pct: float | None  # None when peak equity never exceeds 0
     sharpe_ratio: float | None = None
+    profit_factor: float | None = None  # gross_wins_pnl / abs(gross_losses_pnl); None when no losses
     strategy_name: str = "breakout"
 
 
@@ -54,6 +55,9 @@ def build_backtest_report(result: ReplayResult, strategy_name: str = "breakout")
     win_rate = winners / total
     mean_return_pct = sum(t.return_pct for t in trades) / total
     max_drawdown_pct = _compute_max_drawdown(trades, result.scenario.starting_equity)
+    gross_wins_pnl = sum(t.pnl for t in trades if t.pnl > 0)
+    gross_losses_pnl = abs(sum(t.pnl for t in trades if t.pnl < 0))
+    profit_factor = gross_wins_pnl / gross_losses_pnl if gross_losses_pnl > 0 else None
 
     return BacktestReport(
         trades=tuple(trades),
@@ -64,6 +68,7 @@ def build_backtest_report(result: ReplayResult, strategy_name: str = "breakout")
         mean_return_pct=mean_return_pct,
         max_drawdown_pct=max_drawdown_pct,
         sharpe_ratio=_compute_sharpe(trades),
+        profit_factor=profit_factor,
         strategy_name=strategy_name,
     )
 

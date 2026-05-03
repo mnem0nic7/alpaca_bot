@@ -312,3 +312,37 @@ def test_strategy_grids_keys_match_strategy_params() -> None:
     assert "BREAKOUT_LOOKBACK_BARS" not in STRATEGY_GRIDS["ema_pullback"]
     assert "BB_PERIOD" in STRATEGY_GRIDS["bb_squeeze"]
     assert "BREAKOUT_LOOKBACK_BARS" not in STRATEGY_GRIDS["bb_squeeze"]
+
+
+# ---------------------------------------------------------------------------
+# score_report: profit_factor penalty
+# ---------------------------------------------------------------------------
+
+def test_score_report_penalizes_subunit_profit_factor() -> None:
+    """profit_factor=0.7 with sharpe=2.0 → score = 2.0 * 0.7 = 1.4."""
+    report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+        win_rate=0.6, mean_return_pct=0.02, max_drawdown_pct=0.05,
+        sharpe_ratio=2.0, profit_factor=0.7,
+    )
+    assert score_report(report, min_trades=3) == pytest.approx(1.4)
+
+
+def test_score_report_no_penalty_when_profit_factor_at_or_above_one() -> None:
+    """profit_factor=1.5 with sharpe=2.0 → score = 2.0 (no upward scaling)."""
+    report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+        win_rate=0.6, mean_return_pct=0.02, max_drawdown_pct=0.05,
+        sharpe_ratio=2.0, profit_factor=1.5,
+    )
+    assert score_report(report, min_trades=3) == pytest.approx(2.0)
+
+
+def test_score_report_no_penalty_when_profit_factor_none() -> None:
+    """profit_factor=None (no losses) → score is unchanged from Sharpe."""
+    report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=5, losing_trades=0,
+        win_rate=1.0, mean_return_pct=0.05, max_drawdown_pct=None,
+        sharpe_ratio=3.0, profit_factor=None,
+    )
+    assert score_report(report, min_trades=3) == pytest.approx(3.0)
