@@ -36,6 +36,8 @@ class BacktestReport:
     eod_wins: int = 0
     eod_losses: int = 0
     avg_hold_minutes: float | None = None
+    avg_win_return_pct: float | None = None   # mean return_pct of winning trades; None if no winners
+    avg_loss_return_pct: float | None = None  # mean return_pct of losing/break-even trades; None if no losers
     max_consecutive_losses: int = 0
     max_consecutive_wins: int = 0
     strategy_name: str = "breakout"
@@ -71,6 +73,7 @@ def build_backtest_report(result: ReplayResult, strategy_name: str = "breakout")
     eod_losses = sum(1 for t in trades if t.exit_reason == "eod" and t.pnl <= 0)
     hold_minutes = [(t.exit_time - t.entry_time).total_seconds() / 60 for t in trades]
     avg_hold_minutes = sum(hold_minutes) / len(hold_minutes) if hold_minutes else None
+    avg_win_return_pct, avg_loss_return_pct = _compute_avg_win_loss_return(trades)
     max_consecutive_losses, max_consecutive_wins = _compute_streak_stats(trades)
 
     return BacktestReport(
@@ -88,6 +91,8 @@ def build_backtest_report(result: ReplayResult, strategy_name: str = "breakout")
         eod_wins=eod_wins,
         eod_losses=eod_losses,
         avg_hold_minutes=avg_hold_minutes,
+        avg_win_return_pct=avg_win_return_pct,
+        avg_loss_return_pct=avg_loss_return_pct,
         max_consecutive_losses=max_consecutive_losses,
         max_consecutive_wins=max_consecutive_wins,
         strategy_name=strategy_name,
@@ -127,6 +132,22 @@ def _extract_trades(events: list[ReplayEvent]) -> list[ReplayTradeRecord]:
             )
 
     return trades
+
+
+def _compute_avg_win_loss_return(
+    trades: list[ReplayTradeRecord],
+) -> tuple[float | None, float | None]:
+    """Return (avg_win_return_pct, avg_loss_return_pct).
+
+    Win bucket: pnl > 0.  Loss bucket: pnl <= 0 (includes break-even, consistent
+    with the winning_trades / losing_trades field convention).
+    Returns None for each bucket when no trades fall in that bucket.
+    """
+    win_returns = [t.return_pct for t in trades if t.pnl > 0]
+    loss_returns = [t.return_pct for t in trades if t.pnl <= 0]
+    avg_win = sum(win_returns) / len(win_returns) if win_returns else None
+    avg_loss = sum(loss_returns) / len(loss_returns) if loss_returns else None
+    return avg_win, avg_loss
 
 
 def _compute_streak_stats(trades: list[ReplayTradeRecord]) -> tuple[int, int]:

@@ -524,3 +524,44 @@ def test_max_consecutive_losses_break_even_counts_as_loss() -> None:
     losses, wins = _compute_streak_stats(trades)
     assert losses == 2
     assert wins == 1
+
+
+# ---------------------------------------------------------------------------
+# Avg win / avg loss return pct
+# ---------------------------------------------------------------------------
+
+
+def test_avg_win_return_pct_none_when_no_winners() -> None:
+    """All-loser scenario → avg_win_return_pct is None, avg_loss_return_pct is computed."""
+    from alpaca_bot.replay.report import _compute_avg_win_loss_return
+    trades = [_make_trade(-5.0), _make_trade(-3.0)]
+    avg_win, avg_loss = _compute_avg_win_loss_return(trades)
+    assert avg_win is None
+    assert avg_loss == pytest.approx((-5.0 / 100.0 + -3.0 / 100.0) / 2)
+
+
+def test_avg_loss_return_pct_none_when_no_losers() -> None:
+    """All-winner scenario → avg_loss_return_pct is None, avg_win_return_pct is computed."""
+    from alpaca_bot.replay.report import _compute_avg_win_loss_return
+    trades = [_make_trade(10.0), _make_trade(4.0)]
+    avg_win, avg_loss = _compute_avg_win_loss_return(trades)
+    assert avg_win == pytest.approx((10.0 / 100.0 + 4.0 / 100.0) / 2)
+    assert avg_loss is None
+
+
+def test_avg_win_loss_correct_values() -> None:
+    """Mixed trades: wins=[+10, +4], losses=[-5] → avg_win=+0.07, avg_loss=-0.05."""
+    from alpaca_bot.replay.report import _compute_avg_win_loss_return
+    trades = [_make_trade(10.0), _make_trade(-5.0), _make_trade(4.0)]
+    avg_win, avg_loss = _compute_avg_win_loss_return(trades)
+    assert avg_win == pytest.approx((10.0 / 100.0 + 4.0 / 100.0) / 2)
+    assert avg_loss == pytest.approx(-5.0 / 100.0)
+
+
+def test_avg_loss_includes_break_even_trades() -> None:
+    """pnl=0.0 trade (return_pct=0.0) belongs to the loss bucket (pnl <= 0 convention)."""
+    from alpaca_bot.replay.report import _compute_avg_win_loss_return
+    trades = [_make_trade(10.0), _make_trade(0.0), _make_trade(-4.0)]
+    avg_win, avg_loss = _compute_avg_win_loss_return(trades)
+    assert avg_win == pytest.approx(10.0 / 100.0)
+    assert avg_loss == pytest.approx((0.0 / 100.0 + -4.0 / 100.0) / 2)
