@@ -242,19 +242,13 @@ def test_evaluate_candidates_oos_returns_parallel_scores():
     from alpaca_bot.tuning.sweep import evaluate_candidates_oos
 
     golden = _make_golden_scenario()
-    quiet = _make_quiet_scenario()
 
-    # Build two hand-crafted candidates with known params
-    from alpaca_bot.tuning.sweep import TuningCandidate
-    import os
-
-    base_env = dict(os.environ)
-
-    # Use params from the default grid that produce trades on the golden scenario
+    # Build two hand-crafted candidates with known params.
+    # Merge with _base_env() so Settings.from_env() gets all required fields.
     params = {
-        "BREAKOUT_LOOKBACK_BARS": "5",
-        "RELATIVE_VOLUME_THRESHOLD": "1.0",
-        "DAILY_SMA_PERIOD": "5",
+        "BREAKOUT_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_THRESHOLD": "1.5",
+        "DAILY_SMA_PERIOD": "20",
     }
     c1 = TuningCandidate(params=params, report=None, score=0.5)
     c2 = TuningCandidate(params=params, report=None, score=0.3)
@@ -262,7 +256,7 @@ def test_evaluate_candidates_oos_returns_parallel_scores():
     scores = evaluate_candidates_oos(
         candidates=[c1, c2],
         oos_scenarios=[golden],
-        base_env=base_env,
+        base_env=_base_env(),
         min_trades=1,
         aggregate="min",
     )
