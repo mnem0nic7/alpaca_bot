@@ -13,6 +13,7 @@ from alpaca_bot.replay.runner import ReplayRunner
 from alpaca_bot.strategy import STRATEGY_REGISTRY
 from alpaca_bot.tuning.sweep import (
     DEFAULT_GRID,
+    STRATEGY_GRIDS,
     ParameterGrid,
     TuningCandidate,
     run_multi_scenario_sweep,
@@ -42,7 +43,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Skip DB persistence (just print results)")
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
 
-    grid: ParameterGrid = DEFAULT_GRID
+    grid: ParameterGrid = STRATEGY_GRIDS.get(args.strategy, DEFAULT_GRID)
     if args.params_grid:
         grid = _load_grid(args.params_grid)
 

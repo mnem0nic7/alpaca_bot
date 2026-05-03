@@ -288,3 +288,27 @@ def test_run_multi_scenario_sweep_aggregated_report_sums_trades() -> None:
     assert len(candidates) == 1
     assert candidates[0].report is not None
     assert candidates[0].report.total_trades == 2
+
+
+# ---------------------------------------------------------------------------
+# STRATEGY_GRIDS
+# ---------------------------------------------------------------------------
+
+def test_strategy_grids_covers_all_registry_entries() -> None:
+    """Every strategy in STRATEGY_REGISTRY must have an entry in STRATEGY_GRIDS."""
+    from alpaca_bot.strategy import STRATEGY_REGISTRY
+    from alpaca_bot.tuning.sweep import STRATEGY_GRIDS
+
+    missing = [name for name in STRATEGY_REGISTRY if name not in STRATEGY_GRIDS]
+    assert not missing, f"Strategies missing from STRATEGY_GRIDS: {missing}"
+
+
+def test_strategy_grids_keys_match_strategy_params() -> None:
+    """Spot-check: each strategy grid contains its unique params, not breakout params."""
+    from alpaca_bot.tuning.sweep import STRATEGY_GRIDS
+
+    assert "BREAKOUT_LOOKBACK_BARS" in STRATEGY_GRIDS["breakout"]
+    assert "EMA_PERIOD" in STRATEGY_GRIDS["ema_pullback"]
+    assert "BREAKOUT_LOOKBACK_BARS" not in STRATEGY_GRIDS["ema_pullback"]
+    assert "BB_PERIOD" in STRATEGY_GRIDS["bb_squeeze"]
+    assert "BREAKOUT_LOOKBACK_BARS" not in STRATEGY_GRIDS["bb_squeeze"]

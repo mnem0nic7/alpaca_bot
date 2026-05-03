@@ -29,6 +29,64 @@ DEFAULT_GRID: ParameterGrid = {
     "DAILY_SMA_PERIOD": ["10", "20", "30"],
 }
 
+STRATEGY_GRIDS: dict[str, ParameterGrid] = {
+    "breakout": {
+        "BREAKOUT_LOOKBACK_BARS": ["15", "20", "25", "30"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "1.8", "2.0"],
+        "DAILY_SMA_PERIOD": ["10", "20", "30"],
+    },
+    "momentum": {
+        "PRIOR_DAY_HIGH_LOOKBACK_BARS": ["1", "2", "3"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "1.8", "2.0"],
+        "ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
+    },
+    "orb": {
+        "ORB_OPENING_BARS": ["1", "2", "3", "4"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "1.8"],
+        "ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
+    },
+    "high_watermark": {
+        "HIGH_WATERMARK_LOOKBACK_DAYS": ["63", "126", "252"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "1.8", "2.0"],
+        "ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
+    },
+    "ema_pullback": {
+        "EMA_PERIOD": ["7", "9", "12", "20"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "1.8"],
+        "ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
+    },
+    "vwap_reversion": {
+        "VWAP_DIP_THRESHOLD_PCT": ["0.01", "0.015", "0.02", "0.025"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "1.8"],
+        "ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
+    },
+    "gap_and_go": {
+        "GAP_THRESHOLD_PCT": ["0.01", "0.015", "0.02", "0.025"],
+        "GAP_VOLUME_THRESHOLD": ["1.5", "2.0", "2.5"],
+        "ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
+    },
+    "bull_flag": {
+        "BULL_FLAG_MIN_RUN_PCT": ["0.015", "0.02", "0.03"],
+        "BULL_FLAG_CONSOLIDATION_RANGE_PCT": ["0.4", "0.5", "0.6"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "2.0"],
+        "ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
+    },
+    "vwap_cross": {
+        "RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "1.8", "2.0"],
+        "ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
+    },
+    "bb_squeeze": {
+        "BB_PERIOD": ["15", "20", "25"],
+        "BB_SQUEEZE_THRESHOLD_PCT": ["0.02", "0.03", "0.04"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "2.0"],
+    },
+    "failed_breakdown": {
+        "FAILED_BREAKDOWN_VOLUME_RATIO": ["1.5", "2.0", "2.5", "3.0"],
+        "FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT": ["0.001", "0.002", "0.003"],
+        "ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
+    },
+}
+
 
 def _parse_grid(specs: list[str]) -> ParameterGrid:
     """Parse KEY=v1,v2,... strings into a ParameterGrid dict."""
