@@ -455,3 +455,72 @@ def test_avg_hold_minutes_correct() -> None:
     ])
     report = build_backtest_report(result)
     assert report.avg_hold_minutes == pytest.approx(15.0)
+
+
+# ---------------------------------------------------------------------------
+# Streak stats: max_consecutive_losses / max_consecutive_wins
+# ---------------------------------------------------------------------------
+
+
+def _make_trade(pnl: float) -> "ReplayTradeRecord":
+    from alpaca_bot.replay.report import ReplayTradeRecord
+    return ReplayTradeRecord(
+        symbol="AAPL",
+        entry_price=100.0,
+        exit_price=100.0 + pnl,
+        quantity=1,
+        entry_time=_T0,
+        exit_time=_T1,
+        exit_reason="eod",
+        pnl=pnl,
+        return_pct=pnl / 100.0,
+    )
+
+
+def test_max_consecutive_losses_zero_for_no_trades() -> None:
+    """Zero trades → both streak fields are 0."""
+    report = BacktestReport(
+        trades=(),
+        total_trades=0, winning_trades=0, losing_trades=0,
+        win_rate=None, mean_return_pct=None, max_drawdown_pct=None,
+    )
+    assert report.max_consecutive_losses == 0
+    assert report.max_consecutive_wins == 0
+
+
+def test_max_consecutive_losses_all_winners() -> None:
+    """3 consecutive wins → max_consecutive_losses=0, max_consecutive_wins=3."""
+    from alpaca_bot.replay.report import _compute_streak_stats
+    losses, wins = _compute_streak_stats([_make_trade(10.0)] * 3)
+    assert losses == 0
+    assert wins == 3
+
+
+def test_max_consecutive_losses_mixed_streak() -> None:
+    """W L L W L L L → max_consecutive_losses=3, max_consecutive_wins=1."""
+    from alpaca_bot.replay.report import _compute_streak_stats
+    trades = [
+        _make_trade(10.0),   # W
+        _make_trade(-5.0),   # L
+        _make_trade(-3.0),   # L
+        _make_trade(8.0),    # W
+        _make_trade(-1.0),   # L
+        _make_trade(-2.0),   # L
+        _make_trade(-4.0),   # L
+    ]
+    losses, wins = _compute_streak_stats(trades)
+    assert losses == 3
+    assert wins == 1
+
+
+def test_max_consecutive_losses_break_even_counts_as_loss() -> None:
+    """pnl=0.0 increments the loss streak (not a win)."""
+    from alpaca_bot.replay.report import _compute_streak_stats
+    trades = [
+        _make_trade(10.0),  # W
+        _make_trade(0.0),   # break-even → counts as loss
+        _make_trade(0.0),   # L
+    ]
+    losses, wins = _compute_streak_stats(trades)
+    assert losses == 2
+    assert wins == 1

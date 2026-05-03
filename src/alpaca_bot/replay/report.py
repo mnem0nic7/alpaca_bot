@@ -36,6 +36,8 @@ class BacktestReport:
     eod_wins: int = 0
     eod_losses: int = 0
     avg_hold_minutes: float | None = None
+    max_consecutive_losses: int = 0
+    max_consecutive_wins: int = 0
     strategy_name: str = "breakout"
 
 
@@ -69,6 +71,7 @@ def build_backtest_report(result: ReplayResult, strategy_name: str = "breakout")
     eod_losses = sum(1 for t in trades if t.exit_reason == "eod" and t.pnl <= 0)
     hold_minutes = [(t.exit_time - t.entry_time).total_seconds() / 60 for t in trades]
     avg_hold_minutes = sum(hold_minutes) / len(hold_minutes) if hold_minutes else None
+    max_consecutive_losses, max_consecutive_wins = _compute_streak_stats(trades)
 
     return BacktestReport(
         trades=tuple(trades),
@@ -85,6 +88,8 @@ def build_backtest_report(result: ReplayResult, strategy_name: str = "breakout")
         eod_wins=eod_wins,
         eod_losses=eod_losses,
         avg_hold_minutes=avg_hold_minutes,
+        max_consecutive_losses=max_consecutive_losses,
+        max_consecutive_wins=max_consecutive_wins,
         strategy_name=strategy_name,
     )
 
@@ -122,6 +127,26 @@ def _extract_trades(events: list[ReplayEvent]) -> list[ReplayTradeRecord]:
             )
 
     return trades
+
+
+def _compute_streak_stats(trades: list[ReplayTradeRecord]) -> tuple[int, int]:
+    """Return (max_consecutive_losses, max_consecutive_wins).
+
+    Break-even trades (pnl == 0.0) count as losses, consistent with
+    winning_trades which counts only pnl > 0.
+    """
+    max_losses = max_wins = 0
+    cur_losses = cur_wins = 0
+    for t in trades:
+        if t.pnl > 0:
+            cur_wins += 1
+            cur_losses = 0
+        else:
+            cur_losses += 1
+            cur_wins = 0
+        max_losses = max(max_losses, cur_losses)
+        max_wins = max(max_wins, cur_wins)
+    return max_losses, max_wins
 
 
 def _compute_sharpe(trades: list[ReplayTradeRecord]) -> float | None:
