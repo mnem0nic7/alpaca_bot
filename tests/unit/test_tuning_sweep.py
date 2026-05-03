@@ -393,3 +393,23 @@ def test_aggregate_reports_max_consecutive_losses_uses_worst_case() -> None:
     assert agg is not None
     assert agg.max_consecutive_losses == 4
     assert agg.max_consecutive_wins == 3
+
+
+def test_aggregate_reports_averages_win_loss_return_pct() -> None:
+    """Aggregated avg_win/avg_loss are means of non-None per-scenario values."""
+    from alpaca_bot.tuning.sweep import _aggregate_reports
+
+    r1 = BacktestReport(
+        trades=(), total_trades=3, winning_trades=2, losing_trades=1,
+        win_rate=0.67, mean_return_pct=0.02, max_drawdown_pct=None,
+        avg_win_return_pct=0.04, avg_loss_return_pct=-0.02,
+    )
+    r2 = BacktestReport(
+        trades=(), total_trades=2, winning_trades=1, losing_trades=1,
+        win_rate=0.5, mean_return_pct=0.01, max_drawdown_pct=None,
+        avg_win_return_pct=0.02, avg_loss_return_pct=-0.01,
+    )
+    agg = _aggregate_reports([r1, r2])
+    assert agg is not None
+    assert agg.avg_win_return_pct == pytest.approx((0.04 + 0.02) / 2)
+    assert agg.avg_loss_return_pct == pytest.approx((-0.02 + -0.01) / 2)
