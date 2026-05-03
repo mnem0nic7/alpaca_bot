@@ -373,3 +373,23 @@ def test_aggregate_reports_sums_exit_type_fields() -> None:
     assert agg.eod_wins == 2
     assert agg.eod_losses == 0
     assert agg.avg_hold_minutes == pytest.approx(25.0)
+
+
+def test_aggregate_reports_max_consecutive_losses_uses_worst_case() -> None:
+    """Aggregated max_consecutive_losses is max across scenarios (worst case)."""
+    from alpaca_bot.tuning.sweep import _aggregate_reports
+
+    r1 = BacktestReport(
+        trades=(), total_trades=3, winning_trades=2, losing_trades=1,
+        win_rate=0.67, mean_return_pct=0.02, max_drawdown_pct=None,
+        max_consecutive_losses=2, max_consecutive_wins=3,
+    )
+    r2 = BacktestReport(
+        trades=(), total_trades=4, winning_trades=2, losing_trades=2,
+        win_rate=0.5, mean_return_pct=0.01, max_drawdown_pct=None,
+        max_consecutive_losses=4, max_consecutive_wins=1,
+    )
+    agg = _aggregate_reports([r1, r2])
+    assert agg is not None
+    assert agg.max_consecutive_losses == 4
+    assert agg.max_consecutive_wins == 3

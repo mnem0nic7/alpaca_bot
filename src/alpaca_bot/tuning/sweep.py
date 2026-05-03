@@ -142,6 +142,8 @@ def _aggregate_reports(reports: list[BacktestReport | None]) -> BacktestReport |
     eod_losses = sum(r.eod_losses for r in valid)
     hold_mins = [r.avg_hold_minutes for r in valid if r.avg_hold_minutes is not None]
     avg_hold_minutes: float | None = sum(hold_mins) / len(hold_mins) if hold_mins else None
+    max_consecutive_losses = max(r.max_consecutive_losses for r in valid)
+    max_consecutive_wins = max(r.max_consecutive_wins for r in valid)
     return BacktestReport(
         trades=(),
         total_trades=total_trades,
@@ -157,6 +159,8 @@ def _aggregate_reports(reports: list[BacktestReport | None]) -> BacktestReport |
         eod_wins=eod_wins,
         eod_losses=eod_losses,
         avg_hold_minutes=avg_hold_minutes,
+        max_consecutive_losses=max_consecutive_losses,
+        max_consecutive_wins=max_consecutive_wins,
         strategy_name="aggregate",
     )
 
