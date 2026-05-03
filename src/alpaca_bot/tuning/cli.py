@@ -150,8 +150,9 @@ def _print_top_candidates(scored: list[TuningCandidate]) -> None:
         pf = f"{report.profit_factor:.2f}" if (report and report.profit_factor is not None) else "—"
         stop_total = (report.stop_wins + report.stop_losses) if report else 0
         stop_pct = f"{stop_total / trades:.0%}" if trades > 0 else "—"
+        max_cl = report.max_consecutive_losses if report else 0
         params_str = " ".join(f"{k}={v}" for k, v in c.params.items())
-        print(f"  [{i:2d}] score={sharpe:>8s}  trades={trades:2d}  win={win:>5s}  pf={pf:>5s}  stop%={stop_pct:>4s}  {params_str}")
+        print(f"  [{i:2d}] score={sharpe:>8s}  trades={trades:2d}  win={win:>5s}  pf={pf:>5s}  stop%={stop_pct:>4s}  maxcl={max_cl:>2d}  {params_str}")
 
 
 def _format_env_block(best: TuningCandidate, now: datetime) -> str:
