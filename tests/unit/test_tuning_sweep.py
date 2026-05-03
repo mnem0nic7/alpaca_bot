@@ -413,3 +413,33 @@ def test_aggregate_reports_averages_win_loss_return_pct() -> None:
     assert agg is not None
     assert agg.avg_win_return_pct == pytest.approx((0.04 + 0.02) / 2)
     assert agg.avg_loss_return_pct == pytest.approx((-0.02 + -0.01) / 2)
+
+
+# ---------------------------------------------------------------------------
+# evaluate_candidates_oos
+# ---------------------------------------------------------------------------
+
+def test_evaluate_candidates_oos_returns_parallel_scores() -> None:
+    """OOS evaluation produces a score list parallel to the input candidates list."""
+    from alpaca_bot.tuning.sweep import evaluate_candidates_oos
+
+    golden = _make_golden_scenario()
+
+    params = {
+        "BREAKOUT_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_THRESHOLD": "1.5",
+        "DAILY_SMA_PERIOD": "20",
+    }
+    c1 = TuningCandidate(params=params, report=None, score=0.5)
+    c2 = TuningCandidate(params=params, report=None, score=0.3)
+
+    scores = evaluate_candidates_oos(
+        candidates=[c1, c2],
+        oos_scenarios=[golden],
+        base_env=_base_env(),
+        min_trades=1,
+        aggregate="min",
+    )
+    assert len(scores) == 2
+    for s in scores:
+        assert s is None or isinstance(s, float)

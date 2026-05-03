@@ -265,3 +265,43 @@ def run_multi_scenario_sweep(
         key=lambda c: (c.score is not None, c.score or 0.0),
         reverse=True,
     )
+
+
+def evaluate_candidates_oos(
+    candidates: list[TuningCandidate],
+    oos_scenarios: list[ReplayScenario],
+    *,
+    base_env: dict[str, str],
+    min_trades: int,
+    aggregate: str = "min",
+    signal_evaluator: "StrategySignalEvaluator | None" = None,
+) -> list[float | None]:
+    """Score each candidate against OOS scenarios; returns a parallel list of scores.
+
+    None means disqualified (< min_trades in at least one OOS scenario).
+    Does not produce new TuningCandidate objects — read-only scoring pass.
+    """
+    scores: list[float | None] = []
+    for candidate in candidates:
+        merged_env = {**base_env, **candidate.params}
+        try:
+            settings = Settings.from_env(merged_env)
+        except ValueError:
+            scores.append(None)
+            continue
+        runner = ReplayRunner(settings, signal_evaluator=signal_evaluator)
+        per_scenario_scores: list[float | None] = []
+        for scenario in oos_scenarios:
+            result = runner.run(scenario)
+            report: BacktestReport | None = result.backtest_report  # type: ignore[assignment]
+            s = score_report(report, min_trades=min_trades) if report is not None else None
+            per_scenario_scores.append(s)
+        if any(s is None for s in per_scenario_scores):
+            scores.append(None)
+        elif aggregate == "mean":
+            valid = [s for s in per_scenario_scores if s is not None]
+            scores.append(sum(valid) / len(valid))
+        else:  # "min"
+            valid = [s for s in per_scenario_scores if s is not None]
+            scores.append(min(valid))
+    return scores
