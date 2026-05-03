@@ -4,7 +4,7 @@
 
 **Goal:** Add `max_consecutive_losses` and `max_consecutive_wins` to `BacktestReport` so operators can see worst-case losing streaks for each parameter set and validate the "pause after N losses" operational rule.
 
-**Architecture:** Two new default-zero integer fields on the frozen `BacktestReport` dataclass, computed via a single-pass streak counter in `report.py`. Aggregated with `max()` across scenarios in `sweep.py`. Displayed as a `maxcl=N` column in the tuning CLI top-candidates table.
+**Architecture:** Two new default-zero integer fields on the frozen `BacktestReport` dataclass, computed via a single-pass streak counter in `report.py`. Aggregated with `max()` across scenarios in `sweep.py`. Exposed in replay CLI JSON/CSV output. Displayed as a `maxcl=N` column in the tuning CLI top-candidates table.
 
 **Tech Stack:** Python dataclasses, existing `ReplayTradeRecord.pnl` field, pytest TDD.
 
@@ -147,7 +147,7 @@ In `build_backtest_report()`, add the streak computation after the `hold_minutes
 ```python
     hold_minutes = [(t.exit_time - t.entry_time).total_seconds() / 60 for t in trades]
     avg_hold_minutes = sum(hold_minutes) / len(hold_minutes) if hold_minutes else None
-    max_consecutive_losses, max_consecutive_wins = _compute_streak_stats(list(trades))
+    max_consecutive_losses, max_consecutive_wins = _compute_streak_stats(trades)
 
     return BacktestReport(
         trades=tuple(trades),
@@ -191,6 +191,125 @@ Expected: all existing tests still pass (new fields have defaults, no existing f
 ```bash
 git add src/alpaca_bot/replay/report.py tests/unit/test_replay_report.py
 git commit -m "feat: add max_consecutive_losses/wins streak tracking to BacktestReport"
+```
+
+---
+
+### Task 2.5: Expose streak fields in replay CLI output
+
+**Files:**
+- Modify: `src/alpaca_bot/replay/cli.py`
+- Modify: `tests/unit/test_backtest_cli.py`
+
+These are contract tests that pin exact field sets — they intentionally break when new fields are added and require an explicit acknowledgment update.
+
+- [ ] **Step 1: Update _report_to_dict to include streak fields**
+
+In `_report_to_dict()` in `src/alpaca_bot/replay/cli.py`, add two entries after `avg_hold_minutes` and before `"trades"`:
+
+```python
+def _report_to_dict(report: BacktestReport) -> dict:
+    return {
+        "strategy": report.strategy_name,
+        "total_trades": report.total_trades,
+        "winning_trades": report.winning_trades,
+        "losing_trades": report.losing_trades,
+        "win_rate": report.win_rate,
+        "mean_return_pct": report.mean_return_pct,
+        "max_drawdown_pct": report.max_drawdown_pct,
+        "sharpe_ratio": report.sharpe_ratio,
+        "profit_factor": report.profit_factor,
+        "stop_wins": report.stop_wins,
+        "stop_losses": report.stop_losses,
+        "eod_wins": report.eod_wins,
+        "eod_losses": report.eod_losses,
+        "avg_hold_minutes": report.avg_hold_minutes,
+        "max_consecutive_losses": report.max_consecutive_losses,
+        "max_consecutive_wins": report.max_consecutive_wins,
+        "trades": [_trade_to_dict(t) for t in report.trades],
+    }
+```
+
+- [ ] **Step 2: Update _compare_row and _format_compare_csv**
+
+In `_compare_row()`, add two entries after `avg_hold_minutes`:
+
+```python
+def _compare_row(report: BacktestReport) -> dict:
+    return {
+        "strategy": report.strategy_name,
+        "total_trades": report.total_trades,
+        "win_rate": report.win_rate,
+        "mean_return_pct": report.mean_return_pct,
+        "max_drawdown_pct": report.max_drawdown_pct,
+        "sharpe_ratio": report.sharpe_ratio,
+        "profit_factor": report.profit_factor,
+        "stop_wins": report.stop_wins,
+        "stop_losses": report.stop_losses,
+        "eod_wins": report.eod_wins,
+        "eod_losses": report.eod_losses,
+        "avg_hold_minutes": report.avg_hold_minutes,
+        "max_consecutive_losses": report.max_consecutive_losses,
+        "max_consecutive_wins": report.max_consecutive_wins,
+    }
+```
+
+In `_format_compare_csv()`, update the fieldnames list:
+
+```python
+    fieldnames = [
+        "strategy", "total_trades", "win_rate",
+        "mean_return_pct", "max_drawdown_pct", "sharpe_ratio", "profit_factor",
+        "stop_wins", "stop_losses", "eod_wins", "eod_losses", "avg_hold_minutes",
+        "max_consecutive_losses", "max_consecutive_wins",
+    ]
+```
+
+- [ ] **Step 3: Update contract tests in test_backtest_cli.py**
+
+Find `test_compare_json_output_shape` (around line 392). Update the `assert set(row.keys()) == {...}` to include the two new fields:
+
+```python
+    assert set(row.keys()) == {
+        "strategy", "total_trades", "win_rate",
+        "mean_return_pct", "max_drawdown_pct", "sharpe_ratio", "profit_factor",
+        "stop_wins", "stop_losses", "eod_wins", "eod_losses", "avg_hold_minutes",
+        "max_consecutive_losses", "max_consecutive_wins",
+    }
+```
+
+Find `test_compare_csv_output_has_header_and_rows` (around line 425). Update the fieldnames assertion:
+
+```python
+    assert set(reader.fieldnames) == {
+        "strategy", "total_trades", "win_rate",
+        "mean_return_pct", "max_drawdown_pct", "sharpe_ratio", "profit_factor",
+        "stop_wins", "stop_losses", "eod_wins", "eod_losses", "avg_hold_minutes",
+        "max_consecutive_losses", "max_consecutive_wins",
+    }
+```
+
+- [ ] **Step 4: Run the contract tests to verify they pass**
+
+```
+pytest tests/unit/test_backtest_cli.py::test_compare_json_output_shape tests/unit/test_backtest_cli.py::test_compare_csv_output_has_header_and_rows -v
+```
+
+Expected: 2 PASSED.
+
+- [ ] **Step 5: Run full test suite for the replay CLI module**
+
+```
+pytest tests/unit/test_backtest_cli.py -v
+```
+
+Expected: all existing tests pass.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/alpaca_bot/replay/cli.py tests/unit/test_backtest_cli.py
+git commit -m "feat: expose max_consecutive_losses/wins in replay CLI JSON/CSV output"
 ```
 
 ---
@@ -343,15 +462,15 @@ git commit -m "feat: show maxcl (max consecutive losses) column in sweep top-can
 pytest
 ```
 
-Expected: all tests pass (1054 + 5 new = 1059 tests).
+Expected: all tests pass (1054 + 5 new = 1059 tests; contract tests updated in Task 2.5 count as existing tests).
 
 - [ ] **Step 2: Smoke test the backtest CLI**
 
 ```
-cd /workspace/alpaca_bot && python -m alpaca_bot.replay.cli run --scenario tests/golden/breakout_success.json --format json | python -m json.tool | grep -E "total_trades|profit_factor|stop_wins|max_consecutive"
+cd /workspace/alpaca_bot && python -m alpaca_bot.replay.cli run --scenario tests/golden/breakout_success.json --format json | python -m json.tool | grep -E "max_consecutive"
 ```
 
-Expected: JSON output includes all the new fields.
+Expected: output contains two lines with `"max_consecutive_losses"` and `"max_consecutive_wins"` keys.
 
 - [ ] **Step 3: Final commit if any loose changes remain**
 
