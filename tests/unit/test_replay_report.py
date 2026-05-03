@@ -385,3 +385,73 @@ def test_profit_factor_correct_with_mixed_trades() -> None:
     report = build_backtest_report(result)
     assert report.total_trades == 3
     assert report.profit_factor == pytest.approx(100.0 / 20.0)
+
+
+# ---------------------------------------------------------------------------
+# exit type segmentation
+# ---------------------------------------------------------------------------
+
+
+def test_exit_type_fields_zero_for_no_trades() -> None:
+    result = _make_result([])
+    report = build_backtest_report(result)
+    assert report.stop_wins == 0
+    assert report.stop_losses == 0
+    assert report.eod_wins == 0
+    assert report.eod_losses == 0
+    assert report.avg_hold_minutes is None
+
+
+def test_exit_type_fields_eod_win() -> None:
+    result = _make_result([_fill(entry_price=150.0, quantity=10, t=_T0),
+                           _eod_exit(exit_price=155.0, t=_T1)])
+    report = build_backtest_report(result)
+    assert report.stop_wins == 0
+    assert report.eod_wins == 1
+    assert report.stop_losses == 0
+    assert report.eod_losses == 0
+
+
+def test_exit_type_fields_stop_loss() -> None:
+    result = _make_result([_fill(entry_price=150.0, quantity=10, t=_T0),
+                           _stop_exit(exit_price=148.0, t=_T1)])
+    report = build_backtest_report(result)
+    assert report.stop_wins == 0
+    assert report.stop_losses == 1
+    assert report.eod_wins == 0
+    assert report.eod_losses == 0
+
+
+def test_exit_type_fields_mixed() -> None:
+    """2 eod wins + 1 stop loss."""
+    _T3 = datetime(2026, 4, 24, 14, 45, tzinfo=timezone.utc)
+    _T4 = datetime(2026, 4, 24, 15, 0, tzinfo=timezone.utc)
+    result = _make_result([
+        _fill(entry_price=150.0, quantity=10, t=_T0),
+        _eod_exit(exit_price=155.0, t=_T1),        # eod win
+        ReplayEvent(event_type=IntentType.ENTRY_FILLED, symbol="AAPL", timestamp=_T1,
+                    details={"entry_price": 155.0, "quantity": 10, "initial_stop_price": 153.0}),
+        _eod_exit(exit_price=160.0, t=_T2),        # eod win
+        ReplayEvent(event_type=IntentType.ENTRY_FILLED, symbol="AAPL", timestamp=_T3,
+                    details={"entry_price": 160.0, "quantity": 10, "initial_stop_price": 158.0}),
+        ReplayEvent(event_type=IntentType.STOP_HIT, symbol="AAPL", timestamp=_T4,
+                    details={"exit_price": 158.0}),  # stop loss
+    ])
+    report = build_backtest_report(result)
+    assert report.eod_wins == 2
+    assert report.eod_losses == 0
+    assert report.stop_wins == 0
+    assert report.stop_losses == 1
+
+
+def test_avg_hold_minutes_correct() -> None:
+    """_T0 to _T1 = 15 min; _T1 to _T2 = 15 min → avg = 15.0."""
+    result = _make_result([
+        _fill(entry_price=150.0, quantity=10, t=_T0),
+        _eod_exit(exit_price=155.0, t=_T1),
+        ReplayEvent(event_type=IntentType.ENTRY_FILLED, symbol="AAPL", timestamp=_T1,
+                    details={"entry_price": 155.0, "quantity": 10, "initial_stop_price": 153.0}),
+        _eod_exit(exit_price=160.0, t=_T2),
+    ])
+    report = build_backtest_report(result)
+    assert report.avg_hold_minutes == pytest.approx(15.0)

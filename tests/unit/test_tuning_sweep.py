@@ -346,3 +346,30 @@ def test_score_report_no_penalty_when_profit_factor_none() -> None:
         sharpe_ratio=3.0, profit_factor=None,
     )
     assert score_report(report, min_trades=3) == pytest.approx(3.0)
+
+
+# ---------------------------------------------------------------------------
+# _aggregate_reports: exit type fields
+# ---------------------------------------------------------------------------
+
+def test_aggregate_reports_sums_exit_type_fields() -> None:
+    """Aggregated report sums stop_wins/losses and eod_wins/losses across scenarios."""
+    from alpaca_bot.tuning.sweep import _aggregate_reports
+
+    r1 = BacktestReport(
+        trades=(), total_trades=3, winning_trades=2, losing_trades=1,
+        win_rate=0.67, mean_return_pct=0.02, max_drawdown_pct=None,
+        stop_wins=1, stop_losses=1, eod_wins=1, eod_losses=0, avg_hold_minutes=20.0,
+    )
+    r2 = BacktestReport(
+        trades=(), total_trades=2, winning_trades=1, losing_trades=1,
+        win_rate=0.5, mean_return_pct=0.01, max_drawdown_pct=None,
+        stop_wins=0, stop_losses=1, eod_wins=1, eod_losses=0, avg_hold_minutes=30.0,
+    )
+    agg = _aggregate_reports([r1, r2])
+    assert agg is not None
+    assert agg.stop_wins == 1
+    assert agg.stop_losses == 2
+    assert agg.eod_wins == 2
+    assert agg.eod_losses == 0
+    assert agg.avg_hold_minutes == pytest.approx(25.0)

@@ -31,6 +31,11 @@ class BacktestReport:
     max_drawdown_pct: float | None  # None when peak equity never exceeds 0
     sharpe_ratio: float | None = None
     profit_factor: float | None = None  # gross_wins_pnl / abs(gross_losses_pnl); None when no losses
+    stop_wins: int = 0
+    stop_losses: int = 0
+    eod_wins: int = 0
+    eod_losses: int = 0
+    avg_hold_minutes: float | None = None
     strategy_name: str = "breakout"
 
 
@@ -58,6 +63,12 @@ def build_backtest_report(result: ReplayResult, strategy_name: str = "breakout")
     gross_wins_pnl = sum(t.pnl for t in trades if t.pnl > 0)
     gross_losses_pnl = abs(sum(t.pnl for t in trades if t.pnl < 0))
     profit_factor = gross_wins_pnl / gross_losses_pnl if gross_losses_pnl > 0 else None
+    stop_wins = sum(1 for t in trades if t.exit_reason == "stop" and t.pnl > 0)
+    stop_losses = sum(1 for t in trades if t.exit_reason == "stop" and t.pnl <= 0)
+    eod_wins = sum(1 for t in trades if t.exit_reason == "eod" and t.pnl > 0)
+    eod_losses = sum(1 for t in trades if t.exit_reason == "eod" and t.pnl <= 0)
+    hold_minutes = [(t.exit_time - t.entry_time).total_seconds() / 60 for t in trades]
+    avg_hold_minutes = sum(hold_minutes) / len(hold_minutes) if hold_minutes else None
 
     return BacktestReport(
         trades=tuple(trades),
@@ -69,6 +80,11 @@ def build_backtest_report(result: ReplayResult, strategy_name: str = "breakout")
         max_drawdown_pct=max_drawdown_pct,
         sharpe_ratio=_compute_sharpe(trades),
         profit_factor=profit_factor,
+        stop_wins=stop_wins,
+        stop_losses=stop_losses,
+        eod_wins=eod_wins,
+        eod_losses=eod_losses,
+        avg_hold_minutes=avg_hold_minutes,
         strategy_name=strategy_name,
     )
 

@@ -136,6 +136,12 @@ def _aggregate_reports(reports: list[BacktestReport | None]) -> BacktestReport |
     sharpe_ratio: float | None = sum(sharpes) / len(sharpes) if sharpes else None
     profit_factors = [r.profit_factor for r in valid if r.profit_factor is not None]
     profit_factor: float | None = sum(profit_factors) / len(profit_factors) if profit_factors else None
+    stop_wins = sum(r.stop_wins for r in valid)
+    stop_losses = sum(r.stop_losses for r in valid)
+    eod_wins = sum(r.eod_wins for r in valid)
+    eod_losses = sum(r.eod_losses for r in valid)
+    hold_mins = [r.avg_hold_minutes for r in valid if r.avg_hold_minutes is not None]
+    avg_hold_minutes: float | None = sum(hold_mins) / len(hold_mins) if hold_mins else None
     return BacktestReport(
         trades=(),
         total_trades=total_trades,
@@ -146,6 +152,11 @@ def _aggregate_reports(reports: list[BacktestReport | None]) -> BacktestReport |
         max_drawdown_pct=max_drawdown_pct,
         sharpe_ratio=sharpe_ratio,
         profit_factor=profit_factor,
+        stop_wins=stop_wins,
+        stop_losses=stop_losses,
+        eod_wins=eod_wins,
+        eod_losses=eod_losses,
+        avg_hold_minutes=avg_hold_minutes,
         strategy_name="aggregate",
     )
 
