@@ -34,6 +34,7 @@
 | `src/alpaca_bot/runtime/cycle.py` | Route `is_option=True` ENTRY intents to `OptionOrderRecord` |
 | `src/alpaca_bot/runtime/trade_updates.py` | Route `"option:"` prefix fills to `OptionOrderRepository` |
 | `src/alpaca_bot/strategy/__init__.py` | Add `OPTION_STRATEGY_NAMES` set |
+| `src/alpaca_bot/runtime/bootstrap.py` | Add `option_order_store` field to `RuntimeContext`; wire in `bootstrap_runtime()` and `reconnect_runtime_connection()` |
 | `src/alpaca_bot/runtime/supervisor.py` | Fetch chains; build option evaluator; call `dispatch_pending_option_orders()`; EOD option flatten |
 
 ---
@@ -1599,18 +1600,65 @@ class OptionOrderRepository:
 
 Note: `date` is already imported in `repositories.py` — verify and add if needed: `from datetime import date, datetime`.
 
-- [ ] **Step 6: Run tests to verify all pass**
+- [ ] **Step 6: Wire `OptionOrderRepository` into `RuntimeContext` in `bootstrap.py`**
+
+In `src/alpaca_bot/runtime/bootstrap.py`, add the import:
+
+```python
+from alpaca_bot.storage.repositories import OptionOrderRepository
+```
+
+Add `option_order_store` field to the `RuntimeContext` dataclass (after `watchlist_store`):
+
+```python
+@dataclass
+class RuntimeContext:
+    ...
+    watchlist_store: WatchlistStore | None = None
+    option_order_store: OptionOrderRepository | None = None   # NEW
+    store_lock: threading.Lock = field(default_factory=threading.Lock)
+```
+
+In `bootstrap_runtime()`, add to the `RuntimeContext(...)` constructor call (after `watchlist_store=watchlist_store`):
+
+```python
+    return RuntimeContext(
+        ...
+        watchlist_store=watchlist_store,
+        option_order_store=OptionOrderRepository(runtime_connection),  # NEW
+    )
+```
+
+Also in `reconnect_runtime_connection()`, add `"option_order_store"` to the hardcoded tuple of attribute names (line ~106–114) so the new connection is spliced in after a reconnect:
+
+```python
+    for attr in (
+        "trading_status_store",
+        "audit_event_store",
+        "order_store",
+        "daily_session_state_store",
+        "position_store",
+        "strategy_flag_store",
+        "watchlist_store",
+        "option_order_store",   # NEW
+    ):
+        store = getattr(context, attr, None)
+        if store is not None and hasattr(store, "_connection"):
+            store._connection = new_conn
+```
+
+- [ ] **Step 7: Run tests to verify all pass**
 
 ```bash
 pytest tests/unit/test_option_storage.py -v
 ```
 Expected: all tests PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add migrations/012_add_option_orders.sql src/alpaca_bot/storage/models.py src/alpaca_bot/storage/repositories.py tests/unit/test_option_storage.py
-git commit -m "feat: add option_orders migration, OptionOrderRecord, and OptionOrderRepository"
+git add migrations/012_add_option_orders.sql src/alpaca_bot/storage/models.py src/alpaca_bot/storage/repositories.py src/alpaca_bot/runtime/bootstrap.py tests/unit/test_option_storage.py
+git commit -m "feat: add option_orders migration, OptionOrderRecord, OptionOrderRepository, wire into RuntimeContext"
 ```
 
 ---
