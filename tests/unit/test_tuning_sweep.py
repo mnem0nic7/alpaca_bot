@@ -453,6 +453,48 @@ def test_aggregate_reports_averages_win_loss_return_pct() -> None:
 # evaluate_candidates_oos
 # ---------------------------------------------------------------------------
 
+def test_run_multi_scenario_sweep_respects_surrogate_ordering() -> None:
+    """Surrogate pre-sorts grid: high-predicted-score combo runs first → appears first in results."""
+    from alpaca_bot.domain.models import ReplayScenario
+    from alpaca_bot.tuning.surrogate import SurrogateModel
+
+    class _FixedSurrogate(SurrogateModel):
+        """Predicts 1.0 for BREAKOUT_LOOKBACK_BARS=15 and 0.0 for everything else."""
+        @property
+        def is_fitted(self) -> bool:
+            return True
+        def predict(self, params: dict) -> float | None:
+            return 1.0 if params.get("BREAKOUT_LOOKBACK_BARS") == "15" else 0.0
+
+    quiet_1 = _make_quiet_scenario()
+    quiet_2 = ReplayScenario(
+        name="quiet2", symbol="AAPL", starting_equity=100_000.0,
+        daily_bars=quiet_1.daily_bars, intraday_bars=quiet_1.intraday_bars,
+    )
+    small_grid: ParameterGrid = {
+        "BREAKOUT_LOOKBACK_BARS": ["15", "30"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.5"],
+        "DAILY_SMA_PERIOD": ["20"],
+    }
+
+    results = run_multi_scenario_sweep(
+        scenarios=[quiet_1, quiet_2],
+        base_env=_base_env(),
+        grid=small_grid,
+        surrogate=_FixedSurrogate(),
+    )
+
+    # Both combos produce score=None (quiet scenario). Python's sort is stable,
+    # so insertion order is preserved for equal keys. The surrogate pre-sort
+    # determines which combo runs first → gets appended first → stays first after
+    # the stable final sort. Assert that the surrogate-preferred combo (LOOKBACK=15)
+    # is first in results.
+    lookbacks = [c.params["BREAKOUT_LOOKBACK_BARS"] for c in results]
+    assert set(lookbacks) == {"15", "30"}, "both combos must run (no pruning)"
+    assert results[0].params["BREAKOUT_LOOKBACK_BARS"] == "15", \
+        "surrogate-preferred combo (predicted 1.0) must appear first"
+
+
 def test_evaluate_candidates_oos_returns_parallel_scores() -> None:
     """OOS evaluation produces a score list parallel to the input candidates list."""
     from alpaca_bot.tuning.sweep import evaluate_candidates_oos

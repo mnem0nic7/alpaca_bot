@@ -12,6 +12,7 @@ from alpaca_bot.replay.runner import ReplayRunner
 
 if TYPE_CHECKING:
     from alpaca_bot.strategy import StrategySignalEvaluator
+    from alpaca_bot.tuning.surrogate import SurrogateModel
 
 
 @dataclass(frozen=True)
@@ -220,6 +221,7 @@ def run_multi_scenario_sweep(
     min_trades_per_scenario: int = 2,
     aggregate: str = "min",
     signal_evaluator: "StrategySignalEvaluator | None" = None,
+    surrogate: "SurrogateModel | None" = None,
 ) -> list[TuningCandidate]:
     """Run a parameter grid sweep across multiple scenarios.
 
@@ -232,8 +234,14 @@ def run_multi_scenario_sweep(
     keys = list(effective_grid.keys())
     value_lists = [effective_grid[k] for k in keys]
 
+    all_combos = list(itertools.product(*value_lists))
+    if surrogate is not None and surrogate.is_fitted:
+        all_combos.sort(
+            key=lambda combo: surrogate.predict(dict(zip(keys, combo))) or 0.0,
+            reverse=True,
+        )
     candidates: list[TuningCandidate] = []
-    for combo in itertools.product(*value_lists):
+    for combo in all_combos:
         overrides = dict(zip(keys, combo))
         merged_env = {**base_env, **overrides}
         try:
