@@ -102,6 +102,37 @@ ALPACA_PAPER_SECRET_KEY=... \
 ./scripts/sync_alpaca_credentials.sh /etc/alpaca_bot/alpaca-bot.env
 ```
 
+## Automated Nightly Parameter Apply
+
+After `alpaca-bot-nightly` completes successfully, `scripts/apply_candidate.sh` automatically:
+
+1. Reads `/var/lib/alpaca-bot/nightly/candidate.env` (written by the nightly run if a walk-forward
+   held candidate was found).
+2. Compares the 3 candidate parameters (`BREAKOUT_LOOKBACK_BARS`, `RELATIVE_VOLUME_THRESHOLD`,
+   `DAILY_SMA_PERIOD`) against the current values in the system env file.
+3. If any param changed, updates the env file and restarts the supervisor via `deploy.sh`.
+4. If params are already current (or no `candidate.env` exists), exits cleanly with no restart.
+
+The cron chains both commands with `&&`, so apply only fires when nightly exits 0. Both commands
+log to `/var/log/alpaca-bot-nightly.log`.
+
+To verify an apply happened:
+```bash
+grep "apply_candidate" /var/log/alpaca-bot-nightly.log | tail -5
+```
+
+To apply manually (e.g., after a `--dry-run` evolve):
+```bash
+cd /workspace/alpaca_bot
+./scripts/apply_candidate.sh /etc/alpaca_bot/alpaca-bot.env
+```
+
+To skip auto-apply for one night (e.g., while investigating an issue), temporarily rename
+`candidate.env` before the apply window:
+```bash
+mv /var/lib/alpaca-bot/nightly/candidate.env /var/lib/alpaca-bot/nightly/candidate.env.hold
+```
+
 ## First-time setup
 
 1. Check out the repo on the server.
