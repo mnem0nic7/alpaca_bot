@@ -315,7 +315,7 @@ Run: `pytest tests/unit/test_session_eval.py -v`
 Expected: all 5 tests PASS
 
 Also run existing tests to confirm no regression:
-Run: `pytest tests/unit/test_report.py tests/unit/test_tuning_sweep.py tests/unit/test_storage_db.py -v`
+Run: `pytest tests/unit/test_replay_report.py tests/unit/test_tuning_sweep.py tests/unit/test_storage_db.py -v`
 Expected: all PASS
 
 - [ ] **Step 7: Commit**
