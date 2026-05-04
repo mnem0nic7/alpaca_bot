@@ -257,6 +257,35 @@ def test_nightly_cli_surrogate_active_path(monkeypatch, tmp_path):
     assert surrogate.is_fitted, "surrogate must be fitted when 60 records are available"
 
 
+def test_nightly_cli_min_oos_score_rejects_below_floor(monkeypatch, tmp_path):
+    """--min-oos-score 0.5: OOS=0.35 passes relative gate but fails floor → no held → return 0."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    _patch_common_db(monkeypatch, module)
+
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    # IS=0.6, OOS=0.35: passes ratio gate (0.35 >= 0.6*0.5=0.3) but fails floor (0.35 < 0.5)
+    cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.6)
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", lambda **kw: [cand])
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [0.35])
+
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db",
+        "--output-dir", str(tmp_path),
+        "--min-oos-score", "0.5",
+    ])
+
+    result = module.main()
+
+    # Nightly returns 0 (not 1) when no held candidates — live report still runs
+    assert result == 0
+
+
 def test_nightly_cli_too_few_scenario_files_returns_error(monkeypatch, tmp_path):
     """< 2 scenario files in output-dir with --dry-run must return 1 (hard error)."""
     from alpaca_bot.nightly import cli as module

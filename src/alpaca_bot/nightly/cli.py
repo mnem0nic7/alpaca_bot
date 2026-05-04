@@ -47,6 +47,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Path to write winning candidate env block")
     parser.add_argument("--validate-pct", type=float, default=0.2,
                         help="OOS fraction for walk-forward gate (default: 0.2)")
+    parser.add_argument("--min-oos-score", type=float, default=0.0,
+                        help="Minimum absolute OOS score to accept a candidate (default: 0.0)")
+    parser.add_argument("--oos-gate-ratio", type=float, default=0.5,
+                        help="Required OOS/IS score ratio to hold a candidate (default: 0.5)")
     parser.add_argument("--strategy", default="breakout",
                         choices=list(STRATEGY_REGISTRY),
                         help="Strategy grid to sweep (default: breakout)")
@@ -180,11 +184,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 top10, oos_scores,
                 validate_pct=args.validate_pct,
                 aggregate="min",
+                oos_gate_ratio=args.oos_gate_ratio,
+                min_oos_score=args.min_oos_score,
             )
 
             held_pairs = [
                 (c, s) for c, s in zip(top10, oos_scores)
-                if s is not None and c.score is not None and s >= c.score * 0.5
+                if s is not None
+                and c.score is not None
+                and s >= c.score * args.oos_gate_ratio
+                and s >= args.min_oos_score
             ]
             print(f"Walk-forward: {len(held_pairs)} / {len(top10)} held")
 
