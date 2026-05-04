@@ -1704,8 +1704,13 @@ class _FakeSnapshotClient:
         return self._snapshots
 
 
-def _make_snapshot(strike: float, expiry: date, ask: float, delta: float | None = None):
-    """Build a minimal fake Alpaca OptionSnapshot-like object."""
+def _make_snapshot(ask: float, delta: float | None = None):
+    """Build a minimal fake Alpaca OptionSnapshot-like object.
+
+    Note: strike, expiry, and option_type are parsed from the OCC symbol key
+    by AlpacaOptionChainAdapter — the real OptionsSnapshot has no 'details'
+    field. Only quote and greeks are needed on the fake.
+    """
     class FakeGreeks:
         def __init__(self, delta):
             self.delta = delta
@@ -1716,23 +1721,11 @@ def _make_snapshot(strike: float, expiry: date, ask: float, delta: float | None 
             self.bid_price = ask - 0.10
 
     class FakeSnapshot:
-        def __init__(self, strike, expiry, ask, delta):
+        def __init__(self, ask, delta):
             self.greeks = FakeGreeks(delta) if delta is not None else None
             self.latest_quote = FakeQuote(ask)
 
-    class FakeDetails:
-        def __init__(self, strike, expiry):
-            self.strike_price = strike
-            self.expiration_date = expiry
-            self.option_type = "call"
-
-    class FakeSnapshot2:
-        def __init__(self, strike, expiry, ask, delta):
-            self.greeks = FakeGreeks(delta) if delta is not None else None
-            self.latest_quote = FakeQuote(ask)
-            self.details = FakeDetails(strike, expiry)
-
-    return FakeSnapshot2(strike, expiry, ask, delta)
+    return FakeSnapshot(ask, delta)
 
 
 class TestAlpacaOptionChainAdapter:
@@ -1746,7 +1739,8 @@ class TestAlpacaOptionChainAdapter:
     def test_converts_snapshot_to_option_contract(self):
         expiry = date(2024, 7, 1)
         occ = "AAPL240701C00150000"
-        snapshots = {occ: _make_snapshot(strike=150.0, expiry=expiry, ask=3.00, delta=0.50)}
+        # strike/expiry/option_type parsed from OCC key — only ask/delta on fake
+        snapshots = {occ: _make_snapshot(ask=3.00, delta=0.50)}
         client = _FakeSnapshotClient(snapshots)
         adapter = AlpacaOptionChainAdapter(client)
         s = _settings()
@@ -1762,9 +1756,8 @@ class TestAlpacaOptionChainAdapter:
         assert c.delta == 0.50
 
     def test_delta_is_none_when_greeks_unavailable(self):
-        expiry = date(2024, 7, 1)
         occ = "AAPL240701C00150000"
-        snapshots = {occ: _make_snapshot(strike=150.0, expiry=expiry, ask=3.00, delta=None)}
+        snapshots = {occ: _make_snapshot(ask=3.00, delta=None)}
         client = _FakeSnapshotClient(snapshots)
         adapter = AlpacaOptionChainAdapter(client)
         s = _settings()
@@ -1840,6 +1833,7 @@ Expected: ImportError on `option_chain`.
 ```python
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from datetime import date
 from typing import Any, Protocol, runtime_checkable
@@ -1879,14 +1873,28 @@ class AlpacaOptionChainAdapter:
         return contracts
 
 
+_OCC_RE = re.compile(r'^([A-Z]{1,6})(\d{2})(\d{2})(\d{2})([CP])(\d{8})$')
+
+
+def _parse_occ(occ_symbol: str) -> tuple[date, str, float]:
+    """Parse expiry, option_type ('call'/'put'), and strike from OCC symbol.
+
+    OCC format: UNDERLYING YYMMDD C/P STRIKE(8 digits = price × 1000)
+    Example: AAPL240701C00150000 → 2024-07-01, 'call', 150.0
+    """
+    m = _OCC_RE.match(occ_symbol)
+    if m is None:
+        raise ValueError(f"Cannot parse OCC symbol: {occ_symbol!r}")
+    _, yy, mm, dd, cp, strike_str = m.groups()
+    expiry = date(int(yy) + 2000, int(mm), int(dd))
+    option_type = "call" if cp == "C" else "put"
+    strike = int(strike_str) / 1000.0
+    return expiry, option_type, strike
+
+
 def _snapshot_to_contract(occ_symbol: str, underlying: str, snapshot: Any) -> OptionContract:
-    details = snapshot.details
-    strike = float(details.strike_price)
-    expiry: date = details.expiration_date
-    if not isinstance(expiry, date):
-        expiry = date.fromisoformat(str(expiry))
-    raw_option_type = details.option_type
-    option_type = raw_option_type.value.lower() if hasattr(raw_option_type, "value") else str(raw_option_type).lower()
+    # Real OptionsSnapshot has no 'details' — parse strike/expiry/type from OCC key
+    expiry, option_type, strike = _parse_occ(occ_symbol)
 
     quote = snapshot.latest_quote
     ask = float(quote.ask_price) if quote is not None else 0.0
