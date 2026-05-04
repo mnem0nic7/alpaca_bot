@@ -100,10 +100,11 @@ def _parse_grid(specs: list[str]) -> ParameterGrid:
 
 
 def score_report(report: BacktestReport, *, min_trades: int = 3) -> float | None:
-    """Sharpe-first composite score; None if disqualified (< min_trades).
+    """Sharpe-first composite score; None if disqualified.
 
-    When profit_factor < 1.0 (net-losing strategy), the score is scaled down
-    by profit_factor so that net-profitable strategies rank higher at equal Sharpe.
+    Disqualified when: fewer than min_trades, profit_factor < 1.0 (net-losing),
+    or base score ≤ 0 (non-positive Sharpe/Calmar — no exploitable edge).
+    profit_factor=None (no losses at all) is never penalised.
     """
     if report.total_trades < min_trades:
         return None
@@ -115,7 +116,9 @@ def score_report(report: BacktestReport, *, min_trades: int = 3) -> float | None
         drawdown = report.max_drawdown_pct or 0.0
         base = report.mean_return_pct / (drawdown + 0.001)
     if report.profit_factor is not None and report.profit_factor < 1.0:
-        base *= report.profit_factor
+        return None  # net-losing strategy: hard disqualify
+    if base <= 0.0:
+        return None  # non-positive Sharpe/Calmar: no exploitable edge
     return base
 
 

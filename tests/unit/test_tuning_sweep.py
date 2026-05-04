@@ -319,13 +319,13 @@ def test_strategy_grids_keys_match_strategy_params() -> None:
 # ---------------------------------------------------------------------------
 
 def test_score_report_penalizes_subunit_profit_factor() -> None:
-    """profit_factor=0.7 with sharpe=2.0 → score = 2.0 * 0.7 = 1.4."""
+    """profit_factor < 1.0 is now a hard disqualifier, not a score penalty."""
     report = BacktestReport(
         trades=(), total_trades=5, winning_trades=3, losing_trades=2,
         win_rate=0.6, mean_return_pct=0.02, max_drawdown_pct=0.05,
         sharpe_ratio=2.0, profit_factor=0.7,
     )
-    assert score_report(report, min_trades=3) == pytest.approx(1.4)
+    assert score_report(report, min_trades=3) is None
 
 
 def test_score_report_no_penalty_when_profit_factor_at_or_above_one() -> None:
@@ -346,6 +346,40 @@ def test_score_report_no_penalty_when_profit_factor_none() -> None:
         sharpe_ratio=3.0, profit_factor=None,
     )
     assert score_report(report, min_trades=3) == pytest.approx(3.0)
+
+
+def test_score_report_profit_factor_below_one_disqualifies() -> None:
+    """Any profit_factor strictly below 1.0 → None (hard gate)."""
+    for pf in (0.99, 0.5, 0.01):
+        report = BacktestReport(
+            trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+            win_rate=0.6, mean_return_pct=0.02, max_drawdown_pct=0.05,
+            sharpe_ratio=2.0, profit_factor=pf,
+        )
+        assert score_report(report, min_trades=3) is None, f"Expected None for profit_factor={pf}"
+
+
+def test_score_report_nonpositive_sharpe_disqualifies() -> None:
+    """Sharpe ≤ 0 is disqualified by the score floor."""
+    for sharpe in (0.0, -0.5, -2.0):
+        report = BacktestReport(
+            trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+            win_rate=0.6, mean_return_pct=0.02, max_drawdown_pct=0.05,
+            sharpe_ratio=sharpe, profit_factor=1.5,
+        )
+        assert score_report(report, min_trades=3) is None, f"Expected None for sharpe={sharpe}"
+
+
+def test_score_report_positive_sharpe_above_floor_passes() -> None:
+    """Any Sharpe > 0 with profit_factor ≥ 1.0 passes the gates."""
+    report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+        win_rate=0.6, mean_return_pct=0.02, max_drawdown_pct=0.05,
+        sharpe_ratio=0.001, profit_factor=1.0,
+    )
+    result = score_report(report, min_trades=3)
+    assert result is not None
+    assert result > 0.0
 
 
 # ---------------------------------------------------------------------------
