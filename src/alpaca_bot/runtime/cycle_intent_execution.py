@@ -632,6 +632,15 @@ def _execute_exit(
         timestamp=intent_timestamp,
         strategy_name=strategy_name,
     )
+    _cancel_partial_fill_entry(
+        symbol=symbol,
+        strategy_name=strategy_name,
+        runtime=runtime,
+        broker=broker,
+        settings=settings,
+        now=now,
+        lock_ctx=lock_ctx,
+    )
     # Submit exit outside the lock.
     try:
         if limit_price is not None:
@@ -878,6 +887,109 @@ def _latest_active_stop_order(
     if not orders:
         return None
     return max(orders, key=lambda order: (order.updated_at, order.created_at, order.client_order_id))
+
+
+def _cancel_partial_fill_entry(
+    *,
+    symbol: str,
+    strategy_name: str,
+    runtime: RuntimeProtocol,
+    broker: BrokerProtocol,
+    settings: "Settings",
+    now: datetime,
+    lock_ctx: Any,
+) -> None:
+    with lock_ctx:
+        all_partial = runtime.order_store.list_by_status(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+            statuses=["partially_filled"],
+            strategy_name=strategy_name,
+        )
+    partial_entries = [
+        o for o in all_partial if o.intent_type == "entry" and o.symbol == symbol
+    ]
+    if not partial_entries:
+        return
+    for entry in partial_entries:
+        if not entry.broker_order_id:
+            continue
+        try:
+            broker.cancel_order(entry.broker_order_id)
+        except Exception as exc:
+            exc_msg = str(exc).lower()
+            if any(
+                phrase in exc_msg
+                for phrase in ("already canceled", "not found", "does not exist")
+            ):
+                logger.warning(
+                    "cycle_intent_execution: partial-fill entry %s already gone at broker: %s",
+                    entry.client_order_id,
+                    exc,
+                )
+            else:
+                logger.exception(
+                    "cycle_intent_execution: failed to cancel partial-fill entry %s before exit — proceeding anyway",
+                    entry.client_order_id,
+                )
+                with lock_ctx:
+                    try:
+                        runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="partial_fill_cancel_failed",
+                                symbol=symbol,
+                                payload={
+                                    "entry_client_order_id": entry.client_order_id,
+                                    "entry_broker_order_id": entry.broker_order_id,
+                                    "error": str(exc),
+                                    "context": "exit",
+                                },
+                                created_at=now,
+                            ),
+                            commit=True,
+                        )
+                    except Exception:
+                        pass
+                continue
+        canceled_entry = OrderRecord(
+            client_order_id=entry.client_order_id,
+            symbol=entry.symbol,
+            side=entry.side,
+            intent_type=entry.intent_type,
+            status="canceled",
+            quantity=entry.quantity,
+            trading_mode=entry.trading_mode,
+            strategy_version=entry.strategy_version,
+            created_at=entry.created_at,
+            updated_at=now,
+            stop_price=entry.stop_price,
+            limit_price=entry.limit_price,
+            broker_order_id=entry.broker_order_id,
+            signal_timestamp=entry.signal_timestamp,
+        )
+        with lock_ctx:
+            try:
+                runtime.order_store.save(canceled_entry, commit=False)
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="partial_fill_entry_canceled",
+                        symbol=symbol,
+                        payload={
+                            "entry_client_order_id": entry.client_order_id,
+                            "entry_broker_order_id": entry.broker_order_id,
+                            "context": "exit",
+                        },
+                        created_at=now,
+                    ),
+                    commit=False,
+                )
+                runtime.connection.commit()
+            except Exception:
+                try:
+                    runtime.connection.rollback()
+                except Exception:
+                    pass
+                raise
 
 
 def _stop_client_order_id(

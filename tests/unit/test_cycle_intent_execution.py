@@ -2675,3 +2675,73 @@ def test_exit_failure_none_notifier_does_not_raise() -> None:
     )
 
     assert report.failed_exit_count == 1
+
+
+def test_execute_exit_cancels_partial_fill_entry_before_market_exit() -> None:
+    """_execute_exit cancels an open partial-fill entry before submitting market exit."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 4, 15, 30, tzinfo=timezone.utc)
+
+    partial_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:SONO:entry:1",
+        symbol="SONO",
+        side="buy",
+        intent_type="entry",
+        status="partially_filled",
+        quantity=187,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=14.88,
+        limit_price=14.90,
+        broker_order_id="broker-entry-sono-1",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="SONO",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=187,
+        entry_price=14.88,
+        stop_price=14.00,
+        initial_stop_price=14.00,
+        opened_at=now,
+    )
+    order_store = RecordingOrderStore(orders=[partial_entry])
+    position_store = RecordingPositionStore(positions=[position])
+    audit_store = RecordingAuditEventStore()
+    conn = FakeConnection()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=position_store,
+        audit_event_store=audit_store,
+        connection=conn,
+    )
+    broker = RecordingBroker()
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="SONO",
+                timestamp=now,
+                strategy_name="breakout",
+            )],
+        ),
+        now=now,
+    )
+
+    # Partial-fill entry was canceled at broker before market exit was submitted.
+    assert "broker-entry-sono-1" in broker.cancel_calls
+    assert len(broker.exit_calls) == 1
+    assert broker.exit_calls[0]["symbol"] == "SONO"
+
+    # Audit trail includes partial_fill_entry_canceled
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "partial_fill_entry_canceled" in event_types
