@@ -165,7 +165,7 @@ In `src/alpaca_bot/execution/option_chain.py`, after the `__init__` method (line
 
         api_key, secret_key, _paper = resolve_alpaca_credentials(settings)
         factory = _client_factory if _client_factory is not None else OptionHistoricalDataClient
-        return cls(factory(api_key, secret_key))
+        return cls(factory(api_key=api_key, secret_key=secret_key))
 ```
 
 - [ ] **Step 4: Run test to verify it passes**

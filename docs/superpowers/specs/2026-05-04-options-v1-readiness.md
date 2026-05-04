@@ -87,6 +87,14 @@ Fix: add an `# Options trading (off by default)` section to DEPLOYMENT.md.
 supervisor starts (docker-compose `migrate` service runs first). No down-migration
 is needed for v1 (the table is new with no dependencies from existing tables).
 
+### Pre-existing Reliability Gap — YELLOW (should-fix before live)
+`submit_option_limit_entry` and `submit_option_market_exit` in `AlpacaExecutionAdapter`
+call `self._trading.submit_order()` directly — they bypass the `_retry_with_backoff`
+wrapper that all equity order methods use. Transient Alpaca API errors on option
+submissions will fail immediately rather than retrying. Not a financial safety issue
+(paper/live endpoint routing is unchanged), but a reliability concern before going live.
+Fixing this is outside the production wiring plan scope — add a follow-up task.
+
 ### Financial Safety — GREEN
 - `ENABLE_LIVE_TRADING=false` gate enforced in `AlpacaExecutionAdapter._validate_live_safety()`
   which is called before any order submission. Options use `AlpacaBroker` (same class)
