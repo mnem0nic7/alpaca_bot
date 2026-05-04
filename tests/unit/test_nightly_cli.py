@@ -305,3 +305,34 @@ def test_nightly_cli_too_few_scenario_files_returns_error(monkeypatch, tmp_path)
     result = module.main()
 
     assert result == 1
+
+
+def test_nightly_cli_tighter_defaults_reject_marginal_oos_candidate(monkeypatch, tmp_path):
+    """Default oos_gate_ratio=0.6 rejects OOS=0.28/IS=0.5 (ratio 0.56 < 0.6) without explicit flags."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    _patch_common_db(monkeypatch, module)
+
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    # OOS=0.28, IS=0.5 → ratio 0.28/0.5=0.56 < 0.6 (new default) → not held
+    # (with old default 0.5: 0.28 >= 0.25 would pass → candidate would be held)
+    cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", lambda **kw: [cand])
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [0.28])
+
+    output_env = tmp_path / "candidate.env"
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db",
+        "--output-dir", str(tmp_path),
+        "--output-env", str(output_env),
+    ])
+
+    result = module.main()
+
+    assert result == 0  # nightly always returns 0 even with no held candidates
+    assert not output_env.exists(), "no candidate env written when OOS/IS ratio < new default 0.6"

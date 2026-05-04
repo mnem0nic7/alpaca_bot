@@ -47,10 +47,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Path to write winning candidate env block")
     parser.add_argument("--validate-pct", type=float, default=0.2,
                         help="OOS fraction for walk-forward gate (default: 0.2)")
-    parser.add_argument("--min-oos-score", type=float, default=0.0,
-                        help="Minimum absolute OOS score to accept a candidate (default: 0.0)")
-    parser.add_argument("--oos-gate-ratio", type=float, default=0.5,
-                        help="Required OOS/IS score ratio to hold a candidate (default: 0.5)")
+    parser.add_argument("--min-oos-score", type=float, default=0.2,
+                        help="Minimum absolute OOS score to accept a candidate (default: 0.2)")
+    parser.add_argument("--oos-gate-ratio", type=float, default=0.6,
+                        help="Required OOS/IS score ratio to hold a candidate (default: 0.6)")
+    parser.add_argument("--max-drawdown-pct", type=float, default=0.0,
+                        help="Maximum allowed IS/OOS drawdown to accept a candidate (0.0 = disabled)")
     parser.add_argument("--strategy", default="breakout",
                         choices=list(STRATEGY_REGISTRY),
                         help="Strategy grid to sweep (default: breakout)")
@@ -164,6 +166,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 scenarios=is_scenarios,
                 base_env=base_env,
                 grid=grid,
+                max_drawdown_pct=args.max_drawdown_pct,
                 signal_evaluator=signal_evaluator,
                 surrogate=surrogate,
             )
@@ -178,6 +181,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 oos_scenarios=oos_scenarios,
                 base_env=base_env,
                 min_trades=3,
+                max_drawdown_pct=args.max_drawdown_pct,
                 signal_evaluator=signal_evaluator,
             )
             _print_walk_forward_block(

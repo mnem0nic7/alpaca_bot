@@ -49,6 +49,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Minimum absolute OOS score to accept a candidate (default: 0.0)")
     parser.add_argument("--oos-gate-ratio", type=float, default=0.5,
                         help="Required OOS/IS score ratio to hold a candidate (default: 0.5)")
+    parser.add_argument("--max-drawdown-pct", type=float, default=0.0,
+                        help="Maximum allowed IS/OOS drawdown to accept a candidate (0.0 = disabled)")
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
 
     validate_pct: float = args.validate_pct
@@ -77,6 +79,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             base_env=base_env,
             grid=grid,
             min_trades=args.min_trades,
+            max_drawdown_pct=args.max_drawdown_pct,
             signal_evaluator=signal_evaluator,
         )
         scenario_name = scenario.name
@@ -122,6 +125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             grid=grid,
             min_trades_per_scenario=args.min_trades,
             aggregate=args.aggregate,
+            max_drawdown_pct=args.max_drawdown_pct,
             signal_evaluator=signal_evaluator,
         )
         scenario_name = "+".join(s.name for s in all_scenarios)
@@ -145,6 +149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             base_env=base_env,
             min_trades=args.min_trades,
             aggregate=args.aggregate,
+            max_drawdown_pct=args.max_drawdown_pct,
             signal_evaluator=signal_evaluator,
         )
         _print_walk_forward_block(
