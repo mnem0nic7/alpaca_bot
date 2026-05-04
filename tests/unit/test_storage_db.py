@@ -327,9 +327,9 @@ class TestListClosedTrades:
         return OrderStore(_make_fake_connection(rows))
 
     def test_returns_one_dict_per_closed_trade(self):
-        """Each DB row becomes a dict with symbol, fills, limit, times, qty."""
+        """Each DB row becomes a dict with symbol, fills, limit, times, qty, intent_type."""
         now = datetime(2026, 4, 25, 15, 0, tzinfo=timezone.utc)
-        rows = [("AAPL", "breakout", 110.00, 111.00, now, 112.00, now, 10)]
+        rows = [("AAPL", "breakout", "stop", 110.00, 111.00, now, 112.00, now, 10)]
         store = self._store(rows)
         trades = store.list_closed_trades(
             trading_mode=self.MODE,
@@ -340,17 +340,18 @@ class TestListClosedTrades:
         trade = trades[0]
         assert trade["symbol"] == "AAPL"
         assert trade["strategy_name"] == "breakout"
+        assert trade["intent_type"] == "stop"
         assert trade["entry_fill"] == pytest.approx(110.00)
         assert trade["entry_limit"] == pytest.approx(111.00)
         assert trade["exit_fill"] == pytest.approx(112.00)
         assert trade["qty"] == 10
 
     def test_excludes_rows_with_null_entry_fill(self):
-        """Rows where entry_fill (col 2) is None are filtered out."""
+        """Rows where entry_fill (col 3) is None are filtered out."""
         now = datetime(2026, 4, 25, 15, 0, tzinfo=timezone.utc)
         rows = [
-            ("AAPL", "breakout", None, None, now, 112.00, now, 10),  # no entry fill → skip
-            ("MSFT", "breakout", 400.00, 401.00, now, 405.00, now, 5),
+            ("AAPL", "breakout", "stop", None, None, now, 112.00, now, 10),  # no entry fill → skip
+            ("MSFT", "breakout", "exit", 400.00, 401.00, now, 405.00, now, 5),
         ]
         store = self._store(rows)
         trades = store.list_closed_trades(
@@ -373,7 +374,7 @@ class TestListClosedTrades:
     def test_entry_limit_none_is_preserved(self):
         """entry_limit may be None for stop-only entries (no limit price)."""
         now = datetime(2026, 4, 25, 15, 0, tzinfo=timezone.utc)
-        rows = [("AAPL", "breakout", 110.00, None, now, 112.00, now, 10)]
+        rows = [("AAPL", "breakout", "exit", 110.00, None, now, 112.00, now, 10)]
         store = self._store(rows)
         trades = store.list_closed_trades(
             trading_mode=self.MODE,

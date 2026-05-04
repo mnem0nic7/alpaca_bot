@@ -566,6 +566,7 @@ class OrderStore:
             SELECT
                 x.symbol,
                 x.strategy_name,
+                x.intent_type,
                 (
                     SELECT e.fill_price
                     FROM orders e
@@ -630,15 +631,16 @@ class OrderStore:
             {
                 "symbol": row[0],
                 "strategy_name": row[1],
-                "entry_fill": float(row[2]) if row[2] is not None else None,
-                "entry_limit": float(row[3]) if row[3] is not None else None,
-                "entry_time": row[4],
-                "exit_fill": float(row[5]) if row[5] is not None else None,
-                "exit_time": row[6],
-                "qty": int(row[7]),
+                "intent_type": row[2],
+                "entry_fill": float(row[3]) if row[3] is not None else None,
+                "entry_limit": float(row[4]) if row[4] is not None else None,
+                "entry_time": row[5],
+                "exit_fill": float(row[6]) if row[6] is not None else None,
+                "exit_time": row[7],
+                "qty": int(row[8]),
             }
             for row in rows
-            if row[2] is not None and row[5] is not None
+            if row[3] is not None and row[6] is not None
         ]
 
 

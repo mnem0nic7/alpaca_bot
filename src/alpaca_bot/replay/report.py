@@ -45,6 +45,19 @@ class BacktestReport:
 
 def build_backtest_report(result: ReplayResult, strategy_name: str = "breakout") -> BacktestReport:
     trades = _extract_trades(result.events)
+    return report_from_records(trades, result.scenario.starting_equity, strategy_name)
+
+
+def report_from_records(
+    trades: list[ReplayTradeRecord],
+    starting_equity: float,
+    strategy_name: str = "breakout",
+) -> BacktestReport:
+    """Compute a BacktestReport from a list of ReplayTradeRecord objects.
+
+    Used by both the replay path (via build_backtest_report) and the live
+    session evaluator so both paths share identical stat logic.
+    """
     total = len(trades)
 
     if total == 0:
@@ -63,7 +76,7 @@ def build_backtest_report(result: ReplayResult, strategy_name: str = "breakout")
     losers = sum(1 for t in trades if t.pnl < 0)
     win_rate = winners / total
     mean_return_pct = sum(t.return_pct for t in trades) / total
-    max_drawdown_pct = _compute_max_drawdown(trades, result.scenario.starting_equity)
+    max_drawdown_pct = _compute_max_drawdown(trades, starting_equity)
     gross_wins_pnl = sum(t.pnl for t in trades if t.pnl > 0)
     gross_losses_pnl = abs(sum(t.pnl for t in trades if t.pnl < 0))
     profit_factor = gross_wins_pnl / gross_losses_pnl if gross_losses_pnl > 0 else None
