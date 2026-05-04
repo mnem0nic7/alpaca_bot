@@ -26,6 +26,7 @@ alpaca-bot-backtest = "alpaca_bot.replay.cli:main"
 alpaca-bot-evolve = "alpaca_bot.tuning.cli:main"
 alpaca-bot-backfill = "alpaca_bot.backfill.cli:main"
 alpaca-bot-sweep    = "alpaca_bot.tuning.sweep_cli:main"
+alpaca-bot-session-eval = "alpaca_bot.admin.session_eval_cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
