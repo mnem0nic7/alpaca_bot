@@ -105,6 +105,7 @@ def score_report(
     *,
     min_trades: int = 3,
     max_drawdown_pct: float = 0.0,
+    max_trades: int = 0,
 ) -> float | None:
     """Sharpe-first composite score; None if disqualified.
 
@@ -114,6 +115,8 @@ def score_report(
     profit_factor=None (no losses at all) is never penalised.
     """
     if report.total_trades < min_trades:
+        return None
+    if max_trades > 0 and report.total_trades > max_trades:
         return None
     if report.sharpe_ratio is not None:
         base = report.sharpe_ratio
@@ -192,6 +195,7 @@ def run_sweep(
     grid: ParameterGrid | None = None,
     min_trades: int = 3,
     max_drawdown_pct: float = 0.0,
+    max_trades: int = 0,
     signal_evaluator: "StrategySignalEvaluator | None" = None,
 ) -> list[TuningCandidate]:
     """Run a parameter grid sweep over `scenario`.
@@ -215,7 +219,8 @@ def run_sweep(
         result = runner.run(scenario)
         report: BacktestReport | None = result.backtest_report  # type: ignore[assignment]
         s = (
-            score_report(report, min_trades=min_trades, max_drawdown_pct=max_drawdown_pct)
+            score_report(report, min_trades=min_trades, max_drawdown_pct=max_drawdown_pct,
+                         max_trades=max_trades)
             if report is not None else None
         )
         candidates.append(TuningCandidate(params=overrides, report=report, score=s))
@@ -235,6 +240,7 @@ def run_multi_scenario_sweep(
     min_trades_per_scenario: int = 2,
     aggregate: str = "min",
     max_drawdown_pct: float = 0.0,
+    max_trades: int = 0,
     signal_evaluator: "StrategySignalEvaluator | None" = None,
     surrogate: "SurrogateModel | None" = None,
 ) -> list[TuningCandidate]:
@@ -271,7 +277,8 @@ def run_multi_scenario_sweep(
             result = runner.run(scenario)
             report: BacktestReport | None = result.backtest_report  # type: ignore[assignment]
             s = (
-                score_report(report, min_trades=min_trades_per_scenario, max_drawdown_pct=max_drawdown_pct)
+                score_report(report, min_trades=min_trades_per_scenario,
+                             max_drawdown_pct=max_drawdown_pct, max_trades=max_trades)
                 if report is not None else None
             )
             per_scenario_reports.append(report)
@@ -304,6 +311,7 @@ def evaluate_candidates_oos(
     min_trades: int,
     aggregate: str = "min",
     max_drawdown_pct: float = 0.0,
+    max_trades: int = 0,
     signal_evaluator: "StrategySignalEvaluator | None" = None,
 ) -> list[float | None]:
     """Score each candidate against OOS scenarios; returns a parallel list of scores.
@@ -325,7 +333,8 @@ def evaluate_candidates_oos(
             result = runner.run(scenario)
             report: BacktestReport | None = result.backtest_report  # type: ignore[assignment]
             s = (
-                score_report(report, min_trades=min_trades, max_drawdown_pct=max_drawdown_pct)
+                score_report(report, min_trades=min_trades, max_drawdown_pct=max_drawdown_pct,
+                             max_trades=max_trades)
                 if report is not None else None
             )
             per_scenario_scores.append(s)

@@ -208,7 +208,7 @@ def test_run_multi_scenario_sweep_min_aggregate_uses_worst_case(monkeypatch) -> 
     call_results = [2.0, 0.5]
     call_idx = [0]
 
-    def fake_score(report, *, min_trades, max_drawdown_pct=0.0):
+    def fake_score(report, *, min_trades, max_drawdown_pct=0.0, max_trades=0):
         result = call_results[call_idx[0] % len(call_results)]
         call_idx[0] += 1
         return result
@@ -239,7 +239,7 @@ def test_run_multi_scenario_sweep_mean_aggregate_averages_scores(monkeypatch) ->
     call_results = [2.0, 0.5]
     call_idx = [0]
 
-    def fake_score(report, *, min_trades, max_drawdown_pct=0.0):
+    def fake_score(report, *, min_trades, max_drawdown_pct=0.0, max_trades=0):
         result = call_results[call_idx[0] % len(call_results)]
         call_idx[0] += 1
         return result
@@ -541,3 +541,21 @@ def test_score_report_drawdown_gate_skips_none_drawdown() -> None:
     )
     # max_drawdown_pct is None in report → cannot enforce gate → should NOT disqualify
     assert score_report(report, min_trades=3, max_drawdown_pct=0.10) is not None
+
+
+def test_score_report_disqualifies_on_excessive_trades() -> None:
+    report = BacktestReport(
+        trades=(), total_trades=6, winning_trades=4, losing_trades=2,
+        win_rate=0.67, mean_return_pct=0.02, max_drawdown_pct=None, sharpe_ratio=1.0,
+    )
+    assert score_report(report, min_trades=3, max_trades=5) is None
+    assert score_report(report, min_trades=3, max_trades=6) is not None  # exactly at cap → passes
+
+
+def test_score_report_max_trades_zero_disabled() -> None:
+    report = BacktestReport(
+        trades=(), total_trades=100, winning_trades=60, losing_trades=40,
+        win_rate=0.6, mean_return_pct=0.01, max_drawdown_pct=None, sharpe_ratio=1.5,
+    )
+    # max_trades=0 means gate is disabled — 100 trades must not be disqualified
+    assert score_report(report, min_trades=3, max_trades=0) is not None
