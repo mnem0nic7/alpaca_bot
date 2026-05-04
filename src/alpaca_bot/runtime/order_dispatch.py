@@ -4,7 +4,7 @@ import contextlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 from alpaca_bot.config import Settings
 from alpaca_bot.execution import BrokerOrder
@@ -46,6 +46,8 @@ class BrokerProtocol(Protocol):
     def submit_limit_entry(self, **kwargs) -> BrokerOrder: ...
 
     def submit_stop_order(self, **kwargs) -> BrokerOrder: ...
+
+    def cancel_order(self, order_id: str) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -213,6 +215,17 @@ def dispatch_pending_orders(
                         except Exception:
                             pass
                         raise
+                continue
+        if order.intent_type == "stop":
+            if not _cancel_partial_fill_entry(
+                order=order,
+                runtime=runtime,
+                broker=broker,
+                settings=settings,
+                now=timestamp,
+                lock_ctx=lock_ctx,
+            ):
+                # Cancel failed — leave stop as pending_submit for next cycle retry.
                 continue
         with lock_ctx:
             try:
@@ -423,6 +436,120 @@ def _submit_order(
             client_order_id=order.client_order_id,
         )
     raise ValueError(f"Unsupported pending order intent_type: {order.intent_type}")
+
+
+def _cancel_partial_fill_entry(
+    *,
+    order: OrderRecord,
+    runtime: RuntimeProtocol,
+    broker: BrokerProtocol,
+    settings: "Settings",
+    now: datetime,
+    lock_ctx: Any,
+) -> bool:
+    """Cancel the open buy-limit for a partially-filled entry of the same symbol.
+
+    Returns True if safe to proceed (no partial entry found, or cancel succeeded/already gone).
+    Returns False if cancel raised an unrecognized error — caller should skip the sell-side
+    order to avoid wash trade rejection, leaving it pending_submit for next cycle retry.
+    """
+    if lock_ctx is None:
+        lock_ctx = contextlib.nullcontext()
+
+    with lock_ctx:
+        all_partial = runtime.order_store.list_by_status(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+            statuses=["partially_filled"],
+        )
+    partial_entries = [
+        o for o in all_partial
+        if o.intent_type == "entry" and o.symbol == order.symbol
+    ]
+    if not partial_entries:
+        return True
+
+    for entry in partial_entries:
+        if not entry.broker_order_id:
+            continue
+        try:
+            broker.cancel_order(entry.broker_order_id)
+        except Exception as exc:
+            exc_msg = str(exc).lower()
+            if any(phrase in exc_msg for phrase in ("already canceled", "not found", "does not exist")):
+                logger.warning(
+                    "order_dispatch: partial-fill entry for %s already gone at broker (%s) — proceeding",
+                    order.symbol,
+                    exc,
+                )
+            else:
+                logger.exception(
+                    "order_dispatch: failed to cancel partial-fill entry %s for %s before stop dispatch",
+                    entry.broker_order_id,
+                    order.symbol,
+                )
+                with lock_ctx:
+                    try:
+                        runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="partial_fill_cancel_failed",
+                                symbol=order.symbol,
+                                payload={
+                                    "entry_client_order_id": entry.client_order_id,
+                                    "entry_broker_order_id": entry.broker_order_id,
+                                    "error": str(exc),
+                                    "context": "stop_dispatch",
+                                },
+                                created_at=now,
+                            ),
+                            commit=True,
+                        )
+                    except Exception:
+                        pass
+                return False
+        canceled_record = OrderRecord(
+            client_order_id=entry.client_order_id,
+            symbol=entry.symbol,
+            side=entry.side,
+            intent_type=entry.intent_type,
+            status="canceled",
+            quantity=entry.quantity,
+            trading_mode=entry.trading_mode,
+            strategy_version=entry.strategy_version,
+            strategy_name=entry.strategy_name,
+            created_at=entry.created_at,
+            updated_at=now,
+            stop_price=entry.stop_price,
+            limit_price=entry.limit_price,
+            initial_stop_price=entry.initial_stop_price,
+            broker_order_id=entry.broker_order_id,
+            signal_timestamp=entry.signal_timestamp,
+        )
+        with lock_ctx:
+            try:
+                runtime.order_store.save(canceled_record, commit=False)
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="partial_fill_entry_canceled",
+                        symbol=order.symbol,
+                        payload={
+                            "entry_client_order_id": entry.client_order_id,
+                            "entry_broker_order_id": entry.broker_order_id,
+                            "context": "stop_dispatch",
+                        },
+                        created_at=now,
+                    ),
+                    commit=False,
+                )
+                runtime.connection.commit()
+            except Exception:
+                try:
+                    runtime.connection.rollback()
+                except Exception:
+                    pass
+                raise
+
+    return True
 
 
 def _resolve_now(now: datetime | Callable[[], datetime] | None) -> datetime:
