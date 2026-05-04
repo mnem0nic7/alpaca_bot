@@ -28,6 +28,7 @@ from alpaca_bot.tuning.surrogate import SurrogateModel
 from alpaca_bot.tuning.sweep import (
     DEFAULT_GRID,
     STRATEGY_GRIDS,
+    _viability_key,
     evaluate_candidates_oos,
     run_multi_scenario_sweep,
 )
@@ -53,6 +54,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Required OOS/IS score ratio to hold a candidate (default: 0.6)")
     parser.add_argument("--max-drawdown-pct", type=float, default=0.0,
                         help="Maximum allowed IS/OOS drawdown to accept a candidate (0.0 = disabled)")
+    parser.add_argument("--max-trades", type=int, default=0,
+                        help="Maximum trades per scenario to accept a candidate (0 = disabled)")
     parser.add_argument("--strategy", default="breakout",
                         choices=list(STRATEGY_REGISTRY),
                         help="Strategy grid to sweep (default: breakout)")
@@ -167,6 +170,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 base_env=base_env,
                 grid=grid,
                 max_drawdown_pct=args.max_drawdown_pct,
+                max_trades=args.max_trades,
                 signal_evaluator=signal_evaluator,
                 surrogate=surrogate,
             )
@@ -182,6 +186,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 base_env=base_env,
                 min_trades=3,
                 max_drawdown_pct=args.max_drawdown_pct,
+                max_trades=args.max_trades,
                 signal_evaluator=signal_evaluator,
             )
             _print_walk_forward_block(
@@ -204,7 +209,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             scenario_name = "+".join(s.name for s in all_scenarios)
 
             if held_pairs:
-                best = max(held_pairs, key=lambda pair: pair[1])[0]
+                best = max(held_pairs, key=lambda pair: _viability_key(pair[0], pair[1]))[0]
                 env_block = _format_env_block(best, now)
                 print(f"\n{env_block}")
                 if args.output_env:

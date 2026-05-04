@@ -336,3 +336,53 @@ def test_nightly_cli_tighter_defaults_reject_marginal_oos_candidate(monkeypatch,
 
     assert result == 0  # nightly always returns 0 even with no held candidates
     assert not output_env.exists(), "no candidate env written when OOS/IS ratio < new default 0.6"
+
+
+def test_nightly_viability_tiebreak_picks_higher_r(monkeypatch, tmp_path):
+    """When two held candidates have equal OOS score, the one with higher R-multiple wins."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+    from alpaca_bot.replay.report import BacktestReport
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    _patch_common_db(monkeypatch, module)
+
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    low_r_report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+        win_rate=0.6, mean_return_pct=0.02, max_drawdown_pct=None, sharpe_ratio=0.5,
+        avg_win_return_pct=0.025, avg_loss_return_pct=-0.02,
+    )
+    high_r_report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+        win_rate=0.6, mean_return_pct=0.02, max_drawdown_pct=None, sharpe_ratio=0.5,
+        avg_win_return_pct=0.05, avg_loss_return_pct=-0.014,
+    )
+    # cand_low_r listed first so old max(pair[1]) would pick it on tie
+    cand_low_r = TuningCandidate(
+        params={"BREAKOUT_LOOKBACK_BARS": "15"}, report=low_r_report, score=0.5
+    )
+    cand_high_r = TuningCandidate(
+        params={"BREAKOUT_LOOKBACK_BARS": "30"}, report=high_r_report, score=0.5
+    )
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", lambda **kw: [cand_low_r, cand_high_r])
+    # Both pass OOS gate: OOS=0.4 >= IS=0.5 * ratio=0.6 → 0.4 >= 0.3 ✓, and 0.4 >= min_oos=0.2 ✓
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [0.4, 0.4])
+
+    output_env = tmp_path / "candidate.env"
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db",
+        "--output-dir", str(tmp_path),
+        "--output-env", str(output_env),
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert output_env.exists()
+    assert "BREAKOUT_LOOKBACK_BARS=30" in output_env.read_text(), \
+        "higher R-multiple candidate (LOOKBACK=30) must be selected over lower R (LOOKBACK=15)"
