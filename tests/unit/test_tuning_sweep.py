@@ -208,7 +208,7 @@ def test_run_multi_scenario_sweep_min_aggregate_uses_worst_case(monkeypatch) -> 
     call_results = [2.0, 0.5]
     call_idx = [0]
 
-    def fake_score(report, *, min_trades):
+    def fake_score(report, *, min_trades, max_drawdown_pct=0.0):
         result = call_results[call_idx[0] % len(call_results)]
         call_idx[0] += 1
         return result
@@ -239,7 +239,7 @@ def test_run_multi_scenario_sweep_mean_aggregate_averages_scores(monkeypatch) ->
     call_results = [2.0, 0.5]
     call_idx = [0]
 
-    def fake_score(report, *, min_trades):
+    def fake_score(report, *, min_trades, max_drawdown_pct=0.0):
         result = call_results[call_idx[0] % len(call_results)]
         call_idx[0] += 1
         return result
@@ -519,3 +519,25 @@ def test_evaluate_candidates_oos_returns_parallel_scores() -> None:
     assert len(scores) == 2
     for s in scores:
         assert s is None or isinstance(s, float)
+
+
+def test_score_report_disqualifies_on_excessive_drawdown() -> None:
+    report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+        win_rate=0.6, mean_return_pct=0.02, max_drawdown_pct=0.25, sharpe_ratio=0.5,
+    )
+    # 0.25 > 0.20 → disqualified
+    assert score_report(report, min_trades=3, max_drawdown_pct=0.20) is None
+    # 0.25 <= 0.30 → passes gate
+    assert score_report(report, min_trades=3, max_drawdown_pct=0.30) is not None
+    # default 0.0 → gate disabled, passes
+    assert score_report(report, min_trades=3) is not None
+
+
+def test_score_report_drawdown_gate_skips_none_drawdown() -> None:
+    report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=5, losing_trades=0,
+        win_rate=1.0, mean_return_pct=0.05, max_drawdown_pct=None, sharpe_ratio=0.5,
+    )
+    # max_drawdown_pct is None in report → cannot enforce gate → should NOT disqualify
+    assert score_report(report, min_trades=3, max_drawdown_pct=0.10) is not None

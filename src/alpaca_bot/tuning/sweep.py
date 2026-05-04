@@ -100,11 +100,17 @@ def _parse_grid(specs: list[str]) -> ParameterGrid:
     return grid
 
 
-def score_report(report: BacktestReport, *, min_trades: int = 3) -> float | None:
+def score_report(
+    report: BacktestReport,
+    *,
+    min_trades: int = 3,
+    max_drawdown_pct: float = 0.0,
+) -> float | None:
     """Sharpe-first composite score; None if disqualified.
 
     Disqualified when: fewer than min_trades, profit_factor < 1.0 (net-losing),
-    or base score ≤ 0 (non-positive Sharpe/Calmar — no exploitable edge).
+    base score ≤ 0 (non-positive Sharpe/Calmar), or drawdown exceeds max_drawdown_pct
+    (when max_drawdown_pct > 0.0 and report.max_drawdown_pct is not None).
     profit_factor=None (no losses at all) is never penalised.
     """
     if report.total_trades < min_trades:
@@ -120,6 +126,10 @@ def score_report(report: BacktestReport, *, min_trades: int = 3) -> float | None
         return None  # net-losing strategy: hard disqualify
     if base <= 0.0:
         return None  # non-positive Sharpe/Calmar: no exploitable edge
+    if (max_drawdown_pct > 0.0
+            and report.max_drawdown_pct is not None
+            and report.max_drawdown_pct > max_drawdown_pct):
+        return None  # drawdown exceeds operator-configured limit
     return base
 
 
@@ -181,6 +191,7 @@ def run_sweep(
     base_env: dict[str, str],
     grid: ParameterGrid | None = None,
     min_trades: int = 3,
+    max_drawdown_pct: float = 0.0,
     signal_evaluator: "StrategySignalEvaluator | None" = None,
 ) -> list[TuningCandidate]:
     """Run a parameter grid sweep over `scenario`.
@@ -203,7 +214,10 @@ def run_sweep(
         runner = ReplayRunner(settings, signal_evaluator=signal_evaluator)
         result = runner.run(scenario)
         report: BacktestReport | None = result.backtest_report  # type: ignore[assignment]
-        s = score_report(report, min_trades=min_trades) if report is not None else None
+        s = (
+            score_report(report, min_trades=min_trades, max_drawdown_pct=max_drawdown_pct)
+            if report is not None else None
+        )
         candidates.append(TuningCandidate(params=overrides, report=report, score=s))
 
     return sorted(
@@ -220,6 +234,7 @@ def run_multi_scenario_sweep(
     grid: ParameterGrid | None = None,
     min_trades_per_scenario: int = 2,
     aggregate: str = "min",
+    max_drawdown_pct: float = 0.0,
     signal_evaluator: "StrategySignalEvaluator | None" = None,
     surrogate: "SurrogateModel | None" = None,
 ) -> list[TuningCandidate]:
@@ -255,7 +270,10 @@ def run_multi_scenario_sweep(
         for scenario in scenarios:
             result = runner.run(scenario)
             report: BacktestReport | None = result.backtest_report  # type: ignore[assignment]
-            s = score_report(report, min_trades=min_trades_per_scenario) if report is not None else None
+            s = (
+                score_report(report, min_trades=min_trades_per_scenario, max_drawdown_pct=max_drawdown_pct)
+                if report is not None else None
+            )
             per_scenario_reports.append(report)
             per_scenario_scores.append(s)
 
@@ -285,6 +303,7 @@ def evaluate_candidates_oos(
     base_env: dict[str, str],
     min_trades: int,
     aggregate: str = "min",
+    max_drawdown_pct: float = 0.0,
     signal_evaluator: "StrategySignalEvaluator | None" = None,
 ) -> list[float | None]:
     """Score each candidate against OOS scenarios; returns a parallel list of scores.
@@ -305,7 +324,10 @@ def evaluate_candidates_oos(
         for scenario in oos_scenarios:
             result = runner.run(scenario)
             report: BacktestReport | None = result.backtest_report  # type: ignore[assignment]
-            s = score_report(report, min_trades=min_trades) if report is not None else None
+            s = (
+                score_report(report, min_trades=min_trades, max_drawdown_pct=max_drawdown_pct)
+                if report is not None else None
+            )
             per_scenario_scores.append(s)
         if any(s is None for s in per_scenario_scores):
             scores.append(None)
