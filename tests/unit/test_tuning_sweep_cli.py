@@ -208,3 +208,105 @@ def test_validate_pct_out_of_range(monkeypatch, tmp_path):
 
     with pytest.raises(SystemExit):
         module.main()
+
+
+def test_walk_forward_gate_selects_best_oos_held_candidate(monkeypatch, tmp_path):
+    """When --validate-pct is used, best candidate is the highest-OOS-scoring held one."""
+    import json
+    from alpaca_bot.tuning import cli as module
+    from alpaca_bot.replay.runner import ReplayScenario
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+
+    for name in ("SYM_A_252d.json", "SYM_B_252d.json"):
+        (tmp_path / name).write_text(json.dumps({
+            "name": name.replace(".json", ""), "symbol": "SYM", "starting_equity": 100000.0,
+            "daily_bars": [], "intraday_bars": [],
+        }))
+
+    cand_0 = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
+    cand_1 = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "25"}, report=None, score=0.4)
+    cand_2 = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "30"}, report=None, score=0.3)
+
+    def fake_split(scenario, *, in_sample_ratio):
+        is_s = ReplayScenario(name=scenario.name + "_is", symbol=scenario.symbol,
+                              starting_equity=scenario.starting_equity,
+                              daily_bars=[], intraday_bars=[])
+        oos_s = ReplayScenario(name=scenario.name + "_oos", symbol=scenario.symbol,
+                               starting_equity=scenario.starting_equity,
+                               daily_bars=[], intraday_bars=[])
+        return is_s, oos_s
+
+    def fake_run_multi(**kwargs):
+        return [cand_0, cand_1, cand_2]
+
+    def fake_oos(candidates, oos_scenarios, *, base_env, min_trades, aggregate, signal_evaluator=None):
+        # cand_0: OOS=0.4 → held (0.4 >= 0.5*0.5=0.25) ✓
+        # cand_1: OOS=0.1 → not held (0.1 < 0.4*0.5=0.2) ✗
+        # cand_2: OOS=None → not held ✗
+        return [0.4, 0.1, None]
+
+    output_env = tmp_path / "out.env"
+    monkeypatch.setattr(module, "split_scenario", fake_split)
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_run_multi)
+    monkeypatch.setattr(module, "evaluate_candidates_oos", fake_oos)
+    monkeypatch.setattr(sys, "argv", [
+        "evolve", "--scenario-dir", str(tmp_path),
+        "--validate-pct", "0.2", "--no-db",
+        "--output-env", str(output_env),
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    env_content = output_env.read_text()
+    assert "BREAKOUT_LOOKBACK_BARS=20" in env_content  # cand_0, highest OOS score
+
+
+def test_walk_forward_gate_exits_nonzero_when_no_held_candidates(monkeypatch, tmp_path):
+    """When --validate-pct is used and no candidate holds in OOS, main() returns 1."""
+    import json
+    from alpaca_bot.tuning import cli as module
+    from alpaca_bot.replay.runner import ReplayScenario
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+
+    for name in ("SYM_A_252d.json", "SYM_B_252d.json"):
+        (tmp_path / name).write_text(json.dumps({
+            "name": name.replace(".json", ""), "symbol": "SYM", "starting_equity": 100000.0,
+            "daily_bars": [], "intraday_bars": [],
+        }))
+
+    cand_0 = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
+    cand_1 = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "25"}, report=None, score=0.4)
+
+    def fake_split(scenario, *, in_sample_ratio):
+        is_s = ReplayScenario(name=scenario.name + "_is", symbol=scenario.symbol,
+                              starting_equity=scenario.starting_equity,
+                              daily_bars=[], intraday_bars=[])
+        oos_s = ReplayScenario(name=scenario.name + "_oos", symbol=scenario.symbol,
+                               starting_equity=scenario.starting_equity,
+                               daily_bars=[], intraday_bars=[])
+        return is_s, oos_s
+
+    def fake_run_multi(**kwargs):
+        return [cand_0, cand_1]
+
+    def fake_oos(candidates, oos_scenarios, *, base_env, min_trades, aggregate, signal_evaluator=None):
+        # cand_0: OOS=0.2 → not held (0.2 < 0.5*0.5=0.25) ✗
+        # cand_1: OOS=None → not held ✗
+        return [0.2, None]
+
+    monkeypatch.setattr(module, "split_scenario", fake_split)
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_run_multi)
+    monkeypatch.setattr(module, "evaluate_candidates_oos", fake_oos)
+    monkeypatch.setattr(sys, "argv", [
+        "evolve", "--scenario-dir", str(tmp_path),
+        "--validate-pct", "0.2", "--no-db",
+    ])
+
+    result = module.main()
+
+    assert result == 1

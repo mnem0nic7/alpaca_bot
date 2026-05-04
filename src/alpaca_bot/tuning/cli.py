@@ -144,6 +144,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             signal_evaluator=signal_evaluator,
         )
         _print_walk_forward_block(top10, oos_scores, validate_pct=validate_pct, aggregate=args.aggregate)
+        held_pairs = [
+            (c, s) for c, s in zip(top10, oos_scores)
+            if s is not None and c.score is not None and s >= c.score * 0.5
+        ]
+        if not held_pairs:
+            print("\nNo walk-forward held candidates — approval gate blocked all.")
+            return 1
+        best = max(held_pairs, key=lambda pair: pair[1])[0]
 
     if best is None:
         print("\nNo scored candidates — increase --min-trades or provide longer scenarios.")
