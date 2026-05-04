@@ -1,0 +1,2 @@
+# Nightly evolve pipeline — runs 30 min after NYSE close (22:30 UTC = 5:30 PM ET year-round)
+30 22 * * 1-5 root cd /workspace/alpaca_bot && docker compose -f deploy/compose.yaml run --rm nightly >> /var/log/alpaca-bot-nightly.log 2>&1
