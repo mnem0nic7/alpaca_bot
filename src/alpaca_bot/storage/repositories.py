@@ -1037,6 +1037,35 @@ class TuningResultStore:
             "created_at": row[5],
         }
 
+    def load_all_scored(
+        self,
+        *,
+        trading_mode: str,
+        limit: int = 5000,
+    ) -> list[dict]:
+        """Return all scored rows as [{params, score}, ...] for surrogate training.
+
+        Ordered most-recent first; capped at limit to bound memory.
+        """
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT params, score
+            FROM tuning_results
+            WHERE trading_mode = %s AND score IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (trading_mode, limit),
+        )
+        return [
+            {
+                "params": row[0] if isinstance(row[0], dict) else json.loads(row[0]),
+                "score": float(row[1]),
+            }
+            for row in rows
+        ]
+
 
 class StrategyFlagStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
