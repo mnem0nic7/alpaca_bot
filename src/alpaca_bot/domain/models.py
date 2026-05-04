@@ -39,6 +39,7 @@ class EntrySignal:
     stop_price: float
     limit_price: float
     initial_stop_price: float
+    option_contract: OptionContract | None = None
 
 
 @dataclass(frozen=True)
