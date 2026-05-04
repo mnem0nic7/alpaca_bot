@@ -151,3 +151,31 @@ class TestAlpacaExecutionAdapterOptionMethods:
         )
         assert len(submitted) == 1
         assert result.broker_order_id == "broker-789"
+
+
+def test_from_settings_constructs_adapter_with_injected_factory():
+    """from_settings() wires a client built by _client_factory and returns an adapter."""
+    from alpaca_bot.execution.option_chain import AlpacaOptionChainAdapter
+    from tests.unit.helpers import _base_env
+    from alpaca_bot.config import Settings
+
+    built_clients = []
+
+    class FakeClient:
+        pass
+
+    def fake_factory(*, api_key, secret_key):
+        built_clients.append((api_key, secret_key))
+        return FakeClient()
+
+    env = _base_env()
+    env["ALPACA_PAPER_API_KEY"] = "test-api-key"
+    env["ALPACA_PAPER_SECRET_KEY"] = "test-secret-key"
+    settings = Settings.from_env(env)
+    adapter = AlpacaOptionChainAdapter.from_settings(settings, _client_factory=fake_factory)
+
+    assert isinstance(adapter, AlpacaOptionChainAdapter)
+    assert len(built_clients) == 1
+    api_key, secret_key = built_clients[0]
+    assert api_key == "test-api-key"
+    assert secret_key == "test-secret-key"

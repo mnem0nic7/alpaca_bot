@@ -18,6 +18,20 @@ class AlpacaOptionChainAdapter:
     def __init__(self, option_data_client: Any) -> None:
         self._client = option_data_client
 
+    @classmethod
+    def from_settings(
+        cls,
+        settings: Settings,
+        *,
+        _client_factory: Any | None = None,
+    ) -> "AlpacaOptionChainAdapter":
+        from alpaca.data.historical import OptionHistoricalDataClient  # type: ignore[import]
+        from alpaca_bot.execution.alpaca import resolve_alpaca_credentials
+
+        api_key, secret_key, _paper = resolve_alpaca_credentials(settings)
+        factory = _client_factory if _client_factory is not None else OptionHistoricalDataClient
+        return cls(factory(api_key=api_key, secret_key=secret_key))
+
     def get_option_chain(self, symbol: str, settings: Settings) -> list[OptionContract]:
         try:
             from alpaca.data.requests import OptionChainRequest  # type: ignore[import]
