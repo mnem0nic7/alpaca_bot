@@ -1,5 +1,6 @@
 volumes:
   postgres_data:
+  nightly_data:
 
 services:
   postgres:
@@ -132,4 +133,26 @@ services:
       postgres:
         condition: service_healthy
     environment: *alpaca_bot_env
+    profiles: ["ops"]
+
+  # Run on-demand: docker compose -f deploy/compose.yaml run --rm nightly
+  # Scheduled by host cron via scripts/install_cron.sh — see deploy/cron.d/alpaca-bot
+  nightly:
+    image: alpaca-bot:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command:
+      - alpaca-bot-nightly
+      - --output-dir
+      - /data/scenarios
+      - --output-env
+      - /data/candidate.env
+    environment: *alpaca_bot_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - nightly_data:/data
+    restart: "no"
     profiles: ["ops"]
