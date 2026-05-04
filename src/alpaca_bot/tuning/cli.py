@@ -17,6 +17,7 @@ from alpaca_bot.tuning.sweep import (
     STRATEGY_GRIDS,
     ParameterGrid,
     TuningCandidate,
+    _viability_key,
     evaluate_candidates_oos,
     run_multi_scenario_sweep,
     run_sweep,
@@ -51,6 +52,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Required OOS/IS score ratio to hold a candidate (default: 0.5)")
     parser.add_argument("--max-drawdown-pct", type=float, default=0.0,
                         help="Maximum allowed IS/OOS drawdown to accept a candidate (0.0 = disabled)")
+    parser.add_argument("--max-trades", type=int, default=0,
+                        help="Maximum trades per scenario to accept a candidate (0 = disabled)")
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
 
     validate_pct: float = args.validate_pct
@@ -80,6 +83,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             grid=grid,
             min_trades=args.min_trades,
             max_drawdown_pct=args.max_drawdown_pct,
+            max_trades=args.max_trades,
             signal_evaluator=signal_evaluator,
         )
         scenario_name = scenario.name
@@ -126,6 +130,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             min_trades_per_scenario=args.min_trades,
             aggregate=args.aggregate,
             max_drawdown_pct=args.max_drawdown_pct,
+            max_trades=args.max_trades,
             signal_evaluator=signal_evaluator,
         )
         scenario_name = "+".join(s.name for s in all_scenarios)
@@ -150,6 +155,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             min_trades=args.min_trades,
             aggregate=args.aggregate,
             max_drawdown_pct=args.max_drawdown_pct,
+            max_trades=args.max_trades,
             signal_evaluator=signal_evaluator,
         )
         _print_walk_forward_block(
@@ -169,7 +175,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not held_pairs:
             print("\nNo walk-forward held candidates — approval gate blocked all.")
             return 1
-        best = max(held_pairs, key=lambda pair: pair[1])[0]
+        best = max(held_pairs, key=lambda pair: _viability_key(pair[0], pair[1]))[0]
 
     if best is None:
         print("\nNo scored candidates — increase --min-trades or provide longer scenarios.")

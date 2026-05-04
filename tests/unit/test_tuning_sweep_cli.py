@@ -241,7 +241,7 @@ def test_walk_forward_gate_selects_best_oos_held_candidate(monkeypatch, tmp_path
     def fake_run_multi(**kwargs):
         return [cand_0, cand_1, cand_2]
 
-    def fake_oos(candidates, oos_scenarios, *, base_env, min_trades, aggregate, max_drawdown_pct=0.0, signal_evaluator=None):
+    def fake_oos(candidates, oos_scenarios, *, base_env, min_trades, aggregate, max_drawdown_pct=0.0, max_trades=0, signal_evaluator=None):
         # cand_0: OOS=0.4 → held (0.4 >= 0.5*0.5=0.25) ✓
         # cand_1: OOS=0.1 → not held (0.1 < 0.4*0.5=0.2) ✗
         # cand_2: OOS=None → not held ✗
@@ -294,7 +294,7 @@ def test_walk_forward_gate_exits_nonzero_when_no_held_candidates(monkeypatch, tm
     def fake_run_multi(**kwargs):
         return [cand_0, cand_1]
 
-    def fake_oos(candidates, oos_scenarios, *, base_env, min_trades, aggregate, max_drawdown_pct=0.0, signal_evaluator=None):
+    def fake_oos(candidates, oos_scenarios, *, base_env, min_trades, aggregate, max_drawdown_pct=0.0, max_trades=0, signal_evaluator=None):
         # cand_0: OOS=0.2 → not held (0.2 < 0.5*0.5=0.25) ✗
         # cand_1: OOS=None → not held ✗
         return [0.2, None]
@@ -422,3 +422,34 @@ def test_evolve_max_drawdown_pct_passed_to_sweep(monkeypatch, tmp_path):
     module.main()
 
     assert received_kw.get("max_drawdown_pct") == pytest.approx(0.15)
+
+
+def test_evolve_max_trades_passed_to_sweep(monkeypatch, tmp_path):
+    """--max-trades 5 must be forwarded to run_multi_scenario_sweep as max_trades=5."""
+    import json
+    from alpaca_bot.tuning import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+
+    for name in ("SYM_A_252d.json", "SYM_B_252d.json"):
+        (tmp_path / name).write_text(json.dumps({
+            "name": name.replace(".json", ""), "symbol": "SYM",
+            "starting_equity": 100000.0, "daily_bars": [], "intraday_bars": [],
+        }))
+
+    received_kw: dict = {}
+
+    def fake_sweep(**kw):
+        received_kw.update(kw)
+        return [TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)]
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
+    monkeypatch.setattr(sys, "argv", [
+        "evolve", "--scenario-dir", str(tmp_path), "--no-db",
+        "--max-trades", "5",
+    ])
+
+    module.main()
+
+    assert received_kw.get("max_trades") == 5
