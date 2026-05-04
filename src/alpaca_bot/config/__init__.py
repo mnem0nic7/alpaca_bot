@@ -135,6 +135,9 @@ class Settings:
     )
     enable_spread_filter: bool = True
     max_spread_pct: float = 0.002
+    option_dte_min: int = 21
+    option_dte_max: int = 60
+    option_delta_target: float = 0.50
 
     def __post_init__(self) -> None:
         self.validate()
@@ -291,6 +294,9 @@ class Settings:
                 "ENABLE_SPREAD_FILTER", values.get("ENABLE_SPREAD_FILTER", "false")
             ),
             max_spread_pct=float(values.get("MAX_SPREAD_PCT", "0.002")),
+            option_dte_min=int(values.get("OPTION_DTE_MIN", "21")),
+            option_dte_max=int(values.get("OPTION_DTE_MAX", "60")),
+            option_delta_target=float(values.get("OPTION_DELTA_TARGET", "0.50")),
         )
         return settings
 
@@ -426,6 +432,12 @@ class Settings:
             raise ValueError("PER_SYMBOL_LOSS_LIMIT_PCT must be < 1.0")
         if self.regime_sma_period < 2:
             raise ValueError("REGIME_SMA_PERIOD must be >= 2")
+        if self.option_dte_min < 1:
+            raise ValueError("OPTION_DTE_MIN must be at least 1")
+        if self.option_dte_max <= self.option_dte_min:
+            raise ValueError("OPTION_DTE_MAX must be greater than OPTION_DTE_MIN")
+        if not 0.0 < self.option_delta_target <= 1.0:
+            raise ValueError("OPTION_DELTA_TARGET must be between 0 (exclusive) and 1.0 (inclusive)")
         if self.extended_hours_enabled:
             if self.pre_market_entry_window_start >= self.pre_market_entry_window_end:
                 raise ValueError(
