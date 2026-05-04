@@ -391,8 +391,9 @@ class AlpacaExecutionAdapter:
             limit_price=limit_price,
             client_order_id=client_order_id,
         )
-        response = self._trading.submit_order(order_data)
-        return _parse_broker_order(response)
+        return _parse_broker_order(
+            _retry_with_backoff(lambda: self._trading.submit_order(order_data))
+        )
 
     def submit_option_market_exit(
         self,
@@ -410,8 +411,9 @@ class AlpacaExecutionAdapter:
             time_in_force=TimeInForce.DAY,
             client_order_id=client_order_id,
         )
-        response = self._trading.submit_order(order_data)
-        return _parse_broker_order(response)
+        return _parse_broker_order(
+            _retry_with_backoff(lambda: self._trading.submit_order(order_data))
+        )
 
     def replace_order(
         self,

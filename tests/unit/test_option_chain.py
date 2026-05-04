@@ -152,6 +152,83 @@ class TestAlpacaExecutionAdapterOptionMethods:
         assert len(submitted) == 1
         assert result.broker_order_id == "broker-789"
 
+    def test_submit_option_limit_entry_retries_on_transient_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+        from tests.unit.helpers import _base_env
+        from alpaca_bot.config import Settings
+
+        slept: list[float] = []
+        monkeypatch.setattr("alpaca_bot.execution.alpaca.time.sleep", lambda s: slept.append(s))
+
+        calls = 0
+
+        class FlakyTradingClient:
+            def submit_order(self, order_data):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise RuntimeError("500 Internal Server Error")
+
+                class FakeOrder:
+                    id = "broker-456"
+                    client_order_id = "option:v1:2024-06-01:AAPL240701C00100000:entry:2024-06-01T14:00:00+00:00"
+                    symbol = "AAPL240701C00100000"
+                    side = "buy"
+                    status = "accepted"
+                    qty = 2
+                return FakeOrder()
+
+        adapter = AlpacaExecutionAdapter(FlakyTradingClient(), settings=Settings.from_env(_base_env()))
+        result = adapter.submit_option_limit_entry(
+            occ_symbol="AAPL240701C00100000",
+            quantity=2,
+            limit_price=3.00,
+            client_order_id="option:v1:2024-06-01:AAPL240701C00100000:entry:2024-06-01T14:00:00+00:00",
+        )
+        assert result.broker_order_id == "broker-456"
+        assert calls == 2
+        assert slept == [1]
+
+    def test_submit_option_market_exit_retries_on_transient_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+        from tests.unit.helpers import _base_env
+        from alpaca_bot.config import Settings
+
+        slept: list[float] = []
+        monkeypatch.setattr("alpaca_bot.execution.alpaca.time.sleep", lambda s: slept.append(s))
+
+        calls = 0
+
+        class FlakyTradingClient:
+            def submit_order(self, order_data):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise RuntimeError("500 Internal Server Error")
+
+                class FakeOrder:
+                    id = "broker-789"
+                    client_order_id = "option:v1:2024-06-01:AAPL240701C00100000:sell:2024-06-01T15:50:00+00:00"
+                    symbol = "AAPL240701C00100000"
+                    side = "sell"
+                    status = "accepted"
+                    qty = 2
+                return FakeOrder()
+
+        adapter = AlpacaExecutionAdapter(FlakyTradingClient(), settings=Settings.from_env(_base_env()))
+        result = adapter.submit_option_market_exit(
+            occ_symbol="AAPL240701C00100000",
+            quantity=2,
+            client_order_id="option:v1:2024-06-01:AAPL240701C00100000:sell:2024-06-01T15:50:00+00:00",
+        )
+        assert result.broker_order_id == "broker-789"
+        assert calls == 2
+        assert slept == [1]
+
 
 def test_from_settings_constructs_adapter_with_injected_factory():
     """from_settings() wires a client built by _client_factory and returns an adapter."""
