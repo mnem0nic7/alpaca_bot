@@ -1886,7 +1886,7 @@ In `src/alpaca_bot/execution/alpaca.py`, add two methods to `AlpacaExecutionAdap
             limit_price=limit_price,
             client_order_id=client_order_id,
         )
-        response = self._trading_client.submit_order(order_data)
+        response = self._trading.submit_order(order_data)
         return BrokerOrder(broker_order_id=str(response.id))
 
     def submit_option_market_exit(
@@ -1905,11 +1905,11 @@ In `src/alpaca_bot/execution/alpaca.py`, add two methods to `AlpacaExecutionAdap
             time_in_force=TimeInForce.DAY,
             client_order_id=client_order_id,
         )
-        response = self._trading_client.submit_order(order_data)
+        response = self._trading.submit_order(order_data)
         return BrokerOrder(broker_order_id=str(response.id))
 ```
 
-Note: Check `BrokerOrder` is importable from within `alpaca.py` — it is a named dataclass in the same file (currently). Verify `_trading_client` attribute name matches constructor.
+Note: `BrokerOrder` is a named dataclass defined in the same file (`alpaca.py`). The trading client is stored as `self._trading` (assigned in `__init__` as `self._trading = trading_client or self._build_trading_client(...)`). Do NOT use `self._trading_client` — that attribute does not exist.
 
 - [ ] **Step 5: Run tests to verify all pass**
 
@@ -2771,7 +2771,7 @@ Expected: all PASS (these tests validate contracts, not supervisor wiring, which
 
 - [ ] **Step 3: Wire supervisor for option strategy detection**
 
-In `src/alpaca_bot/runtime/supervisor.py`, add imports:
+In `src/alpaca_bot/runtime/supervisor.py`, add imports near the top of the file (after existing strategy imports):
 
 ```python
 from alpaca_bot.strategy import OPTION_STRATEGY_NAMES
@@ -2779,32 +2779,48 @@ from alpaca_bot.strategy.breakout_calls import make_breakout_calls_evaluator
 from alpaca_bot.runtime.option_dispatch import dispatch_pending_option_orders
 ```
 
-In `run_cycle_once()` (or equivalent method that orchestrates one trading cycle), before calling `run_cycle()`:
+Add `_option_chain_adapter` and `_option_broker` as optional constructor parameters to `RuntimeSupervisor.__init__()` following the existing DI pattern (all existing params unchanged, append at end):
 
-1. **Fetch option chains** (only when strategy is breakout_calls):
 ```python
+def __init__(
+    self,
+    ...,                        # all existing params unchanged
+    option_chain_adapter=None,
+    option_broker=None,
+):
+    ...
+    self._option_chain_adapter = option_chain_adapter
+    self._option_broker = option_broker
+```
+
+In `run_cycle_once()`, locate the line `active_strategies = self._resolve_active_strategies()` (line ~524). Replace that single line with the block below. Everything else in the method is unchanged:
+
+```python
+# Resolve registered strategies (breakout, etc.)
+active_strategies = list(self._resolve_active_strategies())
+
+# Fetch option chains and append option strategies when adapter is configured.
+# breakout_calls is NOT in STRATEGY_REGISTRY — it is a factory that closes over chains.
 option_chains_by_symbol: dict = {}
-option_chain_adapter = getattr(self, "_option_chain_adapter", None)
-if settings.strategy_name in OPTION_STRATEGY_NAMES and option_chain_adapter is not None:
+option_order_store = getattr(self._runtime, "option_order_store", None)
+if self._option_chain_adapter is not None:
     for symbol in settings.symbols:
         try:
-            chains = option_chain_adapter.get_option_chain(symbol, settings)
+            chains = self._option_chain_adapter.get_option_chain(symbol, settings)
             if chains:
                 option_chains_by_symbol[symbol] = chains
         except Exception:
             logger.exception("option chain fetch failed for %s", symbol)
+    for opt_name in OPTION_STRATEGY_NAMES:
+        active_strategies.append(
+            (opt_name, make_breakout_calls_evaluator(option_chains_by_symbol))
+        )
 ```
 
-2. **Build evaluator** (when breakout_calls):
-```python
-signal_evaluator = None
-if settings.strategy_name == "breakout_calls":
-    signal_evaluator = make_breakout_calls_evaluator(option_chains_by_symbol)
-```
+Locate the block that builds `working_order_symbols` (a `set[str]` containing symbols of open equity orders). Immediately after that block, add the open option underlying symbols so the engine deduplicates across both equity and options for the same underlying:
 
-3. **Deduplication**: after loading `working_order_symbols`, load open option position underlying symbols and add them:
 ```python
-option_order_store = getattr(self._runtime, "option_order_store", None)
+# Add open option position underlying symbols to prevent double-entry.
 if option_order_store is not None:
     open_options = option_order_store.list_open_option_positions(
         trading_mode=settings.trading_mode,
@@ -2814,16 +2830,10 @@ if option_order_store is not None:
         working_order_symbols.add(opt_pos.underlying_symbol)
 ```
 
-4. **Call `run_cycle()`** passing the option evaluator (if built):
-```python
-run_cycle(
-    ...,
-    signal_evaluator=signal_evaluator or self._signal_evaluator,
-    ...
-)
-```
+The existing `for strategy_name, evaluator in active_strategies:` loop and `self._cycle_runner(...)` call are **unchanged** — the option evaluator is already in `active_strategies` and the loop handles it uniformly.
 
-5. **Dispatch option orders** after equity dispatch:
+After the `active_strategies` loop (and after the existing equity `dispatch_pending_orders()` call), add option dispatch:
+
 ```python
 option_broker = getattr(self, "_option_broker", None)
 if option_broker is not None and option_order_store is not None:
@@ -2834,7 +2844,8 @@ if option_broker is not None and option_order_store is not None:
     )
 ```
 
-6. **EOD option flatten** — past flatten_time, write sell records for open positions:
+In the EOD flatten block (where equity positions are flattened past `flatten_time`), add option flatten alongside the equity flatten:
+
 ```python
 if past_flatten_time and option_order_store is not None:
     open_option_positions = option_order_store.list_open_option_positions(
@@ -2860,20 +2871,13 @@ if past_flatten_time and option_order_store is not None:
             updated_at=now,
         )
         option_order_store.save(sell_record, commit=True)
-```
-
-Add `_option_chain_adapter` and `_option_broker` as optional constructor parameters to `RuntimeSupervisor.__init__()` following the existing DI pattern:
-
-```python
-def __init__(
-    self,
-    ...,
-    option_chain_adapter=None,
-    option_broker=None,
-):
-    ...
-    self._option_chain_adapter = option_chain_adapter
-    self._option_broker = option_broker
+    # Dispatch the newly-created sell records immediately (same cycle)
+    if option_broker is not None:
+        dispatch_pending_option_orders(
+            settings=settings,
+            runtime=self._runtime,
+            broker=option_broker,
+        )
 ```
 
 - [ ] **Step 4: Run full test suite to verify no regressions**
