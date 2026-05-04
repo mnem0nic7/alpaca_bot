@@ -379,10 +379,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             results = fetcher.fetch_and_save(
                 symbols=symbols, days=args.days, output_dir=output_dir
             )
-            print(f"Symbols: {len(symbols)} (from watchlist, {trading_mode.value} mode)")
-            for path, n_intraday, n_daily in results:
-                print(f"  {path.stem}: {n_intraday} intraday, {n_daily} daily bars")
-            print(f"Wrote {len(results)} scenario files to {output_dir}")
             if not results:
                 print(
                     f"Error: backfill produced 0 scenario files for {len(symbols)} symbols. "
@@ -390,6 +386,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     file=sys.stderr,
                 )
                 return 1
+            print(f"Symbols: {len(symbols)} (from watchlist, {trading_mode.value} mode)")
+            for path, n_intraday, n_daily in results:
+                print(f"  {path.stem}: {n_intraday} intraday, {n_daily} daily bars")
+            print(f"Wrote {len(results)} scenario files to {output_dir}")
 
         # ── Evolve ───────────────────────────────────────────────────────────
         candidates: list = []
