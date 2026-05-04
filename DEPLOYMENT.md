@@ -56,6 +56,12 @@ ENTRY_WINDOW_START=10:00
 ENTRY_WINDOW_END=15:30
 FLATTEN_TIME=15:45
 
+# Options trading (disabled by default; set ENABLE_OPTIONS_TRADING=true to activate)
+# ENABLE_OPTIONS_TRADING=false
+# OPTION_DTE_MIN=21        # minimum days-to-expiry when selecting contracts
+# OPTION_DTE_MAX=60        # maximum days-to-expiry when selecting contracts
+# OPTION_DELTA_TARGET=0.50 # target delta for contract selection (0 < value ≤ 1.0)
+
 ALPACA_PAPER_API_KEY=replace-me
 ALPACA_PAPER_SECRET_KEY=replace-me
 # For live mode, set:
