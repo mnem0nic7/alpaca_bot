@@ -89,6 +89,31 @@ STRATEGY_GRIDS: dict[str, ParameterGrid] = {
 }
 
 
+def _viability_key(
+    candidate: TuningCandidate,
+    oos_score: float | None = None,
+) -> tuple:
+    """Lexicographic sort key: (has_score, score, r_multiple, win_rate).
+
+    Sharpe/OOS score dominates; R-multiple and win_rate break ties.
+    Unscored candidates (score=None) always sort below scored ones.
+    """
+    has_score = candidate.score is not None
+    score = oos_score if oos_score is not None else (candidate.score or 0.0)
+    report = candidate.report
+    r_multiple = 0.0
+    win_rate = 0.0
+    if report is not None:
+        if (report.avg_win_return_pct is not None
+                and report.avg_loss_return_pct is not None
+                and report.avg_loss_return_pct != 0.0):
+            r_multiple = report.avg_win_return_pct / abs(report.avg_loss_return_pct)
+        elif report.avg_loss_return_pct is None and report.avg_win_return_pct is not None:
+            r_multiple = 10.0
+        win_rate = report.win_rate or 0.0
+    return (has_score, score, r_multiple, win_rate)
+
+
 def _parse_grid(specs: list[str]) -> ParameterGrid:
     """Parse KEY=v1,v2,... strings into a ParameterGrid dict."""
     grid: ParameterGrid = {}
@@ -227,7 +252,7 @@ def run_sweep(
 
     return sorted(
         candidates,
-        key=lambda c: (c.score is not None, c.score or 0.0),
+        key=_viability_key,
         reverse=True,
     )
 
@@ -298,7 +323,7 @@ def run_multi_scenario_sweep(
 
     return sorted(
         candidates,
-        key=lambda c: (c.score is not None, c.score or 0.0),
+        key=_viability_key,
         reverse=True,
     )
 

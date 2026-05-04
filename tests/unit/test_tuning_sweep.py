@@ -559,3 +559,68 @@ def test_score_report_max_trades_zero_disabled() -> None:
     )
     # max_trades=0 means gate is disabled — 100 trades must not be disqualified
     assert score_report(report, min_trades=3, max_trades=0) is not None
+
+
+# ---------------------------------------------------------------------------
+# _viability_key
+# ---------------------------------------------------------------------------
+
+def test_viability_key_uses_r_multiple_as_tiebreaker() -> None:
+    """Equal IS scores → higher R-multiple wins."""
+    from alpaca_bot.tuning.sweep import _viability_key
+
+    low_r_report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+        win_rate=0.6, mean_return_pct=0.02, max_drawdown_pct=None, sharpe_ratio=1.0,
+        avg_win_return_pct=0.025, avg_loss_return_pct=-0.02,
+    )
+    high_r_report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+        win_rate=0.6, mean_return_pct=0.02, max_drawdown_pct=None, sharpe_ratio=1.0,
+        avg_win_return_pct=0.05, avg_loss_return_pct=-0.014,
+    )
+    cand_low = TuningCandidate(params={}, report=low_r_report, score=1.0)
+    cand_high = TuningCandidate(params={}, report=high_r_report, score=1.0)
+
+    assert _viability_key(cand_high) > _viability_key(cand_low)
+
+
+def test_viability_key_no_losers_gets_high_r() -> None:
+    """avg_loss_return_pct=None (all trades won) → r_multiple sentinel 10.0."""
+    from alpaca_bot.tuning.sweep import _viability_key
+
+    report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=5, losing_trades=0,
+        win_rate=1.0, mean_return_pct=0.05, max_drawdown_pct=None, sharpe_ratio=2.0,
+        avg_win_return_pct=0.05, avg_loss_return_pct=None,
+    )
+    cand = TuningCandidate(params={}, report=report, score=2.0)
+    key = _viability_key(cand)
+    assert key[2] == 10.0  # third element is r_multiple
+
+
+def test_viability_key_none_score_sorts_last() -> None:
+    """Unscored candidates (score=None) always sort below scored ones."""
+    from alpaca_bot.tuning.sweep import _viability_key
+
+    scored = TuningCandidate(params={}, report=None, score=0.001)
+    unscored = TuningCandidate(params={}, report=None, score=None)
+
+    assert _viability_key(scored) > _viability_key(unscored)
+
+
+def test_viability_key_with_oos_score_uses_oos_as_primary() -> None:
+    """When oos_score is supplied, it replaces IS score as the primary sort key."""
+    from alpaca_bot.tuning.sweep import _viability_key
+
+    report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+        win_rate=0.6, mean_return_pct=0.02, max_drawdown_pct=None, sharpe_ratio=1.0,
+    )
+    cand = TuningCandidate(params={}, report=report, score=1.0)
+
+    key_is = _viability_key(cand)
+    key_oos = _viability_key(cand, 0.5)
+
+    assert key_is[1] == 1.0
+    assert key_oos[1] == 0.5
