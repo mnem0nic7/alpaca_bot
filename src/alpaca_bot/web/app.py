@@ -260,10 +260,12 @@ def create_app(
     def healthz() -> JSONResponse:
         try:
             health_snapshot = _load_health(app)
-        except Exception as exc:
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("/healthz: health check failed")
             return JSONResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                content={"status": "error", "reason": str(exc)},
+                content={"status": "error", "reason": "service unavailable"},
             )
         worker_stale = health_snapshot.worker_health.status == "stale"
         http_status = (

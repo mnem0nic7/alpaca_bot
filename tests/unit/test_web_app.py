@@ -251,7 +251,8 @@ def test_healthz_route_returns_503_when_database_fails() -> None:
         response = client.get("/healthz")
 
     assert response.status_code == 503
-    assert response.json() == {"status": "error", "reason": "db unavailable"}
+    assert response.json() == {"status": "error", "reason": "service unavailable"}
+    assert "db unavailable" not in response.text
 
 
 def test_healthz_route_reports_missing_worker_when_no_heartbeat_exists() -> None:
