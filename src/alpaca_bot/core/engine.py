@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Mapping, Sequence
 from alpaca_bot.config import Settings
 from alpaca_bot.domain import Bar, NewsItem, OpenPosition, Quote
 from alpaca_bot.risk import calculate_position_size
+from alpaca_bot.risk.option_sizing import calculate_option_position_size
 from alpaca_bot.risk.atr import calculate_atr
 from alpaca_bot.strategy import StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import (
@@ -21,6 +22,7 @@ from alpaca_bot.strategy.session import SessionType, is_flatten_time as _session
 
 if TYPE_CHECKING:
     from alpaca_bot.storage import DailySessionState
+    from alpaca_bot.domain.models import OptionContract
 
 
 class CycleIntentType(StrEnum):
@@ -42,6 +44,11 @@ class CycleIntent:
     reason: str | None = None
     signal_timestamp: datetime | None = None
     strategy_name: str = "breakout"
+    underlying_symbol: str | None = None
+    is_option: bool = False
+    option_strike: float | None = None
+    option_expiry: date | None = None
+    option_type_str: str | None = None
 
 
 @dataclass(frozen=True)
@@ -291,42 +298,82 @@ def evaluate_cycle(
                 if signal is None:
                     continue
 
-                if signal.initial_stop_price >= signal.limit_price:
-                    continue
-                if signal.limit_price - signal.initial_stop_price < 0.01:
-                    continue
-                quantity = calculate_position_size(
-                    equity=equity,
-                    entry_price=signal.limit_price,
-                    stop_price=signal.initial_stop_price,
-                    settings=settings,
-                )
-                if quantity < 1:
-                    continue
-
-                entry_candidates.append(
-                    (
-                        round((signal.signal_bar.close / signal.entry_level) - 1, 6),
-                        round(signal.relative_volume, 6),
-                        CycleIntent(
-                            intent_type=CycleIntentType.ENTRY,
-                            symbol=symbol,
-                            timestamp=signal.signal_bar.timestamp,
-                            quantity=quantity,
-                            stop_price=signal.stop_price,
-                            limit_price=signal.limit_price,
-                            initial_stop_price=signal.initial_stop_price,
-                            client_order_id=_client_order_id(
-                                settings=settings,
+                if signal.option_contract is not None:
+                    # Option entry: defined risk = premium; no stop needed
+                    quantity = calculate_option_position_size(
+                        equity=equity,
+                        ask=signal.option_contract.ask,
+                        settings=settings,
+                    )
+                    if quantity < 1:
+                        continue
+                    contract = signal.option_contract
+                    entry_candidates.append(
+                        (
+                            round((signal.signal_bar.close / signal.entry_level) - 1, 6),
+                            round(signal.relative_volume, 6),
+                            CycleIntent(
+                                intent_type=CycleIntentType.ENTRY,
+                                symbol=contract.occ_symbol,
+                                timestamp=signal.signal_bar.timestamp,
+                                quantity=quantity,
+                                stop_price=None,
+                                limit_price=contract.ask,
+                                initial_stop_price=None,
+                                client_order_id=_client_order_id(
+                                    settings=settings,
+                                    symbol=contract.occ_symbol,
+                                    signal_timestamp=signal.signal_bar.timestamp,
+                                    strategy_name=strategy_name,
+                                    is_option=True,
+                                ),
+                                signal_timestamp=signal.signal_bar.timestamp,
+                                strategy_name=strategy_name,
+                                underlying_symbol=symbol,
+                                is_option=True,
+                                option_strike=contract.strike,
+                                option_expiry=contract.expiry,
+                                option_type_str=contract.option_type,
+                            ),
+                        )
+                    )
+                else:
+                    # Equity entry: stop-based sizing
+                    if signal.initial_stop_price >= signal.limit_price:
+                        continue
+                    if signal.limit_price - signal.initial_stop_price < 0.01:
+                        continue
+                    quantity = calculate_position_size(
+                        equity=equity,
+                        entry_price=signal.limit_price,
+                        stop_price=signal.initial_stop_price,
+                        settings=settings,
+                    )
+                    if quantity < 1:
+                        continue
+                    entry_candidates.append(
+                        (
+                            round((signal.signal_bar.close / signal.entry_level) - 1, 6),
+                            round(signal.relative_volume, 6),
+                            CycleIntent(
+                                intent_type=CycleIntentType.ENTRY,
                                 symbol=symbol,
+                                timestamp=signal.signal_bar.timestamp,
+                                quantity=quantity,
+                                stop_price=signal.stop_price,
+                                limit_price=signal.limit_price,
+                                initial_stop_price=signal.initial_stop_price,
+                                client_order_id=_client_order_id(
+                                    settings=settings,
+                                    symbol=symbol,
+                                    signal_timestamp=signal.signal_bar.timestamp,
+                                    strategy_name=strategy_name,
+                                ),
                                 signal_timestamp=signal.signal_bar.timestamp,
                                 strategy_name=strategy_name,
                             ),
-                            signal_timestamp=signal.signal_bar.timestamp,
-                            strategy_name=strategy_name,
-                        ),
+                        )
                     )
-                )
 
             entry_candidates.sort(
                 key=lambda item: (-item[0], -item[1], item[2].symbol),
@@ -362,9 +409,11 @@ def _client_order_id(
     symbol: str,
     signal_timestamp: datetime,
     strategy_name: str = "breakout",
+    is_option: bool = False,
 ) -> str:
+    prefix = "option" if is_option else strategy_name
     return (
-        f"{strategy_name}:"
+        f"{prefix}:"
         f"{settings.strategy_version}:"
         f"{signal_timestamp.date().isoformat()}:"
         f"{symbol}:entry:{signal_timestamp.isoformat()}"

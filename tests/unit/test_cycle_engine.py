@@ -696,6 +696,7 @@ def test_evaluate_cycle_emits_no_entry_when_signal_has_inverted_stop() -> None:
             entry_level=109.0,
             signal_bar=SimpleNamespace(timestamp=now, close=110.0),
             relative_volume=2.0,
+            option_contract=None,
         )
 
     result = evaluate_cycle(
@@ -1294,3 +1295,139 @@ def test_evaluate_cycle_skips_entry_when_symbol_has_active_stop_in_working_order
     assert entry_intents == [], (
         "evaluate_cycle must skip entry for any symbol already in working_order_symbols"
     )
+
+
+# --- Options engine tests ---
+
+def test_cycle_intent_is_option_defaults_false():
+    from alpaca_bot.core.engine import CycleIntent, CycleIntentType
+    intent = CycleIntent(
+        intent_type=CycleIntentType.ENTRY,
+        symbol="AAPL",
+        timestamp=datetime(2024, 6, 1, 14, 0, tzinfo=timezone.utc),
+    )
+    assert intent.is_option is False
+    assert intent.underlying_symbol is None
+
+
+def test_cycle_intent_with_option_fields():
+    from alpaca_bot.core.engine import CycleIntent, CycleIntentType
+    intent = CycleIntent(
+        intent_type=CycleIntentType.ENTRY,
+        symbol="AAPL240701C00100000",
+        timestamp=datetime(2024, 6, 1, 14, 0, tzinfo=timezone.utc),
+        is_option=True,
+        underlying_symbol="AAPL",
+    )
+    assert intent.is_option is True
+    assert intent.underlying_symbol == "AAPL"
+
+
+def test_evaluate_cycle_option_entry_uses_option_sizing():
+    """When a breakout_calls evaluator returns an option signal, evaluate_cycle uses premium-based sizing."""
+    from alpaca_bot.core.engine import evaluate_cycle, CycleIntentType
+    from alpaca_bot.domain.models import Bar, EntrySignal, OptionContract
+    from tests.unit.helpers import _base_env, _make_settings
+
+    contract = OptionContract(
+        occ_symbol="AAPL240701C00100000",
+        underlying="AAPL",
+        option_type="call",
+        strike=100.0,
+        expiry=date(2024, 7, 1),
+        bid=2.50,
+        ask=3.00,
+        delta=0.50,
+    )
+
+    now = datetime(2024, 6, 1, 14, 0, tzinfo=timezone.utc)
+
+    def fake_option_evaluator(*, symbol, intraday_bars, signal_index, daily_bars, settings):
+        bar = intraday_bars[-1]
+        return EntrySignal(
+            symbol=symbol,
+            signal_bar=bar,
+            entry_level=bar.close,
+            relative_volume=2.0,
+            stop_price=0.0,
+            limit_price=contract.ask,
+            initial_stop_price=0.01,
+            option_contract=contract,
+        )
+
+    env = _base_env()
+    env["RISK_PER_TRADE_PCT"] = "0.01"  # 1% of 100k = 1000 budget; ask=3.0, cost=300/contract → 3 contracts
+    env["MAX_POSITION_PCT"] = "0.10"
+    s = _make_settings(env)
+
+    bar = Bar(symbol="AAPL", timestamp=now, open=100.0, high=101.0, low=99.0, close=100.0, volume=1000.0)
+    daily_bar = Bar(symbol="AAPL", timestamp=datetime(2024, 5, 31, 0, 0, tzinfo=timezone.utc), open=95.0, high=100.0, low=94.0, close=98.0, volume=1_000_000.0)
+
+    result = evaluate_cycle(
+        settings=s,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": [daily_bar]},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=fake_option_evaluator,
+        strategy_name="breakout_calls",
+    )
+
+    option_entries = [i for i in result.intents if i.intent_type == CycleIntentType.ENTRY and i.is_option]
+    assert len(option_entries) == 1
+    intent = option_entries[0]
+    assert intent.symbol == "AAPL240701C00100000"
+    assert intent.underlying_symbol == "AAPL"
+    assert intent.is_option is True
+    assert intent.quantity == 3  # floor(1000 / 300) = 3
+    assert intent.client_order_id is not None
+    assert intent.client_order_id.startswith("option:")
+
+
+def test_evaluate_cycle_option_entry_skipped_when_quantity_zero():
+    """If option sizing returns 0 contracts, no ENTRY intent is emitted."""
+    from alpaca_bot.core.engine import evaluate_cycle, CycleIntentType
+    from alpaca_bot.domain.models import Bar, EntrySignal, OptionContract
+    from tests.unit.helpers import _base_env, _make_settings
+
+    contract = OptionContract(
+        occ_symbol="AAPL240701C00100000",
+        underlying="AAPL",
+        option_type="call",
+        strike=100.0,
+        expiry=date(2024, 7, 1),
+        bid=99.50,
+        ask=100.0,  # $100 ask → contract_cost = $10000; tiny budget → 0 contracts
+        delta=0.50,
+    )
+    now = datetime(2024, 6, 1, 14, 0, tzinfo=timezone.utc)
+
+    def fake_option_evaluator(*, symbol, intraday_bars, signal_index, daily_bars, settings):
+        bar = intraday_bars[-1]
+        return EntrySignal(
+            symbol=symbol, signal_bar=bar, entry_level=bar.close, relative_volume=2.0,
+            stop_price=0.0, limit_price=contract.ask, initial_stop_price=0.01,
+            option_contract=contract,
+        )
+
+    env = _base_env()
+    env["RISK_PER_TRADE_PCT"] = "0.001"  # tiny budget
+    s = _make_settings(env)
+
+    bar = Bar(symbol="AAPL", timestamp=now, open=100.0, high=101.0, low=99.0, close=100.0, volume=1000.0)
+    daily_bar = Bar(symbol="AAPL", timestamp=datetime(2024, 5, 31, 0, 0, tzinfo=timezone.utc), open=95.0, high=100.0, low=94.0, close=98.0, volume=1_000_000.0)
+
+    result = evaluate_cycle(
+        settings=s, now=now, equity=10_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": [daily_bar]},
+        open_positions=[], working_order_symbols=set(),
+        traded_symbols_today=set(), entries_disabled=False,
+        signal_evaluator=fake_option_evaluator, strategy_name="breakout_calls",
+    )
+    option_entries = [i for i in result.intents if i.intent_type == CycleIntentType.ENTRY and i.is_option]
+    assert len(option_entries) == 0
