@@ -1,6 +1,5 @@
 volumes:
   postgres_data:
-  nightly_data:
 
 services:
   postgres:
@@ -153,6 +152,6 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - nightly_data:/data
+      - /var/lib/alpaca-bot/nightly:/data
     restart: "no"
     profiles: ["ops"]
