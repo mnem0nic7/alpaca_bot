@@ -373,6 +373,46 @@ class AlpacaExecutionAdapter:
             _retry_with_backoff(lambda: self._trading.submit_order(request))
         )
 
+    def submit_option_limit_entry(
+        self,
+        *,
+        occ_symbol: str,
+        quantity: int,
+        limit_price: float,
+        client_order_id: str,
+    ) -> BrokerOrder:
+        from alpaca.trading.requests import LimitOrderRequest  # type: ignore[import]
+        from alpaca.trading.enums import OrderSide, TimeInForce  # type: ignore[import]
+        order_data = LimitOrderRequest(
+            symbol=occ_symbol,
+            qty=quantity,
+            side=OrderSide.BUY,
+            time_in_force=TimeInForce.DAY,
+            limit_price=limit_price,
+            client_order_id=client_order_id,
+        )
+        response = self._trading.submit_order(order_data)
+        return _parse_broker_order(response)
+
+    def submit_option_market_exit(
+        self,
+        *,
+        occ_symbol: str,
+        quantity: int,
+        client_order_id: str,
+    ) -> BrokerOrder:
+        from alpaca.trading.requests import MarketOrderRequest  # type: ignore[import]
+        from alpaca.trading.enums import OrderSide, TimeInForce  # type: ignore[import]
+        order_data = MarketOrderRequest(
+            symbol=occ_symbol,
+            qty=quantity,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+            client_order_id=client_order_id,
+        )
+        response = self._trading.submit_order(order_data)
+        return _parse_broker_order(response)
+
     def replace_order(
         self,
         *,
