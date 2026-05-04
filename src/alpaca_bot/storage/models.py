@@ -88,6 +88,28 @@ class DailySessionState:
 
 
 @dataclass(frozen=True)
+class OptionOrderRecord:
+    client_order_id: str
+    occ_symbol: str
+    underlying_symbol: str
+    option_type: str
+    strike: float
+    expiry: date
+    side: str
+    status: str
+    quantity: int
+    trading_mode: TradingMode
+    strategy_version: str
+    strategy_name: str
+    created_at: datetime
+    updated_at: datetime
+    limit_price: float | None = None
+    broker_order_id: str | None = None
+    fill_price: float | None = None
+    filled_quantity: int | None = None
+
+
+@dataclass(frozen=True)
 class StrategyFlag:
     strategy_name: str
     trading_mode: TradingMode

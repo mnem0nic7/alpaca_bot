@@ -14,6 +14,7 @@ from alpaca_bot.storage.db import ConnectionProtocol, execute, fetch_all, fetch_
 from alpaca_bot.storage.models import (
     AuditEvent,
     DailySessionState,
+    OptionOrderRecord,
     OrderRecord,
     PositionRecord,
     StrategyFlag,
@@ -1258,6 +1259,159 @@ class WatchlistStore:
             )
         if commit:
             self._connection.commit()
+
+
+class OptionOrderRepository:
+    def __init__(self, connection: ConnectionProtocol) -> None:
+        self._connection = connection
+
+    def save(self, record: OptionOrderRecord, *, commit: bool = True) -> None:
+        execute(
+            self._connection,
+            """
+            INSERT INTO option_orders (
+                client_order_id, occ_symbol, underlying_symbol, option_type,
+                strike, expiry, side, status, quantity, trading_mode,
+                strategy_version, strategy_name, limit_price, broker_order_id,
+                fill_price, filled_quantity, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (client_order_id)
+            DO UPDATE SET
+                status = EXCLUDED.status,
+                broker_order_id = EXCLUDED.broker_order_id,
+                fill_price = EXCLUDED.fill_price,
+                filled_quantity = EXCLUDED.filled_quantity,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (
+                record.client_order_id,
+                record.occ_symbol,
+                record.underlying_symbol,
+                record.option_type,
+                record.strike,
+                record.expiry,
+                record.side,
+                record.status,
+                record.quantity,
+                record.trading_mode.value,
+                record.strategy_version,
+                record.strategy_name,
+                record.limit_price,
+                record.broker_order_id,
+                record.fill_price,
+                record.filled_quantity,
+                record.created_at,
+                record.updated_at,
+            ),
+            commit=commit,
+        )
+
+    def update_fill(
+        self,
+        *,
+        client_order_id: str,
+        broker_order_id: str,
+        fill_price: float,
+        filled_quantity: int,
+        status: str,
+        updated_at: datetime,
+    ) -> None:
+        execute(
+            self._connection,
+            """
+            UPDATE option_orders
+            SET status = %s,
+                broker_order_id = %s,
+                fill_price = %s,
+                filled_quantity = %s,
+                updated_at = %s
+            WHERE client_order_id = %s
+            """,
+            (status, broker_order_id, fill_price, filled_quantity, updated_at, client_order_id),
+            commit=True,
+        )
+
+    def list_by_status(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        statuses: list[str],
+    ) -> list[OptionOrderRecord]:
+        if not statuses:
+            return []
+        placeholders = ", ".join(["%s"] * len(statuses))
+        rows = fetch_all(
+            self._connection,
+            f"""
+            SELECT
+                client_order_id, occ_symbol, underlying_symbol, option_type,
+                strike, expiry, side, status, quantity, trading_mode,
+                strategy_version, strategy_name, limit_price, broker_order_id,
+                fill_price, filled_quantity, created_at, updated_at
+            FROM option_orders
+            WHERE trading_mode = %s
+              AND strategy_version = %s
+              AND status IN ({placeholders})
+            ORDER BY created_at, client_order_id
+            """,
+            (trading_mode.value, strategy_version, *statuses),
+        )
+        return [_row_to_option_order_record(row) for row in rows]
+
+    def list_open_option_positions(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+    ) -> list[OptionOrderRecord]:
+        return self.list_by_status(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            statuses=["filled"],
+        )
+
+    def load_by_broker_order_id(self, broker_order_id: str) -> OptionOrderRecord | None:
+        row = fetch_one(
+            self._connection,
+            """
+            SELECT
+                client_order_id, occ_symbol, underlying_symbol, option_type,
+                strike, expiry, side, status, quantity, trading_mode,
+                strategy_version, strategy_name, limit_price, broker_order_id,
+                fill_price, filled_quantity, created_at, updated_at
+            FROM option_orders
+            WHERE broker_order_id = %s
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (broker_order_id,),
+        )
+        return _row_to_option_order_record(row) if row is not None else None
+
+
+def _row_to_option_order_record(row: Any) -> OptionOrderRecord:
+    return OptionOrderRecord(
+        client_order_id=row[0],
+        occ_symbol=row[1],
+        underlying_symbol=row[2],
+        option_type=row[3],
+        strike=float(row[4]),
+        expiry=row[5],
+        side=row[6],
+        status=row[7],
+        quantity=int(row[8]),
+        trading_mode=TradingMode(row[9]),
+        strategy_version=row[10],
+        strategy_name=row[11],
+        limit_price=float(row[12]) if row[12] is not None else None,
+        broker_order_id=row[13],
+        fill_price=float(row[14]) if row[14] is not None else None,
+        filled_quantity=int(row[15]) if row[15] is not None else None,
+        created_at=row[16],
+        updated_at=row[17],
+    )
 
 
 def _load_json_payload(raw_payload: Any) -> dict[str, Any]:
