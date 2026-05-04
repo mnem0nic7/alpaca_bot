@@ -36,6 +36,10 @@ fi
 CHANGED=false
 while IFS='=' read -r KEY VALUE; do
     [[ -z "$KEY" ]] && continue
+    if [[ ! "$VALUE" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+        echo "$LOG_PREFIX ERROR: unsafe value for $KEY — rejecting candidate.env" >&2
+        exit 1
+    fi
     CURRENT=$(grep "^${KEY}=" "$ENV_FILE" | head -1 | cut -d= -f2- || true)
     if [[ "$CURRENT" != "$VALUE" ]]; then
         CHANGED=true
@@ -51,6 +55,10 @@ fi
 # Apply all params (update existing lines; append missing ones)
 while IFS='=' read -r KEY VALUE; do
     [[ -z "$KEY" ]] && continue
+    if [[ ! "$VALUE" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+        echo "$LOG_PREFIX ERROR: unsafe value for $KEY — rejecting candidate.env" >&2
+        exit 1
+    fi
     if grep -q "^${KEY}=" "$ENV_FILE"; then
         sed -i "s|^${KEY}=.*|${KEY}=${VALUE}|" "$ENV_FILE"
     else

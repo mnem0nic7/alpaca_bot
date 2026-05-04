@@ -100,6 +100,19 @@ def test_apply_no_op_when_params_already_current(tmp_path):
     assert not deploy_log.exists(), "deploy.sh must NOT be called when params unchanged"
 
 
+def test_apply_rejects_unsafe_value_in_candidate_env(tmp_path):
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("BREAKOUT_LOOKBACK_BARS=20\n")
+    candidate_env = tmp_path / "candidate.env"
+    candidate_env.write_text("BREAKOUT_LOOKBACK_BARS=$(rm -rf /)\n")
+    deploy = _make_mock_deploy(tmp_path)
+    result = _run_apply(env_file, candidate_env, deploy)
+    assert result.returncode != 0
+    assert env_file.read_text() == "BREAKOUT_LOOKBACK_BARS=20\n"
+    deploy_log = Path(str(env_file) + ".deploy_log")
+    assert not deploy_log.exists(), "deploy.sh must not be called when value is rejected"
+
+
 def test_apply_appends_param_not_in_env_file(tmp_path):
     """A param in candidate.env not present in env file is appended."""
     env_file = tmp_path / "alpaca-bot.env"
