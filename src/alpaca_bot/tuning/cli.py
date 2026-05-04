@@ -217,16 +217,29 @@ def _print_walk_forward_block(
     *,
     validate_pct: float,
     aggregate: str,
+    oos_gate_ratio: float = 0.5,
+    min_oos_score: float = 0.0,
 ) -> None:
     oos_pct_int = round(validate_pct * 100)
+    ratio_pct = round(oos_gate_ratio * 100)
+    floor_str = f"{min_oos_score:.2f}" if min_oos_score > 0.0 else "none"
     print(f"\nWalk-forward validation (OOS: {oos_pct_int}% of each scenario, aggregate={aggregate})")
-    print("  IS score threshold for \"held\": OOS ≥ IS × 50%")
+    print(f"  IS score threshold for \"held\": OOS ≥ IS × {ratio_pct}%  AND  OOS ≥ {floor_str}")
     print()
     print(f"  {'[Rank]':>6}  {'IS-score':>8}  {'OOS-score':>9}  {'OOS-trades':>10}  {'held?':>5}  Params")
     for i, (c, oos_score) in enumerate(zip(candidates, oos_scores), 1):
         is_score_str = f"{c.score:.4f}" if c.score is not None else "    None"
         oos_score_str = f"{oos_score:.4f}" if oos_score is not None else "    None"
-        held = "✓" if (oos_score is not None and c.score is not None and oos_score >= c.score * 0.5) else "✗"
+        held = (
+            "✓"
+            if (
+                oos_score is not None
+                and c.score is not None
+                and oos_score >= c.score * oos_gate_ratio
+                and oos_score >= min_oos_score
+            )
+            else "✗"
+        )
         params_str = " ".join(f"{k}={v}" for k, v in c.params.items())
         print(f"  [{i:3d}]  {is_score_str:>8}  {oos_score_str:>9}  {'—':>10}  {held:>5}  {params_str}")
 

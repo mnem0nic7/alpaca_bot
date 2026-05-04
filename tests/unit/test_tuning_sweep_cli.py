@@ -310,3 +310,41 @@ def test_walk_forward_gate_exits_nonzero_when_no_held_candidates(monkeypatch, tm
     result = module.main()
 
     assert result == 1
+
+
+def test_print_walk_forward_block_uses_custom_gate_params(capsys):
+    """_print_walk_forward_block must use oos_gate_ratio and min_oos_score for 'held' display."""
+    from alpaca_bot.tuning.cli import _print_walk_forward_block
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
+    # OOS=0.2 passes ratio gate (0.2 >= 0.5*0.3=0.15) but fails min_oos_score (0.2 < 0.4)
+    _print_walk_forward_block(
+        [cand], [0.2],
+        validate_pct=0.2,
+        aggregate="min",
+        oos_gate_ratio=0.3,
+        min_oos_score=0.4,
+    )
+    out = capsys.readouterr().out
+    assert "✗" in out
+    assert "30%" in out or "0.30" in out
+    assert "0.40" in out or "0.4" in out
+
+
+def test_print_walk_forward_block_held_when_both_gates_pass(capsys):
+    """Candidate held when OOS passes both relative ratio AND absolute floor."""
+    from alpaca_bot.tuning.cli import _print_walk_forward_block
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
+    # OOS=0.4 >= IS*0.5=0.25 AND 0.4 >= min_oos_score=0.3 → held
+    _print_walk_forward_block(
+        [cand], [0.4],
+        validate_pct=0.2,
+        aggregate="min",
+        oos_gate_ratio=0.5,
+        min_oos_score=0.3,
+    )
+    out = capsys.readouterr().out
+    assert "✓" in out
