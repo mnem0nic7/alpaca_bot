@@ -189,6 +189,74 @@ def test_nightly_cli_no_held_candidates_continues_to_live_report(monkeypatch, tm
     assert live_report_called, "live report must still run after no-held-candidates"
 
 
+def test_nightly_cli_surrogate_active_path(monkeypatch, tmp_path):
+    """When load_all_scored returns 60 records, surrogate fits and is passed to sweep."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+
+    monkeypatch.setattr(module, "connect_postgres", lambda url: object())
+
+    class FakeWatchlistStore:
+        def __init__(self, conn): pass
+        def list_enabled(self, trading_mode): return ["AAPL", "MSFT"]
+
+    monkeypatch.setattr(module, "WatchlistStore", FakeWatchlistStore)
+
+    class FakeTuningResultStore:
+        def __init__(self, conn): pass
+        def load_all_scored(self, *, trading_mode, limit=5000):
+            return [
+                {"params": {"BREAKOUT_LOOKBACK_BARS": str(15 + (i % 4) * 5),
+                             "RELATIVE_VOLUME_THRESHOLD": str(round(1.3 + (i % 4) * 0.2, 1)),
+                             "DAILY_SMA_PERIOD": str(10 + (i % 3) * 10)},
+                 "score": float(i % 5) * 0.15 + 0.1}
+                for i in range(60)
+            ]
+        def save_run(self, **kw): return "fake-run-id"
+
+    monkeypatch.setattr(module, "TuningResultStore", FakeTuningResultStore)
+
+    class FakeOrderStore:
+        def __init__(self, conn): pass
+        def list_closed_trades(self, **kw): return []
+
+    monkeypatch.setattr(module, "OrderStore", FakeOrderStore)
+
+    class FakeDailySessionStateStore:
+        def __init__(self, conn): pass
+        def load(self, **kw): return None
+
+    monkeypatch.setattr(module, "DailySessionStateStore", FakeDailySessionStateStore)
+
+    surrogate_kwargs = {}
+
+    def fake_sweep(**kw):
+        surrogate_kwargs.update({"surrogate": kw.get("surrogate")})
+        cand = TuningCandidate(
+            params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5
+        )
+        return [cand]
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [None])
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db", "--output-dir", str(tmp_path),
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    surrogate = surrogate_kwargs.get("surrogate")
+    assert surrogate is not None, "surrogate must be passed to run_multi_scenario_sweep"
+    assert surrogate.is_fitted, "surrogate must be fitted when 60 records are available"
+
+
 def test_nightly_cli_too_few_scenario_files_returns_error(monkeypatch, tmp_path):
     """< 2 scenario files in output-dir with --dry-run must return 1 (hard error)."""
     from alpaca_bot.nightly import cli as module

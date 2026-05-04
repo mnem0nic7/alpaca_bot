@@ -24,6 +24,7 @@ from alpaca_bot.storage.repositories import (
 )
 from alpaca_bot.strategy import STRATEGY_REGISTRY
 from alpaca_bot.tuning.cli import _format_env_block, _print_top_candidates, _print_walk_forward_block
+from alpaca_bot.tuning.surrogate import SurrogateModel
 from alpaca_bot.tuning.sweep import (
     DEFAULT_GRID,
     STRATEGY_GRIDS,
@@ -139,11 +140,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"({total_combos} combinations × {len(is_scenarios)} scenarios)"
             )
 
+            tuning_store = TuningResultStore(conn)
+            try:
+                historical = tuning_store.load_all_scored(trading_mode=trading_mode.value)
+            except Exception as exc:
+                print(f"Warning: could not load tuning history for surrogate: {exc}",
+                      file=sys.stderr)
+                historical = []
+            grid_keys = set(grid.keys())
+            historical = [r for r in historical if set(r["params"].keys()) == grid_keys]
+            surrogate = SurrogateModel()
+            surrogate_fitted = surrogate.fit(historical)
+            if surrogate_fitted:
+                print(f"Surrogate: fitted on {len(historical)} historical records")
+            else:
+                print(f"Surrogate: cold start ({len(historical)} records < 50 — full grid)")
+
             candidates = run_multi_scenario_sweep(
                 scenarios=is_scenarios,
                 base_env=base_env,
                 grid=grid,
                 signal_evaluator=signal_evaluator,
+                surrogate=surrogate,
             )
             scored = [c for c in candidates if c.score is not None]
             print(f"Scored: {len(scored)} / {len(candidates)} candidates")
@@ -181,7 +199,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f"Candidate env written to {args.output_env}")
                 if not args.no_db:
                     try:
-                        tuning_store = TuningResultStore(conn)
                         run_id = tuning_store.save_run(
                             scenario_name=scenario_name,
                             trading_mode=trading_mode.value,
