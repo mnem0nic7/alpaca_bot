@@ -281,19 +281,48 @@ return [
 
 Note: the NULL guard was `row[2] is not None and row[5] is not None` — now it must shift to `row[3] is not None and row[6] is not None` because `entry_fill` moved from index 2 to 3 and `exit_fill` moved from 5 to 6.
 
-- [ ] **Step 5: Run Task 1 tests to verify they pass**
+- [ ] **Step 5: Update `test_storage_db.py::TestListClosedTrades` to match new column layout**
+
+The fake tuples in `tests/unit/test_storage_db.py` currently have 8 elements matching the old column order. After adding `intent_type` at index 2, all tuples need a 9th element (or a new `intent_type` value at position 2). Update the file:
+
+```python
+# In test_returns_one_dict_per_closed_trade:
+rows = [("AAPL", "breakout", "stop", 110.00, 111.00, now, 112.00, now, 10)]
+
+# In test_excludes_rows_with_null_entry_fill:
+rows = [
+    ("AAPL", "breakout", "stop", None, None, now, 112.00, now, 10),  # no entry fill → skip
+    ("MSFT", "breakout", "exit", 400.00, 401.00, now, 405.00, now, 5),
+]
+# Also update the comment in that test:
+# old: "Rows where entry_fill (col 2) is None are filtered out."
+# new: "Rows where entry_fill (col 3) is None are filtered out."
+
+# In test_entry_limit_none_is_preserved:
+rows = [("AAPL", "breakout", "exit", 110.00, None, now, 112.00, now, 10)]
+```
+
+The `test_returns_empty_list_when_no_closed_trades` test needs no change (no row tuples).
+
+Also update `test_returns_one_dict_per_closed_trade` to verify the new `intent_type` key exists:
+```python
+assert trade["intent_type"] == "stop"
+```
+
+- [ ] **Step 6: Run Task 1 tests to verify they pass**
 
 Run: `pytest tests/unit/test_session_eval.py -v`
 Expected: all 5 tests PASS
 
-Also run existing report tests to confirm no regression:
-Run: `pytest tests/unit/test_report.py tests/unit/test_tuning_sweep.py -v`
+Also run existing tests to confirm no regression:
+Run: `pytest tests/unit/test_report.py tests/unit/test_tuning_sweep.py tests/unit/test_storage_db.py -v`
 Expected: all PASS
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src/alpaca_bot/replay/report.py src/alpaca_bot/storage/repositories.py tests/unit/test_session_eval.py
+git add src/alpaca_bot/replay/report.py src/alpaca_bot/storage/repositories.py \
+        tests/unit/test_session_eval.py tests/unit/test_storage_db.py
 git commit -m "refactor: extract report_from_records(); add intent_type to list_closed_trades()"
 ```
 
@@ -407,6 +436,7 @@ from alpaca_bot.config import Settings
 from alpaca_bot.domain.enums import TradingMode
 from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord, report_from_records
 from alpaca_bot.storage.db import connect_postgres
+from alpaca_bot.storage.models import EQUITY_SESSION_STATE_STRATEGY_NAME
 from alpaca_bot.storage.repositories import DailySessionStateStore, OrderStore
 
 
@@ -440,7 +470,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             session_date=eval_date,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
-            strategy_name="_equity",
+            strategy_name=EQUITY_SESSION_STATE_STRATEGY_NAME,
         )
         if state is None or state.equity_baseline is None:
             print(f"Warning: no equity baseline found for {eval_date}; using $100,000 as starting equity.")
