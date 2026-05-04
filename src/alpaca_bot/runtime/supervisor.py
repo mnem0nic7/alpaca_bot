@@ -54,6 +54,7 @@ from alpaca_bot.strategy import OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY, Strate
 from alpaca_bot.strategy.breakout import evaluate_breakout_signal as _default_evaluator, is_past_flatten_time
 from alpaca_bot.strategy.breakout_calls import make_breakout_calls_evaluator
 from alpaca_bot.strategy.session import SessionType, detect_session_type
+from alpaca_bot.execution.option_chain import AlpacaOptionChainAdapter
 from alpaca_bot.runtime.option_dispatch import dispatch_pending_option_orders
 from alpaca_bot.storage.models import OptionOrderRecord
 
@@ -136,13 +137,21 @@ class RuntimeSupervisor:
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
+        broker = AlpacaBroker.from_settings(settings)
+        option_chain_adapter = None
+        option_broker = None
+        if settings.enable_options_trading:
+            option_chain_adapter = AlpacaOptionChainAdapter.from_settings(settings)
+            option_broker = broker
         return cls(
             settings=settings,
             runtime=bootstrap_runtime(settings),
-            broker=AlpacaBroker.from_settings(settings),
+            broker=broker,
             market_data=AlpacaMarketDataAdapter.from_settings(settings),
             stream=AlpacaTradingStreamAdapter.from_settings(settings),
             notifier=build_notifier(settings),
+            option_chain_adapter=option_chain_adapter,
+            option_broker=option_broker,
         )
 
     def startup(
