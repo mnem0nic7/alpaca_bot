@@ -364,13 +364,15 @@ def test_run_multi_scenario_sweep_respects_surrogate_ordering() -> None:
         surrogate=_FixedSurrogate(),
     )
 
-    # With surrogate ordering, LOOKBACK=15 should be evaluated first.
-    # Both combos produce score=None (quiet scenario), so order is only
-    # deterministic if surrogate pre-sorted before running.
-    # We verify that the first result in the sorted output was the surrogate-preferred combo.
+    # Both combos produce score=None (quiet scenario). Python's sort is stable,
+    # so insertion order is preserved for equal keys. The surrogate pre-sort
+    # determines which combo runs first → gets appended first → stays first after
+    # the stable final sort. Assert that the surrogate-preferred combo (LOOKBACK=15)
+    # is first in results.
     lookbacks = [c.params["BREAKOUT_LOOKBACK_BARS"] for c in results]
-    # The run should have completed both combos (no pruning)
-    assert set(lookbacks) == {"15", "30"}
+    assert set(lookbacks) == {"15", "30"}, "both combos must run (no pruning)"
+    assert results[0].params["BREAKOUT_LOOKBACK_BARS"] == "15", \
+        "surrogate-preferred combo (predicted 1.0) must appear first"
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -561,7 +563,16 @@ Find this block:
 Replace with:
 ```python
             tuning_store = TuningResultStore(conn)
-            historical = tuning_store.load_all_scored(trading_mode=trading_mode.value)
+            try:
+                historical = tuning_store.load_all_scored(trading_mode=trading_mode.value)
+            except Exception as exc:
+                print(f"Warning: could not load tuning history for surrogate: {exc}",
+                      file=sys.stderr)
+                historical = []
+            # Filter to records matching the current strategy's grid keys exactly;
+            # avoids cross-strategy contamination and stale-grid noise.
+            grid_keys = set(grid.keys())
+            historical = [r for r in historical if set(r["params"].keys()) == grid_keys]
             surrogate = SurrogateModel()
             surrogate_fitted = surrogate.fit(historical)
             if surrogate_fitted:
@@ -642,7 +653,13 @@ git commit -m "test: full regression green — surrogate model integration compl
 - [x] No new env vars — confirmed
 - [x] No new migration — `load_all_scored` reads existing `tuning_results` table
 
+**Grilling fixes applied:**
+- [x] Q4+Q6: Grid-key filter before `surrogate.fit()` — filters cross-strategy and stale-grid records — Task 5
+- [x] Q8: Ordering test asserts `results[0]` position, not just set membership — Task 4
+- [x] Q10: `load_all_scored` wrapped in try/except; falls back to `[]` with warning — Task 5
+
 **Type consistency:**
 - `SurrogateModel.predict()` → `float | None` ✓
 - `run_multi_scenario_sweep(surrogate=...)` uses `SurrogateModel | None` ✓
 - `load_all_scored()` returns `list[dict]` matching what `SurrogateModel.fit()` expects ✓
+- `trading_mode.value` (str) passed to `load_all_scored` — not the enum object ✓
