@@ -30,7 +30,8 @@ def test_apply_rejects_unsafe_value_in_candidate_env(tmp_path):
     result = _run_apply(env_file, candidate_env, deploy)
     assert result.returncode != 0
     assert env_file.read_text() == "BREAKOUT_LOOKBACK_BARS=20\n"
-    assert not (tmp_path / f"{env_file.name}.deploy_log").exists()
+    deploy_log = Path(str(env_file) + ".deploy_log")
+    assert not deploy_log.exists(), "deploy.sh must not be called when value is rejected"
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
