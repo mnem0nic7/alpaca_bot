@@ -312,6 +312,49 @@ def test_walk_forward_gate_exits_nonzero_when_no_held_candidates(monkeypatch, tm
     assert result == 1
 
 
+def test_evolve_min_oos_score_rejects_below_floor(monkeypatch, tmp_path):
+    """--min-oos-score 0.5: candidate passes relative gate but fails absolute floor → return 1."""
+    import json
+    from alpaca_bot.tuning import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+    from alpaca_bot.replay.runner import ReplayScenario
+
+    _patch_env(monkeypatch)
+
+    for name in ("SYM_A_252d.json", "SYM_B_252d.json"):
+        (tmp_path / name).write_text(json.dumps({
+            "name": name.replace(".json", ""), "symbol": "SYM",
+            "starting_equity": 100000.0, "daily_bars": [], "intraday_bars": [],
+        }))
+
+    def fake_split(scenario, *, in_sample_ratio):
+        is_s = ReplayScenario(name=scenario.name + "_is", symbol=scenario.symbol,
+                              starting_equity=scenario.starting_equity,
+                              daily_bars=[], intraday_bars=[])
+        oos_s = ReplayScenario(name=scenario.name + "_oos", symbol=scenario.symbol,
+                               starting_equity=scenario.starting_equity,
+                               daily_bars=[], intraday_bars=[])
+        return is_s, oos_s
+
+    monkeypatch.setattr(module, "split_scenario", fake_split)
+
+    # IS=0.6, OOS=0.35: passes relative gate (0.35 >= 0.6*0.5=0.3) but fails floor (0.35 < 0.5)
+    cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.6)
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", lambda **kw: [cand])
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [0.35])
+
+    monkeypatch.setattr(sys, "argv", [
+        "evolve", "--scenario-dir", str(tmp_path), "--no-db",
+        "--validate-pct", "0.2",
+        "--min-oos-score", "0.5",
+    ])
+
+    result = module.main()
+
+    assert result == 1, "below min_oos_score must return 1 (no held candidates)"
+
+
 def test_print_walk_forward_block_uses_custom_gate_params(capsys):
     """_print_walk_forward_block must use oos_gate_ratio and min_oos_score for 'held' display."""
     from alpaca_bot.tuning.cli import _print_walk_forward_block

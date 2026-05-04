@@ -45,6 +45,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Skip DB persistence (just print results)")
     parser.add_argument("--validate-pct", type=float, default=0.0,
                         help="Fraction of each scenario held out for OOS validation (0 = disabled)")
+    parser.add_argument("--min-oos-score", type=float, default=0.0,
+                        help="Minimum absolute OOS score to accept a candidate (default: 0.0)")
+    parser.add_argument("--oos-gate-ratio", type=float, default=0.5,
+                        help="Required OOS/IS score ratio to hold a candidate (default: 0.5)")
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
 
     validate_pct: float = args.validate_pct
@@ -143,10 +147,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             aggregate=args.aggregate,
             signal_evaluator=signal_evaluator,
         )
-        _print_walk_forward_block(top10, oos_scores, validate_pct=validate_pct, aggregate=args.aggregate)
+        _print_walk_forward_block(
+            top10, oos_scores,
+            validate_pct=validate_pct,
+            aggregate=args.aggregate,
+            oos_gate_ratio=args.oos_gate_ratio,
+            min_oos_score=args.min_oos_score,
+        )
         held_pairs = [
             (c, s) for c, s in zip(top10, oos_scores)
-            if s is not None and c.score is not None and s >= c.score * 0.5
+            if s is not None
+            and c.score is not None
+            and s >= c.score * args.oos_gate_ratio
+            and s >= args.min_oos_score
         ]
         if not held_pairs:
             print("\nNo walk-forward held candidates — approval gate blocked all.")
