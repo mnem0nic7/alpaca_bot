@@ -86,3 +86,17 @@ def test_settings_option_delta_target_must_be_positive_fraction():
     env["OPTION_DELTA_TARGET"] = "0.0"
     with pytest.raises(ValueError, match="OPTION_DELTA_TARGET"):
         Settings.from_env(env)
+
+
+def test_enable_options_trading_defaults_false():
+    from alpaca_bot.config import Settings
+    s = Settings.from_env(_base_env())
+    assert s.enable_options_trading is False
+
+
+def test_enable_options_trading_parsed_true():
+    from alpaca_bot.config import Settings
+    env = _base_env()
+    env["ENABLE_OPTIONS_TRADING"] = "true"
+    s = Settings.from_env(env)
+    assert s.enable_options_trading is True

@@ -138,6 +138,7 @@ class Settings:
     option_dte_min: int = 21
     option_dte_max: int = 60
     option_delta_target: float = 0.50
+    enable_options_trading: bool = False
 
     def __post_init__(self) -> None:
         self.validate()
@@ -297,6 +298,9 @@ class Settings:
             option_dte_min=int(values.get("OPTION_DTE_MIN", "21")),
             option_dte_max=int(values.get("OPTION_DTE_MAX", "60")),
             option_delta_target=float(values.get("OPTION_DELTA_TARGET", "0.50")),
+            enable_options_trading=_parse_bool(
+                "ENABLE_OPTIONS_TRADING", values.get("ENABLE_OPTIONS_TRADING", "false")
+            ),
         )
         return settings
 
