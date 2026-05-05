@@ -18,6 +18,7 @@ from alpaca_bot.web.service import (
     _win_rate,
     load_audit_page,
     load_dashboard_snapshot,
+    load_equity_chart_data,
     load_health_snapshot,
     load_metrics_snapshot,
 )
@@ -989,10 +990,6 @@ def test_load_dashboard_snapshot_realized_pnl_and_loss_limit_none_when_no_sessio
 
 
 def test_load_equity_chart_data_1d_no_trades():
-    from types import SimpleNamespace
-    from datetime import date, datetime, timezone
-    from alpaca_bot.web.service import load_equity_chart_data
-
     now = datetime(2026, 1, 2, 20, 0, tzinfo=timezone.utc)
     settings = make_settings()
 
@@ -1021,10 +1018,6 @@ def test_load_equity_chart_data_1d_no_trades():
 
 
 def test_load_equity_chart_data_1d_with_trades():
-    from types import SimpleNamespace
-    from datetime import date, datetime, timezone
-    from alpaca_bot.web.service import load_equity_chart_data
-
     now = datetime(2026, 1, 2, 20, 0, tzinfo=timezone.utc)
     settings = make_settings()
     # session_start in ET is 9:30 AM = 14:30 UTC on 2026-01-02
@@ -1061,10 +1054,6 @@ def test_load_equity_chart_data_1d_with_trades():
 
 
 def test_load_equity_chart_data_multi_session():
-    from types import SimpleNamespace
-    from datetime import date, datetime, timezone
-    from alpaca_bot.web.service import load_equity_chart_data
-
     now = datetime(2026, 1, 5, 20, 0, tzinfo=timezone.utc)
     settings = make_settings()
 
@@ -1099,3 +1088,4 @@ def test_load_equity_chart_data_multi_session():
     assert data.points[1].v == pytest.approx(100300.0)  # 100150 + 150
     assert data.points[2].v == pytest.approx(100450.0)  # 100300 + 150
     assert data.range_code == "1m"
+    assert data.pct_change == pytest.approx(0.45)  # (100450 - 100000) / 100000 * 100

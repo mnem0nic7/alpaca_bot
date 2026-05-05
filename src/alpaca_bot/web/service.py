@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass, field as dc_field
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -483,9 +484,8 @@ def load_equity_chart_data(
         start_date = date(2000, 1, 1)
         end_date = anchor_date
 
-    from alpaca_bot.storage.repositories import OrderStore as _OrderStore, DailySessionStateStore as _DSSStore
-    o_store = order_store or _OrderStore(connection)
-    d_store = daily_session_state_store or _DSSStore(connection)
+    o_store = order_store or OrderStore(connection)
+    d_store = daily_session_state_store or DailySessionStateStore(connection)
 
     baselines: dict[date, float] = d_store.list_equity_baselines(
         trading_mode=settings.trading_mode,
@@ -543,8 +543,6 @@ def _build_multi_session_series(
     exits: list[dict],
     tz,
 ) -> EquityChartData:
-    from collections import defaultdict
-
     exits_by_date: dict[date, list[dict]] = defaultdict(list)
     for exit_record in exits:
         exit_time = exit_record["exit_time"]
@@ -561,7 +559,8 @@ def _build_multi_session_series(
         points.append(EquityChartPoint(t=close_time, v=baseline + session_pnl))
 
     if points:
-        first_v = baselines.get(sorted(baselines)[0], points[0].v)
+        sorted_dates = sorted(baselines)
+        first_v = baselines[sorted_dates[0]]
         current = points[-1].v
         pct_change = ((current - first_v) / first_v * 100) if first_v else 0.0
     else:
