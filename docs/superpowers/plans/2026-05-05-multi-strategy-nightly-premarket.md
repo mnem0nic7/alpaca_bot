@@ -77,13 +77,13 @@ def test_nightly_composite_env_shared_params_from_highest_scorer(monkeypatch, tm
     _patch_common_db(monkeypatch, module)
     monkeypatch.setattr(module, "split_scenario", _fake_split)
 
-    # breakout wins with score=0.5, momentum wins with score=0.2
+    # breakout wins with score=0.5/OOS=0.4, momentum wins with score=0.2/OOS=0.15
     # RELATIVE_VOLUME_THRESHOLD is shared — should come from breakout (higher rank)
     call_count = [0]
 
     def fake_sweep(**kw):
         call_count[0] += 1
-        if call_count[0] == 1:  # first strategy (breakout, alphabetical or grid order)
+        if call_count[0] == 1:  # first strategy (breakout)
             return [TuningCandidate(
                 params={"BREAKOUT_LOOKBACK_BARS": "25", "RELATIVE_VOLUME_THRESHOLD": "1.8",
                         "DAILY_SMA_PERIOD": "20"},
@@ -97,7 +97,9 @@ def test_nightly_composite_env_shared_params_from_highest_scorer(monkeypatch, tm
             )]
 
     monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
-    # Both pass OOS gate
+    # breakout OOS=0.4, momentum OOS=0.15
+    # With --min-oos-score 0.1: both pass (0.4>=0.1, 0.15>=0.1)
+    # Without it: momentum 0.15 < default 0.2 → not held → only breakout in composite
     monkeypatch.setattr(module, "evaluate_candidates_oos",
                         lambda candidates, oos_scenarios, **kw: [0.4] if call_count[0] <= 1 else [0.15])
 
@@ -107,6 +109,7 @@ def test_nightly_composite_env_shared_params_from_highest_scorer(monkeypatch, tm
         "--output-dir", str(tmp_path),
         "--output-env", str(output_env),
         "--strategies", "breakout,momentum",
+        "--min-oos-score", "0.1",  # lower floor so momentum (OOS=0.15) is also held
     ])
 
     result = module.main()
@@ -132,15 +135,24 @@ def test_nightly_omits_strategy_with_no_held_candidates(monkeypatch, tmp_path):
     _patch_common_db(monkeypatch, module)
     monkeypatch.setattr(module, "split_scenario", _fake_split)
 
-    call_count = [0]
+    sweep_call = [0]
 
     def fake_sweep(**kw):
-        call_count[0] += 1
-        return [TuningCandidate(
-            params={"BREAKOUT_LOOKBACK_BARS": "20", "RELATIVE_VOLUME_THRESHOLD": "1.5",
-                    "DAILY_SMA_PERIOD": "20"},
-            report=None, score=0.4,
-        )]
+        sweep_call[0] += 1
+        if sweep_call[0] == 1:
+            # breakout-specific params — must NOT appear in composite (this strategy fails OOS)
+            return [TuningCandidate(
+                params={"BREAKOUT_LOOKBACK_BARS": "20", "RELATIVE_VOLUME_THRESHOLD": "1.5",
+                        "DAILY_SMA_PERIOD": "20"},
+                report=None, score=0.4,
+            )]
+        else:
+            # momentum-specific params — must appear in composite (this strategy passes OOS)
+            return [TuningCandidate(
+                params={"PRIOR_DAY_HIGH_LOOKBACK_BARS": "2", "RELATIVE_VOLUME_THRESHOLD": "1.5",
+                        "ATR_STOP_MULTIPLIER": "1.0"},
+                report=None, score=0.4,
+            )]
 
     monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
 
@@ -148,7 +160,7 @@ def test_nightly_omits_strategy_with_no_held_candidates(monkeypatch, tmp_path):
 
     def fake_oos(candidates, oos_scenarios, **kw):
         oos_call[0] += 1
-        # First strategy fails OOS gate; second passes
+        # First strategy (breakout) fails OOS gate; second (momentum) passes
         return [None] if oos_call[0] == 1 else [0.3]
 
     monkeypatch.setattr(module, "evaluate_candidates_oos", fake_oos)
@@ -159,6 +171,7 @@ def test_nightly_omits_strategy_with_no_held_candidates(monkeypatch, tmp_path):
         "--output-dir", str(tmp_path),
         "--output-env", str(output_env),
         "--strategies", "breakout,momentum",
+        "--min-oos-score", "0.1",
     ])
 
     result = module.main()
@@ -166,10 +179,12 @@ def test_nightly_omits_strategy_with_no_held_candidates(monkeypatch, tmp_path):
     assert result == 0
     assert output_env.exists()
     content = output_env.read_text()
-    # breakout (first, OOS=None) must NOT contribute params — only momentum winner
+    # breakout (first, OOS=None) must NOT contribute its unique param
     assert "BREAKOUT_LOOKBACK_BARS" not in content, (
         "Strategy with no held candidates must not appear in composite env"
     )
+    # momentum's unique param must be present
+    assert "PRIOR_DAY_HIGH_LOOKBACK_BARS=2" in content
 
 
 def test_nightly_no_winners_writes_no_candidate_env(monkeypatch, tmp_path):
@@ -366,6 +381,48 @@ Then replace the entire `# ── Evolve ───` block (lines 120–231) with
             else:
                 print("\nNo walk-forward held candidates across all strategies — current parameters remain active.")
 ```
+
+Also add `TuningCandidate` to the existing sweep import block in `src/alpaca_bot/nightly/cli.py`:
+
+```python
+from alpaca_bot.tuning.sweep import (
+    DEFAULT_GRID,
+    STRATEGY_GRIDS,
+    TuningCandidate,
+    _viability_key,
+    evaluate_candidates_oos,
+    run_multi_scenario_sweep,
+)
+```
+
+And update the `winners` type annotation in the evolve block to:
+```python
+winners: list[tuple[str, TuningCandidate, float]] = []
+```
+
+Also hoist the `load_all_scored` DB call **above** the per-strategy loop (it returns all records; filtering by grid keys happens inside the loop):
+
+```python
+            tuning_store = TuningResultStore(conn)
+            # Load once; filter by grid_keys per strategy inside the loop
+            try:
+                all_historical = tuning_store.load_all_scored(trading_mode=trading_mode.value)
+            except Exception as exc:
+                print(f"Warning: could not load tuning history for surrogate: {exc}",
+                      file=sys.stderr)
+                all_historical = []
+
+            for strat_name in strategy_names:
+                grid = STRATEGY_GRIDS.get(strat_name, DEFAULT_GRID)
+                signal_evaluator = STRATEGY_REGISTRY[strat_name]
+                ...
+                grid_keys = set(grid.keys())
+                historical = [r for r in all_historical if set(r["params"].keys()) == grid_keys]
+                surrogate = SurrogateModel()
+                surrogate_fitted = surrogate.fit(historical)
+```
+
+Remove the `try/except load_all_scored` block that was inside the per-strategy loop.
 
 Also add these three helper functions at the bottom of `src/alpaca_bot/nightly/cli.py` (before or after `_weekdays_back`):
 
@@ -716,6 +773,7 @@ from pathlib import Path
 from typing import Sequence
 
 from alpaca_bot.config import Settings
+from alpaca_bot.replay.report import BacktestReport
 from alpaca_bot.replay.runner import ReplayRunner
 from alpaca_bot.replay.splitter import split_scenario
 from alpaca_bot.strategy import STRATEGY_REGISTRY
@@ -859,7 +917,7 @@ def _check_gates(
     *,
     is_score: float | None,
     oos_score: float | None,
-    report: object | None,
+    report: "BacktestReport | None",
     oos_gate_ratio: float,
     min_oos_score: float,
 ) -> tuple[bool, str]:
@@ -870,25 +928,21 @@ def _check_gates(
     if oos_score < min_oos_score:
         return False, f"OOS {oos_score:.4f} < min {min_oos_score}"
     if report is not None:
-        pf = getattr(report, "profit_factor", None)
-        sharpe = getattr(report, "sharpe_ratio", None)
-        if pf is not None and pf < 1.0:
-            return False, f"profit_factor {pf:.2f} < 1.0"
-        if sharpe is not None and sharpe <= 0:
-            return False, f"sharpe {sharpe:.2f} ≤ 0"
+        if report.profit_factor is not None and report.profit_factor < 1.0:
+            return False, f"profit_factor {report.profit_factor:.2f} < 1.0"
+        if report.sharpe_ratio is not None and report.sharpe_ratio <= 0:
+            return False, f"sharpe {report.sharpe_ratio:.2f} ≤ 0"
     return True, ""
 
 
 def _print_results(
-    results: list[tuple[str, float | None, float | None, object | None, bool, str]],
+    results: list[tuple[str, float | None, float | None, "BacktestReport | None", bool, str]],
 ) -> None:
     for strat_name, is_score, oos_score, report, passed, fail_reason in results:
         is_str = f"{is_score:.4f}" if is_score is not None else "—"
         oos_str = f"{oos_score:.4f}" if oos_score is not None else "—"
-        pf = getattr(report, "profit_factor", None) if report else None
-        sharpe = getattr(report, "sharpe_ratio", None) if report else None
-        pf_str = f"{pf:.2f}" if pf is not None else "—"
-        sharpe_str = f"{sharpe:.2f}" if sharpe is not None else "—"
+        pf_str = f"{report.profit_factor:.2f}" if (report and report.profit_factor is not None) else "—"
+        sharpe_str = f"{report.sharpe_ratio:.2f}" if (report and report.sharpe_ratio is not None) else "—"
         status = "✓ PASS" if passed else f"✗ FAIL  {fail_reason}"
         print(f"  {strat_name:<20s} IS={is_str}  OOS={oos_str}  "
               f"pf={pf_str}  sharpe={sharpe_str}  {status}")
