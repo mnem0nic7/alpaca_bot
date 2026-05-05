@@ -1321,35 +1321,38 @@ class StrategyWeightStore:
         strategy_version: str,
         computed_at: datetime,
     ) -> None:
-        for strategy_name, weight in weights.items():
-            execute(
-                self._connection,
-                """
-                INSERT INTO strategy_weights (
-                    strategy_name, trading_mode, strategy_version,
-                    weight, sharpe, computed_at
-                )
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (strategy_name, trading_mode, strategy_version)
-                DO UPDATE SET
-                    weight = EXCLUDED.weight,
-                    sharpe = EXCLUDED.sharpe,
-                    computed_at = EXCLUDED.computed_at
-                """,
-                (
-                    strategy_name,
-                    trading_mode.value,
-                    strategy_version,
-                    weight,
-                    sharpes.get(strategy_name, 0.0),
-                    computed_at,
-                ),
-                commit=False,
-            )
         try:
+            for strategy_name, weight in weights.items():
+                execute(
+                    self._connection,
+                    """
+                    INSERT INTO strategy_weights (
+                        strategy_name, trading_mode, strategy_version,
+                        weight, sharpe, computed_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (strategy_name, trading_mode, strategy_version)
+                    DO UPDATE SET
+                        weight = EXCLUDED.weight,
+                        sharpe = EXCLUDED.sharpe,
+                        computed_at = EXCLUDED.computed_at
+                    """,
+                    (
+                        strategy_name,
+                        trading_mode.value,
+                        strategy_version,
+                        weight,
+                        sharpes.get(strategy_name, 0.0),
+                        computed_at,
+                    ),
+                    commit=False,
+                )
             self._connection.commit()
         except Exception:
-            self._connection.rollback()
+            try:
+                self._connection.rollback()
+            except Exception:
+                pass
             raise
 
     def load_all(
