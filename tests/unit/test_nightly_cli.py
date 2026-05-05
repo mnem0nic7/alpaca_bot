@@ -386,3 +386,188 @@ def test_nightly_viability_tiebreak_picks_higher_r(monkeypatch, tmp_path):
     assert output_env.exists()
     assert "BREAKOUT_LOOKBACK_BARS=30" in output_env.read_text(), \
         "higher R-multiple candidate (LOOKBACK=30) must be selected over lower R (LOOKBACK=15)"
+
+
+def test_nightly_multi_strategy_sweeps_all_grids(monkeypatch, tmp_path):
+    """--strategies all: run_multi_scenario_sweep called once per STRATEGY_GRIDS key."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import STRATEGY_GRIDS, TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    _patch_common_db(monkeypatch, module)
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    sweep_calls: list[str] = []
+
+    def fake_sweep(**kw):
+        strat = kw["signal_evaluator"].__name__ if hasattr(kw["signal_evaluator"], "__name__") else str(kw["signal_evaluator"])
+        sweep_calls.append(strat)
+        return [TuningCandidate(params={"RELATIVE_VOLUME_THRESHOLD": "1.5"}, report=None, score=0.3)]
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [0.25])
+
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db", "--output-dir", str(tmp_path),
+        "--strategies", "all",
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert len(sweep_calls) == len(STRATEGY_GRIDS), (
+        f"Expected {len(STRATEGY_GRIDS)} sweep calls, got {len(sweep_calls)}"
+    )
+
+
+def test_nightly_composite_env_shared_params_from_highest_scorer(monkeypatch, tmp_path):
+    """Shared keys come from the highest-_viability_key winner."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    _patch_common_db(monkeypatch, module)
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    # breakout wins with score=0.5/OOS=0.4, momentum wins with score=0.2/OOS=0.15
+    # RELATIVE_VOLUME_THRESHOLD is shared — should come from breakout (higher rank)
+    call_count = [0]
+
+    def fake_sweep(**kw):
+        call_count[0] += 1
+        if call_count[0] == 1:  # first strategy (breakout)
+            return [TuningCandidate(
+                params={"BREAKOUT_LOOKBACK_BARS": "25", "RELATIVE_VOLUME_THRESHOLD": "1.8",
+                        "DAILY_SMA_PERIOD": "20"},
+                report=None, score=0.5,
+            )]
+        else:
+            return [TuningCandidate(
+                params={"PRIOR_DAY_HIGH_LOOKBACK_BARS": "2", "RELATIVE_VOLUME_THRESHOLD": "1.3",
+                        "ATR_STOP_MULTIPLIER": "1.5"},
+                report=None, score=0.2,
+            )]
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
+    # breakout OOS=0.4, momentum OOS=0.15
+    # With --min-oos-score 0.1: both pass (0.4>=0.1, 0.15>=0.1)
+    # Without it: momentum 0.15 < default 0.2 → not held → only breakout in composite
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [0.4] if call_count[0] <= 1 else [0.15])
+
+    output_env = tmp_path / "candidate.env"
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db",
+        "--output-dir", str(tmp_path),
+        "--output-env", str(output_env),
+        "--strategies", "breakout,momentum",
+        "--min-oos-score", "0.1",  # lower floor so momentum (OOS=0.15) is also held
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert output_env.exists()
+    content = output_env.read_text()
+    # Shared RELATIVE_VOLUME_THRESHOLD must come from breakout (score=0.5 > 0.2)
+    assert "RELATIVE_VOLUME_THRESHOLD=1.8" in content, (
+        "Shared param must come from highest-scoring winner (breakout, 1.8 not 1.3)"
+    )
+    # Strategy-specific param from second winner must also be present
+    assert "PRIOR_DAY_HIGH_LOOKBACK_BARS=2" in content
+
+
+def test_nightly_omits_strategy_with_no_held_candidates(monkeypatch, tmp_path):
+    """Strategy with OOS=None is excluded from composite env (no held candidates)."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    _patch_common_db(monkeypatch, module)
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    sweep_call = [0]
+
+    def fake_sweep(**kw):
+        sweep_call[0] += 1
+        if sweep_call[0] == 1:
+            # breakout-specific params — must NOT appear in composite (this strategy fails OOS)
+            return [TuningCandidate(
+                params={"BREAKOUT_LOOKBACK_BARS": "20", "RELATIVE_VOLUME_THRESHOLD": "1.5",
+                        "DAILY_SMA_PERIOD": "20"},
+                report=None, score=0.4,
+            )]
+        else:
+            # momentum-specific params — must appear in composite (this strategy passes OOS)
+            return [TuningCandidate(
+                params={"PRIOR_DAY_HIGH_LOOKBACK_BARS": "2", "RELATIVE_VOLUME_THRESHOLD": "1.5",
+                        "ATR_STOP_MULTIPLIER": "1.0"},
+                report=None, score=0.4,
+            )]
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
+
+    oos_call = [0]
+
+    def fake_oos(candidates, oos_scenarios, **kw):
+        oos_call[0] += 1
+        # First strategy (breakout) fails OOS gate; second (momentum) passes
+        return [None] if oos_call[0] == 1 else [0.3]
+
+    monkeypatch.setattr(module, "evaluate_candidates_oos", fake_oos)
+
+    output_env = tmp_path / "candidate.env"
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db",
+        "--output-dir", str(tmp_path),
+        "--output-env", str(output_env),
+        "--strategies", "breakout,momentum",
+        "--min-oos-score", "0.1",
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert output_env.exists()
+    content = output_env.read_text()
+    # breakout (first, OOS=None) must NOT contribute its unique param
+    assert "BREAKOUT_LOOKBACK_BARS" not in content, (
+        "Strategy with no held candidates must not appear in composite env"
+    )
+    # momentum's unique param must be present
+    assert "PRIOR_DAY_HIGH_LOOKBACK_BARS=2" in content
+
+
+def test_nightly_no_winners_writes_no_candidate_env(monkeypatch, tmp_path):
+    """All strategies fail OOS gate → no candidate.env written."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    _patch_common_db(monkeypatch, module)
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep",
+                        lambda **kw: [TuningCandidate(
+                            params={"RELATIVE_VOLUME_THRESHOLD": "1.5"}, report=None, score=0.3
+                        )])
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [None])
+
+    output_env = tmp_path / "candidate.env"
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db",
+        "--output-dir", str(tmp_path),
+        "--output-env", str(output_env),
+        "--strategies", "breakout,momentum",
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert not output_env.exists(), "No candidate.env must be written when all strategies fail OOS gate"
