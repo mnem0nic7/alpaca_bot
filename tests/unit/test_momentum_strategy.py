@@ -283,9 +283,10 @@ def test_settings_rejects_enable_live_trading_without_live_mode():
 
 
 def test_settings_validates_max_open_positions_upper_bound():
-    # No upper ceiling — large values are allowed
-    settings = _make_settings(max_open_positions=500)
-    assert settings.max_open_positions == 500
+    with pytest.raises(ValueError, match="MAX_OPEN_POSITIONS"):
+        _make_settings(max_open_positions=51)
+    settings = _make_settings(max_open_positions=50)
+    assert settings.max_open_positions == 50
 
 
 def test_settings_rejects_max_position_pct_exceeding_portfolio_exposure():
@@ -310,7 +311,7 @@ def test_momentum_initial_stop_uses_atr_when_enough_daily_bars():
     atr = calculate_atr(daily_bars, 3)
     assert atr is not None
     yesterday_high = daily_bars[-1].high
-    expected_stop = round(yesterday_high - max(0.01, 1.5 * atr), 2)
+    expected_stop = round(yesterday_high - max(0.01, 1.0 * atr), 2)
 
     result = evaluate_momentum_signal(
         symbol="AAPL",
@@ -370,3 +371,24 @@ def test_momentum_returns_none_when_close_at_or_below_yesterday_high():
         settings=settings,
     )
     assert result_below is None, "close < yesterday_high should reject"
+
+
+def test_settings_new_production_defaults_from_env() -> None:
+    """ATR_STOP_MULTIPLIER, MAX_OPEN_POSITIONS, MAX_POSITION_PCT, and
+    MAX_PORTFOLIO_EXPOSURE_PCT must use the new production defaults when
+    the env vars are absent."""
+    from alpaca_bot.config import Settings
+    from tests.unit.helpers import _base_env
+
+    env = _base_env()
+    # _base_env() explicitly sets these two; pop them so from_env falls through to defaults
+    env.pop("MAX_POSITION_PCT")
+    env.pop("MAX_OPEN_POSITIONS")
+    # ATR_STOP_MULTIPLIER and MAX_PORTFOLIO_EXPOSURE_PCT are not set by _base_env()
+
+    settings = Settings.from_env(env)
+
+    assert settings.atr_stop_multiplier == 1.0
+    assert settings.max_open_positions == 20
+    assert settings.max_position_pct == 0.015
+    assert settings.max_portfolio_exposure_pct == 0.30

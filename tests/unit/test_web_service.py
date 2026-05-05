@@ -897,3 +897,87 @@ def test_health_snapshot_stream_fresh_when_empty_stale_events() -> None:
     )
     assert snapshot.stream_stale is False
     assert snapshot.stream_last_stale_at is None
+
+
+# ---------------------------------------------------------------------------
+# Dashboard session P&L and loss-limit fields
+# ---------------------------------------------------------------------------
+
+
+def test_load_dashboard_snapshot_populates_realized_pnl_and_loss_limit_when_baseline_set() -> None:
+    """When session_state has equity_baseline, load_dashboard_snapshot must populate
+    realized_pnl from daily_realized_pnl() and loss_limit_amount from the settings pct."""
+    from datetime import date as date_cls
+    from alpaca_bot.storage import DailySessionState
+    from alpaca_bot.config import TradingMode
+
+    fixed_now = datetime(2026, 5, 2, 15, 0, tzinfo=timezone.utc)
+    settings = make_settings(DAILY_LOSS_LIMIT_PCT="0.01")  # 1% => loss_limit = 500 on 50000 baseline
+
+    session_state = DailySessionState(
+        session_date=date_cls(2026, 5, 2),
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        entries_disabled=False,
+        flatten_complete=False,
+        equity_baseline=50000.0,
+        updated_at=fixed_now,
+    )
+
+    realized_pnl_calls: list[dict] = []
+
+    def fake_daily_realized_pnl(**kwargs):
+        realized_pnl_calls.append(kwargs)
+        return 142.50
+
+    snapshot = load_dashboard_snapshot(
+        settings=settings,
+        connection=SimpleNamespace(),
+        now=fixed_now,
+        trading_status_store=SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store=SimpleNamespace(load=lambda **_: session_state),
+        position_store=SimpleNamespace(list_all=lambda **_: []),
+        order_store=SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            daily_realized_pnl=fake_daily_realized_pnl,
+        ),
+        audit_event_store=make_audit_store(),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
+    )
+
+    assert snapshot.realized_pnl == pytest.approx(142.50)
+    assert snapshot.loss_limit_amount == pytest.approx(500.0)  # 50000 * 0.01
+    assert len(realized_pnl_calls) == 1, "daily_realized_pnl must be called exactly once"
+
+
+def test_load_dashboard_snapshot_realized_pnl_and_loss_limit_none_when_no_session() -> None:
+    """When session_state is None (no equity_baseline), both realized_pnl and
+    loss_limit_amount must be None; daily_realized_pnl must NOT be called."""
+    realized_pnl_calls: list[dict] = []
+
+    def should_not_be_called(**kwargs):
+        realized_pnl_calls.append(kwargs)
+        return 0.0
+
+    fixed_now = datetime(2026, 5, 2, 15, 0, tzinfo=timezone.utc)
+
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=fixed_now,
+        trading_status_store=SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store=SimpleNamespace(load=lambda **_: None),
+        position_store=SimpleNamespace(list_all=lambda **_: []),
+        order_store=SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            daily_realized_pnl=should_not_be_called,
+        ),
+        audit_event_store=make_audit_store(),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
+    )
+
+    assert snapshot.realized_pnl is None
+    assert snapshot.loss_limit_amount is None
+    assert realized_pnl_calls == [], "daily_realized_pnl must NOT be called when equity_baseline is None"

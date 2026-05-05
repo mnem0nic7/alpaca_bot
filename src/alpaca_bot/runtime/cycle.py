@@ -8,6 +8,7 @@ from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType, CycleResult, evaluate_cycle
 from alpaca_bot.domain import Bar, OpenPosition
 from alpaca_bot.storage import AuditEvent, DailySessionState, OrderRecord
+from alpaca_bot.storage.models import OptionOrderRecord
 from alpaca_bot.strategy import StrategySignalEvaluator
 
 if TYPE_CHECKING:
@@ -85,26 +86,50 @@ def run_cycle(
             for intent in result.intents:
                 if intent.intent_type is not CycleIntentType.ENTRY:
                     continue
-                runtime.order_store.save(
-                    OrderRecord(
-                        client_order_id=intent.client_order_id or "",
-                        symbol=intent.symbol,
-                        side="buy",
-                        intent_type=intent.intent_type.value,
-                        status="pending_submit",
-                        quantity=intent.quantity or 0,
-                        trading_mode=settings.trading_mode,
-                        strategy_version=settings.strategy_version,
-                        created_at=now,
-                        updated_at=now,
-                        stop_price=intent.stop_price,
-                        limit_price=intent.limit_price,
-                        initial_stop_price=intent.initial_stop_price,
-                        signal_timestamp=intent.signal_timestamp,
-                        strategy_name=intent.strategy_name,
-                    ),
-                    commit=False,
-                )
+                if getattr(intent, "is_option", False):
+                    option_order_store = getattr(runtime, "option_order_store", None)
+                    if option_order_store is not None:
+                        option_order_store.save(
+                            OptionOrderRecord(
+                                client_order_id=intent.client_order_id or "",
+                                occ_symbol=intent.symbol,
+                                underlying_symbol=intent.underlying_symbol or "",
+                                option_type=intent.option_type_str or "call",
+                                strike=intent.option_strike or 0.0,
+                                expiry=intent.option_expiry or now.date(),
+                                side="buy",
+                                status="pending_submit",
+                                quantity=intent.quantity or 0,
+                                trading_mode=settings.trading_mode,
+                                strategy_version=settings.strategy_version,
+                                strategy_name=intent.strategy_name,
+                                limit_price=intent.limit_price,
+                                created_at=now,
+                                updated_at=now,
+                            ),
+                            commit=False,
+                        )
+                else:
+                    runtime.order_store.save(
+                        OrderRecord(
+                            client_order_id=intent.client_order_id or "",
+                            symbol=intent.symbol,
+                            side="buy",
+                            intent_type=intent.intent_type.value,
+                            status="pending_submit",
+                            quantity=intent.quantity or 0,
+                            trading_mode=settings.trading_mode,
+                            strategy_version=settings.strategy_version,
+                            created_at=now,
+                            updated_at=now,
+                            stop_price=intent.stop_price,
+                            limit_price=intent.limit_price,
+                            initial_stop_price=intent.initial_stop_price,
+                            signal_timestamp=intent.signal_timestamp,
+                            strategy_name=intent.strategy_name,
+                        ),
+                        commit=False,
+                    )
 
             runtime.audit_event_store.append(
                 AuditEvent(

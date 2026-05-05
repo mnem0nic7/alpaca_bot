@@ -50,9 +50,13 @@ from alpaca_bot.storage import (
     PositionRecord,
     TradingStatusValue,
 )
-from alpaca_bot.strategy import STRATEGY_REGISTRY, StrategySignalEvaluator
-from alpaca_bot.strategy.breakout import evaluate_breakout_signal as _default_evaluator
+from alpaca_bot.strategy import OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY, StrategySignalEvaluator
+from alpaca_bot.strategy.breakout import evaluate_breakout_signal as _default_evaluator, is_past_flatten_time
+from alpaca_bot.strategy.breakout_calls import make_breakout_calls_evaluator
 from alpaca_bot.strategy.session import SessionType, detect_session_type
+from alpaca_bot.execution.option_chain import AlpacaOptionChainAdapter
+from alpaca_bot.runtime.option_dispatch import dispatch_pending_option_orders
+from alpaca_bot.storage.models import OptionOrderRecord
 
 
 STREAM_HEARTBEAT_TIMEOUT_SECONDS = 300
@@ -90,6 +94,8 @@ class RuntimeSupervisor:
         connection_checker: Callable[..., bool] | None = None,
         reconnect_fn: Callable[[RuntimeContext], None] | None = None,
         notifier: Notifier | None = None,
+        option_chain_adapter=None,
+        option_broker=None,
     ) -> None:
         self.settings = settings
         self.runtime = runtime
@@ -105,6 +111,8 @@ class RuntimeSupervisor:
         self._check_connection = connection_checker or check_connection
         self._reconnect = reconnect_fn or reconnect_runtime_connection
         self._notifier = notifier
+        self._option_chain_adapter = option_chain_adapter
+        self._option_broker = option_broker
         self._stream_attached = False
         self._stream_thread: threading.Thread | None = None
         self._closed = False
@@ -129,13 +137,21 @@ class RuntimeSupervisor:
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
+        broker = AlpacaBroker.from_settings(settings)
+        option_chain_adapter = None
+        option_broker = None
+        if settings.enable_options_trading:
+            option_chain_adapter = AlpacaOptionChainAdapter.from_settings(settings)
+            option_broker = broker
         return cls(
             settings=settings,
             runtime=bootstrap_runtime(settings),
-            broker=AlpacaBroker.from_settings(settings),
+            broker=broker,
             market_data=AlpacaMarketDataAdapter.from_settings(settings),
             stream=AlpacaTradingStreamAdapter.from_settings(settings),
             notifier=build_notifier(settings),
+            option_chain_adapter=option_chain_adapter,
+            option_broker=option_broker,
         )
 
     def startup(
@@ -521,7 +537,35 @@ class RuntimeSupervisor:
             except Exception:
                 logger.warning("Failed to fetch quotes; spread filter disabled this cycle", exc_info=True)
 
-        active_strategies = self._resolve_active_strategies()
+        # Resolve registered strategies (breakout, etc.)
+        active_strategies = list(self._resolve_active_strategies())
+
+        # Fetch option chains and append option strategies when adapter is configured.
+        # breakout_calls is NOT in STRATEGY_REGISTRY — it is a factory that closes over chains.
+        option_chains_by_symbol: dict = {}
+        option_order_store = getattr(self.runtime, "option_order_store", None)
+        if self._option_chain_adapter is not None:
+            for symbol in self.settings.symbols:
+                try:
+                    chains = self._option_chain_adapter.get_option_chain(symbol, self.settings)
+                    if chains:
+                        option_chains_by_symbol[symbol] = chains
+                except Exception:
+                    logger.exception("option chain fetch failed for %s", symbol)
+            for opt_name in OPTION_STRATEGY_NAMES:
+                active_strategies.append(
+                    (opt_name, make_breakout_calls_evaluator(option_chains_by_symbol))
+                )
+
+        # Add open option position underlying symbols to prevent double-entry.
+        if option_order_store is not None:
+            open_options = option_order_store.list_open_option_positions(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+            )
+            for opt_pos in open_options:
+                working_order_symbols.add(opt_pos.underlying_symbol)
+
         all_cycle_results: list[tuple[str, object]] = []
         entries_disabled_strategies: set[str] = set()
         # Track occupied slots globally across all strategies so no single
@@ -714,6 +758,50 @@ class RuntimeSupervisor:
         if entries_disabled:
             dispatch_kwargs["allowed_intent_types"] = {"stop", "exit"}
         dispatch_report = self._order_dispatcher(**dispatch_kwargs)
+
+        option_broker = getattr(self, "_option_broker", None)
+        if option_broker is not None and option_order_store is not None:
+            dispatch_pending_option_orders(
+                settings=self.settings,
+                runtime=self.runtime,
+                broker=option_broker,
+            )
+
+        # EOD option flatten: create sell records for all open option positions and dispatch.
+        if is_past_flatten_time(timestamp, self.settings) and option_order_store is not None:
+            open_option_positions = option_order_store.list_open_option_positions(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+            )
+            for pos in open_option_positions:
+                sell_id = (
+                    f"option:{self.settings.strategy_version}:{timestamp.date().isoformat()}"
+                    f":{pos.occ_symbol}:sell:{timestamp.isoformat()}"
+                )
+                sell_record = OptionOrderRecord(
+                    client_order_id=sell_id,
+                    occ_symbol=pos.occ_symbol,
+                    underlying_symbol=pos.underlying_symbol,
+                    option_type=pos.option_type,
+                    strike=pos.strike,
+                    expiry=pos.expiry,
+                    side="sell",
+                    status="pending_submit",
+                    quantity=pos.filled_quantity or pos.quantity,
+                    trading_mode=self.settings.trading_mode,
+                    strategy_version=self.settings.strategy_version,
+                    strategy_name=pos.strategy_name,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+                option_order_store.save(sell_record, commit=True)
+            if option_broker is not None and open_option_positions:
+                dispatch_pending_option_orders(
+                    settings=self.settings,
+                    runtime=self.runtime,
+                    broker=option_broker,
+                )
+
         return SupervisorCycleReport(
             entries_disabled=entries_disabled,
             cycle_result=cycle_result,

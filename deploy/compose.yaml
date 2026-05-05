@@ -56,6 +56,7 @@ services:
       RISK_PER_TRADE_PCT: ${RISK_PER_TRADE_PCT}
       MAX_POSITION_PCT: ${MAX_POSITION_PCT}
       MAX_OPEN_POSITIONS: ${MAX_OPEN_POSITIONS}
+      MAX_PORTFOLIO_EXPOSURE_PCT: ${MAX_PORTFOLIO_EXPOSURE_PCT:-0.30}
       DAILY_LOSS_LIMIT_PCT: ${DAILY_LOSS_LIMIT_PCT}
       STOP_LIMIT_BUFFER_PCT: ${STOP_LIMIT_BUFFER_PCT}
       BREAKOUT_STOP_BUFFER_PCT: ${BREAKOUT_STOP_BUFFER_PCT}
@@ -132,4 +133,26 @@ services:
       postgres:
         condition: service_healthy
     environment: *alpaca_bot_env
+    profiles: ["ops"]
+
+  # Run on-demand: docker compose -f deploy/compose.yaml run --rm nightly
+  # Scheduled by host cron via scripts/install_cron.sh — see deploy/cron.d/alpaca-bot
+  nightly:
+    image: alpaca-bot:latest
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command:
+      - alpaca-bot-nightly
+      - --output-dir
+      - /data/scenarios
+      - --output-env
+      - /data/candidate.env
+    environment: *alpaca_bot_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - /var/lib/alpaca-bot/nightly:/data
+    restart: "no"
     profiles: ["ops"]

@@ -11,6 +11,7 @@ if [[ "$MODE" != "paper" && "$MODE" != "live" ]]; then
 fi
 
 mkdir -p "$(dirname "$ENV_FILE")"
+mkdir -p /var/lib/alpaca-bot/nightly
 
 if [[ -f "$ENV_FILE" ]]; then
   echo "env file already exists: $ENV_FILE" >&2

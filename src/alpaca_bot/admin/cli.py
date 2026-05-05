@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 from datetime import datetime, timezone
 import sys
 from typing import Callable, Sequence, TextIO
@@ -11,6 +12,10 @@ from alpaca_bot.notifications.factory import build_notifier
 from alpaca_bot.storage import (
     AuditEvent,
     AuditEventStore,
+    OrderRecord,
+    OrderStore,
+    PositionRecord,
+    PositionStore,
     StrategyFlag,
     StrategyFlagStore,
     TradingStatus,
@@ -57,6 +62,25 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
             "--strategy-version",
             default=defaults.strategy_version,
         )
+
+    ce_parser = subparsers.add_parser("close-excess")
+    ce_parser.add_argument(
+        "--mode",
+        choices=[mode.value for mode in TradingMode],
+        default=defaults.trading_mode.value,
+    )
+    ce_parser.add_argument("--strategy-version", default=defaults.strategy_version)
+    ce_parser.add_argument("--keep", type=int, default=20)
+    ce_parser.add_argument("--dry-run", action="store_true")
+
+    cpf_parser = subparsers.add_parser("cancel-partial-fills")
+    cpf_parser.add_argument(
+        "--mode",
+        choices=[mode.value for mode in TradingMode],
+        default=defaults.trading_mode.value,
+    )
+    cpf_parser.add_argument("--strategy-version", default=defaults.strategy_version)
+    cpf_parser.add_argument("--dry-run", action="store_true")
 
     return parser
 
@@ -293,6 +317,9 @@ def main(
     stdout: TextIO | None = None,
     settings: Settings | None = None,
     notifier: Notifier | None = None,
+    broker_factory: Callable[["Settings"], object] | None = None,
+    position_store_factory: Callable[[ConnectionProtocol], PositionStore] = PositionStore,
+    order_store_factory: Callable[[ConnectionProtocol], OrderStore] = OrderStore,
 ) -> int:
     parsed_argv = list(sys.argv[1:] if argv is None else argv)
     if settings is not None:
@@ -339,6 +366,40 @@ def main(
                 strategy_version=strategy_version,
                 enabled=args.command == "enable-strategy",
                 now=timestamp,
+            )
+        elif args.command == "close-excess":
+            _broker = (
+                broker_factory(resolved_settings)
+                if broker_factory is not None
+                else _make_default_broker(resolved_settings)
+            )
+            _run_close_excess(
+                position_store=position_store_factory(connection),
+                order_store=order_store_factory(connection),
+                audit_store=audit_store,
+                broker=_broker,
+                keep=args.keep,
+                dry_run=args.dry_run,
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                now=timestamp,
+                stdout=stdout or sys.stdout,
+            )
+        elif args.command == "cancel-partial-fills":
+            _broker = (
+                broker_factory(resolved_settings)
+                if broker_factory is not None
+                else _make_default_broker(resolved_settings)
+            )
+            _run_cancel_partial_fills(
+                order_store=order_store_factory(connection),
+                audit_store=audit_store,
+                broker=_broker,
+                dry_run=args.dry_run,
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                now=timestamp,
+                stdout=stdout or sys.stdout,
             )
         else:
             command_reason = getattr(args, "reason", None)
@@ -388,6 +449,171 @@ def main(
     if output is not None:
         print(output, file=stdout or sys.stdout)
     return 0
+
+
+def _run_close_excess(
+    *,
+    position_store: PositionStore,
+    order_store: OrderStore,
+    audit_store: AuditEventStore,
+    broker: object,
+    keep: int,
+    dry_run: bool,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    now: datetime,
+    stdout: TextIO,
+) -> None:
+    positions = position_store.list_all(
+        trading_mode=trading_mode,
+        strategy_version=strategy_version,
+    )
+
+    def _stop_pct(p: PositionRecord) -> float:
+        return (p.entry_price - p.stop_price) / p.entry_price
+
+    ranked = sorted(positions, key=_stop_pct)
+    keep_symbols = {p.symbol for p in ranked[:keep]}
+    to_close = ranked[keep:]
+
+    for position in ranked:
+        label = "KEEP" if position.symbol in keep_symbols else "CLOSE"
+        print(
+            f"{label}  {position.symbol}  stop_pct={round(_stop_pct(position) * 100, 2):.2f}%",
+            file=stdout,
+        )
+
+    if dry_run or not to_close:
+        return
+
+    entry_orders = order_store.list_by_status(
+        trading_mode=trading_mode,
+        strategy_version=strategy_version,
+        statuses=["new", "pending_submit", "partially_filled"],
+    )
+    stop_orders = order_store.list_by_status(
+        trading_mode=trading_mode,
+        strategy_version=strategy_version,
+        statuses=["new", "pending_submit"],
+    )
+
+    for position in to_close:
+        pct = _stop_pct(position)
+
+        for order in entry_orders:
+            if (
+                order.intent_type == "entry"
+                and order.symbol == position.symbol
+                and order.broker_order_id
+            ):
+                broker.cancel_order(order.broker_order_id)  # type: ignore[union-attr]
+
+        for order in stop_orders:
+            if order.intent_type == "stop" and order.symbol == position.symbol:
+                if order.broker_order_id:
+                    broker.cancel_order(order.broker_order_id)  # type: ignore[union-attr]
+                order_store.save(
+                    dataclasses.replace(order, status="canceled", updated_at=now),
+                    commit=False,
+                )
+
+        client_order_id = (
+            f"{strategy_version}:{position.symbol}:force_exit:{now.isoformat()}"
+        )
+        broker_order = broker.submit_market_exit(  # type: ignore[union-attr]
+            symbol=position.symbol,
+            quantity=position.quantity,
+            client_order_id=client_order_id,
+        )
+        order_store.save(
+            OrderRecord(
+                client_order_id=client_order_id,
+                symbol=position.symbol,
+                side="sell",
+                intent_type="exit",
+                status=broker_order.status,
+                quantity=position.quantity,
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                broker_order_id=broker_order.broker_order_id,
+                created_at=now,
+                updated_at=now,
+            ),
+            commit=False,
+        )
+        audit_store.append(
+            AuditEvent(
+                event_type="position_force_closed",
+                symbol=position.symbol,
+                payload={
+                    "symbol": position.symbol,
+                    "quantity": position.quantity,
+                    "entry_price": str(position.entry_price),
+                    "stop_pct": str(round(pct * 100, 2)),
+                },
+                created_at=now,
+            ),
+            commit=True,
+        )
+
+
+def _run_cancel_partial_fills(
+    *,
+    order_store: OrderStore,
+    audit_store: AuditEventStore,
+    broker: object,
+    dry_run: bool,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    now: datetime,
+    stdout: TextIO,
+) -> None:
+    partial_entries = [
+        o
+        for o in order_store.list_by_status(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            statuses=["partially_filled"],
+        )
+        if o.intent_type == "entry"
+    ]
+
+    for order in partial_entries:
+        print(
+            f"{order.symbol}  client_order_id={order.client_order_id}"
+            f"  broker_order_id={order.broker_order_id}",
+            file=stdout,
+        )
+
+    if dry_run:
+        return
+
+    for order in partial_entries:
+        if not order.broker_order_id:
+            continue
+        broker.cancel_order(order.broker_order_id)  # type: ignore[union-attr]
+        order_store.save(
+            dataclasses.replace(order, status="canceled", updated_at=now),
+            commit=False,
+        )
+        audit_store.append(
+            AuditEvent(
+                event_type="partial_fill_canceled_by_admin",
+                symbol=order.symbol,
+                payload={
+                    "client_order_id": order.client_order_id,
+                    "broker_order_id": order.broker_order_id,
+                },
+                created_at=now,
+            ),
+            commit=True,
+        )
+
+
+def _make_default_broker(settings: Settings) -> object:
+    from alpaca_bot.execution.alpaca import AlpacaBroker  # noqa: PLC0415
+
+    return AlpacaBroker.from_settings(settings)
 
 
 def _fallback_settings() -> Settings:

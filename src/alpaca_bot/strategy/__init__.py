@@ -15,6 +15,7 @@ from alpaca_bot.strategy.high_watermark import evaluate_high_watermark_signal
 from alpaca_bot.strategy.momentum import evaluate_momentum_signal
 from alpaca_bot.strategy.orb import evaluate_orb_signal
 from alpaca_bot.strategy.vwap_cross import evaluate_vwap_cross_signal
+from alpaca_bot.strategy.breakout_calls import make_breakout_calls_evaluator
 from alpaca_bot.strategy.vwap_reversion import evaluate_vwap_reversion_signal
 
 
@@ -44,3 +45,5 @@ STRATEGY_REGISTRY: dict[str, StrategySignalEvaluator] = {
     "bb_squeeze": evaluate_bb_squeeze_signal,
     "failed_breakdown": evaluate_failed_breakdown_signal,
 }
+
+OPTION_STRATEGY_NAMES: frozenset[str] = frozenset({"breakout_calls"})

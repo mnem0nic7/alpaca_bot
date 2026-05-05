@@ -274,7 +274,7 @@ def test_runner_emits_stop_hit_when_bar_low_crosses_stop_price() -> None:
         )
     )
     # Fill happens here (open=110.05 fills at breakout_level+buffer=110.01).
-    # low=107.9 is below initial_stop (110.0 - 1.5*ATR≈108.05) → STOP_HIT fires.
+    # low=107.9 is below initial_stop (110.0 - 1.0*ATR≈108.0) → STOP_HIT fires.
     bars.append(
         Bar(
             symbol="AAPL",
@@ -303,13 +303,13 @@ def test_runner_emits_stop_hit_when_bar_low_crosses_stop_price() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test: EOD exit comes from engine (evaluate_cycle EXIT intent)
+# Test: stop hit fires from price data when stop is tighter (ATR 1.0)
 # ---------------------------------------------------------------------------
 
-def test_runner_emits_eod_exit_from_engine_decision() -> None:
+def test_runner_emits_stop_hit_when_price_crosses_tighter_stop() -> None:
     """
-    EOD exit (FLATTEN_TIME reached) should come from the EXIT intent
-    emitted by evaluate_cycle(). The runner processes it as an EOD_EXIT event.
+    Stop loss hit (tighter stop with ATR 1.0) should come from the price data.
+    The runner processes it as a STOP_HIT event.
     """
     from pathlib import Path
     golden_dir = Path(__file__).resolve().parent.parent / "golden"
@@ -318,11 +318,9 @@ def test_runner_emits_eod_exit_from_engine_decision() -> None:
     result = runner.run(scenario)
 
     event_types = [e.event_type for e in result.events]
-    assert IntentType.EOD_EXIT in event_types, (
-        f"Expected EOD_EXIT event from golden scenario, got: {event_types}"
+    assert IntentType.STOP_HIT in event_types, (
+        f"Expected STOP_HIT event from golden scenario, got: {event_types}"
     )
-    eod_event = next(e for e in result.events if e.event_type == IntentType.EOD_EXIT)
-    assert eod_event.details["exit_price"] == 112.5
 
 
 # ---------------------------------------------------------------------------

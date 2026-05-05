@@ -44,17 +44,24 @@ RELATIVE_VOLUME_LOOKBACK_BARS=20
 RELATIVE_VOLUME_THRESHOLD=1.5
 ENTRY_TIMEFRAME_MINUTES=15
 RISK_PER_TRADE_PCT=0.0025
-MAX_POSITION_PCT=0.05
-MAX_OPEN_POSITIONS=3
+MAX_POSITION_PCT=0.015
+MAX_OPEN_POSITIONS=20
+MAX_PORTFOLIO_EXPOSURE_PCT=0.30
 DAILY_LOSS_LIMIT_PCT=0.01
 STOP_LIMIT_BUFFER_PCT=0.001
 BREAKOUT_STOP_BUFFER_PCT=0.001
 ATR_PERIOD=14
-ATR_STOP_MULTIPLIER=1.5
+ATR_STOP_MULTIPLIER=1.0
 ENTRY_STOP_PRICE_BUFFER=0.01
 ENTRY_WINDOW_START=10:00
 ENTRY_WINDOW_END=15:30
 FLATTEN_TIME=15:45
+
+# Options trading (disabled by default; set ENABLE_OPTIONS_TRADING=true to activate)
+# ENABLE_OPTIONS_TRADING=false
+# OPTION_DTE_MIN=21        # minimum days-to-expiry when selecting contracts
+# OPTION_DTE_MAX=60        # maximum days-to-expiry when selecting contracts
+# OPTION_DELTA_TARGET=0.50 # target delta for contract selection (0 < value ≤ 1.0)
 
 ALPACA_PAPER_API_KEY=replace-me
 ALPACA_PAPER_SECRET_KEY=replace-me
@@ -100,6 +107,37 @@ cd /srv/alpaca_bot/current
 ALPACA_PAPER_API_KEY=... \
 ALPACA_PAPER_SECRET_KEY=... \
 ./scripts/sync_alpaca_credentials.sh /etc/alpaca_bot/alpaca-bot.env
+```
+
+## Automated Nightly Parameter Apply
+
+After `alpaca-bot-nightly` completes successfully, `scripts/apply_candidate.sh` automatically:
+
+1. Reads `/var/lib/alpaca-bot/nightly/candidate.env` (written by the nightly run if a walk-forward
+   held candidate was found).
+2. Compares the 3 candidate parameters (`BREAKOUT_LOOKBACK_BARS`, `RELATIVE_VOLUME_THRESHOLD`,
+   `DAILY_SMA_PERIOD`) against the current values in the system env file.
+3. If any param changed, updates the env file and restarts the supervisor via `deploy.sh`.
+4. If params are already current (or no `candidate.env` exists), exits cleanly with no restart.
+
+The cron chains both commands with `&&`, so apply only fires when nightly exits 0. Both commands
+log to `/var/log/alpaca-bot-nightly.log`.
+
+To verify an apply happened:
+```bash
+grep "apply_candidate" /var/log/alpaca-bot-nightly.log | tail -5
+```
+
+To apply manually (e.g., after a `--dry-run` evolve):
+```bash
+cd /workspace/alpaca_bot
+./scripts/apply_candidate.sh /etc/alpaca_bot/alpaca-bot.env
+```
+
+To skip auto-apply for one night (e.g., while investigating an issue), temporarily rename
+`candidate.env` before the apply window:
+```bash
+mv /var/lib/alpaca-bot/nightly/candidate.env /var/lib/alpaca-bot/nightly/candidate.env.hold
 ```
 
 ## First-time setup

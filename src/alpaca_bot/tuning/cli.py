@@ -10,56 +10,175 @@ from typing import Sequence
 
 from alpaca_bot.config import Settings
 from alpaca_bot.replay.runner import ReplayRunner
-from alpaca_bot.tuning.sweep import DEFAULT_GRID, ParameterGrid, TuningCandidate, run_sweep
+from alpaca_bot.strategy import STRATEGY_REGISTRY
+from alpaca_bot.replay.splitter import split_scenario
+from alpaca_bot.tuning.sweep import (
+    DEFAULT_GRID,
+    STRATEGY_GRIDS,
+    ParameterGrid,
+    TuningCandidate,
+    _viability_key,
+    evaluate_candidates_oos,
+    run_multi_scenario_sweep,
+    run_sweep,
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="alpaca-bot-evolve")
-    parser.add_argument("--scenario", required=True, metavar="FILE",
-                        help="Replay scenario (JSON or YAML)")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--scenario", metavar="FILE",
+                       help="Replay scenario (JSON or YAML)")
+    group.add_argument("--scenario-dir", metavar="DIR",
+                       help="Directory of *.json scenario files (multi-scenario sweep)")
     parser.add_argument("--params-grid", metavar="FILE",
                         help="Parameter grid (JSON/YAML); defaults to built-in grid")
     parser.add_argument("--output-env", metavar="FILE",
                         help="Write winning env block to FILE")
     parser.add_argument("--min-trades", type=int, default=3,
                         help="Minimum trades required to score a candidate (default: 3)")
+    parser.add_argument("--strategy", default="breakout",
+                        choices=list(STRATEGY_REGISTRY),
+                        help="Strategy to sweep (default: breakout)")
+    parser.add_argument("--aggregate", default="min", choices=["min", "mean"],
+                        help="Score aggregation across scenarios: min (default) or mean")
     parser.add_argument("--no-db", action="store_true",
                         help="Skip DB persistence (just print results)")
+    parser.add_argument("--validate-pct", type=float, default=0.0,
+                        help="Fraction of each scenario held out for OOS validation (0 = disabled)")
+    parser.add_argument("--min-oos-score", type=float, default=0.0,
+                        help="Minimum absolute OOS score to accept a candidate (default: 0.0)")
+    parser.add_argument("--oos-gate-ratio", type=float, default=0.5,
+                        help="Required OOS/IS score ratio to hold a candidate (default: 0.5)")
+    parser.add_argument("--max-drawdown-pct", type=float, default=0.0,
+                        help="Maximum allowed IS/OOS drawdown to accept a candidate (0.0 = disabled)")
+    parser.add_argument("--max-trades", type=int, default=0,
+                        help="Maximum trades per scenario to accept a candidate (0 = disabled)")
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
 
-    settings = Settings.from_env()
-    runner = ReplayRunner(settings)
-    scenario = runner.load_scenario(args.scenario)
+    validate_pct: float = args.validate_pct
+    if validate_pct != 0.0:
+        if not (0.0 < validate_pct < 1.0):
+            sys.exit(f"--validate-pct must be in (0.0, 1.0), got {validate_pct}")
+        if args.scenario:
+            sys.exit("--validate-pct requires --scenario-dir; single-scenario walk-forward is not supported")
 
-    grid: ParameterGrid = DEFAULT_GRID
+    grid: ParameterGrid = STRATEGY_GRIDS.get(args.strategy, DEFAULT_GRID)
     if args.params_grid:
         grid = _load_grid(args.params_grid)
 
+    signal_evaluator = STRATEGY_REGISTRY[args.strategy]
     base_env = dict(os.environ)
-    total_combos = 1
-    for vals in grid.values():
-        total_combos *= len(vals)
-    print(f"Running sweep: {total_combos} combinations over scenario '{scenario.name}'...")
-
     now = datetime.now(timezone.utc)
-    candidates = run_sweep(
-        scenario=scenario,
-        base_env=base_env,
-        grid=grid,
-        min_trades=args.min_trades,
-    )
+
+    if args.scenario:
+        scenario = ReplayRunner.load_scenario(args.scenario)
+        total_combos = 1
+        for vals in grid.values():
+            total_combos *= len(vals)
+        print(f"Running sweep: {total_combos} combinations over scenario '{scenario.name}'...")
+        candidates = run_sweep(
+            scenario=scenario,
+            base_env=base_env,
+            grid=grid,
+            min_trades=args.min_trades,
+            max_drawdown_pct=args.max_drawdown_pct,
+            max_trades=args.max_trades,
+            signal_evaluator=signal_evaluator,
+        )
+        scenario_name = scenario.name
+    else:
+        scenario_dir = Path(args.scenario_dir)
+        files = sorted(scenario_dir.glob("*.json"))
+        if len(files) < 2:
+            sys.exit(
+                f"--scenario-dir requires at least 2 *.json files; "
+                f"found {len(files)} in {scenario_dir}"
+            )
+        all_scenarios = [ReplayRunner.load_scenario(f) for f in files]
+        total_combos = 1
+        for vals in grid.values():
+            total_combos *= len(vals)
+
+        if validate_pct > 0.0:
+            is_scenarios = []
+            oos_scenarios = []
+            for s in all_scenarios:
+                is_s, oos_s = split_scenario(s, in_sample_ratio=1.0 - validate_pct)
+                is_scenarios.append(is_s)
+                oos_scenarios.append(oos_s)
+            sweep_scenarios = is_scenarios
+            oos_pct_int = round(validate_pct * 100)
+            print(
+                f"Walk-forward mode: IS={100 - oos_pct_int}% / OOS={oos_pct_int}% "
+                f"of each scenario"
+            )
+        else:
+            sweep_scenarios = all_scenarios
+            oos_scenarios = []
+
+        names = ", ".join(s.name for s in all_scenarios)
+        print(
+            f"Running multi-scenario sweep: {total_combos} combinations "
+            f"× {len(sweep_scenarios)} scenarios"
+        )
+        print(f"Scenarios: {names}")
+        candidates = run_multi_scenario_sweep(
+            scenarios=sweep_scenarios,
+            base_env=base_env,
+            grid=grid,
+            min_trades_per_scenario=args.min_trades,
+            aggregate=args.aggregate,
+            max_drawdown_pct=args.max_drawdown_pct,
+            max_trades=args.max_trades,
+            signal_evaluator=signal_evaluator,
+        )
+        scenario_name = "+".join(s.name for s in all_scenarios)
 
     scored = [c for c in candidates if c.score is not None]
     unscored = [c for c in candidates if c.score is None]
-    print(f"Scored: {len(scored)} / {len(candidates)} candidates "
-          f"({len(unscored)} disqualified, min_trades={args.min_trades})")
+    print(
+        f"Scored: {len(scored)} / {len(candidates)} candidates "
+        f"({len(unscored)} disqualified, min_trades={args.min_trades})"
+    )
 
     best = scored[0] if scored else None
 
     _print_top_candidates(scored[:10])
 
+    if validate_pct > 0.0 and oos_scenarios:
+        top10 = scored[:10]
+        oos_scores = evaluate_candidates_oos(
+            candidates=top10,
+            oos_scenarios=oos_scenarios,
+            base_env=base_env,
+            min_trades=args.min_trades,
+            aggregate=args.aggregate,
+            max_drawdown_pct=args.max_drawdown_pct,
+            max_trades=args.max_trades,
+            signal_evaluator=signal_evaluator,
+        )
+        _print_walk_forward_block(
+            top10, oos_scores,
+            validate_pct=validate_pct,
+            aggregate=args.aggregate,
+            oos_gate_ratio=args.oos_gate_ratio,
+            min_oos_score=args.min_oos_score,
+        )
+        held_pairs = [
+            (c, s) for c, s in zip(top10, oos_scores)
+            if s is not None
+            and c.score is not None
+            and s >= c.score * args.oos_gate_ratio
+            and s >= args.min_oos_score
+        ]
+        if not held_pairs:
+            print("\nNo walk-forward held candidates — approval gate blocked all.")
+            return 1
+        best = max(held_pairs, key=lambda pair: _viability_key(pair[0], pair[1]))[0]
+
     if best is None:
-        print("\nNo scored candidates — increase --min-trades or provide a longer scenario.")
+        print("\nNo scored candidates — increase --min-trades or provide longer scenarios.")
         return 1
 
     env_block = _format_env_block(best, now)
@@ -70,10 +189,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Winning env block written to {args.output_env}")
 
     if not args.no_db:
+        settings = Settings.from_env()
         _save_to_db(
             settings=settings,
             candidates=candidates,
-            scenario_name=scenario.name,
+            scenario_name=scenario_name,
             now=now,
         )
 
@@ -100,8 +220,52 @@ def _print_top_candidates(scored: list[TuningCandidate]) -> None:
         trades = report.total_trades if report else 0
         win = f"{report.win_rate:.0%}" if (report and report.win_rate is not None) else "—"
         sharpe = f"{c.score:.4f}" if c.score is not None else "—"
+        pf = f"{report.profit_factor:.2f}" if (report and report.profit_factor is not None) else "—"
+        stop_total = (report.stop_wins + report.stop_losses) if report else 0
+        stop_pct = f"{stop_total / trades:.0%}" if trades > 0 else "—"
+        max_cl = report.max_consecutive_losses if report else 0
+        if (report and report.avg_win_return_pct is not None
+                and report.avg_loss_return_pct is not None
+                and report.avg_loss_return_pct != 0.0):
+            r_multiple = report.avg_win_return_pct / abs(report.avg_loss_return_pct)
+            r_str = f"{r_multiple:.2f}"
+        else:
+            r_str = "—"
         params_str = " ".join(f"{k}={v}" for k, v in c.params.items())
-        print(f"  [{i:2d}] score={sharpe:>8s}  trades={trades:2d}  win={win:>5s}  {params_str}")
+        print(f"  [{i:2d}] score={sharpe:>8s}  trades={trades:2d}  win={win:>5s}  pf={pf:>5s}  R={r_str:>5s}  stop%={stop_pct:>4s}  maxcl={max_cl:>2d}  {params_str}")
+
+
+def _print_walk_forward_block(
+    candidates: list[TuningCandidate],
+    oos_scores: list[float | None],
+    *,
+    validate_pct: float,
+    aggregate: str,
+    oos_gate_ratio: float = 0.5,
+    min_oos_score: float = 0.0,
+) -> None:
+    oos_pct_int = round(validate_pct * 100)
+    ratio_pct = round(oos_gate_ratio * 100)
+    floor_str = f"{min_oos_score:.2f}" if min_oos_score > 0.0 else "none"
+    print(f"\nWalk-forward validation (OOS: {oos_pct_int}% of each scenario, aggregate={aggregate})")
+    print(f"  IS score threshold for \"held\": OOS ≥ IS × {ratio_pct}%  AND  OOS ≥ {floor_str}")
+    print()
+    print(f"  {'[Rank]':>6}  {'IS-score':>8}  {'OOS-score':>9}  {'OOS-trades':>10}  {'held?':>5}  Params")
+    for i, (c, oos_score) in enumerate(zip(candidates, oos_scores), 1):
+        is_score_str = f"{c.score:.4f}" if c.score is not None else "    None"
+        oos_score_str = f"{oos_score:.4f}" if oos_score is not None else "    None"
+        held = (
+            "✓"
+            if (
+                oos_score is not None
+                and c.score is not None
+                and oos_score >= c.score * oos_gate_ratio
+                and oos_score >= min_oos_score
+            )
+            else "✗"
+        )
+        params_str = " ".join(f"{k}={v}" for k, v in c.params.items())
+        print(f"  [{i:3d}]  {is_score_str:>8}  {oos_score_str:>9}  {'—':>10}  {held:>5}  {params_str}")
 
 
 def _format_env_block(best: TuningCandidate, now: datetime) -> str:

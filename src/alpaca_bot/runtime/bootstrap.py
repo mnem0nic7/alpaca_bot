@@ -9,6 +9,7 @@ from alpaca_bot.storage import (
     AuditEventStore,
     DailySessionStateStore,
     MigrationRunner,
+    OptionOrderRepository,
     OrderStore,
     PostgresAdvisoryLock,
     PositionStore,
@@ -36,6 +37,7 @@ class RuntimeContext:
     position_store: PositionStore | None = None
     strategy_flag_store: StrategyFlagStore | None = None
     watchlist_store: WatchlistStore | None = None
+    option_order_store: OptionOrderRepository | None = None
     # Protects all store operations against concurrent access from the trade update stream thread
     store_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -80,6 +82,7 @@ def bootstrap_runtime(
         daily_session_state_store=DailySessionStateStore(runtime_connection),
         strategy_flag_store=StrategyFlagStore(runtime_connection),
         watchlist_store=watchlist_store,
+        option_order_store=OptionOrderRepository(runtime_connection),
     )
 
 
@@ -111,6 +114,7 @@ def reconnect_runtime_connection(
         "position_store",
         "strategy_flag_store",
         "watchlist_store",
+        "option_order_store",
     ):
         store = getattr(context, attr, None)
         if store is not None and hasattr(store, "_connection"):

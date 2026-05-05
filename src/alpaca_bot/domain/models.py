@@ -39,6 +39,7 @@ class EntrySignal:
     stop_price: float
     limit_price: float
     initial_stop_price: float
+    option_contract: OptionContract | None = None
 
 
 @dataclass(frozen=True)
@@ -121,3 +122,15 @@ class Quote:
         if self.ask_price <= 0:
             return 0.0
         return (self.ask_price - self.bid_price) / self.ask_price
+
+
+@dataclass(frozen=True)
+class OptionContract:
+    occ_symbol: str
+    underlying: str
+    option_type: str
+    strike: float
+    expiry: date
+    bid: float
+    ask: float
+    delta: float | None = None

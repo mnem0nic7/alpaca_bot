@@ -307,7 +307,7 @@ def test_high_watermark_initial_stop_uses_atr_when_enough_daily_bars():
     atr = calculate_atr(daily_bars, 3)
     assert atr is not None
     historical_high = 150.0
-    expected_stop = round(historical_high - max(0.01, 1.5 * atr), 2)
+    expected_stop = round(historical_high - max(0.01, 1.0 * atr), 2)
 
     result = evaluate_high_watermark_signal(
         symbol="AAPL",

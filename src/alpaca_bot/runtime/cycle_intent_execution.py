@@ -174,6 +174,7 @@ def execute_cycle_intents(
                 strategy_name=strategy_name,
                 lock_ctx=lock_ctx,
                 limit_price=getattr(intent, "limit_price", None),
+                notifier=notifier,
             )
             canceled_stop_count += canceled
             submitted_exit_count += submitted
@@ -270,6 +271,16 @@ def _execute_update_stop(
                 symbol=symbol,
                 timestamp=intent_timestamp,
                 strategy_name=strategy_name,
+            )
+            _cancel_partial_fill_entry(
+                symbol=symbol,
+                strategy_name=strategy_name,
+                runtime=runtime,
+                broker=broker,
+                settings=settings,
+                now=now,
+                lock_ctx=lock_ctx,
+                context="update_stop",
             )
             broker_order = broker.submit_stop_order(
                 symbol=symbol,
@@ -396,6 +407,7 @@ def _execute_exit(
     strategy_name: str = "breakout",
     lock_ctx: Any = None,
     limit_price: float | None = None,
+    notifier: Notifier | None = None,
 ) -> tuple[int, int, int]:
     # Returns (canceled_stop_count, submitted_exit_count, hard_failed).
     # hard_failed=1 when a broker call failed with an unrecognized error (stop cancel
@@ -546,6 +558,21 @@ def _execute_exit(
                 # DB, causing every subsequent cycle to re-cancel them, hit
                 # "already_canceled", set position_already_gone, and permanently
                 # abandon the exit for an unprotected position.
+        if notifier is not None:
+            try:
+                notifier.send(
+                    subject=f"Exit HARD FAILED: {symbol}/{strategy_name} — stop state UNKNOWN, exit aborted",
+                    body=(
+                        f"cancel_order raised an unrecognized error for {symbol} ({strategy_name}).\n"
+                        f"The stop order status at the broker is unknown. Exit was aborted to prevent double-sell.\n"
+                        f"Position may still be protected (stop may be live). Manual verification required.\n"
+                        f"Reason: {reason}"
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "cycle_intent_execution: notifier failed for cancel_hard_failed on %s", symbol
+                )
         return canceled_stop_count, 0, 1  # hard_failed: stop cancel had unrecognized error
 
     if position_already_gone:
@@ -614,6 +641,16 @@ def _execute_exit(
         symbol=symbol,
         timestamp=intent_timestamp,
         strategy_name=strategy_name,
+    )
+    _cancel_partial_fill_entry(
+        symbol=symbol,
+        strategy_name=strategy_name,
+        runtime=runtime,
+        broker=broker,
+        settings=settings,
+        now=now,
+        lock_ctx=lock_ctx,
+        context="exit",
     )
     # Submit exit outside the lock.
     try:
@@ -705,6 +742,21 @@ def _execute_exit(
                 except Exception:
                     pass
                 raise
+        if notifier is not None:
+            try:
+                notifier.send(
+                    subject=f"Exit HARD FAILED: {symbol}/{strategy_name} — position UNPROTECTED",
+                    body=(
+                        f"Stop cancel succeeded but {exit_method} raised for {symbol} ({strategy_name}).\n"
+                        f"Position is live and unprotected. A recovery stop has been queued.\n"
+                        f"Manual verification required.\n"
+                        f"Reason: {reason}"
+                    ),
+                )
+            except Exception:
+                logger.exception(
+                    "cycle_intent_execution: notifier failed for exit submission failure on %s", symbol
+                )
         return canceled_stop_count, 0, 1  # hard_failed: exit submission raised
 
     # Write all results under lock.
@@ -846,6 +898,110 @@ def _latest_active_stop_order(
     if not orders:
         return None
     return max(orders, key=lambda order: (order.updated_at, order.created_at, order.client_order_id))
+
+
+def _cancel_partial_fill_entry(
+    *,
+    symbol: str,
+    strategy_name: str,
+    runtime: RuntimeProtocol,
+    broker: BrokerProtocol,
+    settings: "Settings",
+    now: datetime,
+    lock_ctx: Any,
+    context: str,
+) -> None:
+    with lock_ctx:
+        all_partial = runtime.order_store.list_by_status(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+            statuses=["partially_filled"],
+            strategy_name=strategy_name,
+        )
+    partial_entries = [
+        o for o in all_partial if o.intent_type == "entry" and o.symbol == symbol
+    ]
+    if not partial_entries:
+        return
+    for entry in partial_entries:
+        if not entry.broker_order_id:
+            continue
+        try:
+            broker.cancel_order(entry.broker_order_id)
+        except Exception as exc:
+            exc_msg = str(exc).lower()
+            if any(
+                phrase in exc_msg
+                for phrase in ("already canceled", "not found", "does not exist")
+            ):
+                logger.warning(
+                    "cycle_intent_execution: partial-fill entry %s already gone at broker: %s",
+                    entry.client_order_id,
+                    exc,
+                )
+            else:
+                logger.exception(
+                    "cycle_intent_execution: failed to cancel partial-fill entry %s before exit — proceeding anyway",
+                    entry.client_order_id,
+                )
+                with lock_ctx:
+                    try:
+                        runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="partial_fill_cancel_failed",
+                                symbol=symbol,
+                                payload={
+                                    "entry_client_order_id": entry.client_order_id,
+                                    "entry_broker_order_id": entry.broker_order_id,
+                                    "error": str(exc),
+                                    "context": context,
+                                },
+                                created_at=now,
+                            ),
+                            commit=True,
+                        )
+                    except Exception:
+                        pass
+                continue
+        canceled_entry = OrderRecord(
+            client_order_id=entry.client_order_id,
+            symbol=entry.symbol,
+            side=entry.side,
+            intent_type=entry.intent_type,
+            status="canceled",
+            quantity=entry.quantity,
+            trading_mode=entry.trading_mode,
+            strategy_version=entry.strategy_version,
+            created_at=entry.created_at,
+            updated_at=now,
+            stop_price=entry.stop_price,
+            limit_price=entry.limit_price,
+            broker_order_id=entry.broker_order_id,
+            signal_timestamp=entry.signal_timestamp,
+        )
+        with lock_ctx:
+            try:
+                runtime.order_store.save(canceled_entry, commit=False)
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="partial_fill_entry_canceled",
+                        symbol=symbol,
+                        payload={
+                            "entry_client_order_id": entry.client_order_id,
+                            "entry_broker_order_id": entry.broker_order_id,
+                            "context": context,
+                        },
+                        created_at=now,
+                    ),
+                    commit=False,
+                )
+                runtime.connection.commit()
+            except Exception:
+                try:
+                    runtime.connection.rollback()
+                except Exception:
+                    pass
+                raise
 
 
 def _stop_client_order_id(

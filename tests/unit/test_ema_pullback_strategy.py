@@ -259,7 +259,7 @@ def test_ema_pullback_initial_stop_uses_atr_when_enough_daily_bars():
     atr = calculate_atr(daily_bars, 3)
     assert atr is not None
     prior_bar_low = intraday_bars[signal_index - 1].low  # pullback_close - 1.0 = 105.0
-    expected_stop = round(prior_bar_low - max(0.01, 1.5 * atr), 2)
+    expected_stop = round(prior_bar_low - max(0.01, 1.0 * atr), 2)
 
     result = evaluate_ema_pullback_signal(
         symbol="AAPL",

@@ -73,14 +73,14 @@ class Settings:
     entry_window_start: time
     entry_window_end: time
     flatten_time: time
-    max_portfolio_exposure_pct: float = 0.15
+    max_portfolio_exposure_pct: float = 0.30
     notify_slippage_threshold_pct: float = 0.005
     prior_day_high_lookback_bars: int = 1
     orb_opening_bars: int = 2
     high_watermark_lookback_days: int = 252
     ema_period: int = 9
     atr_period: int = 14
-    atr_stop_multiplier: float = 1.5
+    atr_stop_multiplier: float = 1.0
     trailing_stop_atr_multiplier: float = 0.0
     trailing_stop_profit_trigger_r: float = 1.0
     market_timezone: ZoneInfo = ZoneInfo("America/New_York")
@@ -135,6 +135,10 @@ class Settings:
     )
     enable_spread_filter: bool = True
     max_spread_pct: float = 0.002
+    option_dte_min: int = 21
+    option_dte_max: int = 60
+    option_delta_target: float = 0.50
+    enable_options_trading: bool = False
 
     def __post_init__(self) -> None:
         self.validate()
@@ -161,11 +165,11 @@ class Settings:
             relative_volume_threshold=float(values.get("RELATIVE_VOLUME_THRESHOLD", "1.5")),
             entry_timeframe_minutes=int(values.get("ENTRY_TIMEFRAME_MINUTES", "15")),
             risk_per_trade_pct=float(values.get("RISK_PER_TRADE_PCT", "0.0025")),
-            max_position_pct=float(values.get("MAX_POSITION_PCT", "0.05")),
-            max_open_positions=int(values.get("MAX_OPEN_POSITIONS", "3")),
+            max_position_pct=float(values.get("MAX_POSITION_PCT", "0.015")),
+            max_open_positions=int(values.get("MAX_OPEN_POSITIONS", "20")),
             daily_loss_limit_pct=float(values.get("DAILY_LOSS_LIMIT_PCT", "0.01")),
             max_portfolio_exposure_pct=float(
-                values.get("MAX_PORTFOLIO_EXPOSURE_PCT", "0.15")
+                values.get("MAX_PORTFOLIO_EXPOSURE_PCT", "0.30")
             ),
             notify_slippage_threshold_pct=float(
                 values.get("NOTIFY_SLIPPAGE_THRESHOLD_PCT", "0.005")
@@ -175,7 +179,7 @@ class Settings:
             high_watermark_lookback_days=int(values.get("HIGH_WATERMARK_LOOKBACK_DAYS", "252")),
             ema_period=int(values.get("EMA_PERIOD", "9")),
             atr_period=int(values.get("ATR_PERIOD", "14")),
-            atr_stop_multiplier=float(values.get("ATR_STOP_MULTIPLIER", "1.5")),
+            atr_stop_multiplier=float(values.get("ATR_STOP_MULTIPLIER", "1.0")),
             trailing_stop_atr_multiplier=float(
                 values.get("TRAILING_STOP_ATR_MULTIPLIER", "0.0")
             ),
@@ -291,6 +295,12 @@ class Settings:
                 "ENABLE_SPREAD_FILTER", values.get("ENABLE_SPREAD_FILTER", "false")
             ),
             max_spread_pct=float(values.get("MAX_SPREAD_PCT", "0.002")),
+            option_dte_min=int(values.get("OPTION_DTE_MIN", "21")),
+            option_dte_max=int(values.get("OPTION_DTE_MAX", "60")),
+            option_delta_target=float(values.get("OPTION_DELTA_TARGET", "0.50")),
+            enable_options_trading=_parse_bool(
+                "ENABLE_OPTIONS_TRADING", values.get("ENABLE_OPTIONS_TRADING", "false")
+            ),
         )
         return settings
 
@@ -354,6 +364,8 @@ class Settings:
             raise ValueError("TRAILING_STOP_PROFIT_TRIGGER_R must be > 0")
         if self.max_open_positions < 1:
             raise ValueError("MAX_OPEN_POSITIONS must be at least 1")
+        if self.max_open_positions > 50:
+            raise ValueError("MAX_OPEN_POSITIONS must be at most 50")
         if not 1 <= self.notify_smtp_port <= 65535:
             raise ValueError("NOTIFY_SMTP_PORT must be between 1 and 65535")
         if self.max_position_pct > self.max_portfolio_exposure_pct:
@@ -426,6 +438,12 @@ class Settings:
             raise ValueError("PER_SYMBOL_LOSS_LIMIT_PCT must be < 1.0")
         if self.regime_sma_period < 2:
             raise ValueError("REGIME_SMA_PERIOD must be >= 2")
+        if self.option_dte_min < 1:
+            raise ValueError("OPTION_DTE_MIN must be at least 1")
+        if self.option_dte_max <= self.option_dte_min:
+            raise ValueError("OPTION_DTE_MAX must be greater than OPTION_DTE_MIN")
+        if not 0.0 < self.option_delta_target <= 1.0:
+            raise ValueError("OPTION_DELTA_TARGET must be between 0 (exclusive) and 1.0 (inclusive)")
         if self.extended_hours_enabled:
             if self.pre_market_entry_window_start >= self.pre_market_entry_window_end:
                 raise ValueError(

@@ -326,6 +326,242 @@ def test_replay_runner_attaches_backtest_report_to_result() -> None:
 
     assert result.backtest_report is not None
     assert isinstance(result.backtest_report, BacktestReport)
-    # Golden scenario ends with EOD_EXIT — should have 1 trade
+    # Golden scenario ends with STOP_HIT (tighter stop with ATR 1.0) — should have 1 trade
     assert result.backtest_report.total_trades == 1
-    assert result.backtest_report.trades[0].exit_reason == "eod"
+    assert result.backtest_report.trades[0].exit_reason == "stop"
+
+
+# ---------------------------------------------------------------------------
+# profit_factor
+# ---------------------------------------------------------------------------
+
+
+def test_profit_factor_none_for_zero_trades() -> None:
+    result = _make_result([])
+    assert build_backtest_report(result).profit_factor is None
+
+
+def test_profit_factor_none_when_no_losses() -> None:
+    """All winners → no losses to divide by → None (not penalized)."""
+    result = _make_result([
+        _fill(entry_price=150.0, quantity=10, t=_T0),
+        _eod_exit(exit_price=155.0, t=_T1),
+    ])
+    report = build_backtest_report(result)
+    assert report.profit_factor is None
+
+
+def test_profit_factor_zero_when_all_losers() -> None:
+    """All losers → gross_wins = 0 → profit_factor = 0.0."""
+    result = _make_result([
+        _fill(entry_price=150.0, quantity=10, t=_T0),
+        _stop_exit(exit_price=148.0, t=_T1),  # pnl = -20
+    ])
+    report = build_backtest_report(result)
+    assert report.profit_factor == pytest.approx(0.0)
+
+
+def test_profit_factor_correct_with_mixed_trades() -> None:
+    """2 wins (+50 + +50) against 1 loss (-20) → profit_factor = 100/20 = 5.0."""
+    _T3 = datetime(2026, 4, 24, 14, 45, tzinfo=timezone.utc)
+    _T4 = datetime(2026, 4, 24, 15, 0, tzinfo=timezone.utc)
+    result = _make_result([
+        _fill(entry_price=150.0, quantity=10, t=_T0),
+        _eod_exit(exit_price=155.0, t=_T1),  # pnl = +50
+        ReplayEvent(
+            event_type=IntentType.ENTRY_FILLED, symbol="AAPL", timestamp=_T1,
+            details={"entry_price": 155.0, "quantity": 10, "initial_stop_price": 153.0},
+        ),
+        _eod_exit(exit_price=160.0, t=_T2),  # pnl = +50
+        ReplayEvent(
+            event_type=IntentType.ENTRY_FILLED, symbol="AAPL", timestamp=_T3,
+            details={"entry_price": 160.0, "quantity": 10, "initial_stop_price": 158.0},
+        ),
+        ReplayEvent(
+            event_type=IntentType.STOP_HIT, symbol="AAPL", timestamp=_T4,
+            details={"exit_price": 158.0},  # pnl = -20
+        ),
+    ])
+    report = build_backtest_report(result)
+    assert report.total_trades == 3
+    assert report.profit_factor == pytest.approx(100.0 / 20.0)
+
+
+# ---------------------------------------------------------------------------
+# exit type segmentation
+# ---------------------------------------------------------------------------
+
+
+def test_exit_type_fields_zero_for_no_trades() -> None:
+    result = _make_result([])
+    report = build_backtest_report(result)
+    assert report.stop_wins == 0
+    assert report.stop_losses == 0
+    assert report.eod_wins == 0
+    assert report.eod_losses == 0
+    assert report.avg_hold_minutes is None
+
+
+def test_exit_type_fields_eod_win() -> None:
+    result = _make_result([_fill(entry_price=150.0, quantity=10, t=_T0),
+                           _eod_exit(exit_price=155.0, t=_T1)])
+    report = build_backtest_report(result)
+    assert report.stop_wins == 0
+    assert report.eod_wins == 1
+    assert report.stop_losses == 0
+    assert report.eod_losses == 0
+
+
+def test_exit_type_fields_stop_loss() -> None:
+    result = _make_result([_fill(entry_price=150.0, quantity=10, t=_T0),
+                           _stop_exit(exit_price=148.0, t=_T1)])
+    report = build_backtest_report(result)
+    assert report.stop_wins == 0
+    assert report.stop_losses == 1
+    assert report.eod_wins == 0
+    assert report.eod_losses == 0
+
+
+def test_exit_type_fields_mixed() -> None:
+    """2 eod wins + 1 stop loss."""
+    _T3 = datetime(2026, 4, 24, 14, 45, tzinfo=timezone.utc)
+    _T4 = datetime(2026, 4, 24, 15, 0, tzinfo=timezone.utc)
+    result = _make_result([
+        _fill(entry_price=150.0, quantity=10, t=_T0),
+        _eod_exit(exit_price=155.0, t=_T1),        # eod win
+        ReplayEvent(event_type=IntentType.ENTRY_FILLED, symbol="AAPL", timestamp=_T1,
+                    details={"entry_price": 155.0, "quantity": 10, "initial_stop_price": 153.0}),
+        _eod_exit(exit_price=160.0, t=_T2),        # eod win
+        ReplayEvent(event_type=IntentType.ENTRY_FILLED, symbol="AAPL", timestamp=_T3,
+                    details={"entry_price": 160.0, "quantity": 10, "initial_stop_price": 158.0}),
+        ReplayEvent(event_type=IntentType.STOP_HIT, symbol="AAPL", timestamp=_T4,
+                    details={"exit_price": 158.0}),  # stop loss
+    ])
+    report = build_backtest_report(result)
+    assert report.eod_wins == 2
+    assert report.eod_losses == 0
+    assert report.stop_wins == 0
+    assert report.stop_losses == 1
+
+
+def test_avg_hold_minutes_correct() -> None:
+    """_T0 to _T1 = 15 min; _T1 to _T2 = 15 min → avg = 15.0."""
+    result = _make_result([
+        _fill(entry_price=150.0, quantity=10, t=_T0),
+        _eod_exit(exit_price=155.0, t=_T1),
+        ReplayEvent(event_type=IntentType.ENTRY_FILLED, symbol="AAPL", timestamp=_T1,
+                    details={"entry_price": 155.0, "quantity": 10, "initial_stop_price": 153.0}),
+        _eod_exit(exit_price=160.0, t=_T2),
+    ])
+    report = build_backtest_report(result)
+    assert report.avg_hold_minutes == pytest.approx(15.0)
+
+
+# ---------------------------------------------------------------------------
+# Streak stats: max_consecutive_losses / max_consecutive_wins
+# ---------------------------------------------------------------------------
+
+
+def _make_trade(pnl: float) -> "ReplayTradeRecord":
+    from alpaca_bot.replay.report import ReplayTradeRecord
+    return ReplayTradeRecord(
+        symbol="AAPL",
+        entry_price=100.0,
+        exit_price=100.0 + pnl,
+        quantity=1,
+        entry_time=_T0,
+        exit_time=_T1,
+        exit_reason="eod",
+        pnl=pnl,
+        return_pct=pnl / 100.0,
+    )
+
+
+def test_max_consecutive_losses_zero_for_no_trades() -> None:
+    """Zero trades → both streak fields are 0."""
+    report = BacktestReport(
+        trades=(),
+        total_trades=0, winning_trades=0, losing_trades=0,
+        win_rate=None, mean_return_pct=None, max_drawdown_pct=None,
+    )
+    assert report.max_consecutive_losses == 0
+    assert report.max_consecutive_wins == 0
+
+
+def test_max_consecutive_losses_all_winners() -> None:
+    """3 consecutive wins → max_consecutive_losses=0, max_consecutive_wins=3."""
+    from alpaca_bot.replay.report import _compute_streak_stats
+    losses, wins = _compute_streak_stats([_make_trade(10.0)] * 3)
+    assert losses == 0
+    assert wins == 3
+
+
+def test_max_consecutive_losses_mixed_streak() -> None:
+    """W L L W L L L → max_consecutive_losses=3, max_consecutive_wins=1."""
+    from alpaca_bot.replay.report import _compute_streak_stats
+    trades = [
+        _make_trade(10.0),   # W
+        _make_trade(-5.0),   # L
+        _make_trade(-3.0),   # L
+        _make_trade(8.0),    # W
+        _make_trade(-1.0),   # L
+        _make_trade(-2.0),   # L
+        _make_trade(-4.0),   # L
+    ]
+    losses, wins = _compute_streak_stats(trades)
+    assert losses == 3
+    assert wins == 1
+
+
+def test_max_consecutive_losses_break_even_counts_as_loss() -> None:
+    """pnl=0.0 increments the loss streak (not a win)."""
+    from alpaca_bot.replay.report import _compute_streak_stats
+    trades = [
+        _make_trade(10.0),  # W
+        _make_trade(0.0),   # break-even → counts as loss
+        _make_trade(0.0),   # L
+    ]
+    losses, wins = _compute_streak_stats(trades)
+    assert losses == 2
+    assert wins == 1
+
+
+# ---------------------------------------------------------------------------
+# Avg win / avg loss return pct
+# ---------------------------------------------------------------------------
+
+
+def test_avg_win_return_pct_none_when_no_winners() -> None:
+    """All-loser scenario → avg_win_return_pct is None, avg_loss_return_pct is computed."""
+    from alpaca_bot.replay.report import _compute_avg_win_loss_return
+    trades = [_make_trade(-5.0), _make_trade(-3.0)]
+    avg_win, avg_loss = _compute_avg_win_loss_return(trades)
+    assert avg_win is None
+    assert avg_loss == pytest.approx((-5.0 / 100.0 + -3.0 / 100.0) / 2)
+
+
+def test_avg_loss_return_pct_none_when_no_losers() -> None:
+    """All-winner scenario → avg_loss_return_pct is None, avg_win_return_pct is computed."""
+    from alpaca_bot.replay.report import _compute_avg_win_loss_return
+    trades = [_make_trade(10.0), _make_trade(4.0)]
+    avg_win, avg_loss = _compute_avg_win_loss_return(trades)
+    assert avg_win == pytest.approx((10.0 / 100.0 + 4.0 / 100.0) / 2)
+    assert avg_loss is None
+
+
+def test_avg_win_loss_correct_values() -> None:
+    """Mixed trades: wins=[+10, +4], losses=[-5] → avg_win=+0.07, avg_loss=-0.05."""
+    from alpaca_bot.replay.report import _compute_avg_win_loss_return
+    trades = [_make_trade(10.0), _make_trade(-5.0), _make_trade(4.0)]
+    avg_win, avg_loss = _compute_avg_win_loss_return(trades)
+    assert avg_win == pytest.approx((10.0 / 100.0 + 4.0 / 100.0) / 2)
+    assert avg_loss == pytest.approx(-5.0 / 100.0)
+
+
+def test_avg_loss_includes_break_even_trades() -> None:
+    """pnl=0.0 trade (return_pct=0.0) belongs to the loss bucket (pnl <= 0 convention)."""
+    from alpaca_bot.replay.report import _compute_avg_win_loss_return
+    trades = [_make_trade(10.0), _make_trade(0.0), _make_trade(-4.0)]
+    avg_win, avg_loss = _compute_avg_win_loss_return(trades)
+    assert avg_win == pytest.approx(10.0 / 100.0)
+    assert avg_loss == pytest.approx((0.0 / 100.0 + -4.0 / 100.0) / 2)

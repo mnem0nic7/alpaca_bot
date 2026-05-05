@@ -147,6 +147,8 @@ class DashboardSnapshot:
     strategy_flags: list[tuple[str, StrategyFlag | None]]
     strategy_entries_disabled: dict[str, bool] = dc_field(default_factory=dict)
     latest_prices: dict[str, float] = dc_field(default_factory=dict)
+    realized_pnl: float | None = None
+    loss_limit_amount: float | None = None
 
 
 def load_dashboard_snapshot(
@@ -191,18 +193,32 @@ def load_dashboard_snapshot(
     else:
         strategy_entries_disabled = {}
 
+    session_state = daily_session_state_store.load(
+        session_date=session_date,
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name=GLOBAL_SESSION_STATE_STRATEGY_NAME,
+    )
+    equity_baseline = session_state.equity_baseline if session_state is not None else None
+    if equity_baseline is not None:
+        realized_pnl: float | None = order_store.daily_realized_pnl(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+            session_date=session_date,
+            market_timezone=str(settings.market_timezone),
+        )
+        loss_limit_amount: float | None = equity_baseline * settings.daily_loss_limit_pct
+    else:
+        realized_pnl = None
+        loss_limit_amount = None
+
     return DashboardSnapshot(
         generated_at=generated_at,
         trading_status=trading_status_store.load(
             trading_mode=settings.trading_mode,
             strategy_version=settings.strategy_version,
         ),
-        session_state=daily_session_state_store.load(
-            session_date=session_date,
-            trading_mode=settings.trading_mode,
-            strategy_version=settings.strategy_version,
-            strategy_name=GLOBAL_SESSION_STATE_STRATEGY_NAME,
-        ),
+        session_state=session_state,
         positions=position_store.list_all(
             trading_mode=settings.trading_mode,
             strategy_version=settings.strategy_version,
@@ -226,6 +242,8 @@ def load_dashboard_snapshot(
         strategy_flags=strategy_flags,
         strategy_entries_disabled=strategy_entries_disabled,
         latest_prices=latest_prices or {},
+        realized_pnl=realized_pnl,
+        loss_limit_amount=loss_limit_amount,
     )
 
 

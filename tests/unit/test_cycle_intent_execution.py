@@ -2456,3 +2456,365 @@ def test_update_stop_known_gone_phrase_does_not_fire_audit_or_notifier() -> None
     failed_audits = [e for e in audit_event_store.appended if e.event_type == "stop_update_failed"]
     assert failed_audits == [], "known-gone phrase must not emit stop_update_failed audit"
     assert notifier_calls == [], "known-gone phrase must not fire notifier"
+
+
+# ---------------------------------------------------------------------------
+# Exit hard-failure notifier
+# ---------------------------------------------------------------------------
+
+
+def test_exit_submission_failure_fires_notifier() -> None:
+    """When submit_market_exit raises after the stop is already canceled,
+    notifier.send() must be called exactly once with the symbol in the subject."""
+    from alpaca_bot.runtime.cycle_intent_execution import execute_cycle_intents
+
+    settings = make_settings()
+    now = datetime(2026, 5, 2, 19, 0, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-05-02:AAPL:stop:1",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-notify",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    class ExitRaisesBroker(RecordingBroker):
+        def submit_market_exit(self, **kwargs):
+            raise RuntimeError("broker_connection_error")
+
+    notifier_calls: list[dict] = []
+
+    class RecordingNotifier:
+        def send(self, *, subject: str, body: str) -> None:
+            notifier_calls.append({"subject": subject, "body": body})
+
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=ExitRaisesBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+        notifier=RecordingNotifier(),
+    )
+
+    assert report.failed_exit_count == 1
+    assert len(notifier_calls) == 1, "notifier.send must be called exactly once on exit submission failure"
+    assert "AAPL" in notifier_calls[0]["subject"]
+    assert "HARD FAILED" in notifier_calls[0]["subject"]
+
+
+def test_stop_cancel_failure_fires_notifier() -> None:
+    """When cancel_order raises an unrecognized error (cancel_hard_failed path),
+    notifier.send() must be called exactly once with the symbol in the subject."""
+    from alpaca_bot.runtime.cycle_intent_execution import execute_cycle_intents
+
+    settings = make_settings()
+    now = datetime(2026, 5, 2, 19, 5, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-05-02:AAPL:stop:cancel-fail",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-cancel-fail",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    notifier_calls: list[dict] = []
+
+    class RecordingNotifier:
+        def send(self, *, subject: str, body: str) -> None:
+            notifier_calls.append({"subject": subject, "body": body})
+
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=RecordingBroker(cancel_raises=RuntimeError("rate_limit_exceeded_unknown")),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+        notifier=RecordingNotifier(),
+    )
+
+    assert report.failed_exit_count == 1
+    assert len(notifier_calls) == 1, "notifier.send must be called exactly once on cancel hard-failure"
+    assert "AAPL" in notifier_calls[0]["subject"]
+    assert "HARD FAILED" in notifier_calls[0]["subject"]
+
+
+def test_exit_failure_none_notifier_does_not_raise() -> None:
+    """When notifier=None (the default), a hard-failed exit must not raise."""
+    from alpaca_bot.runtime.cycle_intent_execution import execute_cycle_intents
+
+    settings = make_settings()
+    now = datetime(2026, 5, 2, 19, 10, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-05-02:AAPL:stop:no-notifier",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-no-notifier",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    class ExitRaisesBroker(RecordingBroker):
+        def submit_market_exit(self, **kwargs):
+            raise RuntimeError("timeout")
+
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=ExitRaisesBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+        # notifier omitted — tests the default None path
+    )
+
+    assert report.failed_exit_count == 1
+
+
+def test_execute_exit_cancels_partial_fill_entry_before_market_exit() -> None:
+    """_execute_exit cancels an open partial-fill entry before submitting market exit."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 4, 15, 30, tzinfo=timezone.utc)
+
+    partial_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:SONO:entry:1",
+        symbol="SONO",
+        side="buy",
+        intent_type="entry",
+        status="partially_filled",
+        quantity=187,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=14.88,
+        limit_price=14.90,
+        broker_order_id="broker-entry-sono-1",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="SONO",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=187,
+        entry_price=14.88,
+        stop_price=14.00,
+        initial_stop_price=14.00,
+        opened_at=now,
+    )
+    order_store = RecordingOrderStore(orders=[partial_entry])
+    position_store = RecordingPositionStore(positions=[position])
+    audit_store = RecordingAuditEventStore()
+    conn = FakeConnection()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=position_store,
+        audit_event_store=audit_store,
+        connection=conn,
+    )
+    broker = RecordingBroker()
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="SONO",
+                timestamp=now,
+                strategy_name="breakout",
+            )],
+        ),
+        now=now,
+    )
+
+    # Partial-fill entry was canceled at broker before market exit was submitted.
+    assert "broker-entry-sono-1" in broker.cancel_calls
+    assert len(broker.exit_calls) == 1
+    assert broker.exit_calls[0]["symbol"] == "SONO"
+
+    # Audit trail includes partial_fill_entry_canceled
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "partial_fill_entry_canceled" in event_types
+
+
+def test_execute_update_stop_cancels_partial_fill_entry_before_submitting_new_stop() -> None:
+    """_execute_update_stop (else branch: no active stop) must cancel any partially-filled
+    entry before submitting a new stop to prevent Alpaca error 40310000."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 5, 14, 0, tzinfo=timezone.utc)
+
+    partial_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:QQQ:entry:1",
+        symbol="QQQ",
+        side="buy",
+        intent_type="entry",
+        status="partially_filled",
+        quantity=4,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=490.00,
+        limit_price=495.00,
+        broker_order_id="broker-entry-qqq-1",
+        signal_timestamp=now,
+        strategy_name="breakout",
+    )
+    position = PositionRecord(
+        symbol="QQQ",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=4,
+        entry_price=495.00,
+        stop_price=490.00,
+        initial_stop_price=490.00,
+        opened_at=now,
+    )
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[partial_entry]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="QQQ",
+                timestamp=now,
+                stop_price=496.00,  # higher than position.stop_price=490.00 → triggers update
+            )],
+        ),
+        now=now,
+    )
+
+    # Partial-fill entry was canceled before stop was submitted.
+    assert "broker-entry-qqq-1" in broker.cancel_calls
+    assert len(broker.stop_calls) == 1
+    assert broker.stop_calls[0]["symbol"] == "QQQ"
+
+    # Audit trail: partial_fill_entry_canceled with context="update_stop"
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "partial_fill_entry_canceled" in event_types
+    canceled_event = next(
+        e for e in audit_store.appended if e.event_type == "partial_fill_entry_canceled"
+    )
+    assert canceled_event.payload["context"] == "update_stop"

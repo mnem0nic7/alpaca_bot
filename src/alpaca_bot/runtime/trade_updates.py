@@ -95,6 +95,22 @@ def _apply_trade_update_locked(
 ) -> tuple[dict[str, Any], list[tuple[str, str]]]:
     normalized = _normalize_trade_update(update)
     timestamp = _resolve_now(now, fallback=normalized.timestamp)
+
+    # Route option fills by client_order_id prefix — must come before equity routing
+    client_order_id = normalized.client_order_id or ""
+    if client_order_id.startswith("option:"):
+        option_store = getattr(runtime, "option_order_store", None)
+        if option_store is not None and normalized.filled_avg_price is not None and normalized.filled_qty is not None:
+            option_store.update_fill(
+                client_order_id=client_order_id,
+                broker_order_id=normalized.broker_order_id or "",
+                fill_price=normalized.filled_avg_price,
+                filled_quantity=normalized.filled_qty,
+                status=normalized.status,
+                updated_at=timestamp,
+            )
+        return {"routed_to": "option_store", "client_order_id": client_order_id}, []
+
     matched_order = _find_order(runtime.order_store, normalized)
     pending_notifications: list[tuple[str, str]] = []
     if matched_order is None:

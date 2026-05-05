@@ -1,0 +1,1 @@
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS reconciliation_miss_count INTEGER NOT NULL DEFAULT 0;

@@ -48,8 +48,13 @@ def make_settings() -> Settings:
 
 
 class RecordingOrderStore:
-    def __init__(self, pending_orders: list[OrderRecord]) -> None:
+    def __init__(
+        self,
+        pending_orders: list[OrderRecord],
+        extra_orders: list[OrderRecord] | None = None,
+    ) -> None:
         self.pending_orders = list(pending_orders)
+        self._all_orders = list(pending_orders) + list(extra_orders or [])
         self.find_pending_submit_calls: list[tuple[TradingMode, str]] = []
         self.saved: list[OrderRecord] = []
 
@@ -58,6 +63,16 @@ class RecordingOrderStore:
     ) -> list[OrderRecord]:
         self.find_pending_submit_calls.append((trading_mode, strategy_version))
         return list(self.pending_orders)
+
+    def list_by_status(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        statuses: list[str],
+        **kwargs: object,
+    ) -> list[OrderRecord]:
+        return [o for o in self._all_orders if o.status in statuses]
 
     def save(self, order: OrderRecord, *, commit: bool = True) -> None:
         self.saved.append(order)
@@ -75,11 +90,16 @@ class FakeConnection:
     def commit(self) -> None:
         pass
 
+    def rollback(self) -> None:
+        pass
+
 
 class RecordingBroker:
-    def __init__(self) -> None:
+    def __init__(self, *, cancel_raises: Exception | None = None) -> None:
         self.entry_calls: list[dict[str, object]] = []
         self.stop_calls: list[dict[str, object]] = []
+        self.cancel_calls: list[str] = []
+        self._cancel_raises = cancel_raises
 
     def submit_stop_limit_entry(self, **kwargs: object) -> SimpleNamespace:
         self.entry_calls.append(dict(kwargs))
@@ -102,6 +122,11 @@ class RecordingBroker:
             status="NEW",
             quantity=kwargs["quantity"],
         )
+
+    def cancel_order(self, order_id: str) -> None:
+        self.cancel_calls.append(order_id)
+        if self._cancel_raises is not None:
+            raise self._cancel_raises
 
 
 def test_dispatch_pending_orders_submits_entry_and_stop_orders_and_persists_updates() -> None:
@@ -1181,4 +1206,135 @@ def test_dispatch_submitting_stamp_has_no_broker_order_id() -> None:
     assert len(submitting_saves) == 1
     assert submitting_saves[0].broker_order_id is None
     assert submitting_saves[0].client_order_id == order.client_order_id
+
+
+def test_dispatch_stop_cancels_partial_fill_entry_first() -> None:
+    """When a stop is pending_submit and the entry is partially_filled, dispatch
+    cancels the entry's broker order and saves it as canceled before submitting the stop."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 4, 15, 30, tzinfo=timezone.utc)
+
+    partial_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:SONO:entry:1",
+        symbol="SONO",
+        side="buy",
+        intent_type="entry",
+        status="partially_filled",
+        quantity=187,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=14.88,
+        limit_price=14.90,
+        broker_order_id="broker-entry-sono-1",
+        signal_timestamp=now,
+    )
+    stop_order = OrderRecord(
+        client_order_id="paper:v1-breakout:SONO:stop:1",
+        symbol="SONO",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=187,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=14.00,
+        signal_timestamp=now,
+    )
+    order_store = RecordingOrderStore([stop_order], extra_orders=[partial_entry])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    # Entry's broker order was canceled before stop was submitted.
+    assert broker.cancel_calls == ["broker-entry-sono-1"]
+    # Stop was submitted to broker.
+    assert len(broker.stop_calls) == 1
+    assert broker.stop_calls[0]["symbol"] == "SONO"
+    assert report.submitted_count == 1
+
+    # DB saves: entry→canceled, stop→submitting, stop→new
+    saved_statuses = [(o.client_order_id, o.status) for o in order_store.saved]
+    assert ("paper:v1-breakout:SONO:entry:1", "canceled") in saved_statuses
+    assert ("paper:v1-breakout:SONO:stop:1", "submitting") in saved_statuses
+    assert ("paper:v1-breakout:SONO:stop:1", "new") in saved_statuses
+
+    # Audit trail includes partial_fill_entry_canceled
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "partial_fill_entry_canceled" in event_types
+    assert "order_dispatch_submitting" in event_types
+    assert "order_submitted" in event_types
+
+
+def test_dispatch_stop_skips_when_partial_fill_cancel_fails() -> None:
+    """When cancel_order raises an unrecognized error, the stop is skipped (not submitted)
+    and remains pending_submit for next cycle retry."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 4, 15, 30, tzinfo=timezone.utc)
+
+    partial_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:SONO:entry:1",
+        symbol="SONO",
+        side="buy",
+        intent_type="entry",
+        status="partially_filled",
+        quantity=187,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=14.88,
+        limit_price=14.90,
+        broker_order_id="broker-entry-sono-1",
+        signal_timestamp=now,
+    )
+    stop_order = OrderRecord(
+        client_order_id="paper:v1-breakout:SONO:stop:1",
+        symbol="SONO",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=187,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=14.00,
+        signal_timestamp=now,
+    )
+    order_store = RecordingOrderStore([stop_order], extra_orders=[partial_entry])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker(cancel_raises=RuntimeError("broker timeout"))
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    # Cancel was attempted.
+    assert broker.cancel_calls == ["broker-entry-sono-1"]
+    # Stop was NOT submitted — broker.submit_stop_order never called.
+    assert broker.stop_calls == []
+    assert report.submitted_count == 0
+
+    # Stop was NOT marked as "submitting" — it stays pending_submit for retry.
+    saved_statuses = [o.status for o in order_store.saved]
+    assert "submitting" not in saved_statuses
+
+    # Audit event for failed cancel was recorded.
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "partial_fill_cancel_failed" in event_types
 

@@ -18,6 +18,8 @@ ACTIVE_ORDER_STATUSES = [
     "partially_filled", "held", "pending_new",
 ]
 
+RECONCILIATION_MISS_THRESHOLD = 3
+
 
 class OrderStoreProtocol(Protocol):
     def save(self, order: OrderRecord, *, commit: bool = True) -> None: ...
@@ -226,6 +228,9 @@ def recover_startup_state(
             # orders is expected.  Exclude them from mismatch reporting so they are
             # also preserved in the DB write loop below.
             if _is_never_submitted(order):
+                continue
+            is_stop = order.intent_type == "stop" and order.side == "sell"
+            if is_stop and (order.reconciliation_miss_count + 1) < RECONCILIATION_MISS_THRESHOLD:
                 continue
             mismatches.append(f"local order missing at broker: {order.client_order_id}")
             cleared_order_count += 1
@@ -492,27 +497,80 @@ def recover_startup_state(
                         commit=False,
                     )
                 continue
-            runtime.order_store.save(
-                OrderRecord(
-                    client_order_id=order.client_order_id,
-                    symbol=order.symbol,
-                    side=order.side,
-                    intent_type=order.intent_type,
-                    status="reconciled_missing",
-                    quantity=order.quantity,
-                    trading_mode=order.trading_mode,
-                    strategy_version=order.strategy_version,
-                    strategy_name=order.strategy_name,
-                    created_at=order.created_at,
-                    updated_at=timestamp,
-                    stop_price=order.stop_price,
-                    limit_price=order.limit_price,
-                    initial_stop_price=order.initial_stop_price,
-                    broker_order_id=order.broker_order_id,
-                    signal_timestamp=order.signal_timestamp,
-                ),
-                commit=False,
-            )
+            is_stop_order = order.intent_type == "stop" and order.side == "sell"
+            new_miss_count = order.reconciliation_miss_count + 1
+            if is_stop_order and new_miss_count < RECONCILIATION_MISS_THRESHOLD:
+                runtime.order_store.save(
+                    OrderRecord(
+                        client_order_id=order.client_order_id,
+                        symbol=order.symbol,
+                        side=order.side,
+                        intent_type=order.intent_type,
+                        status=order.status,
+                        quantity=order.quantity,
+                        trading_mode=order.trading_mode,
+                        strategy_version=order.strategy_version,
+                        strategy_name=order.strategy_name,
+                        created_at=order.created_at,
+                        updated_at=timestamp,
+                        stop_price=order.stop_price,
+                        limit_price=order.limit_price,
+                        initial_stop_price=order.initial_stop_price,
+                        broker_order_id=order.broker_order_id,
+                        signal_timestamp=order.signal_timestamp,
+                        reconciliation_miss_count=new_miss_count,
+                    ),
+                    commit=False,
+                )
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="reconciliation_miss_count_incremented",
+                        symbol=order.symbol,
+                        payload={
+                            "client_order_id": order.client_order_id,
+                            "reconciliation_miss_count": new_miss_count,
+                            "threshold": RECONCILIATION_MISS_THRESHOLD,
+                        },
+                        created_at=timestamp,
+                    ),
+                    commit=False,
+                )
+            else:
+                runtime.order_store.save(
+                    OrderRecord(
+                        client_order_id=order.client_order_id,
+                        symbol=order.symbol,
+                        side=order.side,
+                        intent_type=order.intent_type,
+                        status="reconciled_missing",
+                        quantity=order.quantity,
+                        trading_mode=order.trading_mode,
+                        strategy_version=order.strategy_version,
+                        strategy_name=order.strategy_name,
+                        created_at=order.created_at,
+                        updated_at=timestamp,
+                        stop_price=order.stop_price,
+                        limit_price=order.limit_price,
+                        initial_stop_price=order.initial_stop_price,
+                        broker_order_id=order.broker_order_id,
+                        signal_timestamp=order.signal_timestamp,
+                        reconciliation_miss_count=new_miss_count if is_stop_order else 0,
+                    ),
+                    commit=False,
+                )
+                if is_stop_order:
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="reconciled_missing_stop_cleared",
+                            symbol=order.symbol,
+                            payload={
+                                "client_order_id": order.client_order_id,
+                                "reconciliation_miss_count": new_miss_count,
+                            },
+                            created_at=timestamp,
+                        ),
+                        commit=False,
+                    )
         for sym in missing_entry_price_symbols:
             runtime.audit_event_store.append(
                 AuditEvent(
