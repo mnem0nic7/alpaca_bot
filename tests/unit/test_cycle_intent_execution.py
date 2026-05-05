@@ -2745,3 +2745,76 @@ def test_execute_exit_cancels_partial_fill_entry_before_market_exit() -> None:
     # Audit trail includes partial_fill_entry_canceled
     event_types = [e.event_type for e in audit_store.appended]
     assert "partial_fill_entry_canceled" in event_types
+
+
+def test_execute_update_stop_cancels_partial_fill_entry_before_submitting_new_stop() -> None:
+    """_execute_update_stop (else branch: no active stop) must cancel any partially-filled
+    entry before submitting a new stop to prevent Alpaca error 40310000."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 5, 14, 0, tzinfo=timezone.utc)
+
+    partial_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:QQQ:entry:1",
+        symbol="QQQ",
+        side="buy",
+        intent_type="entry",
+        status="partially_filled",
+        quantity=4,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=490.00,
+        limit_price=495.00,
+        broker_order_id="broker-entry-qqq-1",
+        signal_timestamp=now,
+        strategy_name="breakout",
+    )
+    position = PositionRecord(
+        symbol="QQQ",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=4,
+        entry_price=495.00,
+        stop_price=490.00,
+        initial_stop_price=490.00,
+        opened_at=now,
+    )
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[partial_entry]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="QQQ",
+                timestamp=now,
+                stop_price=496.00,  # higher than position.stop_price=490.00 → triggers update
+            )],
+        ),
+        now=now,
+    )
+
+    # Partial-fill entry was canceled before stop was submitted.
+    assert "broker-entry-qqq-1" in broker.cancel_calls
+    assert len(broker.stop_calls) == 1
+    assert broker.stop_calls[0]["symbol"] == "QQQ"
+
+    # Audit trail: partial_fill_entry_canceled with context="update_stop"
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "partial_fill_entry_canceled" in event_types
+    canceled_event = next(
+        e for e in audit_store.appended if e.event_type == "partial_fill_entry_canceled"
+    )
+    assert canceled_event.payload["context"] == "update_stop"
