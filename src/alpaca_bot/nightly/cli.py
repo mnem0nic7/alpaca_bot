@@ -23,11 +23,11 @@ from alpaca_bot.storage.repositories import (
     WatchlistStore,
 )
 from alpaca_bot.strategy import STRATEGY_REGISTRY
-from alpaca_bot.tuning.cli import _format_env_block, _print_top_candidates, _print_walk_forward_block
 from alpaca_bot.tuning.surrogate import SurrogateModel
 from alpaca_bot.tuning.sweep import (
     DEFAULT_GRID,
     STRATEGY_GRIDS,
+    TuningCandidate,
     _viability_key,
     evaluate_candidates_oos,
     run_multi_scenario_sweep,
@@ -56,9 +56,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Maximum allowed IS/OOS drawdown to accept a candidate (0.0 = disabled)")
     parser.add_argument("--max-trades", type=int, default=0,
                         help="Maximum trades per scenario to accept a candidate (0 = disabled)")
-    parser.add_argument("--strategy", default="breakout",
-                        choices=list(STRATEGY_REGISTRY),
-                        help="Strategy grid to sweep (default: breakout)")
+    parser.add_argument("--strategies", default="all",
+                        help="Comma-separated strategy names or 'all' (default: all)")
     parser.add_argument("--no-db", action="store_true",
                         help="Skip persisting results to tuning_results")
     parser.add_argument("--dry-run", action="store_true",
@@ -77,8 +76,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     trading_mode = settings.trading_mode
     strategy_version = settings.strategy_version
-    signal_evaluator = STRATEGY_REGISTRY[args.strategy]
-    grid = STRATEGY_GRIDS.get(args.strategy, DEFAULT_GRID)
     output_dir = Path(args.output_dir)
     now = datetime.now(timezone.utc)
 
@@ -128,6 +125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 return 1
 
+            strategy_names = _resolve_strategies(args.strategies)
             all_scenarios = [ReplayRunner.load_scenario(f) for f in files]
             is_scenarios = []
             oos_scenarios = []
@@ -136,98 +134,97 @@ def main(argv: Sequence[str] | None = None) -> int:
                 is_scenarios.append(is_s)
                 oos_scenarios.append(oos_s)
 
+            scenario_name_base = "+".join(s.name for s in all_scenarios)
             oos_pct_int = round(args.validate_pct * 100)
-            total_combos = 1
-            for vals in grid.values():
-                total_combos *= len(vals)
             print(
                 f"Scenarios: {len(all_scenarios)} × IS/OOS split "
                 f"({100 - oos_pct_int}% / {oos_pct_int}%)"
             )
-            print(
-                f"Grid: {args.strategy} "
-                f"({total_combos} combinations × {len(is_scenarios)} scenarios)"
-            )
+            print(f"Strategies: {', '.join(strategy_names)}")
 
             tuning_store = TuningResultStore(conn)
             try:
-                historical = tuning_store.load_all_scored(trading_mode=trading_mode.value)
+                all_historical = tuning_store.load_all_scored(trading_mode=trading_mode.value)
             except Exception as exc:
                 print(f"Warning: could not load tuning history for surrogate: {exc}",
                       file=sys.stderr)
-                historical = []
-            grid_keys = set(grid.keys())
-            historical = [r for r in historical if set(r["params"].keys()) == grid_keys]
-            surrogate = SurrogateModel()
-            surrogate_fitted = surrogate.fit(historical)
-            if surrogate_fitted:
-                print(f"Surrogate: fitted on {len(historical)} historical records")
-            else:
-                print(f"Surrogate: cold start ({len(historical)} records < 50 — full grid)")
+                all_historical = []
 
-            candidates = run_multi_scenario_sweep(
-                scenarios=is_scenarios,
-                base_env=base_env,
-                grid=grid,
-                max_drawdown_pct=args.max_drawdown_pct,
-                max_trades=args.max_trades,
-                signal_evaluator=signal_evaluator,
-                surrogate=surrogate,
-            )
-            scored = [c for c in candidates if c.score is not None]
-            print(f"Scored: {len(scored)} / {len(candidates)} candidates")
+            winners: list[tuple[str, TuningCandidate, float]] = []
 
-            _print_top_candidates(scored[:10])
+            for strat_name in strategy_names:
+                grid = STRATEGY_GRIDS.get(strat_name, DEFAULT_GRID)
+                signal_evaluator = STRATEGY_REGISTRY[strat_name]
 
-            top10 = scored[:10]
-            oos_scores = evaluate_candidates_oos(
-                candidates=top10,
-                oos_scenarios=oos_scenarios,
-                base_env=base_env,
-                min_trades=3,
-                max_drawdown_pct=args.max_drawdown_pct,
-                max_trades=args.max_trades,
-                signal_evaluator=signal_evaluator,
-            )
-            _print_walk_forward_block(
-                top10, oos_scores,
-                validate_pct=args.validate_pct,
-                aggregate="min",
-                oos_gate_ratio=args.oos_gate_ratio,
-                min_oos_score=args.min_oos_score,
-            )
+                grid_keys = set(grid.keys())
+                historical = [r for r in all_historical if set(r["params"].keys()) == grid_keys]
+                surrogate = SurrogateModel()
+                surrogate_fitted = surrogate.fit(historical)
+                if surrogate_fitted:
+                    print(f"  [{strat_name}] surrogate: fitted on {len(historical)} records")
 
-            held_pairs = [
-                (c, s) for c, s in zip(top10, oos_scores)
-                if s is not None
-                and c.score is not None
-                and s >= c.score * args.oos_gate_ratio
-                and s >= args.min_oos_score
-            ]
-            print(f"Walk-forward: {len(held_pairs)} / {len(top10)} held")
+                candidates = run_multi_scenario_sweep(
+                    scenarios=is_scenarios,
+                    base_env=base_env,
+                    grid=grid,
+                    max_drawdown_pct=args.max_drawdown_pct,
+                    max_trades=args.max_trades,
+                    signal_evaluator=signal_evaluator,
+                    surrogate=surrogate,
+                )
+                scored = [c for c in candidates if c.score is not None]
 
-            scenario_name = "+".join(s.name for s in all_scenarios)
+                top10 = scored[:10]
+                if not top10:
+                    print(f"  [{strat_name}] no scored candidates — skipped")
+                    continue
 
-            if held_pairs:
-                best = max(held_pairs, key=lambda pair: _viability_key(pair[0], pair[1]))[0]
-                env_block = _format_env_block(best, now)
-                print(f"\n{env_block}")
-                if args.output_env:
-                    Path(args.output_env).write_text(env_block + "\n")
-                    print(f"Candidate env written to {args.output_env}")
-                if not args.no_db:
+                oos_scores = evaluate_candidates_oos(
+                    candidates=top10,
+                    oos_scenarios=oos_scenarios,
+                    base_env=base_env,
+                    min_trades=3,
+                    max_drawdown_pct=args.max_drawdown_pct,
+                    max_trades=args.max_trades,
+                    signal_evaluator=signal_evaluator,
+                )
+
+                held_pairs = [
+                    (c, s) for c, s in zip(top10, oos_scores)
+                    if s is not None
+                    and c.score is not None
+                    and s >= c.score * args.oos_gate_ratio
+                    and s >= args.min_oos_score
+                ]
+
+                if not args.no_db and candidates:
                     try:
                         run_id = tuning_store.save_run(
-                            scenario_name=scenario_name,
+                            scenario_name=f"{scenario_name_base} [{strat_name}]",
                             trading_mode=trading_mode.value,
                             candidates=candidates,
                             created_at=now,
                         )
-                        print(f"Results saved to DB (run_id={run_id})")
+                        print(f"  [{strat_name}] DB run_id={run_id}")
                     except Exception as exc:
-                        print(f"Warning: could not save tuning results: {exc}", file=sys.stderr)
+                        print(f"Warning: could not save tuning results ({strat_name}): {exc}",
+                              file=sys.stderr)
+
+                if held_pairs:
+                    best, best_oos = max(held_pairs, key=lambda p: _viability_key(p[0], p[1]))
+                    winners.append((strat_name, best, best_oos))
+
+            _print_strategy_results(winners, strategy_names, all_scenarios)
+
+            if winners:
+                composite_params = _build_composite_env(winners)
+                env_block = _format_composite_env_block(composite_params, winners[0][0], now)
+                print(f"\n{env_block}")
+                if args.output_env:
+                    Path(args.output_env).write_text(env_block + "\n")
+                    print(f"Candidate env written to {args.output_env}")
             else:
-                print("\nNo walk-forward held candidates — current parameters remain active.")
+                print("\nNo walk-forward held candidates across all strategies — current parameters remain active.")
 
         # ── Rolling live report ───────────────────────────────────────────────
         print(
@@ -293,6 +290,64 @@ def _weekdays_back(n: int) -> list[date]:
             result.append(d)
         d -= timedelta(days=1)
     return result
+
+
+def _resolve_strategies(strategies_arg: str) -> list[str]:
+    """Resolve '--strategies all' or comma-separated names to a list."""
+    if strategies_arg.strip().lower() == "all":
+        return list(STRATEGY_GRIDS.keys())
+    names = [s.strip() for s in strategies_arg.split(",") if s.strip()]
+    unknown = [n for n in names if n not in STRATEGY_GRIDS]
+    if unknown:
+        print(f"Warning: unknown strategies ignored: {unknown}", file=sys.stderr)
+    return [n for n in names if n in STRATEGY_GRIDS]
+
+
+def _build_composite_env(
+    winners: list[tuple[str, TuningCandidate, float]],
+) -> dict[str, str]:
+    """First-wins merge: sort by _viability_key descending, apply params in rank order."""
+    sorted_winners = sorted(winners, key=lambda t: _viability_key(t[1], t[2]), reverse=True)
+    composite: dict[str, str] = {}
+    for _strat, candidate, _oos in sorted_winners:
+        for k, v in candidate.params.items():
+            if k not in composite:
+                composite[k] = v
+    return composite
+
+
+def _format_composite_env_block(
+    params: dict[str, str],
+    top_strategy: str,
+    now: datetime,
+) -> str:
+    lines = [
+        f"# Composite params from nightly run {now.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        f"# Shared params from: {top_strategy}",
+    ]
+    lines += [f"{k}={v}" for k, v in params.items()]
+    return "\n".join(lines)
+
+
+def _print_strategy_results(
+    winners: list[tuple[str, TuningCandidate, float]],
+    strategy_names: list[str],
+    all_scenarios: list,
+) -> None:
+    print("\n── Strategy Results ─────────────────────────────────────────────────")
+    winner_map = {strat: (cand, oos) for strat, cand, oos in winners}
+    for strat in strategy_names:
+        if strat in winner_map:
+            cand, oos = winner_map[strat]
+            report = cand.report
+            trades = report.total_trades if report else 0
+            pf = f"{report.profit_factor:.2f}" if (report and report.profit_factor is not None) else "—"
+            print(f"  {strat:<20s} score={oos:.4f}  trades={trades:<3d}  pf={pf}  held? ✓")
+        else:
+            print(f"  {strat:<20s} held? ✗  (no held candidates)")
+    if winners:
+        top = sorted(winners, key=lambda t: _viability_key(t[1], t[2]), reverse=True)[0][0]
+        print(f"Composite winner (shared params from: {top})")
 
 
 def _print_rolling_report(report: BacktestReport, *, report_days: int) -> None:

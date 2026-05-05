@@ -247,6 +247,7 @@ def test_nightly_cli_surrogate_active_path(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sys, "argv", [
         "nightly", "--dry-run", "--no-db", "--output-dir", str(tmp_path),
+        "--strategies", "breakout",
     ])
 
     result = module.main()
