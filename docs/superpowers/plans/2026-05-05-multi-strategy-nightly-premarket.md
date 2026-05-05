@@ -295,7 +295,7 @@ Then replace the entire `# ── Evolve ───` block (lines 120–231) with
             tuning_store = TuningResultStore(conn)
 
             # winners: (strategy_name, best_candidate, oos_score) — only held candidates
-            winners: list[tuple[str, object, float]] = []
+            winners: list[tuple[str, TuningCandidate, float]] = []
 
             for strat_name in strategy_names:
                 grid = STRATEGY_GRIDS.get(strat_name, DEFAULT_GRID)
@@ -511,11 +511,28 @@ pytest tests/unit/test_nightly_cli.py::test_nightly_multi_strategy_sweeps_all_gr
 
 Expected: 4 PASSED
 
-- [ ] **Step 3: Run full test suite to check for regressions**
+- [ ] **Step 3: Update `test_nightly_cli_surrogate_active_path` for multi-strategy**
 
-The existing test `test_nightly_cli_runs_evolve_and_writes_output_env` uses `--dry-run` with no `--strategies` arg — it should still pass because `default="all"` causes a full sweep. However, it stubs `run_multi_scenario_sweep` to return one candidate with key `BREAKOUT_LOOKBACK_BARS`. The new loop calls sweep once per strategy (11 calls) but only one call returns a candidate with a non-None OOS score. Since `fake_oos` returns `[0.4]` for all calls, all 11 strategies will produce a winner. The composite env will contain `BREAKOUT_LOOKBACK_BARS=20` from whichever strategy has that key (breakout, first alphabetically). The existing assertion `"BREAKOUT_LOOKBACK_BARS=20" in output_env.read_text()` will still pass.
+The surrogate test captures `surrogate_kwargs` from the last `fake_sweep` call. With `--strategies all` (11 calls), the last strategy may not be breakout, so the last surrogate may be unfitted. Fix: add `--strategies breakout` to that test's `sys.argv` so only one strategy sweeps and the surrogate assertion is unambiguous.
 
-But: the existing test stubs `run_multi_scenario_sweep` with a simple lambda that ignores `signal_evaluator`, so all 11 strategies return the same candidate. The OOS stub `lambda candidates, oos_scenarios, **kw: [0.4]` also works for all calls. Run:
+In `tests/unit/test_nightly_cli.py`, find `test_nightly_cli_surrogate_active_path` and change:
+
+```python
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db", "--output-dir", str(tmp_path),
+    ])
+```
+
+to:
+
+```python
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db", "--output-dir", str(tmp_path),
+        "--strategies", "breakout",
+    ])
+```
+
+- [ ] **Step 4: Run full test suite to check for regressions**
 
 ```bash
 pytest tests/unit/test_nightly_cli.py -v
@@ -523,10 +540,10 @@ pytest tests/unit/test_nightly_cli.py -v
 
 Expected: all tests PASS (13 total including 4 new)
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add src/alpaca_bot/nightly/cli.py
+git add src/alpaca_bot/nightly/cli.py tests/unit/test_nightly_cli.py
 git commit -m "feat: multi-strategy nightly sweep with composite env block"
 ```
 
