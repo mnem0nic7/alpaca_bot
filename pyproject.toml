@@ -28,6 +28,7 @@ alpaca-bot-backfill = "alpaca_bot.backfill.cli:main"
 alpaca-bot-sweep    = "alpaca_bot.tuning.sweep_cli:main"
 alpaca-bot-session-eval = "alpaca_bot.admin.session_eval_cli:main"
 alpaca-bot-nightly = "alpaca_bot.nightly.cli:main"
+alpaca-bot-premarket = "alpaca_bot.nightly.premarket_cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
