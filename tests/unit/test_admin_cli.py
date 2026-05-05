@@ -523,3 +523,125 @@ def test_close_excess_dry_run_prints_plan_without_broker_calls() -> None:
     assert "AAPL" in rendered
     assert "MSFT" in rendered
     assert "SPY" in rendered
+
+
+# ---------------------------------------------------------------------------
+# cancel-partial-fills tests
+# ---------------------------------------------------------------------------
+
+
+def test_cancel_partial_fills_cancels_at_broker_and_marks_canceled_in_db() -> None:
+    """cancel-partial-fills must cancel each partially_filled entry at broker and DB."""
+    now = datetime(2026, 5, 5, 14, 0, tzinfo=timezone.utc)
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+    orders = [
+        OrderRecord(
+            client_order_id="v1-breakout:AAPL:entry:1",
+            symbol="AAPL",
+            side="buy",
+            intent_type="entry",
+            status="partially_filled",
+            quantity=10,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            broker_order_id="broker-entry-aapl-1",
+            created_at=now,
+            updated_at=now,
+        ),
+        OrderRecord(
+            client_order_id="v1-breakout:MSFT:entry:1",
+            symbol="MSFT",
+            side="buy",
+            intent_type="entry",
+            status="partially_filled",
+            quantity=5,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            broker_order_id="broker-entry-msft-1",
+            created_at=now,
+            updated_at=now,
+        ),
+    ]
+    order_store = RecordingOrderStore(orders=orders)
+    position_store = RecordingPositionStore()
+    broker = RecordingBroker()
+    stdout = io.StringIO()
+
+    exit_code = main(
+        ["cancel-partial-fills", "--mode", "paper", "--strategy-version", "v1-breakout"],
+        connect=lambda: connection,
+        trading_status_store_factory=StoreFactoryStub(RecordingTradingStatusStore()),
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        now=lambda: now,
+        stdout=stdout,
+        broker_factory=lambda _: broker,
+        position_store_factory=StoreFactoryStub(position_store),
+        order_store_factory=StoreFactoryStub(order_store),
+    )
+
+    assert exit_code == 0
+    assert set(broker.cancel_calls) == {"broker-entry-aapl-1", "broker-entry-msft-1"}
+    canceled_ids = {o.client_order_id for o in order_store.saved if o.status == "canceled"}
+    assert canceled_ids == {"v1-breakout:AAPL:entry:1", "v1-breakout:MSFT:entry:1"}
+    event_types = [e.event_type for e in audit_store.appended]
+    assert event_types.count("partial_fill_canceled_by_admin") == 2
+
+
+def test_cancel_partial_fills_dry_run_prints_without_acting() -> None:
+    """cancel-partial-fills --dry-run must print order info but make no broker or DB calls."""
+    now = datetime(2026, 5, 5, 14, 0, tzinfo=timezone.utc)
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+    orders = [
+        OrderRecord(
+            client_order_id="v1-breakout:AAPL:entry:1",
+            symbol="AAPL",
+            side="buy",
+            intent_type="entry",
+            status="partially_filled",
+            quantity=10,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            broker_order_id="broker-entry-aapl-1",
+            created_at=now,
+            updated_at=now,
+        ),
+        OrderRecord(
+            client_order_id="v1-breakout:MSFT:entry:1",
+            symbol="MSFT",
+            side="buy",
+            intent_type="entry",
+            status="partially_filled",
+            quantity=5,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            broker_order_id="broker-entry-msft-1",
+            created_at=now,
+            updated_at=now,
+        ),
+    ]
+    order_store = RecordingOrderStore(orders=orders)
+    position_store = RecordingPositionStore()
+    broker = RecordingBroker()
+    stdout = io.StringIO()
+
+    exit_code = main(
+        ["cancel-partial-fills", "--dry-run", "--mode", "paper", "--strategy-version", "v1-breakout"],
+        connect=lambda: connection,
+        trading_status_store_factory=StoreFactoryStub(RecordingTradingStatusStore()),
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        now=lambda: now,
+        stdout=stdout,
+        broker_factory=lambda _: broker,
+        position_store_factory=StoreFactoryStub(position_store),
+        order_store_factory=StoreFactoryStub(order_store),
+    )
+
+    assert exit_code == 0
+    assert broker.cancel_calls == []
+    assert order_store.saved == []
+    assert audit_store.appended == []
+    rendered = stdout.getvalue()
+    assert "AAPL" in rendered
+    assert "MSFT" in rendered

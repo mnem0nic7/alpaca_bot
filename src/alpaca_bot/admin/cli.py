@@ -73,6 +73,15 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     ce_parser.add_argument("--keep", type=int, default=20)
     ce_parser.add_argument("--dry-run", action="store_true")
 
+    cpf_parser = subparsers.add_parser("cancel-partial-fills")
+    cpf_parser.add_argument(
+        "--mode",
+        choices=[mode.value for mode in TradingMode],
+        default=defaults.trading_mode.value,
+    )
+    cpf_parser.add_argument("--strategy-version", default=defaults.strategy_version)
+    cpf_parser.add_argument("--dry-run", action="store_true")
+
     return parser
 
 
@@ -376,6 +385,22 @@ def main(
                 now=timestamp,
                 stdout=stdout or sys.stdout,
             )
+        elif args.command == "cancel-partial-fills":
+            _broker = (
+                broker_factory(resolved_settings)
+                if broker_factory is not None
+                else _make_default_broker(resolved_settings)
+            )
+            _run_cancel_partial_fills(
+                order_store=order_store_factory(connection),
+                audit_store=audit_store,
+                broker=_broker,
+                dry_run=args.dry_run,
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                now=timestamp,
+                stdout=stdout or sys.stdout,
+            )
         else:
             command_reason = getattr(args, "reason", None)
             if args.command == "halt":
@@ -525,6 +550,59 @@ def _run_close_excess(
                     "quantity": position.quantity,
                     "entry_price": str(position.entry_price),
                     "stop_pct": str(round(pct * 100, 2)),
+                },
+                created_at=now,
+            ),
+            commit=True,
+        )
+
+
+def _run_cancel_partial_fills(
+    *,
+    order_store: OrderStore,
+    audit_store: AuditEventStore,
+    broker: object,
+    dry_run: bool,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    now: datetime,
+    stdout: TextIO,
+) -> None:
+    partial_entries = [
+        o
+        for o in order_store.list_by_status(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            statuses=["partially_filled"],
+        )
+        if o.intent_type == "entry"
+    ]
+
+    for order in partial_entries:
+        print(
+            f"{order.symbol}  client_order_id={order.client_order_id}"
+            f"  broker_order_id={order.broker_order_id}",
+            file=stdout,
+        )
+
+    if dry_run:
+        return
+
+    for order in partial_entries:
+        if not order.broker_order_id:
+            continue
+        broker.cancel_order(order.broker_order_id)  # type: ignore[union-attr]
+        order_store.save(
+            dataclasses.replace(order, status="canceled", updated_at=now),
+            commit=False,
+        )
+        audit_store.append(
+            AuditEvent(
+                event_type="partial_fill_canceled_by_admin",
+                symbol=order.symbol,
+                payload={
+                    "client_order_id": order.client_order_id,
+                    "broker_order_id": order.broker_order_id,
                 },
                 created_at=now,
             ),
