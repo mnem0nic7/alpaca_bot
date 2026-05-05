@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from alpaca_bot.admin.cli import main
 from alpaca_bot.config import TradingMode
-from alpaca_bot.storage import AuditEvent, TradingStatus, TradingStatusValue
+from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord, TradingStatus, TradingStatusValue
 
 
 class StoreFactoryStub:
@@ -335,3 +335,191 @@ def test_resume_notifies() -> None:
 
     assert len(notifier.calls) == 1
     assert notifier.calls[0]["subject"] == "Trading resumed"
+
+
+# ---------------------------------------------------------------------------
+# Fakes for close-excess and cancel-partial-fills
+# ---------------------------------------------------------------------------
+
+
+class RecordingBroker:
+    def __init__(self) -> None:
+        self.cancel_calls: list[str] = []
+        self.market_exit_calls: list[dict] = []
+
+    def cancel_order(self, order_id: str) -> None:
+        self.cancel_calls.append(order_id)
+
+    def submit_market_exit(self, **kwargs) -> object:
+        self.market_exit_calls.append(dict(kwargs))
+        return SimpleNamespace(
+            client_order_id=kwargs["client_order_id"],
+            broker_order_id=f"broker-exit-{kwargs['symbol']}",
+            symbol=kwargs["symbol"],
+            side="sell",
+            status="ACCEPTED",
+            quantity=kwargs["quantity"],
+        )
+
+
+class RecordingOrderStore:
+    def __init__(self, *, orders: list | None = None) -> None:
+        self._orders: list = orders or []
+        self.saved: list = []
+
+    def list_by_status(
+        self,
+        *,
+        trading_mode,
+        strategy_version,
+        statuses: list[str],
+        strategy_name=None,
+    ) -> list:
+        return [o for o in self._orders if o.status in statuses]
+
+    def save(self, order, *, commit: bool = True) -> None:
+        self.saved.append(order)
+
+
+class RecordingPositionStore:
+    def __init__(self, *, positions: list | None = None) -> None:
+        self._positions: list = positions or []
+
+    def list_all(self, *, trading_mode, strategy_version, strategy_name=None) -> list:
+        return self._positions
+
+
+# ---------------------------------------------------------------------------
+# close-excess tests
+# ---------------------------------------------------------------------------
+
+
+def test_close_excess_submits_market_exits_for_positions_outside_top_n() -> None:
+    """close-excess --keep 1 must exit the 2 positions with the widest stops."""
+    now = datetime(2026, 5, 5, 14, 0, tzinfo=timezone.utc)
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+
+    # stop_pct = (entry_price - stop_price) / entry_price
+    positions = [
+        PositionRecord(
+            symbol="AAPL",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            quantity=10,
+            entry_price=100.0,
+            stop_price=99.0,   # stop_pct = 1% → KEEP
+            initial_stop_price=99.0,
+            opened_at=now,
+        ),
+        PositionRecord(
+            symbol="MSFT",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            quantity=10,
+            entry_price=100.0,
+            stop_price=95.0,   # stop_pct = 5% → CLOSE
+            initial_stop_price=95.0,
+            opened_at=now,
+        ),
+        PositionRecord(
+            symbol="SPY",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            quantity=10,
+            entry_price=100.0,
+            stop_price=90.0,   # stop_pct = 10% → CLOSE
+            initial_stop_price=90.0,
+            opened_at=now,
+        ),
+    ]
+    order_store = RecordingOrderStore(orders=[])
+    position_store = RecordingPositionStore(positions=positions)
+    broker = RecordingBroker()
+    stdout = io.StringIO()
+
+    exit_code = main(
+        ["close-excess", "--keep", "1", "--mode", "paper", "--strategy-version", "v1-breakout"],
+        connect=lambda: connection,
+        trading_status_store_factory=StoreFactoryStub(RecordingTradingStatusStore()),
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        now=lambda: now,
+        stdout=stdout,
+        broker_factory=lambda _: broker,
+        position_store_factory=StoreFactoryStub(position_store),
+        order_store_factory=StoreFactoryStub(order_store),
+    )
+
+    assert exit_code == 0
+    exited_symbols = {call["symbol"] for call in broker.market_exit_calls}
+    assert exited_symbols == {"MSFT", "SPY"}
+    assert "AAPL" not in exited_symbols
+    closed_event_symbols = {
+        e.symbol for e in audit_store.appended if e.event_type == "position_force_closed"
+    }
+    assert closed_event_symbols == {"MSFT", "SPY"}
+
+
+def test_close_excess_dry_run_prints_plan_without_broker_calls() -> None:
+    """close-excess --dry-run must print ranked table but make no broker calls or DB writes."""
+    now = datetime(2026, 5, 5, 14, 0, tzinfo=timezone.utc)
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+
+    positions = [
+        PositionRecord(
+            symbol="AAPL",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            quantity=10,
+            entry_price=100.0,
+            stop_price=99.0,
+            initial_stop_price=99.0,
+            opened_at=now,
+        ),
+        PositionRecord(
+            symbol="MSFT",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            quantity=10,
+            entry_price=100.0,
+            stop_price=95.0,
+            initial_stop_price=95.0,
+            opened_at=now,
+        ),
+        PositionRecord(
+            symbol="SPY",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            quantity=10,
+            entry_price=100.0,
+            stop_price=90.0,
+            initial_stop_price=90.0,
+            opened_at=now,
+        ),
+    ]
+    order_store = RecordingOrderStore(orders=[])
+    position_store = RecordingPositionStore(positions=positions)
+    broker = RecordingBroker()
+    stdout = io.StringIO()
+
+    exit_code = main(
+        ["close-excess", "--keep", "1", "--dry-run", "--mode", "paper", "--strategy-version", "v1-breakout"],
+        connect=lambda: connection,
+        trading_status_store_factory=StoreFactoryStub(RecordingTradingStatusStore()),
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        now=lambda: now,
+        stdout=stdout,
+        broker_factory=lambda _: broker,
+        position_store_factory=StoreFactoryStub(position_store),
+        order_store_factory=StoreFactoryStub(order_store),
+    )
+
+    assert exit_code == 0
+    assert broker.market_exit_calls == []
+    assert broker.cancel_calls == []
+    assert audit_store.appended == []
+    rendered = stdout.getvalue()
+    assert "AAPL" in rendered
+    assert "MSFT" in rendered
+    assert "SPY" in rendered
