@@ -73,14 +73,14 @@ class Settings:
     entry_window_start: time
     entry_window_end: time
     flatten_time: time
-    max_portfolio_exposure_pct: float = 0.15
+    max_portfolio_exposure_pct: float = 0.30
     notify_slippage_threshold_pct: float = 0.005
     prior_day_high_lookback_bars: int = 1
     orb_opening_bars: int = 2
     high_watermark_lookback_days: int = 252
     ema_period: int = 9
     atr_period: int = 14
-    atr_stop_multiplier: float = 1.5
+    atr_stop_multiplier: float = 1.0
     trailing_stop_atr_multiplier: float = 0.0
     trailing_stop_profit_trigger_r: float = 1.0
     market_timezone: ZoneInfo = ZoneInfo("America/New_York")
@@ -165,11 +165,11 @@ class Settings:
             relative_volume_threshold=float(values.get("RELATIVE_VOLUME_THRESHOLD", "1.5")),
             entry_timeframe_minutes=int(values.get("ENTRY_TIMEFRAME_MINUTES", "15")),
             risk_per_trade_pct=float(values.get("RISK_PER_TRADE_PCT", "0.0025")),
-            max_position_pct=float(values.get("MAX_POSITION_PCT", "0.05")),
-            max_open_positions=int(values.get("MAX_OPEN_POSITIONS", "3")),
+            max_position_pct=float(values.get("MAX_POSITION_PCT", "0.015")),
+            max_open_positions=int(values.get("MAX_OPEN_POSITIONS", "20")),
             daily_loss_limit_pct=float(values.get("DAILY_LOSS_LIMIT_PCT", "0.01")),
             max_portfolio_exposure_pct=float(
-                values.get("MAX_PORTFOLIO_EXPOSURE_PCT", "0.15")
+                values.get("MAX_PORTFOLIO_EXPOSURE_PCT", "0.30")
             ),
             notify_slippage_threshold_pct=float(
                 values.get("NOTIFY_SLIPPAGE_THRESHOLD_PCT", "0.005")
@@ -179,7 +179,7 @@ class Settings:
             high_watermark_lookback_days=int(values.get("HIGH_WATERMARK_LOOKBACK_DAYS", "252")),
             ema_period=int(values.get("EMA_PERIOD", "9")),
             atr_period=int(values.get("ATR_PERIOD", "14")),
-            atr_stop_multiplier=float(values.get("ATR_STOP_MULTIPLIER", "1.5")),
+            atr_stop_multiplier=float(values.get("ATR_STOP_MULTIPLIER", "1.0")),
             trailing_stop_atr_multiplier=float(
                 values.get("TRAILING_STOP_ATR_MULTIPLIER", "0.0")
             ),

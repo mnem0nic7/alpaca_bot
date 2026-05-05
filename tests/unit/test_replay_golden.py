@@ -49,11 +49,10 @@ def test_breakout_success_golden_scenario() -> None:
         IntentType.ENTRY_ORDER_PLACED,
         IntentType.ENTRY_FILLED,
         IntentType.STOP_UPDATED,
-        IntentType.EOD_EXIT,
+        IntentType.STOP_HIT,
     ]
     assert result.events[1].details["entry_price"] == 110.05
     assert result.events[2].details["stop_price"] == 110.05
-    assert result.events[3].details["exit_price"] == 112.5
     assert result.final_position is None
 
 

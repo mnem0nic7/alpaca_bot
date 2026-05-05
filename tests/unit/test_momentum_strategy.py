@@ -310,7 +310,7 @@ def test_momentum_initial_stop_uses_atr_when_enough_daily_bars():
     atr = calculate_atr(daily_bars, 3)
     assert atr is not None
     yesterday_high = daily_bars[-1].high
-    expected_stop = round(yesterday_high - max(0.01, 1.5 * atr), 2)
+    expected_stop = round(yesterday_high - max(0.01, 1.0 * atr), 2)
 
     result = evaluate_momentum_signal(
         symbol="AAPL",

@@ -119,7 +119,7 @@ def test_evaluate_cycle_emits_entry_intent_for_valid_breakout() -> None:
     # stop_price anchors to breakout_level (110.0) + buffer, not signal_bar.high (111.0).
     assert result.intents[0].stop_price == 110.01
     assert result.intents[0].limit_price == 110.12
-    assert result.intents[0].initial_stop_price == 107.0
+    assert result.intents[0].initial_stop_price == 108.0
     assert result.intents[0].quantity == 45
 
 

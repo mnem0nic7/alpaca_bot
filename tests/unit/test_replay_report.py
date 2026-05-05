@@ -326,9 +326,9 @@ def test_replay_runner_attaches_backtest_report_to_result() -> None:
 
     assert result.backtest_report is not None
     assert isinstance(result.backtest_report, BacktestReport)
-    # Golden scenario ends with EOD_EXIT — should have 1 trade
+    # Golden scenario ends with STOP_HIT (tighter stop with ATR 1.0) — should have 1 trade
     assert result.backtest_report.total_trades == 1
-    assert result.backtest_report.trades[0].exit_reason == "eod"
+    assert result.backtest_report.trades[0].exit_reason == "stop"
 
 
 # ---------------------------------------------------------------------------
