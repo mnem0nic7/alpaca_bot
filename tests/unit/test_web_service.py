@@ -1098,8 +1098,13 @@ class TestLoadStrategyWeights:
 
     def _make_fake_weight_store(self, weights: list) -> object:
         class _FakeStore:
+            def __init__(self) -> None:
+                self.last_load_kwargs: dict = {}
+
             def load_all(self, **kwargs):
+                self.last_load_kwargs = kwargs
                 return weights
+
         return _FakeStore()
 
     def test_returns_empty_list_when_no_weights(self) -> None:
@@ -1154,3 +1159,12 @@ class TestLoadStrategyWeights:
         assert row.strategy_name == "breakout"
         assert abs(row.weight - 0.6) < 1e-9
         assert abs(row.sharpe - 2.1) < 1e-9
+
+    def test_forwards_trading_mode_and_strategy_version(self) -> None:
+        from alpaca_bot.web.service import load_strategy_weights
+
+        store = self._make_fake_weight_store([])
+        settings = make_settings()
+        load_strategy_weights(settings=settings, connection=None, strategy_weight_store=store)
+        assert store.last_load_kwargs.get("trading_mode") == settings.trading_mode
+        assert store.last_load_kwargs.get("strategy_version") == settings.strategy_version

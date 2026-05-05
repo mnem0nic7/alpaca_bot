@@ -160,6 +160,7 @@ def create_app(
                 "metrics": metrics,
                 "operator_email": operator,
                 "auto_refresh": not bool(no_refresh),
+                "strategy_weights": [],
             },
         )
 
