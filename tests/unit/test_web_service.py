@@ -426,7 +426,8 @@ def test_worker_health_populates_last_event_type_and_timestamp() -> None:
 # ---------------------------------------------------------------------------
 
 
-def make_metrics_stores(trades: list[dict] | None = None, admin_events=None, last_tuning=None):
+def make_metrics_stores(trades=None, admin_events=None, last_tuning=None, daily_session_state_store=None):
+    default_state_store = daily_session_state_store or SimpleNamespace(load=lambda **_: None)
     return dict(
         order_store=SimpleNamespace(
             list_closed_trades=lambda **_: trades if trades is not None else [],
@@ -437,6 +438,7 @@ def make_metrics_stores(trades: list[dict] | None = None, admin_events=None, las
         tuning_result_store=SimpleNamespace(
             load_latest_best=lambda **_: last_tuning,
         ),
+        daily_session_state_store=default_state_store,
     )
 
 
@@ -567,6 +569,84 @@ def test_trade_record_exit_reason_and_hold_minutes() -> None:
     assert trade_eod.exit_reason == "eod"
 
 
+def test_session_report_none_when_no_trades() -> None:
+    now = datetime(2026, 5, 5, 15, 0, tzinfo=timezone.utc)
+    metrics = load_metrics_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=now,
+        **make_metrics_stores(trades=[]),
+    )
+    assert metrics.session_report is None
+
+
+def test_session_report_populated_from_trades() -> None:
+    now = datetime(2026, 5, 5, 15, 0, tzinfo=timezone.utc)
+    entry_time = datetime(2026, 5, 5, 10, 0, tzinfo=timezone.utc)
+    exit_time = datetime(2026, 5, 5, 10, 30, tzinfo=timezone.utc)
+    trades = [
+        {
+            "symbol": "AAPL",
+            "entry_fill": 100.0,
+            "entry_limit": None,
+            "entry_time": entry_time,
+            "exit_time": exit_time,
+            "exit_fill": 105.0,
+            "qty": 10,
+            "intent_type": "stop",
+        },
+        {
+            "symbol": "GOOG",
+            "entry_fill": 200.0,
+            "entry_limit": None,
+            "entry_time": entry_time,
+            "exit_time": exit_time,
+            "exit_fill": 190.0,
+            "qty": 5,
+            "intent_type": "eod",
+        },
+    ]
+    metrics = load_metrics_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=now,
+        **make_metrics_stores(trades=trades),
+    )
+    assert metrics.session_report is not None
+    assert metrics.session_report.profit_factor is not None
+    assert metrics.session_report.stop_wins == 1
+    assert metrics.session_report.eod_losses == 1
+
+
+def test_session_report_uses_starting_equity_from_store() -> None:
+    now = datetime(2026, 5, 5, 15, 0, tzinfo=timezone.utc)
+    entry_time = datetime(2026, 5, 5, 10, 0, tzinfo=timezone.utc)
+    exit_time = datetime(2026, 5, 5, 10, 30, tzinfo=timezone.utc)
+    trades = [
+        {
+            "symbol": "AAPL",
+            "entry_fill": 100.0,
+            "entry_limit": None,
+            "entry_time": entry_time,
+            "exit_time": exit_time,
+            "exit_fill": 95.0,
+            "qty": 10,
+            "intent_type": "eod",
+        },
+    ]
+    fake_state = SimpleNamespace(equity_baseline=50_000.0)
+    fake_store = SimpleNamespace(load=lambda **_: fake_state)
+    metrics = load_metrics_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=now,
+        **make_metrics_stores(trades=trades, daily_session_state_store=fake_store),
+    )
+    assert metrics.session_report is not None
+    # pnl = (95-100)*10 = -50; peak = 50_000; drawdown = 50/50_000 = 0.001
+    assert metrics.session_report.max_drawdown_pct == pytest.approx(50.0 / 50_000.0)
+
+
 # ---------------------------------------------------------------------------
 # _win_rate, _mean_return_pct, _max_drawdown_pct helpers
 # ---------------------------------------------------------------------------
@@ -686,6 +766,7 @@ def test_load_metrics_snapshot_groups_by_strategy():
         tuning_result_store=SimpleNamespace(
             load_latest_best=lambda **_: None,
         ),
+        daily_session_state_store=SimpleNamespace(load=lambda **_: None),
     )
 
     assert "breakout" in snapshot.trades_by_strategy
