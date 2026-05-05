@@ -981,3 +981,121 @@ def test_load_dashboard_snapshot_realized_pnl_and_loss_limit_none_when_no_sessio
     assert snapshot.realized_pnl is None
     assert snapshot.loss_limit_amount is None
     assert realized_pnl_calls == [], "daily_realized_pnl must NOT be called when equity_baseline is None"
+
+
+# ---------------------------------------------------------------------------
+# load_equity_chart_data
+# ---------------------------------------------------------------------------
+
+
+def test_load_equity_chart_data_1d_no_trades():
+    from types import SimpleNamespace
+    from datetime import date, datetime, timezone
+    from alpaca_bot.web.service import load_equity_chart_data
+
+    now = datetime(2026, 1, 2, 20, 0, tzinfo=timezone.utc)
+    settings = make_settings()
+
+    order_store = SimpleNamespace(
+        list_trade_exits_in_range=lambda **_: []
+    )
+    dss_store = SimpleNamespace(
+        list_equity_baselines=lambda **_: {date(2026, 1, 2): 100000.0}
+    )
+
+    data = load_equity_chart_data(
+        settings=settings,
+        connection=None,
+        range_code="1d",
+        anchor_date=date(2026, 1, 2),
+        now=now,
+        order_store=order_store,
+        daily_session_state_store=dss_store,
+    )
+
+    assert data.range_code == "1d"
+    assert data.current == 100000.0
+    assert data.pct_change == 0.0
+    assert len(data.points) == 1
+    assert data.points[0].v == 100000.0
+
+
+def test_load_equity_chart_data_1d_with_trades():
+    from types import SimpleNamespace
+    from datetime import date, datetime, timezone
+    from alpaca_bot.web.service import load_equity_chart_data
+
+    now = datetime(2026, 1, 2, 20, 0, tzinfo=timezone.utc)
+    settings = make_settings()
+    # session_start in ET is 9:30 AM = 14:30 UTC on 2026-01-02
+    session_start_utc = datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc)
+    exit1 = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)  # after open
+    exit2 = datetime(2026, 1, 2, 16, 0, tzinfo=timezone.utc)  # after open
+
+    order_store = SimpleNamespace(
+        list_trade_exits_in_range=lambda **_: [
+            {"exit_time": exit1, "pnl": 200.0},
+            {"exit_time": exit2, "pnl": -50.0},
+        ]
+    )
+    dss_store = SimpleNamespace(
+        list_equity_baselines=lambda **_: {date(2026, 1, 2): 100000.0}
+    )
+
+    data = load_equity_chart_data(
+        settings=settings,
+        connection=None,
+        range_code="1d",
+        anchor_date=date(2026, 1, 2),
+        now=now,
+        order_store=order_store,
+        daily_session_state_store=dss_store,
+    )
+
+    # Points: session_start baseline + 2 trade exits
+    assert len(data.points) == 3
+    assert data.points[0].v == 100000.0
+    assert data.points[1].v == 100200.0
+    assert data.points[2].v == 100150.0
+    assert abs(data.pct_change - 0.15) < 0.001  # 150/100000 * 100
+
+
+def test_load_equity_chart_data_multi_session():
+    from types import SimpleNamespace
+    from datetime import date, datetime, timezone
+    from alpaca_bot.web.service import load_equity_chart_data
+
+    now = datetime(2026, 1, 5, 20, 0, tzinfo=timezone.utc)
+    settings = make_settings()
+
+    baselines = {
+        date(2026, 1, 2): 100000.0,
+        date(2026, 1, 3): 100150.0,
+        date(2026, 1, 4): 100300.0,
+    }
+    # one trade exit per session date (all at 15:00 ET = 20:00 UTC)
+    exits = [
+        {"exit_time": datetime(2026, 1, 2, 20, 0, tzinfo=timezone.utc), "pnl": 150.0},
+        {"exit_time": datetime(2026, 1, 3, 20, 0, tzinfo=timezone.utc), "pnl": 150.0},
+        {"exit_time": datetime(2026, 1, 4, 20, 0, tzinfo=timezone.utc), "pnl": 150.0},
+    ]
+
+    order_store = SimpleNamespace(list_trade_exits_in_range=lambda **_: exits)
+    dss_store = SimpleNamespace(list_equity_baselines=lambda **_: baselines)
+
+    data = load_equity_chart_data(
+        settings=settings,
+        connection=None,
+        range_code="1m",
+        anchor_date=date(2026, 1, 5),
+        now=now,
+        order_store=order_store,
+        daily_session_state_store=dss_store,
+    )
+
+    # One point per session: baseline + cumulative P&L for that session
+    assert len(data.points) == 3
+    assert data.points[0].v == pytest.approx(100150.0)  # 100000 + 150
+    assert data.points[1].v == pytest.approx(100300.0)  # 100150 + 150
+    assert data.points[2].v == pytest.approx(100450.0)  # 100300 + 150
+    assert data.range_code == "1m"

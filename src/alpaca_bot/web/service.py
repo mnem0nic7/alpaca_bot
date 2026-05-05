@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dc_field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from alpaca_bot.config import Settings
 from alpaca_bot.storage import (
@@ -259,7 +260,6 @@ def load_health_snapshot(
     audit_event_store = audit_event_store or AuditEventStore(connection)
     strategy_flag_store = strategy_flag_store or StrategyFlagStore(connection)
     now = datetime.now(timezone.utc)
-    from datetime import timedelta
     stale_cutoff = now - timedelta(seconds=STREAM_STALE_WINDOW_SECONDS)
     _recent_stale = audit_event_store.list_by_event_types(
         event_types=["stream_heartbeat_stale"],
@@ -437,6 +437,144 @@ def _max_drawdown_pct(trades: list[TradeRecord]) -> float | None:
             if dd > max_dd:
                 max_dd = dd
     return max_dd if peak > 0 else None
+
+
+@dataclass(frozen=True)
+class EquityChartPoint:
+    t: datetime
+    v: float
+
+
+@dataclass(frozen=True)
+class EquityChartData:
+    range_code: str
+    points: list[EquityChartPoint]
+    current: float
+    pct_change: float  # percentage, e.g. 1.5 means +1.5%
+    label: str
+
+
+def _equity_label(range_code: str) -> str:
+    return {"1d": "Today", "1m": "1 Month", "1y": "1 Year", "all": "All Time"}.get(range_code, range_code)
+
+
+def load_equity_chart_data(
+    *,
+    settings,
+    connection,
+    range_code: str,
+    anchor_date: date,
+    now: datetime,
+    order_store=None,
+    daily_session_state_store=None,
+) -> EquityChartData:
+    tz = ZoneInfo(str(settings.market_timezone))
+
+    if range_code == "1d":
+        start_date = anchor_date
+        end_date = anchor_date
+    elif range_code == "1m":
+        start_date = anchor_date - timedelta(days=31)
+        end_date = anchor_date
+    elif range_code == "1y":
+        start_date = anchor_date - timedelta(days=366)
+        end_date = anchor_date
+    else:  # all
+        start_date = date(2000, 1, 1)
+        end_date = anchor_date
+
+    from alpaca_bot.storage.repositories import OrderStore as _OrderStore, DailySessionStateStore as _DSSStore
+    o_store = order_store or _OrderStore(connection)
+    d_store = daily_session_state_store or _DSSStore(connection)
+
+    baselines: dict[date, float] = d_store.list_equity_baselines(
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    exits = o_store.list_trade_exits_in_range(
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+    if range_code == "1d":
+        return _build_1d_series(anchor_date, baselines, exits, tz)
+    else:
+        return _build_multi_session_series(range_code, baselines, exits, tz)
+
+
+def _build_1d_series(
+    session_date: date,
+    baselines: dict[date, float],
+    exits: list[dict],
+    tz,
+) -> EquityChartData:
+    baseline = baselines.get(session_date, 0.0)
+    session_start = datetime.combine(session_date, time(9, 30), tzinfo=tz)
+
+    points: list[EquityChartPoint] = [EquityChartPoint(t=session_start, v=baseline)]
+    cumulative = baseline
+    for exit_record in exits:
+        exit_time = exit_record["exit_time"]
+        if exit_time.tzinfo is None:
+            exit_time = exit_time.replace(tzinfo=timezone.utc)
+        if exit_time < session_start:
+            continue
+        cumulative += exit_record["pnl"]
+        points.append(EquityChartPoint(t=exit_time, v=cumulative))
+
+    current = cumulative
+    pct_change = ((current - baseline) / baseline * 100) if baseline else 0.0
+    return EquityChartData(
+        range_code="1d",
+        points=points,
+        current=current,
+        pct_change=round(pct_change, 4),
+        label=_equity_label("1d"),
+    )
+
+
+def _build_multi_session_series(
+    range_code: str,
+    baselines: dict[date, float],
+    exits: list[dict],
+    tz,
+) -> EquityChartData:
+    from collections import defaultdict
+
+    exits_by_date: dict[date, list[dict]] = defaultdict(list)
+    for exit_record in exits:
+        exit_time = exit_record["exit_time"]
+        if exit_time.tzinfo is None:
+            exit_time = exit_time.replace(tzinfo=timezone.utc)
+        et_date = exit_time.astimezone(tz).date()
+        exits_by_date[et_date].append(exit_record)
+
+    points: list[EquityChartPoint] = []
+    for session_date in sorted(baselines):
+        baseline = baselines[session_date]
+        session_pnl = sum(e["pnl"] for e in exits_by_date.get(session_date, []))
+        close_time = datetime.combine(session_date, time(16, 0), tzinfo=tz)
+        points.append(EquityChartPoint(t=close_time, v=baseline + session_pnl))
+
+    if points:
+        first_v = baselines.get(sorted(baselines)[0], points[0].v)
+        current = points[-1].v
+        pct_change = ((current - first_v) / first_v * 100) if first_v else 0.0
+    else:
+        current = 0.0
+        pct_change = 0.0
+
+    return EquityChartData(
+        range_code=range_code,
+        points=points,
+        current=current,
+        pct_change=round(pct_change, 4),
+        label=_equity_label(range_code),
+    )
 
 
 def _load_worker_health(
