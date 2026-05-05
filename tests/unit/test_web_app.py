@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
+import pytest
 
 from alpaca_bot.config import TradingMode
 from alpaca_bot.storage import (
@@ -41,7 +42,7 @@ class FakeCursor:
 
 
 class FakeConnection:
-    def __init__(self, responses) -> None:
+    def __init__(self, responses=()) -> None:
         self.responses = list(responses)
         self.executed = []
         self.closed = False
@@ -1902,3 +1903,47 @@ def test_healthz_200_when_stream_stale_but_worker_fresh() -> None:
     assert payload["stream_stale"] is True
     assert payload["stream_last_stale_at"] is not None
     assert payload["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# /api/equity-chart route
+# ---------------------------------------------------------------------------
+
+
+def test_equity_chart_api_returns_json():
+    from alpaca_bot.web.service import EquityChartData, EquityChartPoint
+    from datetime import datetime, timezone
+
+    pt = EquityChartPoint(t=datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc), v=100000.0)
+    fixed_data = EquityChartData(
+        range_code="1d",
+        points=[pt],
+        current=100000.0,
+        pct_change=0.0,
+        label="Today",
+    )
+
+    app = create_app(
+        settings=make_settings(),
+        connection=FakeConnection(),
+        equity_chart_data_factory=lambda **_: fixed_data,
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/api/equity-chart?range=1d")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["range"] == "1d"
+    assert body["current"] == pytest.approx(100000.0)
+    assert body["pct_change"] == pytest.approx(0.0)
+    assert len(body["points"]) == 1
+    assert body["points"][0]["v"] == pytest.approx(100000.0)
+
+
+def test_equity_chart_api_invalid_range():
+    app = create_app(
+        settings=make_settings(),
+        connection=FakeConnection(),
+    )
+    client = TestClient(app, raise_server_exceptions=False)
+    resp = client.get("/api/equity-chart?range=5d")
+    assert resp.status_code == 400

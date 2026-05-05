@@ -42,8 +42,10 @@ from alpaca_bot.web.auth import (
 )
 from alpaca_bot.web.service import (
     ALL_AUDIT_EVENT_TYPES,
+    EquityChartData,
     load_audit_page,
     load_dashboard_snapshot,
+    load_equity_chart_data,
     load_health_snapshot,
     load_metrics_snapshot,
 )
@@ -73,6 +75,7 @@ def create_app(
     watchlist_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     notifier: Notifier | None = None,
     market_data_adapter: object | None = None,
+    equity_chart_data_factory: Callable[..., EquityChartData] | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings.from_env()
     fixed_connection = connection or db_connection
@@ -120,6 +123,7 @@ def create_app(
         except Exception:
             market_data_adapter = None
     app.state.market_data_adapter = market_data_adapter
+    app.state.equity_chart_data_factory = equity_chart_data_factory or load_equity_chart_data
 
     @app.get("/", response_class=HTMLResponse)
     def dashboard(request: Request, no_refresh: str = "") -> HTMLResponse:
@@ -711,6 +715,52 @@ def create_app(
             if callable(close):
                 close()
         return RedirectResponse(url="/watchlist", status_code=status.HTTP_303_SEE_OTHER)
+
+    @app.get("/api/equity-chart")
+    def equity_chart_api(
+        request: Request,
+        range: str = "1d",
+        date_param: str = "",
+    ) -> Response:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return JSONResponse({"error": "unauthorized"}, status_code=401)
+        if range not in {"1d", "1m", "1y", "all"}:
+            return JSONResponse({"error": "invalid range"}, status_code=400)
+        now = datetime.now(timezone.utc)
+        today = now.astimezone(app_settings.market_timezone).date()
+        anchor_date, _ = _parse_date_param(date_param, today=today)
+        try:
+            connection = app.state.connect_postgres(app_settings.database_url)
+            try:
+                data = app.state.equity_chart_data_factory(
+                    settings=app_settings,
+                    connection=connection,
+                    range_code=range,
+                    anchor_date=anchor_date,
+                    now=now,
+                    order_store=_build_store(app.state.order_store_factory, connection),
+                    daily_session_state_store=_build_store(
+                        app.state.daily_session_state_store_factory, connection
+                    ),
+                )
+            finally:
+                close = getattr(connection, "close", None)
+                if callable(close):
+                    close()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("/api/equity-chart failed")
+            return JSONResponse({"error": "service unavailable"}, status_code=503)
+        return JSONResponse(
+            {
+                "points": [{"t": p.t.isoformat(), "v": p.v} for p in data.points],
+                "current": data.current,
+                "pct_change": data.pct_change,
+                "label": data.label,
+                "range": data.range_code,
+            }
+        )
 
     return app
 
