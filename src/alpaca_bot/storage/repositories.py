@@ -19,6 +19,7 @@ from alpaca_bot.storage.models import (
     OrderRecord,
     PositionRecord,
     StrategyFlag,
+    StrategyWeight,
     TradingStatus,
     TradingStatusValue,
 )
@@ -703,6 +704,69 @@ class OrderStore:
             if row[3] is not None
         ]
 
+    def list_trade_pnl_by_strategy(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        start_date: date,
+        end_date: date,
+        market_timezone: str = "America/New_York",
+    ) -> list[dict]:
+        """Return one dict per closed trade in the date range with strategy attribution.
+
+        Each dict: {strategy_name: str, exit_date: date, pnl: float}
+        Filters out trades where entry_fill is NULL (no correlated entry order).
+        """
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT x.strategy_name,
+                   DATE(x.updated_at AT TIME ZONE %s) AS exit_date,
+                   COALESCE(x.filled_quantity, x.quantity) AS qty,
+                   x.fill_price AS exit_fill,
+                   (SELECT e.fill_price
+                      FROM orders e
+                     WHERE e.symbol = x.symbol
+                       AND e.trading_mode = x.trading_mode
+                       AND e.strategy_version = x.strategy_version
+                       AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
+                       AND e.intent_type = 'entry'
+                       AND e.fill_price IS NOT NULL
+                       AND e.status = 'filled'
+                       AND e.updated_at <= x.updated_at
+                     ORDER BY e.updated_at DESC
+                     LIMIT 1) AS entry_fill
+              FROM orders x
+             WHERE x.trading_mode = %s
+               AND x.strategy_version = %s
+               AND x.intent_type IN ('stop', 'exit')
+               AND x.fill_price IS NOT NULL
+               AND x.status = 'filled'
+               AND DATE(x.updated_at AT TIME ZONE %s) >= %s
+               AND DATE(x.updated_at AT TIME ZONE %s) <= %s
+             ORDER BY x.updated_at
+            """,
+            (
+                market_timezone,
+                trading_mode.value,
+                strategy_version,
+                market_timezone,
+                start_date,
+                market_timezone,
+                end_date,
+            ),
+        )
+        return [
+            {
+                "strategy_name": row[0],
+                "exit_date": row[1],
+                "pnl": (float(row[3]) - float(row[4])) * int(row[2]),
+            }
+            for row in rows
+            if row[4] is not None
+        ]
+
 
 class DailySessionStateStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
@@ -1239,6 +1303,80 @@ class StrategyFlagStore:
                 strategy_version=row[2],
                 enabled=bool(row[3]),
                 updated_at=row[4],
+            )
+            for row in rows
+        ]
+
+
+class StrategyWeightStore:
+    def __init__(self, connection: ConnectionProtocol) -> None:
+        self._connection = connection
+
+    def upsert_many(
+        self,
+        *,
+        weights: dict[str, float],
+        sharpes: dict[str, float],
+        trading_mode: TradingMode,
+        strategy_version: str,
+        computed_at: datetime,
+    ) -> None:
+        for strategy_name, weight in weights.items():
+            execute(
+                self._connection,
+                """
+                INSERT INTO strategy_weights (
+                    strategy_name, trading_mode, strategy_version,
+                    weight, sharpe, computed_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (strategy_name, trading_mode, strategy_version)
+                DO UPDATE SET
+                    weight = EXCLUDED.weight,
+                    sharpe = EXCLUDED.sharpe,
+                    computed_at = EXCLUDED.computed_at
+                """,
+                (
+                    strategy_name,
+                    trading_mode.value,
+                    strategy_version,
+                    weight,
+                    sharpes.get(strategy_name, 0.0),
+                    computed_at,
+                ),
+                commit=False,
+            )
+        try:
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    def load_all(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+    ) -> list[StrategyWeight]:
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT strategy_name, trading_mode, strategy_version,
+                   weight, sharpe, computed_at
+              FROM strategy_weights
+             WHERE trading_mode = %s AND strategy_version = %s
+             ORDER BY strategy_name
+            """,
+            (trading_mode.value, strategy_version),
+        )
+        return [
+            StrategyWeight(
+                strategy_name=row[0],
+                trading_mode=TradingMode(row[1]),
+                strategy_version=row[2],
+                weight=float(row[3]),
+                sharpe=float(row[4]),
+                computed_at=row[5],
             )
             for row in rows
         ]

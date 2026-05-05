@@ -10,6 +10,7 @@ from alpaca_bot.storage.db import (
     check_connection,
     connect_postgres_with_retry,
 )
+from alpaca_bot.storage import StrategyWeight, StrategyWeightStore
 from alpaca_bot.storage.repositories import AuditEventStore, OrderStore
 
 
@@ -520,3 +521,150 @@ class TestListByEventTypes:
             limit=20,
         )
         assert [e.payload["status"] for e in events] == ["halted", "enabled"]
+
+
+# ── test_list_trade_pnl_by_strategy ──────────────────────────────────────────
+
+class TestListTradePnlByStrategy:
+    """Unit tests for OrderStore.list_trade_pnl_by_strategy()."""
+
+    def _make_store(self, rows: list[tuple]) -> "OrderStore":
+        return OrderStore(_make_fake_connection(rows))
+
+    def test_returns_empty_when_no_rows(self) -> None:
+        store = self._make_store([])
+        result = store.list_trade_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 28),
+        )
+        assert result == []
+
+    def test_filters_rows_without_entry_fill(self) -> None:
+        # entry_fill is None → should be excluded
+        rows = [("breakout", date(2026, 1, 2), 10, 105.0, None)]
+        store = self._make_store(rows)
+        result = store.list_trade_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 28),
+        )
+        assert result == []
+
+    def test_computes_pnl_correctly(self) -> None:
+        # pnl = (exit_fill - entry_fill) * qty
+        # row: (strategy_name, exit_date, qty, exit_fill, entry_fill)
+        rows = [("breakout", date(2026, 1, 2), 5, 110.0, 100.0)]
+        store = self._make_store(rows)
+        result = store.list_trade_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 28),
+        )
+        assert len(result) == 1
+        assert result[0]["strategy_name"] == "breakout"
+        assert result[0]["exit_date"] == date(2026, 1, 2)
+        assert abs(result[0]["pnl"] - 50.0) < 1e-9  # (110 - 100) * 5
+
+    def test_multiple_strategies_returned(self) -> None:
+        rows = [
+            ("breakout", date(2026, 1, 2), 5, 110.0, 100.0),
+            ("momentum", date(2026, 1, 3), 10, 52.0, 50.0),
+        ]
+        store = self._make_store(rows)
+        result = store.list_trade_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 28),
+        )
+        assert len(result) == 2
+        names = {r["strategy_name"] for r in result}
+        assert names == {"breakout", "momentum"}
+
+    def test_negative_pnl_for_losing_trade(self) -> None:
+        rows = [("breakout", date(2026, 1, 2), 5, 90.0, 100.0)]
+        store = self._make_store(rows)
+        result = store.list_trade_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 28),
+        )
+        assert len(result) == 1
+        assert result[0]["pnl"] < 0.0  # losing trade
+
+
+# ── test_StrategyWeightStore ──────────────────────────────────────────────────
+
+class TestStrategyWeightStore:
+    """Unit tests for StrategyWeightStore upsert_many + load_all."""
+
+    def _make_store_with_rows(self, rows: list[tuple]) -> "StrategyWeightStore":
+        return StrategyWeightStore(_make_fake_connection(rows))
+
+    def test_load_all_returns_empty_when_no_rows(self) -> None:
+        store = self._make_store_with_rows([])
+        result = store.load_all(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert result == []
+
+    def test_load_all_returns_strategy_weight_objects(self) -> None:
+        now = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
+        rows = [("breakout", "paper", "v1", 0.6, 1.8, now)]
+        store = self._make_store_with_rows(rows)
+        result = store.load_all(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert len(result) == 1
+        w = result[0]
+        assert w.strategy_name == "breakout"
+        assert abs(w.weight - 0.6) < 1e-9
+        assert abs(w.sharpe - 1.8) < 1e-9
+        assert w.trading_mode == TradingMode.PAPER
+        assert w.computed_at == now
+
+    def test_upsert_many_calls_execute_for_each_strategy(self) -> None:
+        executed: list[tuple] = []
+
+        class _TrackingConn:
+            def cursor(self):
+                return self
+
+            def execute(self, sql, params=None):
+                if params:
+                    executed.append(params)
+
+            def fetchone(self):
+                return None
+
+            def fetchall(self):
+                return []
+
+            def commit(self):
+                pass
+
+            def rollback(self):
+                pass
+
+            def close(self):
+                pass
+
+        store = StrategyWeightStore(_TrackingConn())
+        now = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
+        store.upsert_many(
+            weights={"breakout": 0.6, "momentum": 0.4},
+            sharpes={"breakout": 1.8, "momentum": 0.9},
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            computed_at=now,
+        )
+        assert len(executed) == 2
+        names_stored = {p[0] for p in executed}
+        assert names_stored == {"breakout", "momentum"}
