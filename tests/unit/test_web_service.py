@@ -545,11 +545,33 @@ def test_load_metrics_snapshot_passes_admin_event_types() -> None:
     assert captured_types == [["trading_status_changed", "strategy_flag_changed"]]
 
 
+def test_trade_record_exit_reason_and_hold_minutes() -> None:
+    entry_time = datetime(2026, 5, 5, 10, 0, tzinfo=timezone.utc)
+    exit_time = datetime(2026, 5, 5, 10, 45, tzinfo=timezone.utc)
+    row = {
+        "symbol": "AAPL",
+        "entry_fill": 100.0,
+        "entry_limit": 101.0,
+        "entry_time": entry_time,
+        "exit_time": exit_time,
+        "exit_fill": 105.0,
+        "qty": 10,
+        "intent_type": "stop",
+    }
+    trade = _to_trade_record(row)
+    assert trade.exit_reason == "stop"
+    assert trade.hold_minutes == pytest.approx(45.0)
+
+    row_eod = {**row, "intent_type": "eod"}
+    trade_eod = _to_trade_record(row_eod)
+    assert trade_eod.exit_reason == "eod"
+
+
 # ---------------------------------------------------------------------------
 # _win_rate, _mean_return_pct, _max_drawdown_pct helpers
 # ---------------------------------------------------------------------------
 
-from alpaca_bot.web.service import TradeRecord
+from alpaca_bot.web.service import TradeRecord, _to_trade_record
 
 
 def _trade(*, symbol="AAPL", entry=100.0, exit=110.0, qty=10, slippage=None, strategy_name="breakout"):
