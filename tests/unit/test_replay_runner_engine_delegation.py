@@ -274,7 +274,7 @@ def test_runner_emits_stop_hit_when_bar_low_crosses_stop_price() -> None:
         )
     )
     # Fill happens here (open=110.05 fills at breakout_level+buffer=110.01).
-    # low=107.9 is below initial_stop (110.0 - 1.5*ATR≈108.05) → STOP_HIT fires.
+    # low=107.9 is below initial_stop (110.0 - 1.0*ATR≈108.0) → STOP_HIT fires.
     bars.append(
         Bar(
             symbol="AAPL",
@@ -303,10 +303,10 @@ def test_runner_emits_stop_hit_when_bar_low_crosses_stop_price() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test: EOD exit comes from engine (evaluate_cycle EXIT intent)
+# Test: stop hit fires from price data when stop is tighter (ATR 1.0)
 # ---------------------------------------------------------------------------
 
-def test_runner_emits_eod_exit_from_engine_decision() -> None:
+def test_runner_emits_stop_hit_when_price_crosses_tighter_stop() -> None:
     """
     Stop loss hit (tighter stop with ATR 1.0) should come from the price data.
     The runner processes it as a STOP_HIT event.
