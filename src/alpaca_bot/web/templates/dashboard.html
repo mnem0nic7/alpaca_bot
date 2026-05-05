@@ -750,8 +750,9 @@
                   chgEl.textContent = data.label || '';
                   chgEl.style.color = 'var(--muted)';
                 }
-                var labels = data.points.map(function(p) { return p.t; });
-                var values = data.points.map(function(p) { return p.v; });
+                var pts = data.points || [];
+                var labels = pts.map(function(p) { return p.t; });
+                var values = pts.map(function(p) { return p.v; });
                 if (_equityChart) { _equityChart.destroy(); }
                 var ctx = document.getElementById('equity-canvas').getContext('2d');
                 _equityChart = new Chart(ctx, {
