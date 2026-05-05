@@ -648,10 +648,10 @@ class OrderStore:
     def list_trade_exits_in_range(
         self,
         *,
-        trading_mode,
-        strategy_version,
-        start_date,
-        end_date,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        start_date: date,
+        end_date: date,
         market_timezone: str = "America/New_York",
     ) -> list[dict]:
         """Return one dict per exit (stop/exit) order in the date range.
@@ -833,11 +833,11 @@ class DailySessionStateStore:
     def list_equity_baselines(
         self,
         *,
-        trading_mode,
-        strategy_version,
-        start_date,
-        end_date,
-    ) -> dict:
+        trading_mode: TradingMode,
+        strategy_version: str,
+        start_date: date,
+        end_date: date,
+    ) -> dict[date, float]:
         """Return dict mapping session_date to equity_baseline for the date range.
 
         Filters to EQUITY_SESSION_STATE_STRATEGY_NAME and non-NULL equity_baseline values.
@@ -850,7 +850,7 @@ class DailySessionStateStore:
               FROM daily_session_state
              WHERE trading_mode = %s
                AND strategy_version = %s
-               AND strategy_name = %s
+               AND strategy_name IS NOT DISTINCT FROM %s
                AND equity_baseline IS NOT NULL
                AND session_date >= %s
                AND session_date <= %s
