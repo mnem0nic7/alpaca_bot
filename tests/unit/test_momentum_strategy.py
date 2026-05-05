@@ -370,3 +370,24 @@ def test_momentum_returns_none_when_close_at_or_below_yesterday_high():
         settings=settings,
     )
     assert result_below is None, "close < yesterday_high should reject"
+
+
+def test_settings_new_production_defaults_from_env() -> None:
+    """ATR_STOP_MULTIPLIER, MAX_OPEN_POSITIONS, MAX_POSITION_PCT, and
+    MAX_PORTFOLIO_EXPOSURE_PCT must use the new production defaults when
+    the env vars are absent."""
+    from alpaca_bot.config import Settings
+    from tests.unit.helpers import _base_env
+
+    env = _base_env()
+    # _base_env() explicitly sets these two; pop them so from_env falls through to defaults
+    env.pop("MAX_POSITION_PCT")
+    env.pop("MAX_OPEN_POSITIONS")
+    # ATR_STOP_MULTIPLIER and MAX_PORTFOLIO_EXPOSURE_PCT are not set by _base_env()
+
+    settings = Settings.from_env(env)
+
+    assert settings.atr_stop_multiplier == 1.0
+    assert settings.max_open_positions == 20
+    assert settings.max_position_pct == 0.015
+    assert settings.max_portfolio_exposure_pct == 0.30
