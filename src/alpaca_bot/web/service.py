@@ -85,6 +85,8 @@ class TradeRecord:
     quantity: int
     pnl: float
     slippage: float | None  # limit_price - fill_price; positive=favorable, negative=adverse
+    exit_reason: str = "eod"          # "stop" or "eod"
+    hold_minutes: float | None = None  # (exit_time - entry_time).total_seconds() / 60
 
 
 @dataclass(frozen=True)
@@ -384,16 +386,26 @@ def _to_trade_record(row: dict) -> TradeRecord:
         if row.get("entry_limit") is not None
         else None
     )
+    entry_time = row.get("entry_time")
+    exit_time = row.get("exit_time")
+    hold_minutes = (
+        (exit_time - entry_time).total_seconds() / 60
+        if entry_time is not None and exit_time is not None
+        else None
+    )
+    exit_reason = "stop" if row.get("intent_type") == "stop" else "eod"
     return TradeRecord(
         symbol=row["symbol"],
         strategy_name=row.get("strategy_name", "breakout"),
-        entry_time=row.get("entry_time"),
-        exit_time=row.get("exit_time"),
+        entry_time=entry_time,
+        exit_time=exit_time,
         entry_price=entry_fill,
         exit_price=exit_fill,
         quantity=qty,
         pnl=pnl,
         slippage=slippage,
+        exit_reason=exit_reason,
+        hold_minutes=hold_minutes,
     )
 
 
