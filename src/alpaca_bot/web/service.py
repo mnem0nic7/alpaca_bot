@@ -53,6 +53,7 @@ ALL_AUDIT_EVENT_TYPES = [
     "WATCHLIST_UNIGNORE",
     "extended_hours_cycle",
     "stop_update_skipped_extended_hours",
+    "strategy_weights_updated",
 ]
 
 WORKING_ORDER_STATUSES = [

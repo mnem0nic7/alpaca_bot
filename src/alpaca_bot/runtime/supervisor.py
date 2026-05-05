@@ -1200,7 +1200,7 @@ class RuntimeSupervisor:
             return {w.strategy_name: w.weight for w in existing}
 
         end_date = session_date - timedelta(days=1)
-        start_date = end_date - timedelta(days=28)
+        start_date = end_date - timedelta(days=28)  # 28 calendar days ≈ 20 trading days
         active_names = [name for name, _ in self._resolve_active_strategies()]
 
         with lock_ctx:
