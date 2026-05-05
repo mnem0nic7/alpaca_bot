@@ -6,11 +6,13 @@ from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from alpaca_bot.config import Settings
+from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord, report_from_records
 from alpaca_bot.storage import (
     AuditEvent,
     AuditEventStore,
     DailySessionState,
     DailySessionStateStore,
+    EQUITY_SESSION_STATE_STRATEGY_NAME,
     GLOBAL_SESSION_STATE_STRATEGY_NAME,
     OrderRecord,
     OrderStore,
@@ -139,6 +141,7 @@ class MetricsSnapshot:
     sharpe_ratio: float | None
     admin_history: list[AuditEvent]
     last_backtest: object | None = None  # BacktestReport; None until Phase 5 persists reports
+    session_report: BacktestReport | None = None
 
 
 @dataclass(frozen=True)
@@ -309,6 +312,7 @@ def load_metrics_snapshot(
     order_store: OrderStore | None = None,
     audit_event_store: AuditEventStore | None = None,
     tuning_result_store: TuningResultStore | None = None,
+    daily_session_state_store: DailySessionStateStore | None = None,
     now: datetime | None = None,
     session_date: date | None = None,
 ) -> MetricsSnapshot:
@@ -328,6 +332,26 @@ def load_metrics_snapshot(
     trades_by_strategy: dict[str, list[TradeRecord]] = {}
     for trade in trades:
         trades_by_strategy.setdefault(trade.strategy_name, []).append(trade)
+
+    session_report: BacktestReport | None = None
+    if raw_trades:
+        state_store = daily_session_state_store or DailySessionStateStore(connection)
+        state = state_store.load(
+            session_date=session_date,
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+            strategy_name=EQUITY_SESSION_STATE_STRATEGY_NAME,
+        )
+        starting_equity = (
+            state.equity_baseline
+            if state is not None and state.equity_baseline is not None
+            else 100_000.0
+        )
+        replay_records = [_row_to_replay_record(r) for r in raw_trades]
+        session_report = report_from_records(
+            replay_records, starting_equity=starting_equity, strategy_name="all"
+        )
+
     admin_history = audit_event_store.list_by_event_types(
         event_types=ADMIN_EVENT_TYPES,
         limit=20,
@@ -345,6 +369,7 @@ def load_metrics_snapshot(
         sharpe_ratio=_compute_sharpe_from_trade_records(trades),
         admin_history=admin_history,
         last_backtest=last_tuning,
+        session_report=session_report,
     )
 
 
@@ -406,6 +431,26 @@ def _to_trade_record(row: dict) -> TradeRecord:
         slippage=slippage,
         exit_reason=exit_reason,
         hold_minutes=hold_minutes,
+    )
+
+
+def _row_to_replay_record(row: dict) -> ReplayTradeRecord:
+    entry = row["entry_fill"]
+    exit_ = row["exit_fill"]
+    qty = row["qty"]
+    pnl = (exit_ - entry) * qty
+    return_pct = (exit_ - entry) / entry
+    exit_reason = "stop" if row.get("intent_type") == "stop" else "eod"
+    return ReplayTradeRecord(
+        symbol=row["symbol"],
+        entry_price=entry,
+        exit_price=exit_,
+        quantity=qty,
+        entry_time=row["entry_time"],
+        exit_time=row["exit_time"],
+        exit_reason=exit_reason,
+        pnl=pnl,
+        return_pct=return_pct,
     )
 
 

@@ -652,6 +652,8 @@
                   <th>Exit</th>
                   <th>P&amp;L</th>
                   <th>Slippage</th>
+                  <th>Hold (min)</th>
+                  <th>Exit Type</th>
                 </tr>
               </thead>
               <tbody>
@@ -668,9 +670,11 @@
                     <td class="{% if trade.slippage is not none %}{% if trade.slippage < 0 %}warn{% else %}muted{% endif %}{% else %}muted{% endif %}">
                       {{ format_price(trade.slippage) if trade.slippage is not none else "&mdash;" }}
                     </td>
+                    <td class="muted">{{ "%.0f" | format(trade.hold_minutes) if trade.hold_minutes is not none else "&mdash;" }}</td>
+                    <td class="muted">{{ trade.exit_reason }}</td>
                   </tr>
                 {% else %}
-                  <tr><td colspan="7" class="muted">No closed trades today.</td></tr>
+                  <tr><td colspan="9" class="muted">No closed trades today.</td></tr>
                 {% endfor %}
               </tbody>
             </table>
@@ -703,6 +707,23 @@
           </div>
           {% endif %}
         </div>
+
+        {% if metrics.session_report %}
+        <div class="panel">
+          <h2>Session Evaluation</h2>
+          <table class="data-table">
+            <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+            <tbody>
+              <tr><td>Profit factor</td><td>{{ "%.2f" | format(metrics.session_report.profit_factor) if metrics.session_report.profit_factor is not none else "&mdash;" }}</td></tr>
+              <tr><td>Avg hold (min)</td><td>{{ "%.0f" | format(metrics.session_report.avg_hold_minutes) if metrics.session_report.avg_hold_minutes is not none else "&mdash;" }}</td></tr>
+              <tr><td>Stop wins / losses</td><td>{{ metrics.session_report.stop_wins }} / {{ metrics.session_report.stop_losses }}</td></tr>
+              <tr><td>EOD wins / losses</td><td>{{ metrics.session_report.eod_wins }} / {{ metrics.session_report.eod_losses }}</td></tr>
+              <tr><td>Max consecutive wins</td><td>{{ metrics.session_report.max_consecutive_wins }}</td></tr>
+              <tr><td>Max consecutive losses</td><td>{{ metrics.session_report.max_consecutive_losses }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
 
         <div class="panel">
           <h2>Last Backtest</h2>
