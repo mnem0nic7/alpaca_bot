@@ -18,6 +18,8 @@ from alpaca_bot.storage import (
     PositionStore,
     StrategyFlag,
     StrategyFlagStore,
+    StrategyWeight,
+    StrategyWeightStore,
     TradingStatus,
     TradingStatusStore,
 )
@@ -51,6 +53,7 @@ ALL_AUDIT_EVENT_TYPES = [
     "WATCHLIST_UNIGNORE",
     "extended_hours_cycle",
     "stop_update_skipped_extended_hours",
+    "strategy_weights_updated",
 ]
 
 WORKING_ORDER_STATUSES = [
@@ -453,6 +456,35 @@ class EquityChartData:
     current: float
     pct_change: float  # percentage, e.g. 1.5 means +1.5%
     label: str
+
+
+@dataclass(frozen=True)
+class StrategyWeightRow:
+    strategy_name: str
+    weight: float
+    sharpe: float
+
+
+def load_strategy_weights(
+    *,
+    settings: Settings,
+    connection,
+    strategy_weight_store=None,
+) -> list[StrategyWeightRow]:
+    store = strategy_weight_store or StrategyWeightStore(connection)
+    weights = store.load_all(
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+    )
+    rows = [
+        StrategyWeightRow(
+            strategy_name=w.strategy_name,
+            weight=w.weight,
+            sharpe=w.sharpe,
+        )
+        for w in weights
+    ]
+    return sorted(rows, key=lambda r: r.weight, reverse=True)
 
 
 def _equity_label(range_code: str) -> str:

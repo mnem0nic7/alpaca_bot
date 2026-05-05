@@ -116,3 +116,13 @@ class StrategyFlag:
     strategy_version: str
     enabled: bool
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class StrategyWeight:
+    strategy_name: str
+    trading_mode: TradingMode
+    strategy_version: str
+    weight: float
+    sharpe: float
+    computed_at: datetime

@@ -1089,3 +1089,82 @@ def test_load_equity_chart_data_multi_session():
     assert data.points[2].v == pytest.approx(100450.0)  # 100300 + 150
     assert data.range_code == "1m"
     assert data.pct_change == pytest.approx(0.45)  # (100450 - 100000) / 100000 * 100
+
+
+# ── test_load_strategy_weights ────────────────────────────────────────────────
+
+class TestLoadStrategyWeights:
+    """Tests for load_strategy_weights() service function."""
+
+    def _make_fake_weight_store(self, weights: list) -> object:
+        class _FakeStore:
+            def __init__(self) -> None:
+                self.last_load_kwargs: dict = {}
+
+            def load_all(self, **kwargs):
+                self.last_load_kwargs = kwargs
+                return weights
+
+        return _FakeStore()
+
+    def test_returns_empty_list_when_no_weights(self) -> None:
+        from alpaca_bot.web.service import load_strategy_weights
+        store = self._make_fake_weight_store([])
+        result = load_strategy_weights(
+            settings=make_settings(),
+            connection=None,
+            strategy_weight_store=store,
+        )
+        assert result == []
+
+    def test_returns_weight_rows_sorted_by_weight_descending(self) -> None:
+        from alpaca_bot.web.service import load_strategy_weights, StrategyWeightRow
+        from alpaca_bot.storage import StrategyWeight
+        from alpaca_bot.config import TradingMode
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 5, 1, 15, 0, tzinfo=timezone.utc)
+        store = self._make_fake_weight_store([
+            StrategyWeight("momentum", TradingMode.PAPER, "v1", 0.3, 0.9, now),
+            StrategyWeight("breakout", TradingMode.PAPER, "v1", 0.4, 1.8, now),
+            StrategyWeight("orb", TradingMode.PAPER, "v1", 0.3, 0.5, now),
+        ])
+        result = load_strategy_weights(
+            settings=make_settings(),
+            connection=None,
+            strategy_weight_store=store,
+        )
+        assert len(result) == 3
+        assert result[0].strategy_name == "breakout"  # highest weight first
+        assert abs(result[0].weight - 0.4) < 1e-9
+        assert abs(result[0].sharpe - 1.8) < 1e-9
+        assert isinstance(result[0], StrategyWeightRow)
+
+    def test_weight_row_fields(self) -> None:
+        from alpaca_bot.web.service import load_strategy_weights, StrategyWeightRow
+        from alpaca_bot.storage import StrategyWeight
+        from alpaca_bot.config import TradingMode
+        from datetime import datetime, timezone
+
+        now = datetime(2026, 5, 1, 15, 0, tzinfo=timezone.utc)
+        store = self._make_fake_weight_store([
+            StrategyWeight("breakout", TradingMode.PAPER, "v1", 0.6, 2.1, now),
+        ])
+        result = load_strategy_weights(
+            settings=make_settings(),
+            connection=None,
+            strategy_weight_store=store,
+        )
+        row = result[0]
+        assert row.strategy_name == "breakout"
+        assert abs(row.weight - 0.6) < 1e-9
+        assert abs(row.sharpe - 2.1) < 1e-9
+
+    def test_forwards_trading_mode_and_strategy_version(self) -> None:
+        from alpaca_bot.web.service import load_strategy_weights
+
+        store = self._make_fake_weight_store([])
+        settings = make_settings()
+        load_strategy_weights(settings=settings, connection=None, strategy_weight_store=store)
+        assert store.last_load_kwargs.get("trading_mode") == settings.trading_mode
+        assert store.last_load_kwargs.get("strategy_version") == settings.strategy_version

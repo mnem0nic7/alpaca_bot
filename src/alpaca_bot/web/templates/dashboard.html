@@ -548,7 +548,35 @@
             <button class="btn-neutral" id="btn-all" onclick="loadEquityChart('all')">All</button>
           </div>
         </div>
-        <canvas id="equity-canvas" height="160"></canvas>
+        <div style="position:relative; height:200px;">
+          <canvas id="equity-canvas"></canvas>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if strategy_weights %}
+      <div class="panel" style="margin-bottom:1.5rem">
+        <div class="eyebrow">Capital Allocation</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Strategy</th>
+                <th style="text-align:right">Weight</th>
+                <th style="text-align:right">Sharpe (20d)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in strategy_weights %}
+                <tr>
+                  <td>{{ row.strategy_name }}</td>
+                  <td style="text-align:right">{{ "%.1f"|format(row.weight * 100) }}%</td>
+                  <td style="text-align:right">{{ "%.2f"|format(row.sharpe) }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
       {% endif %}
 
@@ -771,6 +799,7 @@
                   },
                   options: {
                     responsive: true,
+                    maintainAspectRatio: false,
                     plugins: {
                       legend: { display: false },
                       tooltip: { mode: 'index', intersect: false }

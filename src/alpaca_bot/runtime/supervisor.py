@@ -29,6 +29,7 @@ from alpaca_bot.runtime.bootstrap import (
     close_runtime,
     reconnect_runtime_connection,
 )
+from alpaca_bot.risk.weighting import compute_strategy_weights
 from alpaca_bot.storage.db import check_connection
 from alpaca_bot.runtime.cli import _list_open_orders, _list_open_positions
 from alpaca_bot.core.engine import CycleIntentType
@@ -123,6 +124,8 @@ class RuntimeSupervisor:
         self._consecutive_cycle_failures: int = 0
         # Keyed by session_date (ET); populated on the first cycle of each day.
         self._session_equity_baseline: dict[date, float] = {}
+        # Per-session capital weights: keyed by session_date, populated once per day.
+        self._session_capital_weights: dict[date, dict[str, float]] = {}
         # Dates for which the daily loss limit alert has already been sent (once per day).
         self._loss_limit_alerted: set[date] = set()
         # Dates for which the daily loss limit has ever fired; sticky — never cleared on recovery.
@@ -340,6 +343,9 @@ class RuntimeSupervisor:
                     )
                 )
         baseline_equity = self._session_equity_baseline[session_date]
+        if session_date not in self._session_capital_weights:
+            weights = self._update_session_weights(session_date)
+            self._session_capital_weights[session_date] = weights
         loss_limit = self.settings.daily_loss_limit_pct * baseline_equity
         # Include unrealized losses via broker-reported equity delta so open
         # positions with large drawdowns trigger the limit before stops fill.
@@ -610,11 +616,15 @@ class RuntimeSupervisor:
                 if strategy_entries_disabled:
                     entries_disabled_strategies.add(strategy_name)
 
+                strategy_weight = self._session_capital_weights[session_date].get(
+                    strategy_name, 1.0 / max(len(active_strategies), 1)
+                )
+                effective_equity = account.equity * strategy_weight
                 cycle_result = self._cycle_runner(
                     settings=self.settings,
                     runtime=self.runtime,
                     now=timestamp,
-                    equity=account.equity,
+                    equity=effective_equity,
                     intraday_bars_by_symbol=intraday_bars_by_symbol,
                     daily_bars_by_symbol=daily_bars_by_symbol,
                     open_positions=strategy_positions,
@@ -1170,6 +1180,57 @@ class RuntimeSupervisor:
                 except Exception:
                     pass
                 raise
+
+    def _update_session_weights(self, session_date: date) -> dict[str, float]:
+        weight_store = getattr(self.runtime, "strategy_weight_store", None)
+        if weight_store is None:
+            active_names = [name for name, _ in self._resolve_active_strategies()]
+            n = max(len(active_names), 1)
+            return {name: 1.0 / n for name in active_names}
+
+        store_lock = getattr(self.runtime, "store_lock", None)
+        lock_ctx = store_lock if store_lock is not None else contextlib.nullcontext()
+
+        with lock_ctx:
+            existing = weight_store.load_all(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+            )
+        if existing and all(w.computed_at.date() == session_date for w in existing):
+            return {w.strategy_name: w.weight for w in existing}
+
+        end_date = session_date - timedelta(days=1)
+        start_date = end_date - timedelta(days=28)  # 28 calendar days ≈ 20 trading days
+        active_names = [name for name, _ in self._resolve_active_strategies()]
+
+        with lock_ctx:
+            trade_rows = self.runtime.order_store.list_trade_pnl_by_strategy(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+        result = compute_strategy_weights(trade_rows, active_names)
+        now = datetime.now(timezone.utc)
+
+        with lock_ctx:
+            weight_store.upsert_many(
+                weights=result.weights,
+                sharpes=result.sharpes,
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+                computed_at=now,
+            )
+
+        self._append_audit(
+            AuditEvent(
+                event_type="strategy_weights_updated",
+                payload={name: round(w, 6) for name, w in result.weights.items()},
+                created_at=now,
+            )
+        )
+        return result.weights
 
     def _append_audit(self, event: AuditEvent) -> None:
         """Append an AuditEvent while holding store_lock to prevent races with the stream thread."""
