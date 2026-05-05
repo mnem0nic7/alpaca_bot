@@ -24,6 +24,7 @@ from alpaca_bot.storage import (
     PositionStore,
     StrategyFlag,
     StrategyFlagStore,
+    StrategyWeightStore,
     TradingStatus,
     TradingStatusStore,
     TradingStatusValue,
@@ -43,11 +44,13 @@ from alpaca_bot.web.auth import (
 from alpaca_bot.web.service import (
     ALL_AUDIT_EVENT_TYPES,
     EquityChartData,
+    StrategyWeightRow,
     load_audit_page,
     load_dashboard_snapshot,
     load_equity_chart_data,
     load_health_snapshot,
     load_metrics_snapshot,
+    load_strategy_weights,
 )
 
 
@@ -73,6 +76,7 @@ def create_app(
     audit_event_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     strategy_flag_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     watchlist_store_factory: Callable[[ConnectionProtocol], object] | None = None,
+    strategy_weight_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     notifier: Notifier | None = None,
     market_data_adapter: object | None = None,
     equity_chart_data_factory: Callable[..., EquityChartData] | None = None,
@@ -115,6 +119,7 @@ def create_app(
     app.state.audit_event_store_factory = audit_event_store_factory or AuditEventStore
     app.state.strategy_flag_store_factory = strategy_flag_store_factory or StrategyFlagStore
     app.state.watchlist_store_factory = watchlist_store_factory or WatchlistStore
+    app.state.strategy_weight_store_factory = strategy_weight_store_factory or StrategyWeightStore
     app.state.notifier = notifier or build_notifier(app_settings)
     if market_data_adapter is None:
         try:
@@ -170,6 +175,7 @@ def create_app(
         now = datetime.now(timezone.utc)
         today = now.astimezone(app_settings.market_timezone).date()
         session_date, date_warning = _parse_date_param(date_param, today=today)
+        strategy_weights: list[StrategyWeightRow] = []
         try:
             connection = app.state.connect_postgres(app_settings.database_url)
             try:
@@ -179,6 +185,11 @@ def create_app(
                     audit_event_store=_build_store(app.state.audit_event_store_factory, connection),
                     order_store=_build_store(app.state.order_store_factory, connection),
                     session_date=session_date,
+                )
+                strategy_weights = load_strategy_weights(
+                    settings=app_settings,
+                    connection=connection,
+                    strategy_weight_store=_build_store(app.state.strategy_weight_store_factory, connection),
                 )
             finally:
                 close = getattr(connection, "close", None)
@@ -209,6 +220,7 @@ def create_app(
                 "prev_date": prev_date,
                 "next_date": next_date,
                 "date_warning": date_warning,
+                "strategy_weights": strategy_weights,
             },
         )
 

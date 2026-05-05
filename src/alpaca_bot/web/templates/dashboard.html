@@ -554,6 +554,32 @@
       </div>
       {% endif %}
 
+      {% if strategy_weights %}
+      <div class="panel" style="margin-bottom:1.5rem">
+        <div class="eyebrow">Capital Allocation</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Strategy</th>
+                <th style="text-align:right">Weight</th>
+                <th style="text-align:right">Sharpe (20d)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in strategy_weights %}
+                <tr>
+                  <td>{{ row.strategy_name }}</td>
+                  <td style="text-align:right">{{ "%.1f"|format(row.weight * 100) }}%</td>
+                  <td style="text-align:right">{{ "%.2f"|format(row.sharpe) }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
       <section class="section-grid" style="margin-top: 1rem;">
         <div class="panel">
           <h2>Session P&amp;L Summary</h2>
