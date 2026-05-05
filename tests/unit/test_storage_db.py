@@ -389,6 +389,88 @@ class TestListClosedTrades:
 # ---------------------------------------------------------------------------
 
 
+class TestListTradeExitsInRange:
+    def _store(self, rows: list[tuple]) -> OrderStore:
+        return OrderStore(_make_fake_connection(rows))
+
+    def test_list_trade_exits_in_range_empty(self):
+        """Empty result when no rows returned."""
+        store = self._store([])
+        result = store.list_trade_exits_in_range(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 31),
+        )
+        assert result == []
+
+    def test_list_trade_exits_in_range_filters_null_entry(self):
+        """Rows where entry_fill is None are filtered out."""
+        now_1 = datetime(2026, 1, 2, 14, 0, tzinfo=timezone.utc)
+        now_2 = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
+        rows = [
+            (now_1, 10, 105.0, None),   # entry_fill is None → skip
+            (now_2, 5, 110.0, 100.0),  # valid
+        ]
+        store = self._store(rows)
+        result = store.list_trade_exits_in_range(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 31),
+        )
+        assert len(result) == 1
+        assert abs(result[0]["pnl"] - 50.0) < 0.01
+
+    def test_list_trade_exits_in_range_calculates_pnl(self):
+        """PnL is calculated as (exit_fill - entry_fill) * qty."""
+        now = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
+        rows = [
+            (now, 10, 115.0, 100.0),  # (115 - 100) * 10 = 150
+        ]
+        store = self._store(rows)
+        result = store.list_trade_exits_in_range(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 31),
+        )
+        assert len(result) == 1
+        assert abs(result[0]["pnl"] - 150.0) < 0.01
+
+
+class TestListEquityBaselines:
+    def _store(self, rows: list[tuple]):
+        from alpaca_bot.storage.repositories import DailySessionStateStore
+        return DailySessionStateStore(_make_fake_connection(rows))
+
+    def test_list_equity_baselines_empty(self):
+        """Empty result returns empty dict."""
+        store = self._store([])
+        result = store.list_equity_baselines(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 31),
+        )
+        assert result == {}
+
+    def test_list_equity_baselines_returns_dict(self):
+        """Returns dict mapping date to equity_baseline."""
+        rows = [
+            (date(2026, 1, 2), 100000.0),
+            (date(2026, 1, 3), 100500.0),
+        ]
+        store = self._store(rows)
+        result = store.list_equity_baselines(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 31),
+        )
+        assert result == {date(2026, 1, 2): 100000.0, date(2026, 1, 3): 100500.0}
+
+
 class TestListByEventTypes:
     def _store(self, rows: list[tuple]) -> AuditEventStore:
         return AuditEventStore(_make_fake_connection(rows))

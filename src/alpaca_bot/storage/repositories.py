@@ -14,6 +14,7 @@ from alpaca_bot.storage.db import ConnectionProtocol, execute, fetch_all, fetch_
 from alpaca_bot.storage.models import (
     AuditEvent,
     DailySessionState,
+    EQUITY_SESSION_STATE_STRATEGY_NAME,
     OptionOrderRecord,
     OrderRecord,
     PositionRecord,
@@ -644,6 +645,64 @@ class OrderStore:
             if row[3] is not None and row[6] is not None
         ]
 
+    def list_trade_exits_in_range(
+        self,
+        *,
+        trading_mode,
+        strategy_version,
+        start_date,
+        end_date,
+        market_timezone: str = "America/New_York",
+    ) -> list[dict]:
+        """Return one dict per exit (stop/exit) order in the date range.
+
+        Derives entry_fill from the most recent correlated entry order.
+        Filters out rows where entry_fill is NULL (no correlated entry).
+        Each dict contains: exit_time, pnl.
+        """
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT x.updated_at AS exit_time,
+                   COALESCE(x.filled_quantity, x.quantity) AS qty,
+                   x.fill_price AS exit_fill,
+                   (SELECT e.fill_price
+                      FROM orders e
+                     WHERE e.symbol = x.symbol
+                       AND e.trading_mode = x.trading_mode
+                       AND e.strategy_version = x.strategy_version
+                       AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
+                       AND e.intent_type = 'entry'
+                       AND e.fill_price IS NOT NULL
+                       AND e.status = 'filled'
+                       AND e.updated_at <= x.updated_at
+                     ORDER BY e.updated_at DESC
+                     LIMIT 1) AS entry_fill
+              FROM orders x
+             WHERE x.trading_mode = %s
+               AND x.strategy_version = %s
+               AND x.intent_type IN ('stop', 'exit')
+               AND x.fill_price IS NOT NULL
+               AND x.status = 'filled'
+               AND DATE(x.updated_at AT TIME ZONE %s) >= %s
+               AND DATE(x.updated_at AT TIME ZONE %s) <= %s
+             ORDER BY x.updated_at
+            """,
+            (
+                trading_mode.value,
+                strategy_version,
+                market_timezone,
+                start_date,
+                market_timezone,
+                end_date,
+            ),
+        )
+        return [
+            {"exit_time": row[0], "pnl": (float(row[2]) - float(row[3])) * int(row[1])}
+            for row in rows
+            if row[3] is not None
+        ]
+
 
 class DailySessionStateStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
@@ -770,6 +829,42 @@ class DailySessionStateStore:
             )
             for row in rows
         ]
+
+    def list_equity_baselines(
+        self,
+        *,
+        trading_mode,
+        strategy_version,
+        start_date,
+        end_date,
+    ) -> dict:
+        """Return dict mapping session_date to equity_baseline for the date range.
+
+        Filters to EQUITY_SESSION_STATE_STRATEGY_NAME and non-NULL equity_baseline values.
+        Returns {date: float, ...} keyed by session_date.
+        """
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT session_date, equity_baseline
+              FROM daily_session_state
+             WHERE trading_mode = %s
+               AND strategy_version = %s
+               AND strategy_name = %s
+               AND equity_baseline IS NOT NULL
+               AND session_date >= %s
+               AND session_date <= %s
+             ORDER BY session_date
+            """,
+            (
+                trading_mode.value,
+                strategy_version,
+                EQUITY_SESSION_STATE_STRATEGY_NAME,
+                start_date,
+                end_date,
+            ),
+        )
+        return {row[0]: float(row[1]) for row in rows}
 
 
 class PositionStore:
