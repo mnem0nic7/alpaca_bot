@@ -14,6 +14,7 @@ from alpaca_bot.storage import (
     PostgresAdvisoryLock,
     PositionStore,
     StrategyFlagStore,
+    StrategyWeightStore,
     TradingStatusStore,
     WatchlistStore,
     resolve_migrations_path,
@@ -38,6 +39,7 @@ class RuntimeContext:
     strategy_flag_store: StrategyFlagStore | None = None
     watchlist_store: WatchlistStore | None = None
     option_order_store: OptionOrderRepository | None = None
+    strategy_weight_store: StrategyWeightStore | None = None
     # Protects all store operations against concurrent access from the trade update stream thread
     store_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -83,6 +85,7 @@ def bootstrap_runtime(
         strategy_flag_store=StrategyFlagStore(runtime_connection),
         watchlist_store=watchlist_store,
         option_order_store=OptionOrderRepository(runtime_connection),
+        strategy_weight_store=StrategyWeightStore(runtime_connection),
     )
 
 
@@ -115,6 +118,7 @@ def reconnect_runtime_connection(
         "strategy_flag_store",
         "watchlist_store",
         "option_order_store",
+        "strategy_weight_store",
     ):
         store = getattr(context, attr, None)
         if store is not None and hasattr(store, "_connection"):
