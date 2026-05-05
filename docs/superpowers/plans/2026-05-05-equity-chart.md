@@ -413,25 +413,7 @@ from datetime import date, datetime, time, timezone
 from zoneinfo import ZoneInfo
 ```
 
-Also add `EQUITY_SESSION_STATE_STRATEGY_NAME` to the `alpaca_bot.storage` import block:
-```python
-from alpaca_bot.storage import (
-    AuditEvent,
-    AuditEventStore,
-    DailySessionState,
-    DailySessionStateStore,
-    EQUITY_SESSION_STATE_STRATEGY_NAME,
-    GLOBAL_SESSION_STATE_STRATEGY_NAME,
-    OrderRecord,
-    OrderStore,
-    PositionRecord,
-    PositionStore,
-    StrategyFlag,
-    StrategyFlagStore,
-    TradingStatus,
-    TradingStatusStore,
-)
-```
+The `from alpaca_bot.storage import (...)` block in `service.py` does not need `EQUITY_SESSION_STATE_STRATEGY_NAME` — the `list_equity_baselines()` repo method applies that filter internally. No change needed to that import block.
 
 - [ ] **Step 4: Add `EquityChartPoint`, `EquityChartData`, and `load_equity_chart_data()` to `service.py`**
 
@@ -595,7 +577,9 @@ git commit -m "feat: add load_equity_chart_data service function and EquityChart
 
 - [ ] **Step 1: Write the failing API test**
 
-Append to `tests/unit/test_web_app.py`:
+First, add `import pytest` to the top-level imports in `tests/unit/test_web_app.py` (it is not currently present and the new test uses `pytest.approx`). Add it after `from fastapi.testclient import TestClient`.
+
+Then append to `tests/unit/test_web_app.py`:
 
 ```python
 def test_equity_chart_api_returns_json() -> None:
@@ -621,7 +605,7 @@ def test_equity_chart_api_returns_json() -> None:
     )
 
     with TestClient(app) as client:
-        response = client.get("/api/equity-chart?range=1d&date=2026-05-05")
+        response = client.get("/api/equity-chart?range=1d&date_param=2026-05-05")
 
     assert response.status_code == 200
     assert "application/json" in response.headers["content-type"]
@@ -710,7 +694,7 @@ In `src/alpaca_bot/web/app.py`, add the following route after the `/healthz` rou
     def equity_chart_api(
         request: Request,
         range: str = "1d",
-        date: str = "",
+        date_param: str = "",
     ) -> Response:
         operator = current_operator(request, settings=app_settings)
         if auth_enabled(app_settings) and operator is None:
@@ -719,7 +703,7 @@ In `src/alpaca_bot/web/app.py`, add the following route after the `/healthz` rou
             return JSONResponse({"error": "invalid range"}, status_code=400)
         now = datetime.now(timezone.utc)
         today = now.astimezone(app_settings.market_timezone).date()
-        anchor_date, _ = _parse_date_param(date, today=today)
+        anchor_date, _ = _parse_date_param(date_param, today=today)
         try:
             connection = app.state.connect_postgres(app_settings.database_url)
             try:
@@ -859,7 +843,7 @@ In the same file, find the `{% endif %}` that closes the outer `{% if metrics %}
 
           function loadEquityChart(range) {
             setActiveEquityBtn(range);
-            fetch('/api/equity-chart?range=' + range + '&date={{ session_date }}')
+            fetch('/api/equity-chart?range=' + range + '&date_param={{ session_date }}')
               .then(function(r) { return r.json(); })
               .then(function(data) {
                 var valEl = document.getElementById('equity-value');
