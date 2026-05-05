@@ -533,24 +533,24 @@
       {% endif %}
 
       {% if metrics %}
-      <div class="panel" style="margin-top: 1rem;">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.5rem;">
+      {% if session_date %}
+      <div class="panel" id="equity-chart-panel" style="margin-bottom:1.5rem">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:0.5rem">
           <div>
-            <h2 style="margin-bottom: 0.2rem;">Portfolio Equity</h2>
-            <p id="equity-value" class="value" style="margin: 0; font-size: 1.6rem;">—</p>
-            <p id="equity-change" class="muted" style="margin: 0; font-size: 0.9rem;">—</p>
+            <div class="eyebrow">Portfolio Equity</div>
+            <div id="equity-value" style="font-size:1.6rem; font-weight:700"></div>
+            <div id="equity-change" style="font-size:0.9rem; color:var(--muted)"></div>
           </div>
-          <div style="display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;">
-            <button class="btn-neutral equity-range-btn" data-range="1d" style="padding: 0.2rem 0.6rem;">1D</button>
-            <button class="btn-neutral equity-range-btn" data-range="1m" style="padding: 0.2rem 0.6rem;">1M</button>
-            <button class="btn-neutral equity-range-btn" data-range="1y" style="padding: 0.2rem 0.6rem;">1Y</button>
-            <button class="btn-neutral equity-range-btn" data-range="all" style="padding: 0.2rem 0.6rem;">All</button>
+          <div id="range-buttons" style="display:flex; gap:0.4rem">
+            <button class="btn-neutral" id="btn-1d" onclick="loadEquityChart('1d')">1D</button>
+            <button class="btn-neutral" id="btn-1m" onclick="loadEquityChart('1m')">1M</button>
+            <button class="btn-neutral" id="btn-1y" onclick="loadEquityChart('1y')">1Y</button>
+            <button class="btn-neutral" id="btn-all" onclick="loadEquityChart('all')">All</button>
           </div>
         </div>
-        <div style="margin-top: 1rem; position: relative; height: 220px;">
-          <canvas id="equity-chart"></canvas>
-        </div>
+        <canvas id="equity-canvas" height="160"></canvas>
       </div>
+      {% endif %}
 
       <section class="section-grid" style="margin-top: 1rem;">
         <div class="panel">
@@ -712,90 +712,86 @@
           </ul>
         </div>
       </section>
+      {% if session_date %}
       <script>
-        (function () {
-          var chart = null;
-          var activeRange = "1d";
-          var sessionDate = "{{ session_date }}";
+        (function() {
+          var _equityChart = null;
 
-          function fmtPrice(v) {
-            return "$" + v.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+          function setActiveEquityBtn(range) {
+            ['1d','1m','1y','all'].forEach(function(r) {
+              var btn = document.getElementById('btn-' + r);
+              if (btn) {
+                btn.style.fontWeight = r === range ? '700' : '';
+                btn.style.borderColor = r === range ? 'var(--accent)' : '';
+                btn.style.color = r === range ? 'var(--accent)' : '';
+              }
+            });
           }
 
-          function loadChart(range) {
-            var url = "/api/equity-chart?range=" + range + "&date_param=" + sessionDate;
-            fetch(url)
-              .then(function (r) { return r.json(); })
-              .then(function (data) {
-                document.getElementById("equity-value").textContent = fmtPrice(data.current);
-                var sign = data.pct_change >= 0 ? "+" : "";
-                document.getElementById("equity-change").textContent =
-                  sign + data.pct_change.toFixed(2) + "% · " + data.label;
-                document.getElementById("equity-change").className =
-                  data.pct_change >= 0 ? "value" : "value warn";
-                document.getElementById("equity-change").style.fontSize = "0.9rem";
-                document.getElementById("equity-change").style.margin = "0";
-
-                var labels = data.points.map(function (p) { return p.t; });
-                var values = data.points.map(function (p) { return p.v; });
-
-                if (chart) {
-                  chart.data.labels = labels;
-                  chart.data.datasets[0].data = values;
-                  chart.update();
+          function loadEquityChart(range) {
+            setActiveEquityBtn(range);
+            fetch('/api/equity-chart?range=' + range + '&date_param={{ session_date }}')
+              .then(function(r) { return r.json(); })
+              .then(function(data) {
+                var valEl = document.getElementById('equity-value');
+                var chgEl = document.getElementById('equity-change');
+                if (data.current != null) {
+                  valEl.textContent = '$' + data.current.toLocaleString('en-US', {
+                    minimumFractionDigits: 2, maximumFractionDigits: 2
+                  });
                 } else {
-                  var ctx = document.getElementById("equity-chart").getContext("2d");
-                  chart = new Chart(ctx, {
-                    type: "line",
-                    data: {
-                      labels: labels,
-                      datasets: [{
-                        data: values,
-                        borderColor: data.pct_change >= 0 ? "#22c55e" : "#ef4444",
-                        backgroundColor: data.pct_change >= 0 ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)",
-                        fill: true,
-                        tension: 0.3,
-                        pointRadius: 0,
-                        borderWidth: 2,
-                      }]
+                  valEl.textContent = '—';
+                }
+                if (data.pct_change != null) {
+                  var sign = data.pct_change >= 0 ? '+' : '';
+                  chgEl.textContent = sign + data.pct_change.toFixed(2) + '%  ' + (data.label || '');
+                  chgEl.style.color = data.pct_change >= 0 ? 'var(--accent)' : 'var(--warn)';
+                } else {
+                  chgEl.textContent = data.label || '';
+                  chgEl.style.color = 'var(--muted)';
+                }
+                var labels = data.points.map(function(p) { return p.t; });
+                var values = data.points.map(function(p) { return p.v; });
+                if (_equityChart) { _equityChart.destroy(); }
+                var ctx = document.getElementById('equity-canvas').getContext('2d');
+                _equityChart = new Chart(ctx, {
+                  type: 'line',
+                  data: {
+                    labels: labels,
+                    datasets: [{
+                      data: values,
+                      fill: true,
+                      tension: 0.3,
+                      borderColor: '#1f6f78',
+                      backgroundColor: 'rgba(31, 111, 120, 0.12)',
+                      pointRadius: 0,
+                      borderWidth: 2
+                    }]
+                  },
+                  options: {
+                    responsive: true,
+                    plugins: {
+                      legend: { display: false },
+                      tooltip: { mode: 'index', intersect: false }
                     },
-                    options: {
-                      responsive: true,
-                      maintainAspectRatio: false,
-                      plugins: { legend: { display: false }, tooltip: {
-                        callbacks: {
-                          label: function (ctx) { return fmtPrice(ctx.parsed.y); }
-                        }
-                      }},
-                      scales: {
-                        x: { display: false },
-                        y: {
-                          ticks: {
-                            callback: function (v) { return "$" + v.toLocaleString("en-US"); }
-                          }
-                        }
+                    scales: {
+                      x: { display: false },
+                      y: {
+                        display: true,
+                        grid: { color: 'rgba(216, 210, 197, 0.5)' },
+                        ticks: { color: 'var(--muted)', font: { size: 11 } }
                       }
                     }
-                  });
-                }
-
-                document.querySelectorAll(".equity-range-btn").forEach(function (btn) {
-                  btn.style.fontWeight = btn.dataset.range === range ? "bold" : "normal";
+                  }
                 });
-                activeRange = range;
               })
-              .catch(function () {
-                document.getElementById("equity-value").textContent = "unavailable";
-              });
+              .catch(function() {});
           }
 
-          document.querySelectorAll(".equity-range-btn").forEach(function (btn) {
-            btn.addEventListener("click", function () { loadChart(btn.dataset.range); });
-          });
-
-          loadChart(activeRange);
+          loadEquityChart('1d');
         })();
       </script>
+      {% endif %}
       {% endif %}
     </main>
   </body>
