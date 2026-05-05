@@ -272,6 +272,16 @@ def _execute_update_stop(
                 timestamp=intent_timestamp,
                 strategy_name=strategy_name,
             )
+            _cancel_partial_fill_entry(
+                symbol=symbol,
+                strategy_name=strategy_name,
+                runtime=runtime,
+                broker=broker,
+                settings=settings,
+                now=now,
+                lock_ctx=lock_ctx,
+                context="update_stop",
+            )
             broker_order = broker.submit_stop_order(
                 symbol=symbol,
                 quantity=position.quantity,
@@ -640,6 +650,7 @@ def _execute_exit(
         settings=settings,
         now=now,
         lock_ctx=lock_ctx,
+        context="exit",
     )
     # Submit exit outside the lock.
     try:
@@ -898,6 +909,7 @@ def _cancel_partial_fill_entry(
     settings: "Settings",
     now: datetime,
     lock_ctx: Any,
+    context: str,
 ) -> None:
     with lock_ctx:
         all_partial = runtime.order_store.list_by_status(
@@ -942,7 +954,7 @@ def _cancel_partial_fill_entry(
                                     "entry_client_order_id": entry.client_order_id,
                                     "entry_broker_order_id": entry.broker_order_id,
                                     "error": str(exc),
-                                    "context": "exit",
+                                    "context": context,
                                 },
                                 created_at=now,
                             ),
@@ -977,7 +989,7 @@ def _cancel_partial_fill_entry(
                         payload={
                             "entry_client_order_id": entry.client_order_id,
                             "entry_broker_order_id": entry.broker_order_id,
-                            "context": "exit",
+                            "context": context,
                         },
                         created_at=now,
                     ),
