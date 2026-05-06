@@ -67,7 +67,7 @@ class OpenPosition:
     symbol: str
     entry_timestamp: datetime
     entry_price: float
-    quantity: int
+    quantity: float
     entry_level: float
     initial_stop_price: float
     stop_price: float
