@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timezone
@@ -219,6 +220,7 @@ def _execute_update_stop(
         active_stop = _latest_active_stop_order(runtime, settings, symbol, strategy_name=strategy_name)
 
     # Broker calls happen outside the lock to avoid blocking the stream thread.
+    _path_c_client_order_id: str | None = None
     try:
         if active_stop is not None and active_stop.broker_order_id:
             broker_order = broker.replace_order(
@@ -273,6 +275,7 @@ def _execute_update_stop(
                 timestamp=intent_timestamp,
                 strategy_name=strategy_name,
             )
+            _path_c_client_order_id = client_order_id
             _cancel_partial_fill_entry(
                 symbol=symbol,
                 strategy_name=strategy_name,
@@ -1041,3 +1044,21 @@ def _resolve_now(now: datetime | Callable[[], datetime] | None) -> datetime:
     if callable(now):
         return now()
     return datetime.now(timezone.utc)
+
+
+def _parse_related_orders_from_error(exc: Exception) -> list[str]:
+    """Extract blocking broker order IDs from a 40310000 'insufficient qty' error body."""
+    raw = str(exc)
+    try:
+        body = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        # SDK may wrap the body in a string like: "... {'related_orders': [...]}"
+        start = raw.find("{")
+        if start == -1:
+            return []
+        try:
+            body = json.loads(raw[start:])
+        except (json.JSONDecodeError, ValueError):
+            return []
+    related = body.get("related_orders", [])
+    return [str(oid) for oid in related if oid]
