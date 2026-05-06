@@ -87,13 +87,13 @@ class BrokerOrder:
     symbol: str
     side: str
     status: str
-    quantity: int
+    quantity: float
 
 
 @dataclass(frozen=True)
 class BrokerPosition:
     symbol: str
-    quantity: int
+    quantity: float
     entry_price: float | None = None
     market_value: float | None = None
 
@@ -121,6 +121,8 @@ class TradingClientProtocol(Protocol):
     def replace_order_by_id(self, order_id: str, order_data: Any) -> Any: ...
 
     def cancel_order_by_id(self, order_id: str) -> None: ...
+
+    def get_asset(self, symbol: str) -> Any: ...
 
 
 class HistoricalDataClientProtocol(Protocol):
@@ -237,7 +239,7 @@ class AlpacaExecutionAdapter:
                 symbol=str(order.symbol).upper(),
                 side=order.side.value if hasattr(order.side, "value") else str(order.side),
                 status=order.status.value if hasattr(order.status, "value") else str(order.status),
-                quantity=int(float(order.qty)),
+                quantity=float(order.qty),
             )
             for order in raw_orders
         ]
@@ -257,7 +259,7 @@ class AlpacaExecutionAdapter:
                 symbol=str(order.symbol).upper(),
                 side=order.side.value if hasattr(order.side, "value") else str(order.side),
                 status=order.status.value if hasattr(order.status, "value") else str(order.status),
-                quantity=int(float(order.qty)),
+                quantity=float(order.qty),
             )
             for order in raw_orders
         ]
@@ -267,7 +269,7 @@ class AlpacaExecutionAdapter:
         return [
             BrokerPosition(
                 symbol=str(position.symbol).upper(),
-                quantity=int(float(position.qty)),
+                quantity=float(position.qty),
                 entry_price=float(position.avg_entry_price)
                 if getattr(position, "avg_entry_price", None) is not None
                 else None,
@@ -290,8 +292,8 @@ class AlpacaExecutionAdapter:
         self,
         *,
         symbol: str,
-        quantity: int | None = None,
-        qty: int | None = None,
+        quantity: float | None = None,
+        qty: float | None = None,
         stop_price: float,
         limit_price: float,
         client_order_id: str,
@@ -313,8 +315,8 @@ class AlpacaExecutionAdapter:
         self,
         *,
         symbol: str,
-        quantity: int | None = None,
-        qty: int | None = None,
+        quantity: float | None = None,
+        qty: float | None = None,
         stop_price: float,
         client_order_id: str,
     ) -> BrokerOrder:
@@ -334,8 +336,8 @@ class AlpacaExecutionAdapter:
         self,
         *,
         symbol: str,
-        quantity: int | None = None,
-        qty: int | None = None,
+        quantity: float | None = None,
+        qty: float | None = None,
         client_order_id: str,
     ) -> BrokerOrder:
         resolved_qty = _resolve_order_quantity(quantity=quantity, qty=qty)
@@ -353,8 +355,8 @@ class AlpacaExecutionAdapter:
         self,
         *,
         symbol: str,
-        quantity: int | None = None,
-        qty: int | None = None,
+        quantity: float | None = None,
+        qty: float | None = None,
         limit_price: float,
         client_order_id: str,
     ) -> BrokerOrder:
@@ -375,8 +377,8 @@ class AlpacaExecutionAdapter:
         self,
         *,
         symbol: str,
-        quantity: int | None = None,
-        qty: int | None = None,
+        quantity: float | None = None,
+        qty: float | None = None,
         limit_price: float,
         client_order_id: str,
     ) -> BrokerOrder:
@@ -464,6 +466,18 @@ class AlpacaExecutionAdapter:
 
     def list_open_positions(self) -> list[BrokerPosition]:
         return self.list_positions()
+
+    def get_fractionable_symbols(self, symbols: Sequence[str]) -> frozenset[str]:
+        """Return the subset of symbols that Alpaca supports for fractional trading."""
+        result = set()
+        for symbol in symbols:
+            try:
+                asset = self._trading.get_asset(symbol)
+                if asset.fractionable:
+                    result.add(symbol)
+            except Exception:
+                pass  # non-fractionable or asset not found; default to integer sizing
+        return frozenset(result)
 
     @staticmethod
     def _build_trading_client(settings: Settings) -> TradingClientProtocol:
@@ -850,26 +864,27 @@ def _parse_broker_order(raw: Any) -> BrokerOrder:
         symbol=str(getattr(raw, "symbol")).upper(),
         side=raw_side.value if hasattr(raw_side, "value") else str(raw_side),
         status=raw_status.value if hasattr(raw_status, "value") else str(raw_status),
-        quantity=int(float(getattr(raw, "qty"))),
+        quantity=float(getattr(raw, "qty", 0)),
     )
 
 
 def _stop_limit_order_request(
     *,
     symbol: str,
-    quantity: int,
+    quantity: float,
     stop_price: float,
     limit_price: float,
     client_order_id: str,
     side: str,
 ) -> Any:
+    qty = round(quantity, 4)
     try:
         from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
         from alpaca.trading.requests import StopLimitOrderRequest
     except ModuleNotFoundError:
         return {
             "symbol": symbol,
-            "qty": quantity,
+            "qty": qty,
             "side": side,
             "type": "stop_limit",
             "time_in_force": "day",
@@ -880,7 +895,7 @@ def _stop_limit_order_request(
 
     return StopLimitOrderRequest(
         symbol=symbol,
-        qty=quantity,
+        qty=qty,
         side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
         type=OrderType.STOP_LIMIT,
         time_in_force=TimeInForce.DAY,
@@ -893,18 +908,19 @@ def _stop_limit_order_request(
 def _stop_order_request(
     *,
     symbol: str,
-    quantity: int,
+    quantity: float,
     stop_price: float,
     client_order_id: str,
     side: str,
 ) -> Any:
+    qty = round(quantity, 4)
     try:
         from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
         from alpaca.trading.requests import StopOrderRequest
     except ModuleNotFoundError:
         return {
             "symbol": symbol,
-            "qty": quantity,
+            "qty": qty,
             "side": side,
             "type": "stop",
             "time_in_force": "day",
@@ -914,7 +930,7 @@ def _stop_order_request(
 
     return StopOrderRequest(
         symbol=symbol,
-        qty=quantity,
+        qty=qty,
         side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
         type=OrderType.STOP,
         time_in_force=TimeInForce.DAY,
@@ -959,17 +975,18 @@ def _replace_order_request(
 def _market_order_request(
     *,
     symbol: str,
-    quantity: int,
+    quantity: float,
     client_order_id: str,
     side: str,
 ) -> Any:
+    qty = round(quantity, 4)
     try:
         from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
         from alpaca.trading.requests import MarketOrderRequest
     except ModuleNotFoundError:
         return {
             "symbol": symbol,
-            "qty": quantity,
+            "qty": qty,
             "side": side,
             "type": "market",
             "time_in_force": "day",
@@ -978,7 +995,7 @@ def _market_order_request(
 
     return MarketOrderRequest(
         symbol=symbol,
-        qty=quantity,
+        qty=qty,
         side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
         type=OrderType.MARKET,
         time_in_force=TimeInForce.DAY,
@@ -988,18 +1005,19 @@ def _market_order_request(
 
 def _build_extended_hours_limit_order(
     symbol: str,
-    quantity: int,
+    quantity: float,
     limit_price: float,
     client_order_id: str,
     side: str,
 ) -> Any:
+    qty = round(quantity, 4)
     try:
         from alpaca.trading.enums import OrderSide, OrderType, TimeInForce
         from alpaca.trading.requests import LimitOrderRequest
     except ModuleNotFoundError:
         return {
             "symbol": symbol,
-            "qty": quantity,
+            "qty": qty,
             "side": side,
             "type": "limit",
             "time_in_force": "day",
@@ -1009,7 +1027,7 @@ def _build_extended_hours_limit_order(
         }
     return LimitOrderRequest(
         symbol=symbol,
-        qty=quantity,
+        qty=qty,
         side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
         type=OrderType.LIMIT,
         time_in_force=TimeInForce.DAY,
@@ -1028,7 +1046,7 @@ def extended_hours_limit_price(side: str, ref_price: float, offset_pct: float) -
     raise ValueError(f"extended_hours_limit_price: side must be 'buy' or 'sell', got {side!r}")
 
 
-def _resolve_order_quantity(*, quantity: int | None, qty: int | None) -> int:
+def _resolve_order_quantity(*, quantity: float | None, qty: float | None) -> float:
     resolved = quantity if quantity is not None else qty
     if resolved is None:
         raise ValueError("quantity/qty is required")
