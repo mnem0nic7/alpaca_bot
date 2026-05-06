@@ -222,3 +222,36 @@ def test_afterhours_entry_not_blocked_by_stale_bars():
         "AFTER_HOURS entries must not be blocked by the 30-minute bar-age check; "
         "regular session bars are the correct and only available signal basis"
     )
+
+
+def test_cap_up_stop_not_emitted_in_after_hours():
+    """Cap-up UPDATE_STOP must not be emitted during extended hours."""
+    # entry=100, max_stop_pct=5% → cap_stop=95.0; position stop=88.0 is below cap.
+    # In regular session this would emit UPDATE_STOP; in AFTER_HOURS it must not.
+    settings = _settings(MAX_STOP_PCT="0.05")
+    now = datetime(2026, 4, 28, 21, 0, tzinfo=timezone.utc)  # 5pm ET
+    position = OpenPosition(
+        symbol="AAPL",
+        quantity=10,
+        entry_price=100.0,
+        stop_price=88.0,
+        initial_stop_price=88.0,
+        entry_level=88.0,
+        entry_timestamp=datetime(2026, 4, 28, 14, 0, tzinfo=timezone.utc),
+    )
+    bar = _bar("AAPL", close=100.0, ts=now)
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+        session_type=SessionType.AFTER_HOURS,
+    )
+    update_stops = [i for i in result.intents if i.intent_type is CycleIntentType.UPDATE_STOP]
+    assert update_stops == [], "cap-up UPDATE_STOP must be suppressed during extended hours"
