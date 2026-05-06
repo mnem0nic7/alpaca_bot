@@ -131,3 +131,15 @@ def _fmt_pnl(v: float) -> str:
     if v < 0:
         return f"-${abs(v):.2f}"
     return f"${v:.2f}"
+
+
+def trailing_consecutive_losses(*, order_store: object, settings: Settings, session_date: date) -> int:
+    """Count consecutive losses trailing into today (stub for Task 2)."""
+    # Stub implementation — will be implemented in Task 2
+    return 0
+
+
+def build_intraday_digest(*, settings: Settings, order_store: object) -> tuple[str, str]:
+    """Build (subject, body) for intra-day trade review (stub for Task 3)."""
+    # Stub implementation — will be implemented in Task 3
+    return "Intra-day Digest", ""

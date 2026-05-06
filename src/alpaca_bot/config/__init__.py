@@ -147,6 +147,9 @@ class Settings:
     fractionable_symbols: frozenset[str] = field(default_factory=frozenset)
     # From env — configurable threshold; 0.0 = disabled (default)
     min_position_notional: float = 0.0
+    # Intra-day review: 0 = disabled (default)
+    intraday_digest_interval_cycles: int = 0
+    intraday_consecutive_loss_gate: int = 0
 
     def __post_init__(self) -> None:
         self.validate()
@@ -318,6 +321,12 @@ class Settings:
             ),
             profit_trail_pct=float(values.get("PROFIT_TRAIL_PCT", "0.95")),
             min_position_notional=float(values.get("MIN_POSITION_NOTIONAL", "0.0")),
+            intraday_digest_interval_cycles=int(
+                values.get("INTRADAY_DIGEST_INTERVAL_CYCLES", "0")
+            ),
+            intraday_consecutive_loss_gate=int(
+                values.get("INTRADAY_CONSECUTIVE_LOSS_GATE", "0")
+            ),
         )
         return settings
 
@@ -500,6 +509,10 @@ class Settings:
             raise ValueError(
                 f"MIN_POSITION_NOTIONAL must be >= 0, got {self.min_position_notional}"
             )
+        if self.intraday_digest_interval_cycles < 0:
+            raise ValueError("INTRADAY_DIGEST_INTERVAL_CYCLES must be >= 0")
+        if self.intraday_consecutive_loss_gate < 0:
+            raise ValueError("INTRADAY_CONSECUTIVE_LOSS_GATE must be >= 0")
 
 
 def _validate_positive_fraction(name: str, value: float) -> None:
