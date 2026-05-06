@@ -159,6 +159,13 @@ class TestTrailingConsecutiveLosses:
         # After sorting by exit_time: win (14:01), loss (14:02) → most recent is loss → streak=1
         assert trailing_consecutive_losses(trades) == 1
 
+    def test_breakeven_trade_counts_as_loss(self):
+        """exit_fill == entry_fill is not a win — counts toward loss streak."""
+        trades = [
+            _trade(exit_fill=150.0, entry_fill=150.0, exit_time="2026-05-06T14:01:00+00:00"),
+        ]
+        assert trailing_consecutive_losses(trades) == 1
+
 
 # ── build_intraday_digest tests ───────────────────────────────────────────────
 
@@ -237,3 +244,21 @@ class TestBuildIntradayDigest:
     def test_no_open_positions(self):
         _, body = self._call(open_positions=[])
         assert "Open positions: 0" in body
+
+    def test_loss_limit_headroom_exactly_consumed(self):
+        """When equity exactly hits the loss limit, headroom is $0.00."""
+        _, body = self._call(
+            settings=_make_settings(INTRADAY_DIGEST_INTERVAL_CYCLES="60", DAILY_LOSS_LIMIT_PCT="0.01"),
+            baseline_equity=46_100.0,
+            current_equity=45_639.0,  # exactly at limit: 46100 - 461 = 45639
+        )
+        assert "$0.00" in body
+
+    def test_loss_limit_headroom_below_zero_clamped_to_zero(self):
+        """When equity falls past the loss limit, headroom stays at $0.00 (not negative)."""
+        _, body = self._call(
+            settings=_make_settings(INTRADAY_DIGEST_INTERVAL_CYCLES="60", DAILY_LOSS_LIMIT_PCT="0.01"),
+            baseline_equity=46_100.0,
+            current_equity=45_000.0,  # 1100 loss, limit is 461 → well past limit
+        )
+        assert "$0.00" in body

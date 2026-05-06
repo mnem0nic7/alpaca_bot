@@ -184,11 +184,11 @@ def build_intraday_digest(
     if scored:
         win_rate = wins / len(scored)
         lines.append(
-            f"P&L: {_fmt_pnl(total_pnl)}  |  Trades: {len(trades)}  |  "
+            f"P&L: {_fmt_pnl(total_pnl)}  |  Trades: {len(scored)}  |  "
             f"Win rate: {win_rate:.1%}  ({wins}W / {losses}L)"
         )
     else:
-        lines.append(f"P&L: {_fmt_pnl(0.0)}  |  Trades: {len(trades)}")
+        lines.append(f"P&L: {_fmt_pnl(0.0)}  |  Trades: {len(scored)}")
 
     loss_limit = settings.daily_loss_limit_pct * baseline_equity
     session_pnl = current_equity - baseline_equity
