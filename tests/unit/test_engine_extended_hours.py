@@ -298,3 +298,85 @@ def test_afterhours_spread_filter_uses_extended_threshold():
         "0.5% spread should pass the 1% extended-hours threshold; "
         "regular-session 0.2% threshold must not apply during extended hours"
     )
+
+
+def test_afterhours_signal_uses_last_in_window_bar():
+    """During extended hours, signal_evaluator must receive the last bar within ENTRY_WINDOW_END."""
+    settings = _settings()  # ENTRY_WINDOW_END=15:30
+    now = datetime(2026, 4, 28, 22, 0, tzinfo=timezone.utc)  # 6pm ET
+
+    # Two bars: 3:30pm ET (within ENTRY_WINDOW_END=15:30) and 3:45pm ET (past it)
+    bar_in_window = _bar("AAPL", close=105.0, ts=datetime(2026, 4, 28, 19, 30, tzinfo=timezone.utc))
+    bar_past_window = _bar("AAPL", close=106.0, ts=datetime(2026, 4, 28, 19, 45, tzinfo=timezone.utc))
+
+    seen_signal_ts: list = []
+
+    def recording_evaluator(**kwargs) -> EntrySignal | None:
+        seen_signal_ts.append(kwargs["intraday_bars"][kwargs["signal_index"]].timestamp)
+        return EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=105.1,
+            relative_volume=2.0,
+            stop_price=103.0,
+            limit_price=105.2,
+            initial_stop_price=103.0,
+        )
+
+    evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar_in_window, bar_past_window]},
+        daily_bars_by_symbol={"AAPL": [bar_in_window]},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        session_type=SessionType.AFTER_HOURS,
+        signal_evaluator=recording_evaluator,
+    )
+    assert seen_signal_ts, "signal_evaluator must be called during AFTER_HOURS"
+    assert seen_signal_ts[0] == bar_in_window.timestamp, (
+        "signal_index must point to the last bar within ENTRY_WINDOW_END, not bars[-1]"
+    )
+
+
+def test_pre_market_signal_index_uses_last_bar():
+    """During PRE_MARKET, signal_index must be len(bars)-1 — no walk-back to REGULAR window."""
+    settings = _settings()  # pre_market_entry_window_start=04:00, end=09:20
+    # 8:00am ET = 12:00 UTC = pre-market, within PRE_MARKET entry window
+    now = datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc)
+    bar = _bar("AAPL", close=105.0, ts=datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc))  # 8am ET
+
+    seen_signal_index: list = []
+
+    def recording_evaluator(**kwargs) -> EntrySignal | None:
+        seen_signal_index.append(kwargs["signal_index"])
+        return EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=105.1,
+            relative_volume=2.0,
+            stop_price=103.0,
+            limit_price=105.2,
+            initial_stop_price=103.0,
+        )
+
+    evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": [bar]},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        session_type=SessionType.PRE_MARKET,
+        signal_evaluator=recording_evaluator,
+    )
+    assert seen_signal_index, "signal_evaluator must be called during PRE_MARKET"
+    assert seen_signal_index[0] == 0, (
+        "PRE_MARKET must use signal_index=len(bars)-1 (no REGULAR walk-back)"
+    )

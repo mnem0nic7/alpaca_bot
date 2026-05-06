@@ -18,7 +18,11 @@ from alpaca_bot.strategy.breakout import (
     session_day,
 )
 from alpaca_bot.strategy.indicators import calculate_vwap
-from alpaca_bot.strategy.session import SessionType, is_flatten_time as _session_flatten_time
+from alpaca_bot.strategy.session import (
+    SessionType,
+    is_flatten_time as _session_flatten_time,
+    is_entry_window as _is_entry_window,
+)
 
 if TYPE_CHECKING:
     from alpaca_bot.storage import DailySessionState
@@ -362,10 +366,24 @@ def evaluate_cycle(
                         _spread_blocked.append(symbol)
                         continue
 
+                if session_type is SessionType.AFTER_HOURS:
+                    signal_index = next(
+                        (
+                            i
+                            for i in range(len(bars) - 1, -1, -1)
+                            if _is_entry_window(bars[i].timestamp, settings, SessionType.REGULAR)
+                        ),
+                        -1,
+                    )
+                    if signal_index < 0:
+                        continue
+                else:
+                    signal_index = len(bars) - 1
+
                 signal = signal_evaluator(
                     symbol=symbol,
                     intraday_bars=bars,
-                    signal_index=len(bars) - 1,
+                    signal_index=signal_index,
                     daily_bars=daily_bars,
                     settings=settings,
                 )
