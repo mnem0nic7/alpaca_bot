@@ -10,19 +10,26 @@ def calculate_position_size(
     equity: float,
     entry_price: float,
     stop_price: float,
-    settings: Settings,
-) -> int:
+    settings,
+    fractionable: bool = False,
+) -> float:
     if stop_price >= entry_price:
         raise ValueError("stop_price must be below entry_price for a long position")
 
     risk_per_share = entry_price - stop_price
+    if risk_per_share <= 0:
+        return 0.0
     risk_budget = equity * settings.risk_per_trade_pct
-    quantity = math.floor(risk_budget / risk_per_share)
-    if quantity < 1:
-        return 0
-
+    quantity = risk_budget / risk_per_share
+    if not fractionable:
+        quantity = math.floor(quantity)
+    if not fractionable and quantity < 1:
+        return 0.0
+    if quantity <= 0.0:
+        return 0.0
     max_notional = equity * settings.max_position_pct
     if quantity * entry_price > max_notional:
-        quantity = math.floor(max_notional / entry_price)
-
-    return max(quantity, 0)
+        quantity = max_notional / entry_price
+        if not fractionable:
+            quantity = math.floor(quantity)
+    return max(float(quantity), 0.0)

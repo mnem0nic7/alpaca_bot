@@ -98,3 +98,69 @@ class TestCalculatePositionSize:
             settings=settings,
         )
         assert qty == 0
+
+
+def test_fractional_sizing_returns_float():
+    settings = SimpleNamespace(risk_per_trade_pct=0.0025, max_position_pct=0.015)
+    qty = calculate_position_size(
+        equity=99_500.0,
+        entry_price=3.00,
+        stop_price=2.70,
+        settings=settings,
+        fractionable=True,
+    )
+    assert isinstance(qty, float)
+    # risk_budget = $248.75, risk_per_share = $0.30 → raw qty = 829.17
+    # max_notional = $1492.50 → capped at $1492.50 / $3.00 = 497.5
+    assert qty == pytest.approx(497.5, rel=1e-4)
+
+
+def test_fractional_sizing_no_floor_below_one():
+    """For fractionable symbols, qty can be between 0 and 1."""
+    settings = SimpleNamespace(risk_per_trade_pct=0.0025, max_position_pct=0.0001)
+    qty = calculate_position_size(
+        equity=99_500.0,
+        entry_price=500.00,
+        stop_price=495.00,
+        settings=settings,
+        fractionable=True,
+    )
+    assert isinstance(qty, float)
+    assert 0.0 < qty < 1.0
+
+
+def test_non_fractional_sizing_floors_to_integer_value():
+    settings = SimpleNamespace(risk_per_trade_pct=0.0025, max_position_pct=0.015)
+    qty = calculate_position_size(
+        equity=99_500.0,
+        entry_price=3.00,
+        stop_price=2.70,
+        settings=settings,
+        fractionable=False,
+    )
+    assert qty == float(int(qty))  # whole number value stored as float
+
+
+def test_non_fractional_sizing_returns_zero_for_sub_one():
+    """Non-fractionable symbol with < 1 share budget returns 0."""
+    settings = SimpleNamespace(risk_per_trade_pct=0.0025, max_position_pct=0.0001)
+    qty = calculate_position_size(
+        equity=99_500.0,
+        entry_price=500.00,
+        stop_price=495.00,
+        settings=settings,
+        fractionable=False,
+    )
+    assert qty == 0.0
+
+
+def test_fractionable_returns_zero_for_negative_risk():
+    settings = SimpleNamespace(risk_per_trade_pct=0.0025, max_position_pct=0.015)
+    with pytest.raises(ValueError, match="stop_price must be below entry_price"):
+        calculate_position_size(
+            equity=99_500.0,
+            entry_price=3.00,
+            stop_price=3.00,  # zero risk (equal prices)
+            settings=settings,
+            fractionable=True,
+        )
