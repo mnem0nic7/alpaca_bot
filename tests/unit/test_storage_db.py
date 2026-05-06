@@ -598,6 +598,63 @@ class TestListTradePnlByStrategy:
         assert result[0]["pnl"] < 0.0  # losing trade
 
 
+# ── test_win_loss_counts_by_strategy ─────────────────────────────────────────
+
+class TestWinLossCountsByStrategy:
+    """Unit tests for OrderStore.win_loss_counts_by_strategy()."""
+
+    def _make_store(self, rows: list[tuple]) -> "OrderStore":
+        return OrderStore(_make_fake_connection(rows))
+
+    def test_returns_empty_when_no_rows(self) -> None:
+        store = self._make_store([])
+        result = store.win_loss_counts_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert result == {}
+
+    def test_single_win(self) -> None:
+        # row: (strategy_name, wins, losses) — as returned by the aggregation query
+        rows = [("breakout", 1, 0)]
+        store = self._make_store(rows)
+        result = store.win_loss_counts_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert result == {"breakout": (1, 0)}
+
+    def test_single_loss(self) -> None:
+        rows = [("breakout", 0, 1)]
+        store = self._make_store(rows)
+        result = store.win_loss_counts_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert result == {"breakout": (0, 1)}
+
+    def test_multiple_strategies(self) -> None:
+        rows = [
+            ("breakout", 5, 2),
+            ("momentum", 1, 3),
+        ]
+        store = self._make_store(rows)
+        result = store.win_loss_counts_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert result == {"breakout": (5, 2), "momentum": (1, 3)}
+
+    def test_strategy_with_only_losses(self) -> None:
+        rows = [("orb", 0, 4)]
+        store = self._make_store(rows)
+        result = store.win_loss_counts_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert result["orb"] == (0, 4)
+
+
 # ── test_StrategyWeightStore ──────────────────────────────────────────────────
 
 class TestStrategyWeightStore:
