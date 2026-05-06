@@ -319,6 +319,8 @@
       <div class="panel" style="margin-bottom: 1rem;">
         <h2>Strategies</h2>
         {% for name, flag in snapshot.strategy_flags %}
+          {%- set wl = snapshot.strategy_win_loss.get(name) %}
+          {%- set cap = snapshot.strategy_capital_pct.get(name, 0.0) %}
           {% set entries_off = snapshot.strategy_entries_disabled.get(name, false) %}
           <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-bottom: 0.7rem;">
             <span class="mono" style="min-width: 8rem;">{{ name }}</span>
@@ -341,6 +343,12 @@
                 {{ "Enable Entries" if entries_off else "Disable Entries" }}
               </button>
             </form>
+            <span class="muted" style="min-width: 7rem; white-space: nowrap;">
+              {% if wl %}{{ wl[0] }}W / {{ wl[1] }}L{% else %}—{% endif %}
+            </span>
+            <span class="muted" style="min-width: 4rem; text-align: right;">
+              {% if cap > 0 %}{{ "%.1f" | format(cap) }}%{% else %}0%{% endif %}
+            </span>
           </div>
         {% endfor %}
       </div>

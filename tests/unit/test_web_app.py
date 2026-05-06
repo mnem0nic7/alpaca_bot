@@ -2089,3 +2089,128 @@ def test_dashboard_no_totals_row_without_positions() -> None:
     assert response.status_code == 200
     assert "TOTAL" not in response.text
     assert "<tfoot>" not in response.text
+
+
+def test_dashboard_strategy_win_loss_rendered() -> None:
+    """Strategy row shows W/L counts from snapshot.strategy_win_loss."""
+    settings = make_settings()
+    connection = FakeConnection(responses=[])
+
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([connection]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        daily_session_state_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        position_store_factory=lambda _connection: SimpleNamespace(
+            list_all=lambda **_kwargs: []
+        ),
+        order_store_factory=lambda _connection: SimpleNamespace(
+            list_by_status=lambda **_kwargs: [],
+            list_recent=lambda **_kwargs: [],
+            list_closed_trades=lambda **_kwargs: [],
+            win_loss_counts_by_strategy=lambda **_kwargs: {"breakout": (5, 2)},
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: None,
+            list_by_event_types=lambda **_kwargs: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "5W / 2L" in response.text
+
+
+def test_dashboard_strategy_no_history_shows_dash() -> None:
+    """Strategy row shows — when win_loss is empty (no closed trades)."""
+    settings = make_settings()
+    connection = FakeConnection(responses=[])
+
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([connection]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        daily_session_state_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        position_store_factory=lambda _connection: SimpleNamespace(
+            list_all=lambda **_kwargs: []
+        ),
+        order_store_factory=lambda _connection: SimpleNamespace(
+            list_by_status=lambda **_kwargs: [],
+            list_recent=lambda **_kwargs: [],
+            list_closed_trades=lambda **_kwargs: [],
+            win_loss_counts_by_strategy=lambda **_kwargs: {},
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: None,
+            list_by_event_types=lambda **_kwargs: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "—" in response.text
+
+
+def test_dashboard_strategy_capital_pct_rendered() -> None:
+    """Strategy row shows capital % when positions exist."""
+    now = datetime.now(timezone.utc)
+    settings = make_settings()
+    connection = FakeConnection(responses=[])
+
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([connection]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        daily_session_state_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        position_store_factory=lambda _connection: SimpleNamespace(
+            list_all=lambda **_kwargs: [
+                PositionRecord(
+                    symbol="AAPL",
+                    trading_mode=TradingMode.PAPER,
+                    strategy_version=settings.strategy_version,
+                    quantity=10,
+                    entry_price=100.0,
+                    stop_price=95.0,
+                    initial_stop_price=95.0,
+                    opened_at=now,
+                    strategy_name="breakout",
+                )
+            ]
+        ),
+        order_store_factory=lambda _connection: SimpleNamespace(
+            list_by_status=lambda **_kwargs: [],
+            list_recent=lambda **_kwargs: [],
+            list_closed_trades=lambda **_kwargs: [],
+            win_loss_counts_by_strategy=lambda **_kwargs: {},
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: None,
+            list_by_event_types=lambda **_kwargs: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    # breakout is the only strategy with a position → 100.0%
+    assert "100.0%" in response.text
