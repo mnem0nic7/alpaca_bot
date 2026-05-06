@@ -140,6 +140,8 @@ class Settings:
     option_delta_target: float = 0.50
     enable_options_trading: bool = False
     max_stop_pct: float = 0.05
+    enable_profit_trail: bool = False
+    profit_trail_pct: float = 0.95
 
     def __post_init__(self) -> None:
         self.validate()
@@ -303,6 +305,10 @@ class Settings:
                 "ENABLE_OPTIONS_TRADING", values.get("ENABLE_OPTIONS_TRADING", "false")
             ),
             max_stop_pct=float(values.get("MAX_STOP_PCT", "0.05")),
+            enable_profit_trail=_parse_bool(
+                "ENABLE_PROFIT_TRAIL", values.get("ENABLE_PROFIT_TRAIL", "false")
+            ),
+            profit_trail_pct=float(values.get("PROFIT_TRAIL_PCT", "0.95")),
         )
         return settings
 
@@ -471,6 +477,11 @@ class Settings:
                 raise ValueError(
                     "EXTENDED_HOURS_FLATTEN_TIME must be after AFTER_HOURS_ENTRY_WINDOW_END"
                 )
+        if not 0 < self.profit_trail_pct < 1.0:
+            raise ValueError(
+                "PROFIT_TRAIL_PCT must be between 0 (exclusive) and 1.0 (exclusive); "
+                f"got {self.profit_trail_pct}"
+            )
 
 
 def _validate_positive_fraction(name: str, value: float) -> None:
