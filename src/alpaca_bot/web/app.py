@@ -79,6 +79,7 @@ def create_app(
     strategy_weight_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     notifier: Notifier | None = None,
     market_data_adapter: object | None = None,
+    portfolio_reader: object | None = None,
     equity_chart_data_factory: Callable[..., EquityChartData] | None = None,
 ) -> FastAPI:
     app_settings = settings or Settings.from_env()
@@ -128,6 +129,13 @@ def create_app(
         except Exception:
             market_data_adapter = None
     app.state.market_data_adapter = market_data_adapter
+    if portfolio_reader is None:
+        try:
+            from alpaca_bot.execution.alpaca import AlpacaPortfolioReader
+            portfolio_reader = AlpacaPortfolioReader.from_settings(app_settings)
+        except Exception:
+            portfolio_reader = None
+    app.state.portfolio_reader = portfolio_reader
     app.state.equity_chart_data_factory = equity_chart_data_factory or load_equity_chart_data
 
     @app.get("/", response_class=HTMLResponse)
@@ -867,16 +875,40 @@ def _isoformat(d: date | None) -> str | None:
     return d.isoformat() if d is not None else None
 
 
-def _fetch_latest_prices(*, adapter: object | None, positions: list) -> dict[str, float]:
-    if adapter is None or not positions:
+def _fetch_latest_prices(
+    *,
+    portfolio_reader: object | None,
+    adapter: object | None,
+    positions: list,
+) -> dict[str, float]:
+    if not positions:
         return {}
     symbols = list({p.symbol for p in positions})
-    try:
-        return adapter.get_latest_prices(symbols)  # type: ignore[union-attr]
-    except Exception:
-        import logging
-        logging.getLogger(__name__).warning("Failed to fetch latest prices", exc_info=True)
-        return {}
+    result: dict[str, float] = {}
+    remaining = list(symbols)
+
+    if portfolio_reader is not None:
+        try:
+            reader_prices = portfolio_reader.get_current_prices(symbols)  # type: ignore[union-attr]
+            result.update(reader_prices)
+            remaining = [s for s in symbols if s not in result]
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to fetch prices from portfolio reader", exc_info=True
+            )
+
+    if remaining and adapter is not None:
+        try:
+            adapter_prices = adapter.get_latest_prices(remaining)  # type: ignore[union-attr]
+            result.update(adapter_prices)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to fetch latest prices from market data adapter", exc_info=True
+            )
+
+    return result
 
 
 def _load_dashboard_data(app: FastAPI) -> tuple:
@@ -891,6 +923,7 @@ def _load_dashboard_data(app: FastAPI) -> tuple:
             strategy_version=settings.strategy_version,
         )
         latest_prices = _fetch_latest_prices(
+            portfolio_reader=app.state.portfolio_reader,
             adapter=app.state.market_data_adapter,
             positions=pre_positions,
         )

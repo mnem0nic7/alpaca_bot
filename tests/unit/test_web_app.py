@@ -1838,6 +1838,170 @@ def test_dashboard_skips_price_fetch_when_no_adapter() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _fetch_latest_prices — portfolio reader integration
+# ---------------------------------------------------------------------------
+
+
+class _FakePortfolioReader:
+    def __init__(self, prices: dict[str, float]) -> None:
+        self._prices = prices
+        self.calls: list[list[str]] = []
+
+    def get_current_prices(self, symbols: list[str]) -> dict[str, float]:
+        self.calls.append(list(symbols))
+        return {s: self._prices[s] for s in symbols if s in self._prices}
+
+
+def _make_app_with_position_and_reader(
+    settings,
+    portfolio_reader=None,
+    market_data_adapter=None,
+):
+    now = datetime(2026, 4, 28, 15, 0, tzinfo=timezone.utc)
+    return create_app(
+        settings=settings,
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(
+            load=lambda **_: None,
+        ),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(
+            load=lambda **_: None,
+            list_by_session=lambda **_: [],
+        ),
+        position_store_factory=lambda _c: SimpleNamespace(
+            list_all=lambda **_: [
+                PositionRecord(
+                    symbol="AAPL",
+                    trading_mode=TradingMode.PAPER,
+                    strategy_version=settings.strategy_version,
+                    quantity=10,
+                    entry_price=170.00,
+                    stop_price=168.00,
+                    initial_stop_price=168.00,
+                    opened_at=now,
+                    updated_at=now,
+                )
+            ]
+        ),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+        strategy_flag_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        portfolio_reader=portfolio_reader,
+        market_data_adapter=market_data_adapter,
+    )
+
+
+def test_dashboard_uses_portfolio_reader_when_available() -> None:
+    settings = make_settings()
+    reader = _FakePortfolioReader({"AAPL": 180.00})
+    adapter = _FakeMarketDataAdapter({"AAPL": 170.00})
+    app = _make_app_with_position_and_reader(
+        settings, portfolio_reader=reader, market_data_adapter=adapter
+    )
+    client = TestClient(app)
+
+    response = client.get("/", headers={"Authorization": f"Basic {b64encode(b'admin:secret').decode()}"})
+
+    assert response.status_code == 200
+    assert "180.00" in response.text
+    assert reader.calls == [["AAPL"]]
+    assert adapter.calls == []
+
+
+def test_dashboard_falls_back_to_adapter_when_portfolio_reader_raises() -> None:
+    settings = make_settings()
+
+    class _RaisingReader:
+        def get_current_prices(self, symbols: list[str]) -> dict[str, float]:
+            raise RuntimeError("Trading client unavailable")
+
+    adapter = _FakeMarketDataAdapter({"AAPL": 170.50})
+    app = _make_app_with_position_and_reader(
+        settings, portfolio_reader=_RaisingReader(), market_data_adapter=adapter
+    )
+    client = TestClient(app)
+
+    response = client.get("/", headers={"Authorization": f"Basic {b64encode(b'admin:secret').decode()}"})
+
+    assert response.status_code == 200
+    assert "170.50" in response.text
+    assert adapter.calls == [["AAPL"]]
+
+
+def test_dashboard_merges_reader_and_adapter_for_missing_symbols() -> None:
+    settings = make_settings(SYMBOLS="AAPL,MSFT,SPY")
+    now = datetime(2026, 4, 28, 15, 0, tzinfo=timezone.utc)
+
+    reader = _FakePortfolioReader({"AAPL": 180.00})
+    adapter = _FakeMarketDataAdapter({"MSFT": 410.00})
+
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(
+            load=lambda **_: None,
+            list_by_session=lambda **_: [],
+        ),
+        position_store_factory=lambda _c: SimpleNamespace(
+            list_all=lambda **_: [
+                PositionRecord(
+                    symbol="AAPL",
+                    trading_mode=TradingMode.PAPER,
+                    strategy_version=settings.strategy_version,
+                    quantity=10,
+                    entry_price=170.00,
+                    stop_price=168.00,
+                    initial_stop_price=168.00,
+                    opened_at=now,
+                    updated_at=now,
+                ),
+                PositionRecord(
+                    symbol="MSFT",
+                    trading_mode=TradingMode.PAPER,
+                    strategy_version=settings.strategy_version,
+                    quantity=5,
+                    entry_price=400.00,
+                    stop_price=395.00,
+                    initial_stop_price=395.00,
+                    opened_at=now,
+                    updated_at=now,
+                ),
+            ]
+        ),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+        strategy_flag_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        portfolio_reader=reader,
+        market_data_adapter=adapter,
+    )
+    client = TestClient(app)
+
+    response = client.get("/", headers={"Authorization": f"Basic {b64encode(b'admin:secret').decode()}"})
+
+    assert response.status_code == 200
+    assert "180.00" in response.text
+    assert "410.00" in response.text
+    assert adapter.calls == [["MSFT"]]
+
+
+# ---------------------------------------------------------------------------
 # /healthz — stream_stale and stream_last_stale_at fields
 # ---------------------------------------------------------------------------
 
