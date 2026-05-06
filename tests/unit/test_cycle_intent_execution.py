@@ -2893,3 +2893,88 @@ def test_replace_stop_does_not_pass_client_order_id() -> None:
         "Alpaca transfers the original ID automatically; "
         "passing the old ID triggers 'client_order_id must be unique'"
     )
+
+
+# ---------------------------------------------------------------------------
+# Regression: "insufficient qty" must be silently skipped
+# ---------------------------------------------------------------------------
+
+def test_replace_stop_insufficient_qty_silently_skipped() -> None:
+    """'insufficient qty available' means a working stop already holds the full
+    position qty at the broker. Position is protected. Must NOT write
+    stop_update_failed or raise — skip at debug level only.
+
+    Production scenario: CLOV had 'insufficient qty available for order
+    (requested: 101, available: 0, held_for_orders: 101)' every cycle for 4+ hours.
+    """
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:CLOV:stop:2026-04-24T14:30:00+00:00",
+        symbol="CLOV",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=101,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=2.20,
+        initial_stop_price=2.20,
+        broker_order_id="broker-stop-clov",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="CLOV",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=101,
+        entry_price=2.63,
+        stop_price=2.20,
+        initial_stop_price=2.20,
+        opened_at=now,
+        updated_at=now,
+    )
+
+    class InsufficientQtyBroker(RecordingBroker):
+        def replace_order(self, **kwargs):
+            raise RuntimeError(
+                "insufficient qty available for order "
+                "(requested: 101, available: 0, held_for_orders: 101)"
+            )
+
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=InsufficientQtyBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="CLOV",
+                timestamp=now,
+                stop_price=2.50,
+            )],
+        ),
+        now=now,
+    )
+
+    stop_failed_events = [
+        e for e in audit_store.appended if e.event_type == "stop_update_failed"
+    ]
+    assert stop_failed_events == [], (
+        "insufficient qty means a working stop already holds the full qty; "
+        "position is protected; must not write stop_update_failed"
+    )
+    assert report.replaced_stop_count == 0
