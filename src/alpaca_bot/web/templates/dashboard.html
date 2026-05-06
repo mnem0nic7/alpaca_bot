@@ -318,39 +318,60 @@
 
       <div class="panel" style="margin-bottom: 1rem;">
         <h2>Strategies</h2>
-        {% for name, flag in snapshot.strategy_flags %}
-          {%- set wl = snapshot.strategy_win_loss.get(name) %}
-          {%- set cap = snapshot.strategy_capital_pct.get(name, 0.0) %}
-          {% set entries_off = snapshot.strategy_entries_disabled.get(name, false) %}
-          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-bottom: 0.7rem;">
-            <span class="mono" style="min-width: 8rem;">{{ name }}</span>
-            {% set is_enabled = (flag is none or flag.enabled) %}
-            <span class="{{ '' if is_enabled else 'warn' }}" style="min-width: 5rem;">
-              {{ "Enabled" if is_enabled else "Disabled" }}
-            </span>
-            <form method="post" action="/strategies/{{ name }}/toggle">
-              <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'toggle') }}">
-              <button type="submit" class="btn-neutral">
-                {{ "Disable" if is_enabled else "Enable" }}
-              </button>
-            </form>
-            <span class="{{ 'warn' if entries_off else 'muted' }}" style="min-width: 8rem;">
-              Entries: {{ "disabled" if entries_off else "enabled" }}
-            </span>
-            <form method="post" action="/strategies/{{ name }}/toggle-entries">
-              <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'toggle') }}">
-              <button type="submit" class="btn-neutral">
-                {{ "Enable Entries" if entries_off else "Disable Entries" }}
-              </button>
-            </form>
-            <span class="muted" style="min-width: 7rem; white-space: nowrap;">
-              {% if wl %}{{ wl[0] }}W / {{ wl[1] }}L{% else %}—{% endif %}
-            </span>
-            <span class="muted" style="min-width: 4rem; text-align: right;">
-              {% if cap > 0 %}{{ "%.1f" | format(cap) }}%{% else %}0%{% endif %}
-            </span>
-          </div>
-        {% endfor %}
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Strategy</th>
+                <th>Status</th>
+                <th></th>
+                <th>Entries</th>
+                <th></th>
+                <th>W / L</th>
+                <th style="text-align: right">Win %</th>
+                <th style="text-align: right">Capital</th>
+                <th style="text-align: right">Open</th>
+                <th style="text-align: right">Today P&amp;L</th>
+                <th style="text-align: right">Today</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for name, flag in snapshot.strategy_flags %}
+                {%- set wl = snapshot.strategy_win_loss.get(name) %}
+                {%- set cap = snapshot.strategy_capital_pct.get(name, 0.0) %}
+                {%- set entries_off = snapshot.strategy_entries_disabled.get(name, false) %}
+                {%- set is_enabled = (flag is none or flag.enabled) %}
+                {%- set open_count = snapshot.positions | selectattr('strategy_name', 'equalto', name) | list | length %}
+                {%- set strat_trades = metrics.trades_by_strategy.get(name, []) %}
+                {%- set today_count = strat_trades | length %}
+                {%- set today_pnl = strat_trades | map(attribute='pnl') | sum %}
+                <tr>
+                  <td class="mono">{{ name }}</td>
+                  <td class="{{ '' if is_enabled else 'warn' }}">{{ "Enabled" if is_enabled else "Disabled" }}</td>
+                  <td style="white-space: nowrap">
+                    <form method="post" action="/strategies/{{ name }}/toggle">
+                      <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'toggle') }}">
+                      <button type="submit" class="btn-neutral">{{ "Disable" if is_enabled else "Enable" }}</button>
+                    </form>
+                  </td>
+                  <td class="{{ 'warn' if entries_off else 'muted' }}">{{ "off" if entries_off else "on" }}</td>
+                  <td style="white-space: nowrap">
+                    <form method="post" action="/strategies/{{ name }}/toggle-entries">
+                      <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'toggle') }}">
+                      <button type="submit" class="btn-neutral">{{ "Enable Entries" if entries_off else "Disable Entries" }}</button>
+                    </form>
+                  </td>
+                  <td>{% if wl %}{{ wl[0] }}W / {{ wl[1] }}L{% else %}—{% endif %}</td>
+                  <td style="text-align: right">{% if wl and (wl[0] + wl[1]) > 0 %}{{ "%.0f%%" | format(wl[0] / (wl[0] + wl[1]) * 100) }}{% else %}—{% endif %}</td>
+                  <td style="text-align: right">{% if cap > 0 %}{{ "%.1f" | format(cap) }}%{% else %}0%{% endif %}</td>
+                  <td style="text-align: right">{{ open_count }}</td>
+                  <td style="text-align: right" class="{% if today_pnl < 0 %}warn{% endif %}">{% if today_count > 0 %}{{ format_price(today_pnl) }}{% else %}—{% endif %}</td>
+                  <td style="text-align: right">{% if today_count > 0 %}{{ today_count }}{% else %}—{% endif %}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <section style="margin-bottom: 1rem;">

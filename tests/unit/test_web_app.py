@@ -2214,3 +2214,183 @@ def test_dashboard_strategy_capital_pct_rendered() -> None:
     assert response.status_code == 200
     # breakout is the only strategy with a position → 100.0%
     assert "100.0%" in response.text
+
+
+def test_dashboard_strategy_table_headers_rendered() -> None:
+    """Strategies panel renders column headers for Win %, Today P&L, and Today."""
+    settings = make_settings()
+    connection = FakeConnection(responses=[])
+
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([connection]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        daily_session_state_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        position_store_factory=lambda _connection: SimpleNamespace(
+            list_all=lambda **_kwargs: []
+        ),
+        order_store_factory=lambda _connection: SimpleNamespace(
+            list_by_status=lambda **_kwargs: [],
+            list_recent=lambda **_kwargs: [],
+            list_closed_trades=lambda **_kwargs: [],
+            win_loss_counts_by_strategy=lambda **_kwargs: {},
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: None,
+            list_by_event_types=lambda **_kwargs: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Win %" in response.text
+    assert "Today P" in response.text  # "Today P&amp;L" column header
+
+
+def test_dashboard_strategy_win_pct_rendered() -> None:
+    """Strategy row shows win % derived from win_loss_counts_by_strategy."""
+    settings = make_settings()
+    connection = FakeConnection(responses=[])
+
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([connection]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        daily_session_state_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        position_store_factory=lambda _connection: SimpleNamespace(
+            list_all=lambda **_kwargs: []
+        ),
+        order_store_factory=lambda _connection: SimpleNamespace(
+            list_by_status=lambda **_kwargs: [],
+            list_recent=lambda **_kwargs: [],
+            list_closed_trades=lambda **_kwargs: [],
+            # 3 wins, 1 loss → 75%
+            win_loss_counts_by_strategy=lambda **_kwargs: {"breakout": (3, 1)},
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: None,
+            list_by_event_types=lambda **_kwargs: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "75%" in response.text  # 3 / (3 + 1) * 100 = 75%
+
+
+def test_dashboard_strategy_today_pnl_rendered() -> None:
+    """Strategy row shows today's realized P&L from metrics.trades_by_strategy."""
+    settings = make_settings()
+    connection = FakeConnection(responses=[])
+    now = datetime.now(timezone.utc)
+
+    # entry_fill=100.0, exit_fill=115.0, qty=10 → pnl = (115 - 100) * 10 = $150.00
+    fake_trade = {
+        "symbol": "AAPL",
+        "strategy_name": "breakout",
+        "entry_fill": 100.0,
+        "exit_fill": 115.0,
+        "qty": 10,
+        "intent_type": "exit",
+        "entry_limit": None,
+        "entry_time": now,
+        "exit_time": now,
+    }
+
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([connection]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        daily_session_state_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        position_store_factory=lambda _connection: SimpleNamespace(
+            list_all=lambda **_kwargs: []
+        ),
+        order_store_factory=lambda _connection: SimpleNamespace(
+            list_by_status=lambda **_kwargs: [],
+            list_recent=lambda **_kwargs: [],
+            list_closed_trades=lambda **_kwargs: [fake_trade],
+            win_loss_counts_by_strategy=lambda **_kwargs: {},
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: None,
+            list_by_event_types=lambda **_kwargs: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "$150.00" in response.text
+
+
+def test_dashboard_strategy_today_count_rendered() -> None:
+    """Strategy row shows today's trade count from metrics.trades_by_strategy."""
+    settings = make_settings()
+    connection = FakeConnection(responses=[])
+    now = datetime.now(timezone.utc)
+
+    def make_trade(exit_fill: float) -> dict:
+        return {
+            "symbol": "AAPL",
+            "strategy_name": "breakout",
+            "entry_fill": 100.0,
+            "exit_fill": exit_fill,
+            "qty": 1,
+            "intent_type": "exit",
+            "entry_limit": None,
+            "entry_time": now,
+            "exit_time": now,
+        }
+
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([connection]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        daily_session_state_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        position_store_factory=lambda _connection: SimpleNamespace(
+            list_all=lambda **_kwargs: []
+        ),
+        order_store_factory=lambda _connection: SimpleNamespace(
+            list_by_status=lambda **_kwargs: [],
+            list_recent=lambda **_kwargs: [],
+            # 2 trades for breakout today: pnl = 5 + 10 = $15.00
+            list_closed_trades=lambda **_kwargs: [make_trade(105.0), make_trade(110.0)],
+            win_loss_counts_by_strategy=lambda **_kwargs: {},
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: None,
+            list_by_event_types=lambda **_kwargs: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    # Combined P&L = (105-100)*1 + (110-100)*1 = $15.00
+    assert "$15.00" in response.text
