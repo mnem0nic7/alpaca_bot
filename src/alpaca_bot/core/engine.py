@@ -227,6 +227,43 @@ def evaluate_cycle(
                     )
                 )
 
+    if settings.enable_profit_trail and not is_extended:
+        _profit_trail_exited = {
+            i.symbol for i in intents if i.intent_type == CycleIntentType.EXIT
+        }
+        _pt_prior_stops: dict[str, float] = {
+            i.symbol: i.stop_price
+            for i in intents
+            if i.intent_type == CycleIntentType.UPDATE_STOP and i.stop_price is not None
+        }
+        for position in open_positions:
+            if position.symbol in _profit_trail_exited:
+                continue
+            bars = intraday_bars_by_symbol.get(position.symbol, ())
+            if not bars:
+                continue
+            session_date = now.astimezone(settings.market_timezone).date()
+            today_bars = [
+                b for b in bars
+                if b.timestamp.astimezone(settings.market_timezone).date() == session_date
+            ]
+            if not today_bars:
+                continue
+            today_high = max(b.high for b in today_bars)
+            trail_candidate = round(today_high * settings.profit_trail_pct, 2)
+            prior_stop = _pt_prior_stops.get(position.symbol, position.stop_price)
+            if trail_candidate > prior_stop:
+                intents.append(
+                    CycleIntent(
+                        intent_type=CycleIntentType.UPDATE_STOP,
+                        symbol=position.symbol,
+                        timestamp=now,
+                        stop_price=trail_candidate,
+                        strategy_name=strategy_name,
+                        reason="profit_trail",
+                    )
+                )
+
     # Cap-up pass: raise stop to MAX_STOP_PCT cap for any existing position whose stop
     # is more than max_stop_pct below entry. Trailing logic ran first; use emitted
     # UPDATE_STOP intents so we don't emit a duplicate for the same symbol.

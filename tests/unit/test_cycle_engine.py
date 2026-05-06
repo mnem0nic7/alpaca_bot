@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 
+import pytest
+
 from alpaca_bot.config import Settings
 from alpaca_bot.domain import Bar, OpenPosition
 
@@ -1431,3 +1433,357 @@ def test_evaluate_cycle_option_entry_skipped_when_quantity_zero():
     )
     option_entries = [i for i in result.intents if i.intent_type == CycleIntentType.ENTRY and i.is_option]
     assert len(option_entries) == 0
+
+
+# ── profit trail ─────────────────────────────────────────────────────────────
+
+
+def test_profit_trail_emits_when_trail_exceeds_current_stop() -> None:
+    """Trail > current_stop → UPDATE_STOP at trail value."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=11.80,
+        high=12.00,
+        low=11.60,
+        close=11.90,
+        volume=3000,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=10.00,
+        quantity=100,
+        entry_level=9.90,
+        initial_stop_price=8.50,
+        stop_price=8.50,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_PROFIT_TRAIL="true",
+            PROFIT_TRAIL_PCT="0.90",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1000",  # disable ATR block
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    # trail = 12.00 * 0.90 = 10.80 > stop 8.50 → emit
+    trail_intents = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    assert len(trail_intents) == 1
+    assert trail_intents[0].stop_price == pytest.approx(10.80)
+    assert trail_intents[0].reason == "profit_trail"
+
+
+def test_profit_trail_no_emit_when_trail_below_current_stop() -> None:
+    """Trail < current_stop → no UPDATE_STOP emitted."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=9.70,
+        high=9.80,
+        low=9.60,
+        close=9.75,
+        volume=1500,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=10.00,
+        quantity=100,
+        entry_level=9.90,
+        initial_stop_price=8.50,
+        stop_price=9.50,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_PROFIT_TRAIL="true",
+            PROFIT_TRAIL_PCT="0.90",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1000",  # disable ATR block
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    # trail = 9.80 * 0.90 = 8.82 < stop 9.50 → no emit
+    update_stops = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    assert update_stops == []
+
+
+def test_profit_trail_defers_to_atr_when_atr_stop_is_higher() -> None:
+    """ATR trail (11.80) > profit trail (10.80) → emit ATR stop, not profit trail."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    # ATR≈2.0, multiplier=0.1 → ATR trail = 12.0-0.2=11.8 (well above profit trail 10.80)
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=11.80,
+        high=12.00,
+        low=11.60,
+        close=11.90,
+        volume=3000,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=10.00,
+        quantity=100,
+        entry_level=9.90,
+        initial_stop_price=9.00,
+        stop_price=9.00,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_PROFIT_TRAIL="true",
+            PROFIT_TRAIL_PCT="0.90",
+            TRAILING_STOP_ATR_MULTIPLIER="0.1",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1.0",
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    # ATR trail: 12.0 - 0.1*2.0 = 11.80; profit trail: 12.0*0.90=10.80 < 11.80 → no profit emit
+    update_stops = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    assert len(update_stops) == 1
+    assert update_stops[0].stop_price == pytest.approx(11.80)
+    assert update_stops[0].reason != "profit_trail"
+
+
+def test_profit_trail_emits_above_atr_when_trail_is_higher() -> None:
+    """Profit trail (10.80) > ATR trail (10.00) → UPDATE_STOP with reason=profit_trail at 10.80."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    # ATR≈2.0, multiplier=1.5 → ATR candidate=12.0-3.0=9.0 → capped at entry 10.0
+    # profit trail = 12.0*0.90=10.80 > 10.0 → profit trail emits
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=11.80,
+        high=12.00,
+        low=11.60,
+        close=11.90,
+        volume=3000,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=10.00,
+        quantity=100,
+        entry_level=9.90,
+        initial_stop_price=9.00,
+        stop_price=9.00,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_PROFIT_TRAIL="true",
+            PROFIT_TRAIL_PCT="0.90",
+            TRAILING_STOP_ATR_MULTIPLIER="1.5",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1.0",
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    profit_trail_intents = [
+        i for i in result.intents
+        if i.intent_type == CycleIntentType.UPDATE_STOP and i.reason == "profit_trail"
+    ]
+    assert len(profit_trail_intents) == 1
+    assert profit_trail_intents[0].stop_price == pytest.approx(10.80)
+    # Both ATR and profit trail emit UPDATE_STOP: ATR at 10.00, profit trail at 10.80
+    all_update_stops = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    assert len(all_update_stops) == 2
+
+
+def test_profit_trail_monotonic_never_lowers_stop() -> None:
+    """Trail candidate (10.35) < existing stop (11.40) → no profit_trail UPDATE_STOP emitted."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=11.40,
+        high=11.50,
+        low=11.30,
+        close=11.45,
+        volume=2000,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=10.00,
+        quantity=100,
+        entry_level=9.90,
+        initial_stop_price=8.50,
+        stop_price=11.40,  # already moved up from prior cycles
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_PROFIT_TRAIL="true",
+            PROFIT_TRAIL_PCT="0.90",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1000",  # disable ATR block
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    # trail = 11.50 * 0.90 = 10.35 < existing stop 11.40 → must not lower the stop
+    for intent in result.intents:
+        if intent.intent_type == CycleIntentType.UPDATE_STOP and intent.symbol == "AAPL":
+            assert intent.stop_price >= 11.40, (
+                f"profit trail emitted a stop ({intent.stop_price}) below existing stop (11.40)"
+            )
+
+
+def test_profit_trail_disabled_by_feature_flag() -> None:
+    """enable_profit_trail=False → no profit_trail UPDATE_STOP regardless of price."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=11.80,
+        high=12.00,
+        low=11.60,
+        close=11.90,
+        volume=3000,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=10.00,
+        quantity=100,
+        entry_level=9.90,
+        initial_stop_price=8.50,
+        stop_price=8.50,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            TRAILING_STOP_PROFIT_TRIGGER_R="1000",  # disable ATR block too
+            # ENABLE_PROFIT_TRAIL not set → defaults to false
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    profit_trail_intents = [
+        i for i in result.intents
+        if i.intent_type == CycleIntentType.UPDATE_STOP and i.reason == "profit_trail"
+    ]
+    assert profit_trail_intents == []
+
+
+def test_profit_trail_no_emit_when_trail_below_current_stop_at_boundary() -> None:
+    """today_high == entry ($10.00) → trail=$9.00 < current_stop=$9.50 → no emit."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=9.90,
+        high=10.00,
+        low=9.80,
+        close=9.95,
+        volume=1200,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=10.00,
+        quantity=100,
+        entry_level=9.90,
+        initial_stop_price=8.50,
+        stop_price=9.50,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_PROFIT_TRAIL="true",
+            PROFIT_TRAIL_PCT="0.90",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1000",  # disable ATR block
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    # trail = 10.00 * 0.90 = 9.00 < current_stop 9.50 → no emit (mechanism: trail < stop)
+    update_stops = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    assert update_stops == []
+
+
+def test_profit_trail_emits_when_trail_exceeds_stop_even_below_entry() -> None:
+    """Gray zone: today_high=$10.50, trail=$9.45 > stop=$8.50 → emit even though trail < entry."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=10.30,
+        high=10.50,
+        low=10.10,
+        close=10.40,
+        volume=2000,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=10.00,
+        quantity=100,
+        entry_level=9.90,
+        initial_stop_price=8.50,
+        stop_price=8.50,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_PROFIT_TRAIL="true",
+            PROFIT_TRAIL_PCT="0.90",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1000",  # disable ATR block
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    # trail = 10.50 * 0.90 = 9.45 > stop 8.50 → emit (activation rule: trail > current_stop)
+    trail_intents = [
+        i for i in result.intents
+        if i.intent_type == CycleIntentType.UPDATE_STOP and i.reason == "profit_trail"
+    ]
+    assert len(trail_intents) == 1
+    assert trail_intents[0].stop_price == pytest.approx(9.45)
