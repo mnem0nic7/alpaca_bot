@@ -255,3 +255,46 @@ def test_cap_up_stop_not_emitted_in_after_hours():
     )
     update_stops = [i for i in result.intents if i.intent_type is CycleIntentType.UPDATE_STOP]
     assert update_stops == [], "cap-up UPDATE_STOP must be suppressed during extended hours"
+
+
+def test_afterhours_spread_filter_uses_extended_threshold():
+    """During extended hours, extended_hours_max_spread_pct applies, not max_spread_pct."""
+    settings = _settings(
+        EXTENDED_HOURS_MAX_SPREAD_PCT="0.01",
+        ENABLE_SPREAD_FILTER="true",
+        MAX_SPREAD_PCT="0.002",
+    )
+    # 0.5% spread: blocked by regular 0.2% threshold, allowed by extended 1% threshold
+    class FakeQuote:
+        spread_pct = 0.005
+
+    now = datetime(2026, 4, 28, 22, 0, tzinfo=timezone.utc)  # 6pm ET
+    # Bar at ENTRY_WINDOW_END (3:30pm ET = 19:30 UTC) so signal_index walk-back (Task 5) finds it.
+    bar = _bar("AAPL", close=105.0, ts=datetime(2026, 4, 28, 19, 30, tzinfo=timezone.utc))
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": [bar]},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        session_type=SessionType.AFTER_HOURS,
+        quotes_by_symbol={"AAPL": FakeQuote()},
+        signal_evaluator=lambda **kwargs: EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][-1],
+            entry_level=105.1,
+            relative_volume=2.0,
+            stop_price=103.0,
+            limit_price=105.2,
+            initial_stop_price=103.0,
+        ),
+    )
+    assert result.spread_blocked_symbols == (), (
+        "0.5% spread should pass the 1% extended-hours threshold; "
+        "regular-session 0.2% threshold must not apply during extended hours"
+    )

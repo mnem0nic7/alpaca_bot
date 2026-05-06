@@ -353,7 +353,12 @@ def evaluate_cycle(
                 # Spread filter: skip entry if NBBO spread exceeds threshold.
                 if settings.enable_spread_filter and quotes_by_symbol is not None:
                     quote = quotes_by_symbol.get(symbol)
-                    if quote is not None and quote.spread_pct > settings.max_spread_pct:
+                    spread_threshold = (
+                        settings.extended_hours_max_spread_pct
+                        if is_extended
+                        else settings.max_spread_pct
+                    )
+                    if quote is not None and quote.spread_pct > spread_threshold:
                         _spread_blocked.append(symbol)
                         continue
 
