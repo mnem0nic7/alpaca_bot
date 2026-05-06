@@ -343,10 +343,12 @@ def evaluate_cycle(
                         continue
                     if signal.limit_price - signal.initial_stop_price < 0.01:
                         continue
+                    cap_stop = round(signal.limit_price * (1 - settings.max_stop_pct), 2)
+                    effective_initial_stop = max(signal.initial_stop_price, cap_stop)
                     quantity = calculate_position_size(
                         equity=equity,
                         entry_price=signal.limit_price,
-                        stop_price=signal.initial_stop_price,
+                        stop_price=effective_initial_stop,
                         settings=settings,
                     )
                     if quantity < 1:
@@ -362,7 +364,7 @@ def evaluate_cycle(
                                 quantity=quantity,
                                 stop_price=signal.stop_price,
                                 limit_price=signal.limit_price,
-                                initial_stop_price=signal.initial_stop_price,
+                                initial_stop_price=effective_initial_stop,
                                 client_order_id=_client_order_id(
                                     settings=settings,
                                     symbol=symbol,
