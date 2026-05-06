@@ -924,12 +924,16 @@ def _replace_order_request(
             payload["client_order_id"] = client_order_id
         return payload
 
-    return ReplaceOrderRequest(
-        qty=quantity,
-        limit_price=limit_price,
-        stop_price=stop_price,
-        client_order_id=client_order_id,
-    )
+    _req_kwargs: dict[str, Any] = {}
+    if quantity is not None:
+        _req_kwargs["qty"] = quantity
+    if limit_price is not None:
+        _req_kwargs["limit_price"] = limit_price
+    if stop_price is not None:
+        _req_kwargs["stop_price"] = stop_price
+    if client_order_id is not None:
+        _req_kwargs["client_order_id"] = client_order_id
+    return ReplaceOrderRequest(**_req_kwargs)
 
 
 def _market_order_request(
