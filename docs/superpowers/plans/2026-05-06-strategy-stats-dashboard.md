@@ -109,7 +109,6 @@ In `src/alpaca_bot/storage/repositories.py`, add this method to `OrderStore` aft
         *,
         trading_mode: TradingMode,
         strategy_version: str,
-        market_timezone: str = "America/New_York",
     ) -> dict[str, tuple[int, int]]:
         """Return all-time win and loss counts per strategy.
 
@@ -351,8 +350,8 @@ def test_load_dashboard_snapshot_populates_strategy_win_loss() -> None:
     assert snapshot.strategy_win_loss == {"breakout": (5, 2), "momentum": (1, 3)}
 
 
-def test_load_dashboard_snapshot_strategy_win_loss_defaults_to_empty() -> None:
-    """Snapshot falls back to {} when order_store lacks win_loss_counts_by_strategy."""
+def test_load_dashboard_snapshot_strategy_win_loss_empty_when_no_closed_trades() -> None:
+    """strategy_win_loss is {} when win_loss_counts_by_strategy returns empty dict."""
     fixed_now = datetime(2026, 5, 6, 14, 0, tzinfo=timezone.utc)
 
     snapshot = load_dashboard_snapshot(
@@ -447,7 +446,6 @@ Then in `load_dashboard_snapshot()`, hoist the positions query out of the `Dashb
         strategy_win_loss: dict[str, tuple[int, int]] = order_store.win_loss_counts_by_strategy(
             trading_mode=settings.trading_mode,
             strategy_version=settings.strategy_version,
-            market_timezone=str(settings.market_timezone),
         )
     else:
         strategy_win_loss = {}
@@ -511,6 +509,8 @@ git commit -m "feat: add strategy win/loss and capital allocation fields to Dash
 ### Part A: Template update
 
 - [ ] **Step 1: Update the Strategies panel in `dashboard.html`**
+
+> **Character note:** The `—` below is the literal Unicode em dash (U+2014), not the HTML entity `&mdash;`. The test asserts `"—" in response.text` against the raw response string, so both template and test must use the same literal character. Copy-paste as-is.
 
 Find the `{% for name, flag in snapshot.strategy_flags %}` loop in `src/alpaca_bot/web/templates/dashboard.html` (around line 321). The current strategy row ends after the "Disable Entries" form `</form>` at line 343. Add two read-only spans immediately after that closing `</form>` tag, before the closing `</div>`:
 
