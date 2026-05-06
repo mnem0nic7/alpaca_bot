@@ -472,11 +472,11 @@ class AlpacaExecutionAdapter:
         result = set()
         for symbol in symbols:
             try:
-                asset = self._trading.get_asset(symbol)
+                asset = _retry_with_backoff(lambda s=symbol: self._trading.get_asset(s))
                 if asset.fractionable:
                     result.add(symbol)
-            except Exception:
-                pass  # non-fractionable or asset not found; default to integer sizing
+            except Exception as exc:
+                _logger.warning("get_fractionable_symbols: skipping %s: %s", symbol, exc)
         return frozenset(result)
 
     @staticmethod
