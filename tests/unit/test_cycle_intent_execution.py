@@ -3162,3 +3162,351 @@ def test_path_c_duplicate_client_order_id_falls_back_to_stop_update_failed_when_
     assert "stop_update_failed" in event_types, (
         "stop_update_failed must be emitted when resync cannot find the conflicting order"
     )
+
+
+# ---------------------------------------------------------------------------
+# Self-healing: 40310000 insufficient qty — stop update path
+# ---------------------------------------------------------------------------
+
+def test_path_c_insufficient_qty_cancels_blocking_orders_and_emits_blocking_stop_canceled() -> None:
+    """When submit_stop_order raises 40310000 (insufficient qty available), the handler must
+    parse related_orders, cancel each blocking order, update DB status, and emit
+    blocking_stop_canceled — NOT stop_update_failed, NOT retry submit_stop_order."""
+    import json as _json
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 6, 19, 30, tzinfo=timezone.utc)
+    bar_ts = datetime(2026, 5, 6, 19, 15, tzinfo=timezone.utc)
+
+    position = PositionRecord(
+        symbol="CLOV",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        quantity=101,
+        entry_price=2.63,
+        stop_price=2.40,
+        initial_stop_price=2.40,
+        opened_at=now,
+        updated_at=now,
+    )
+    order_store = RecordingOrderStore(orders=[])
+    audit_store = RecordingAuditEventStore()
+
+    cancel_calls: list[str] = []
+    submit_stop_calls: list[dict] = []
+
+    error_body = _json.dumps({
+        "code": 40310000,
+        "message": "insufficient qty available for order",
+        "related_orders": ["broker-phantom-stop-99"],
+    })
+
+    class InsufficientQtyBroker:
+        def submit_stop_order(self, **kwargs):
+            submit_stop_calls.append(dict(kwargs))
+            raise Exception(error_body)
+
+        def get_open_orders_for_symbol(self, symbol: str):
+            return []
+
+        def cancel_order(self, order_id: str) -> None:
+            cancel_calls.append(order_id)
+
+        def replace_order(self, **kwargs):
+            pass
+
+        def submit_market_exit(self, **kwargs):
+            pass
+
+        def submit_limit_exit(self, **kwargs):
+            pass
+
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=InsufficientQtyBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="CLOV",
+                timestamp=bar_ts,
+                stop_price=2.50,
+                strategy_name="breakout",
+            )],
+        ),
+        now=now,
+    )
+
+    assert len(submit_stop_calls) == 1, "submit_stop_order must be called exactly once (no retry)"
+    assert cancel_calls == ["broker-phantom-stop-99"], (
+        "cancel_order must be called for each blocking order in related_orders"
+    )
+
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "blocking_stop_canceled" in event_types, "blocking_stop_canceled audit event must be emitted"
+    assert "stop_update_failed" not in event_types, "stop_update_failed must NOT be emitted for 40310000"
+
+
+# ---------------------------------------------------------------------------
+# Self-healing: 40310000 insufficient qty — exit path
+# ---------------------------------------------------------------------------
+
+def test_exit_insufficient_qty_cancels_blocking_orders_retries_and_succeeds() -> None:
+    """When submit_market_exit raises 40310000, the handler must cancel blocking orders,
+    emit blocking_stop_canceled_for_exit, retry once, and succeed without exit_hard_failed."""
+    import json as _json
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 6, 19, 50, tzinfo=timezone.utc)
+
+    position = PositionRecord(
+        symbol="CLOV",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        quantity=101,
+        entry_price=2.63,
+        stop_price=2.40,
+        initial_stop_price=2.40,
+        opened_at=now,
+        updated_at=now,
+    )
+    order_store = RecordingOrderStore(orders=[])
+    audit_store = RecordingAuditEventStore()
+
+    cancel_calls: list[str] = []
+    exit_attempt = [0]
+
+    error_body = _json.dumps({
+        "code": 40310000,
+        "message": "insufficient qty available for order",
+        "related_orders": ["broker-phantom-stop-77"],
+    })
+
+    class BlockedExitBroker:
+        def submit_market_exit(self, **kwargs):
+            exit_attempt[0] += 1
+            if exit_attempt[0] == 1:
+                raise Exception(error_body)
+            return SimpleNamespace(
+                client_order_id=kwargs["client_order_id"],
+                broker_order_id="broker-exit-ok",
+                symbol=kwargs["symbol"],
+                side="sell",
+                status="accepted",
+                quantity=kwargs["quantity"],
+            )
+
+        def cancel_order(self, order_id: str) -> None:
+            cancel_calls.append(order_id)
+
+        def replace_order(self, **kwargs):
+            pass
+
+        def submit_stop_order(self, **kwargs):
+            pass
+
+        def submit_limit_exit(self, **kwargs):
+            pass
+
+        def get_open_orders_for_symbol(self, symbol: str):
+            return []
+
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=BlockedExitBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="CLOV",
+                timestamp=now,
+                reason="eod_flatten",
+                strategy_name="breakout",
+            )],
+        ),
+        now=now,
+    )
+
+    assert exit_attempt[0] == 2, "submit_market_exit must be called twice (first fails, retry succeeds)"
+    assert cancel_calls == ["broker-phantom-stop-77"], "cancel_order must be called for the blocking order"
+
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "blocking_stop_canceled_for_exit" in event_types, (
+        "blocking_stop_canceled_for_exit must be emitted before retry"
+    )
+    assert "exit_hard_failed" not in event_types, "exit_hard_failed must NOT be emitted when retry succeeds"
+    assert report.submitted_exit_count == 1, "submitted_exit_count must be 1 after successful retry"
+
+
+def test_exit_insufficient_qty_emits_exit_hard_failed_when_retry_also_fails() -> None:
+    """When submit_market_exit raises 40310000 and the retry also fails,
+    exit_hard_failed must be emitted and a recovery stop must be queued."""
+    import json as _json
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 6, 19, 50, tzinfo=timezone.utc)
+
+    position = PositionRecord(
+        symbol="CLOV",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        quantity=101,
+        entry_price=2.63,
+        stop_price=2.40,
+        initial_stop_price=2.40,
+        opened_at=now,
+        updated_at=now,
+    )
+    order_store = RecordingOrderStore(orders=[])
+    audit_store = RecordingAuditEventStore()
+
+    error_body = _json.dumps({
+        "code": 40310000,
+        "message": "insufficient qty available for order",
+        "related_orders": ["broker-phantom-stop-88"],
+    })
+
+    class DoubleFailExitBroker:
+        def submit_market_exit(self, **kwargs):
+            raise Exception(error_body)
+
+        def cancel_order(self, order_id: str) -> None:
+            pass
+
+        def replace_order(self, **kwargs):
+            pass
+
+        def submit_stop_order(self, **kwargs):
+            pass
+
+        def submit_limit_exit(self, **kwargs):
+            pass
+
+        def get_open_orders_for_symbol(self, symbol: str):
+            return []
+
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=DoubleFailExitBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="CLOV",
+                timestamp=now,
+                reason="eod_flatten",
+                strategy_name="breakout",
+            )],
+        ),
+        now=now,
+    )
+
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "blocking_stop_canceled_for_exit" in event_types, (
+        "blocking_stop_canceled_for_exit must be emitted even when retry also fails"
+    )
+    assert "exit_hard_failed" in event_types, "exit_hard_failed must be emitted when retry also fails"
+    assert report.submitted_exit_count == 0
+    assert "recovery_stop_queued_after_exit_failure" in event_types, (
+        "recovery_stop_queued_after_exit_failure must be emitted when retry fails "
+        "and position has a stop_price — canceled_stop_count==0 must not suppress it"
+    )
+
+
+def test_path_c_get_open_orders_for_symbol_raises_falls_back_to_stop_update_failed() -> None:
+    """When submit_stop_order raises 40010001 but get_open_orders_for_symbol also raises,
+    the handler must fall back to stop_update_failed."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 6, 19, 30, tzinfo=timezone.utc)
+    bar_ts = datetime(2026, 5, 6, 19, 15, tzinfo=timezone.utc)
+
+    position = PositionRecord(
+        symbol="ACHR",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        quantity=100,
+        entry_price=6.00,
+        stop_price=5.50,
+        initial_stop_price=5.50,
+        opened_at=now,
+        updated_at=now,
+    )
+    order_store = RecordingOrderStore(orders=[])
+    audit_store = RecordingAuditEventStore()
+
+    class BrokerFetchFails:
+        def submit_stop_order(self, **kwargs):
+            raise Exception("client_order_id must be unique")
+
+        def get_open_orders_for_symbol(self, symbol: str):
+            raise RuntimeError("broker unavailable")
+
+        def cancel_order(self, order_id: str) -> None:
+            pass
+
+        def replace_order(self, **kwargs):
+            pass
+
+        def submit_market_exit(self, **kwargs):
+            pass
+
+        def submit_limit_exit(self, **kwargs):
+            pass
+
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=BrokerFetchFails(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="ACHR",
+                timestamp=bar_ts,
+                stop_price=5.75,
+                strategy_name="breakout",
+            )],
+        ),
+        now=now,
+    )
+
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "stop_update_failed" in event_types, (
+        "stop_update_failed must be emitted when get_open_orders_for_symbol raises during resync"
+    )

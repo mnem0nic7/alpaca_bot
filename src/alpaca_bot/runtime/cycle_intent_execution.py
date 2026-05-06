@@ -337,9 +337,21 @@ def _execute_update_stop(
                     lock_ctx=lock_ctx,
                     notifier=notifier,
                 )
+        elif "insufficient qty available" in exc_msg:
+            # 40310000: a phantom stop at the broker holds the full qty.
+            # Cancel blocking orders; the next cycle re-emits the intent from a clean state.
+            _cancel_blocking_orders(
+                exc=exc,
+                runtime=runtime,
+                broker=broker,
+                symbol=symbol,
+                event_type="blocking_stop_canceled",
+                now=now,
+                lock_ctx=lock_ctx,
+            )
         elif any(phrase in exc_msg for phrase in (
             "not found", "already filled", "already canceled", "does not exist",
-            "has been filled", "is filled", "order is", "order was", "insufficient qty",
+            "has been filled", "is filled", "order is", "order was",
         )):
             logger.debug("update_stop skipped for %s — order already gone: %s", symbol, exc)
         else:
@@ -1187,6 +1199,57 @@ def _resync_duplicate_stop_order(
             )
             return False
     return True
+
+
+def _cancel_blocking_orders(
+    *,
+    exc: Exception,
+    runtime: RuntimeProtocol,
+    broker: BrokerProtocol,
+    symbol: str,
+    event_type: str,
+    now: datetime,
+    lock_ctx: Any,
+) -> None:
+    """Handle 40310000: cancel phantom stops blocking a new order submission.
+
+    Parses related_orders from the error body, cancels each via the broker,
+    and emits an audit event per blocking order.
+    """
+    related = _parse_related_orders_from_error(exc)
+    if not related:
+        logger.warning(
+            "cycle_intent_execution: 40310000 for %s but no related_orders in error body: %s",
+            symbol, exc,
+        )
+        return
+    for broker_order_id in related:
+        try:
+            broker.cancel_order(broker_order_id)
+        except Exception as cancel_exc:
+            logger.warning(
+                "cycle_intent_execution: cancel_order failed for blocking order %s on %s: %s",
+                broker_order_id, symbol, cancel_exc,
+            )
+        with lock_ctx:
+            try:
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type=event_type,
+                        symbol=symbol,
+                        payload={
+                            "broker_order_id": broker_order_id,
+                            "error": str(exc),
+                        },
+                        created_at=now,
+                    ),
+                    commit=True,
+                )
+            except Exception:
+                logger.exception(
+                    "cycle_intent_execution: failed to append %s audit event for %s",
+                    event_type, symbol,
+                )
 
 
 def _emit_stop_update_failed(
