@@ -227,6 +227,36 @@ def evaluate_cycle(
                     )
                 )
 
+    # Cap-up pass: raise stop to MAX_STOP_PCT cap for any existing position whose stop
+    # is more than max_stop_pct below entry. Trailing logic ran first; use emitted
+    # UPDATE_STOP intents so we don't emit a duplicate for the same symbol.
+    # Derive exit set from intents — emitted_exit_symbols is only populated by the
+    # past_flatten branch; trend-filter and VWAP exits are not tracked there.
+    emitted_exit_syms = {i.symbol for i in intents if i.intent_type == CycleIntentType.EXIT}
+    emitted_update_stops: dict[str, float] = {
+        i.symbol: (i.stop_price or 0.0)
+        for i in intents
+        if i.intent_type == CycleIntentType.UPDATE_STOP
+    }
+    for position in open_positions:
+        if position.symbol in emitted_exit_syms:
+            continue
+        if position.stop_price <= 0 or position.entry_price <= 0:
+            continue
+        cap_stop = round(position.entry_price * (1 - settings.max_stop_pct), 2)
+        effective_stop = emitted_update_stops.get(position.symbol, position.stop_price)
+        if effective_stop < cap_stop:
+            intents.append(
+                CycleIntent(
+                    intent_type=CycleIntentType.UPDATE_STOP,
+                    symbol=position.symbol,
+                    timestamp=now,
+                    stop_price=cap_stop,
+                    strategy_name=strategy_name,
+                    reason="stop_cap_applied",
+                )
+            )
+
     # Regime filter: block all entries when broad market is in a downtrend.
     # Mirrors daily_trend_filter_passes(): window[-1] is the most recent completed
     # bar (second-to-last), excluding today's potentially partial bar.
