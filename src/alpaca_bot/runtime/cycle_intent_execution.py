@@ -312,39 +312,46 @@ def _execute_update_stop(
             action = "submitted"
     except Exception as exc:
         exc_msg = str(exc).lower()
-        if any(phrase in exc_msg for phrase in ("not found", "already filled", "already canceled", "does not exist", "has been filled", "is filled", "order is", "order was", "insufficient qty")):
+
+        if "client_order_id must be unique" in exc_msg and _path_c_client_order_id is not None:
+            # 40010001: broker has our stop under this client_order_id but DB doesn't track it.
+            # The prior Path C submission succeeded at broker but the DB write failed.
+            success = _resync_duplicate_stop_order(
+                settings=settings,
+                runtime=runtime,
+                broker=broker,
+                symbol=symbol,
+                client_order_id=_path_c_client_order_id,
+                stop_price=stop_price,
+                position=position,
+                now=now,
+                strategy_name=strategy_name,
+                lock_ctx=lock_ctx,
+            )
+            if not success:
+                _emit_stop_update_failed(
+                    runtime=runtime,
+                    symbol=symbol,
+                    exc=exc,
+                    now=now,
+                    lock_ctx=lock_ctx,
+                    notifier=notifier,
+                )
+        elif any(phrase in exc_msg for phrase in (
+            "not found", "already filled", "already canceled", "does not exist",
+            "has been filled", "is filled", "order is", "order was", "insufficient qty",
+        )):
             logger.debug("update_stop skipped for %s — order already gone: %s", symbol, exc)
         else:
             logger.exception("Broker call failed for update_stop on %s; skipping", symbol)
-            with lock_ctx:
-                try:
-                    runtime.audit_event_store.append(
-                        AuditEvent(
-                            event_type="stop_update_failed",
-                            symbol=symbol,
-                            payload={
-                                "error": str(exc),
-                                "symbol": symbol,
-                                "timestamp": now.isoformat(),
-                            },
-                            created_at=now,
-                        ),
-                        commit=True,
-                    )
-                except Exception:
-                    logger.exception("Failed to write stop_update_failed audit event for %s", symbol)
-            if notifier is not None:
-                try:
-                    notifier.send(
-                        subject=f"Stop update failed: {symbol}",
-                        body=(
-                            f"Broker call failed for UPDATE_STOP on {symbol}.\n"
-                            f"Position may be losing stop protection.\n"
-                            f"Error: {exc}"
-                        ),
-                    )
-                except Exception:
-                    logger.exception("Notifier failed to send stop_update_failed alert for %s", symbol)
+            _emit_stop_update_failed(
+                runtime=runtime,
+                symbol=symbol,
+                exc=exc,
+                now=now,
+                lock_ctx=lock_ctx,
+                notifier=notifier,
+            )
         return None
 
     # All store writes under lock — serializes with the trade-update stream thread.
@@ -1062,3 +1069,162 @@ def _parse_related_orders_from_error(exc: Exception) -> list[str]:
             return []
     related = body.get("related_orders", [])
     return [str(oid) for oid in related if oid]
+
+
+def _resync_duplicate_stop_order(
+    *,
+    settings: Settings,
+    runtime: RuntimeProtocol,
+    broker: BrokerProtocol,
+    symbol: str,
+    client_order_id: str,
+    stop_price: float,
+    position: "PositionRecord",
+    now: datetime,
+    strategy_name: str,
+    lock_ctx: Any,
+) -> bool:
+    """Handle 40010001: broker already has a stop under this client_order_id.
+
+    Fetch open orders for the symbol, find the conflicting order, UPSERT to DB,
+    replace_order() to the correct stop_price, write audit events.
+
+    Returns True on success, False on any failure (caller should emit stop_update_failed).
+    """
+    try:
+        broker_orders = broker.get_open_orders_for_symbol(symbol)
+    except Exception as fetch_exc:
+        logger.exception(
+            "cycle_intent_execution: get_open_orders_for_symbol failed during 40010001 resync for %s: %s",
+            symbol, fetch_exc,
+        )
+        return False
+
+    found = next((o for o in broker_orders if o.client_order_id == client_order_id), None)
+    if found is None:
+        logger.warning(
+            "cycle_intent_execution: 40010001 resync for %s — no order matching client_order_id=%s found; "
+            "order may have been filled or expired",
+            symbol, client_order_id,
+        )
+        return False
+
+    if not found.broker_order_id:
+        logger.warning(
+            "cycle_intent_execution: 40010001 resync for %s — found order has no broker_order_id; skipping replace",
+            symbol,
+        )
+        return False
+
+    try:
+        replaced = broker.replace_order(order_id=found.broker_order_id, stop_price=stop_price)
+    except Exception as replace_exc:
+        logger.exception(
+            "cycle_intent_execution: replace_order failed during 40010001 resync for %s: %s",
+            symbol, replace_exc,
+        )
+        return False
+
+    with lock_ctx:
+        try:
+            runtime.order_store.save(
+                OrderRecord(
+                    client_order_id=found.client_order_id,
+                    symbol=symbol,
+                    side=found.side if hasattr(found, "side") else "sell",
+                    intent_type="stop",
+                    status=str(replaced.status).lower(),
+                    quantity=found.quantity if hasattr(found, "quantity") else position.quantity,
+                    trading_mode=settings.trading_mode,
+                    strategy_version=settings.strategy_version,
+                    strategy_name=strategy_name,
+                    created_at=now,
+                    updated_at=now,
+                    stop_price=stop_price,
+                    initial_stop_price=position.initial_stop_price,
+                    broker_order_id=replaced.broker_order_id,
+                    signal_timestamp=None,
+                ),
+                commit=False,
+            )
+            runtime.position_store.save(
+                PositionRecord(
+                    symbol=position.symbol,
+                    trading_mode=position.trading_mode,
+                    strategy_version=position.strategy_version,
+                    quantity=position.quantity,
+                    entry_price=position.entry_price,
+                    stop_price=stop_price,
+                    initial_stop_price=position.initial_stop_price,
+                    opened_at=position.opened_at,
+                    updated_at=now,
+                    strategy_name=strategy_name,
+                ),
+                commit=False,
+            )
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="stop_order_resynced",
+                    symbol=symbol,
+                    payload={
+                        "client_order_id": found.client_order_id,
+                        "broker_order_id": found.broker_order_id,
+                        "stop_price": stop_price,
+                        "strategy_name": strategy_name,
+                    },
+                    created_at=now,
+                ),
+                commit=False,
+            )
+            runtime.connection.commit()
+        except Exception:
+            try:
+                runtime.connection.rollback()
+            except Exception:
+                pass
+            logger.exception(
+                "cycle_intent_execution: DB write failed during 40010001 resync for %s", symbol
+            )
+            return False
+    return True
+
+
+def _emit_stop_update_failed(
+    *,
+    runtime: RuntimeProtocol,
+    symbol: str,
+    exc: Exception,
+    now: datetime,
+    lock_ctx: Any,
+    notifier: Any,
+) -> None:
+    """Log stop_update_failed audit event and optionally send notification."""
+    with lock_ctx:
+        try:
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="stop_update_failed",
+                    symbol=symbol,
+                    payload={
+                        "error": str(exc),
+                        "symbol": symbol,
+                        "timestamp": now.isoformat(),
+                    },
+                    created_at=now,
+                ),
+                commit=True,
+            )
+        except Exception:
+            logger.exception("Failed to write stop_update_failed audit event for %s", symbol)
+    if notifier is not None:
+        try:
+            notifier.send(
+                subject=f"Stop update failed: {symbol}",
+                body=(
+                    f"Broker call failed for UPDATE_STOP on {symbol}.\n"
+                    f"Position may be losing stop protection.\n"
+                    f"Error: {exc}"
+                ),
+            )
+        except Exception:
+            logger.exception("Notifier failed to send stop_update_failed alert for %s", symbol)

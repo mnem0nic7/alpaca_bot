@@ -2978,3 +2978,187 @@ def test_replace_stop_insufficient_qty_silently_skipped() -> None:
         "position is protected; must not write stop_update_failed"
     )
     assert report.replaced_stop_count == 0
+
+
+# ---------------------------------------------------------------------------
+# Self-healing: 40010001 duplicate client_order_id resync
+# ---------------------------------------------------------------------------
+
+def test_path_c_duplicate_client_order_id_resyncs_stop_and_emits_stop_order_resynced() -> None:
+    """When submit_stop_order raises 40010001 (client_order_id must be unique),
+    the handler must: fetch broker orders for symbol, find matching stop, UPSERT to DB,
+    replace_order() to correct price, emit stop_order_resynced, NOT emit stop_update_failed."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 6, 19, 30, tzinfo=timezone.utc)
+    bar_ts = datetime(2026, 5, 6, 19, 15, tzinfo=timezone.utc)
+
+    position = PositionRecord(
+        symbol="ACHR",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        quantity=100,
+        entry_price=6.00,
+        stop_price=5.50,
+        initial_stop_price=5.50,
+        opened_at=now,
+        updated_at=now,
+    )
+    order_store = RecordingOrderStore(orders=[])
+    audit_store = RecordingAuditEventStore()
+
+    conflicting_client_order_id = (
+        f"v1-breakout:breakout:{now.date().isoformat()}:ACHR:stop:{bar_ts.isoformat()}"
+    )
+    conflicting_broker_order = SimpleNamespace(
+        client_order_id=conflicting_client_order_id,
+        broker_order_id="broker-conflicting-stop-1",
+        symbol="ACHR",
+        side="sell",
+        status="new",
+        quantity=100,
+    )
+
+    replace_calls: list[dict] = []
+    open_orders_for_symbol_calls: list[str] = []
+
+    class ResyncBroker:
+        def submit_stop_order(self, **kwargs):
+            raise Exception("client_order_id must be unique")
+
+        def get_open_orders_for_symbol(self, symbol: str):
+            open_orders_for_symbol_calls.append(symbol)
+            return [conflicting_broker_order]
+
+        def replace_order(self, **kwargs):
+            replace_calls.append(dict(kwargs))
+            return SimpleNamespace(
+                client_order_id=conflicting_client_order_id,
+                broker_order_id="broker-conflicting-stop-1",
+                symbol="ACHR",
+                side="sell",
+                status="accepted",
+                quantity=100,
+            )
+
+        def cancel_order(self, order_id: str) -> None:
+            pass
+
+        def submit_market_exit(self, **kwargs):
+            pass
+
+        def submit_limit_exit(self, **kwargs):
+            pass
+
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=ResyncBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="ACHR",
+                timestamp=bar_ts,
+                stop_price=5.75,
+                strategy_name="breakout",
+            )],
+        ),
+        now=now,
+    )
+
+    assert open_orders_for_symbol_calls == ["ACHR"], (
+        "get_open_orders_for_symbol must be called with the symbol on 40010001"
+    )
+    assert len(replace_calls) == 1, "replace_order must be called once with found broker_order_id"
+    assert replace_calls[0]["order_id"] == "broker-conflicting-stop-1"
+    assert replace_calls[0]["stop_price"] == pytest.approx(5.75)
+
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "stop_order_resynced" in event_types, "stop_order_resynced audit event must be emitted"
+    assert "stop_update_failed" not in event_types, "stop_update_failed must NOT be emitted on successful resync"
+
+    saved_stops = [o for o in order_store.saved if o.intent_type == "stop"]
+    assert any(o.stop_price == pytest.approx(5.75) for o in saved_stops), (
+        "DB order record must reflect the new stop_price after resync"
+    )
+
+
+def test_path_c_duplicate_client_order_id_falls_back_to_stop_update_failed_when_order_not_found() -> None:
+    """When submit_stop_order raises 40010001 but get_open_orders_for_symbol returns no
+    matching order, the handler must fall back to stop_update_failed."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 6, 19, 30, tzinfo=timezone.utc)
+    bar_ts = datetime(2026, 5, 6, 19, 15, tzinfo=timezone.utc)
+
+    position = PositionRecord(
+        symbol="ACHR",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        quantity=100,
+        entry_price=6.00,
+        stop_price=5.50,
+        initial_stop_price=5.50,
+        opened_at=now,
+        updated_at=now,
+    )
+    order_store = RecordingOrderStore(orders=[])
+    audit_store = RecordingAuditEventStore()
+
+    class NotFoundResyncBroker:
+        def submit_stop_order(self, **kwargs):
+            raise Exception("client_order_id must be unique")
+
+        def get_open_orders_for_symbol(self, symbol: str):
+            return []
+
+        def replace_order(self, **kwargs):
+            pass
+
+        def cancel_order(self, order_id: str) -> None:
+            pass
+
+        def submit_market_exit(self, **kwargs):
+            pass
+
+        def submit_limit_exit(self, **kwargs):
+            pass
+
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=NotFoundResyncBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="ACHR",
+                timestamp=bar_ts,
+                stop_price=5.75,
+                strategy_name="breakout",
+            )],
+        ),
+        now=now,
+    )
+
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "stop_update_failed" in event_types, (
+        "stop_update_failed must be emitted when resync cannot find the conflicting order"
+    )
