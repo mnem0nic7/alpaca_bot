@@ -12,6 +12,7 @@ from alpaca_bot.storage import (
     DailySessionState,
     OrderRecord,
     PositionRecord,
+    StrategyWeight,
     TradingStatus,
     TradingStatusValue,
 )
@@ -2394,3 +2395,54 @@ def test_dashboard_strategy_today_count_rendered() -> None:
     assert response.status_code == 200
     # Combined P&L = (105-100)*1 + (110-100)*1 = $15.00
     assert "$15.00" in response.text
+
+
+def test_dashboard_strategy_alloc_pct_rendered() -> None:
+    """Strategy row shows Sharpe-weighted allocation % from strategy_weights store."""
+    settings = make_settings()
+    connection = FakeConnection(responses=[])
+    now = datetime.now(timezone.utc)
+
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([connection]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        daily_session_state_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: None
+        ),
+        position_store_factory=lambda _connection: SimpleNamespace(
+            list_all=lambda **_kwargs: []
+        ),
+        order_store_factory=lambda _connection: SimpleNamespace(
+            list_by_status=lambda **_kwargs: [],
+            list_recent=lambda **_kwargs: [],
+            list_closed_trades=lambda **_kwargs: [],
+            win_loss_counts_by_strategy=lambda **_kwargs: {},
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: None,
+            list_by_event_types=lambda **_kwargs: [],
+        ),
+        strategy_weight_store_factory=lambda _connection: SimpleNamespace(
+            load_all=lambda **_kwargs: [
+                StrategyWeight(
+                    strategy_name="breakout",
+                    trading_mode=TradingMode.PAPER,
+                    strategy_version="v1-breakout",
+                    weight=0.6,
+                    sharpe=1.23,
+                    computed_at=now,
+                )
+            ],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Alloc %" in response.text   # column header present
+    assert "60%" in response.text       # 0.6 * 100 = 60%

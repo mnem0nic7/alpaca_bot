@@ -140,7 +140,7 @@ def create_app(
                 next_path=request.url.path,
             )
         try:
-            snapshot, metrics = _load_dashboard_data(app)
+            snapshot, metrics, strategy_weights = _load_dashboard_data(app)
         except Exception:
             return HTMLResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -160,7 +160,7 @@ def create_app(
                 "metrics": metrics,
                 "operator_email": operator,
                 "auto_refresh": not bool(no_refresh),
-                "strategy_weights": [],
+                "strategy_weights": strategy_weights,
             },
         )
 
@@ -911,7 +911,12 @@ def _load_dashboard_data(app: FastAPI) -> tuple:
             order_store=order_store,
             audit_event_store=audit_event_store,
         )
-        return snapshot, metrics
+        strategy_weights = load_strategy_weights(
+            settings=settings,
+            connection=connection,
+            strategy_weight_store=_build_store(app.state.strategy_weight_store_factory, connection),
+        )
+        return snapshot, metrics, strategy_weights
     finally:
         close = getattr(connection, "close", None)
         if callable(close):
