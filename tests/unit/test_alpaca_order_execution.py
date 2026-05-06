@@ -198,6 +198,78 @@ def test_submit_market_exit_builds_market_sell_request_and_normalizes_order() ->
     )
 
 
+# ---------------------------------------------------------------------------
+# AlpacaPortfolioReader
+# ---------------------------------------------------------------------------
+
+from alpaca_bot.execution.alpaca import AlpacaPortfolioReader
+from dataclasses import dataclass as _dc
+
+
+@_dc
+class _PositionStub:
+    symbol: str
+    current_price: object  # str, float, or missing
+
+
+class _TradingClientPositionsStub:
+    def __init__(self, positions: list) -> None:
+        self._positions = positions
+        self.called = False
+
+    def get_all_positions(self) -> list:
+        self.called = True
+        return self._positions
+
+
+def test_portfolio_reader_returns_current_price_for_requested_symbols() -> None:
+    stub = _TradingClientPositionsStub([
+        _PositionStub(symbol="AAPL", current_price=175.50),
+        _PositionStub(symbol="MSFT", current_price=410.25),
+    ])
+    reader = AlpacaPortfolioReader(stub)
+
+    result = reader.get_current_prices(["AAPL"])
+
+    assert result == {"AAPL": 175.50}
+    assert stub.called
+
+
+def test_portfolio_reader_returns_empty_when_symbols_is_empty() -> None:
+    stub = _TradingClientPositionsStub([
+        _PositionStub(symbol="AAPL", current_price=175.50),
+    ])
+    reader = AlpacaPortfolioReader(stub)
+
+    result = reader.get_current_prices([])
+
+    assert result == {}
+    assert not stub.called
+
+
+def test_portfolio_reader_skips_position_with_missing_current_price() -> None:
+    class _NoPricePosition:
+        symbol = "AAPL"
+
+    stub = _TradingClientPositionsStub([_NoPricePosition()])
+    reader = AlpacaPortfolioReader(stub)
+
+    result = reader.get_current_prices(["AAPL"])
+
+    assert result == {}
+
+
+def test_portfolio_reader_skips_position_with_nonnumeric_current_price() -> None:
+    stub = _TradingClientPositionsStub([
+        _PositionStub(symbol="AAPL", current_price="N/A"),
+    ])
+    reader = AlpacaPortfolioReader(stub)
+
+    result = reader.get_current_prices(["AAPL"])
+
+    assert result == {}
+
+
 class TradingClientReadStub:
     def __init__(self, orders: list[Any]) -> None:
         self._orders = orders

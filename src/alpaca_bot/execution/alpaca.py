@@ -491,6 +491,47 @@ class AlpacaExecutionAdapter:
         return TradingClient(api_key, secret_key, paper=paper)
 
 
+class AlpacaPortfolioReader:
+    """Read-only portfolio price reader using the Alpaca trading API.
+
+    Uses get_all_positions() which reflects after-hours pricing, unlike
+    the historical data feed which freezes at regular-session close.
+    """
+
+    def __init__(self, trading_client: TradingClientProtocol) -> None:
+        self._trading = trading_client
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "AlpacaPortfolioReader":
+        api_key, secret_key, paper = resolve_alpaca_credentials(settings)
+        try:
+            from alpaca.trading.client import TradingClient
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "alpaca-py is required for portfolio price reads. Install dependencies first."
+            ) from exc
+        return cls(TradingClient(api_key, secret_key, paper=paper))
+
+    def get_current_prices(self, symbols: Sequence[str]) -> dict[str, float]:
+        if not symbols:
+            return {}
+        symbol_set = {s.upper() for s in symbols}
+        raw = _retry_with_backoff(self._trading.get_all_positions)
+        result: dict[str, float] = {}
+        for position in raw:
+            sym = str(position.symbol).upper()
+            if sym not in symbol_set:
+                continue
+            raw_price = getattr(position, "current_price", None)
+            if raw_price is None:
+                continue
+            try:
+                result[sym] = float(raw_price)
+            except (TypeError, ValueError):
+                pass
+        return result
+
+
 def _as_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
