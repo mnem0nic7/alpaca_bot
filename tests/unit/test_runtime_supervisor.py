@@ -268,6 +268,9 @@ class FakeBroker:
         self.open_position_calls += 1
         return list(self.open_positions)
 
+    def get_fractionable_symbols(self, symbols) -> frozenset:
+        return frozenset()
+
     def get_clock(self):
         self.clock_calls += 1
         return SimpleNamespace(

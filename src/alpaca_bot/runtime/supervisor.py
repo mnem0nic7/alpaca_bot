@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 import logging
 from pathlib import Path
@@ -141,6 +141,8 @@ class RuntimeSupervisor:
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
         broker = AlpacaBroker.from_settings(settings)
+        fractionable = broker.get_fractionable_symbols(settings.symbols)
+        settings = replace(settings, fractionable_symbols=fractionable)
         option_chain_adapter = None
         option_broker = None
         if settings.enable_options_trading:
