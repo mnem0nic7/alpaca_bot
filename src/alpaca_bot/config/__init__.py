@@ -142,6 +142,10 @@ class Settings:
     max_stop_pct: float = 0.05
     enable_profit_trail: bool = False
     profit_trail_pct: float = 0.95
+    # Not from env — populated at startup after broker lookup
+    fractionable_symbols: frozenset[str] = field(default_factory=frozenset)
+    # From env — configurable threshold; 0.0 = disabled (default)
+    min_position_notional: float = 0.0
 
     def __post_init__(self) -> None:
         self.validate()
@@ -309,6 +313,7 @@ class Settings:
                 "ENABLE_PROFIT_TRAIL", values.get("ENABLE_PROFIT_TRAIL", "false")
             ),
             profit_trail_pct=float(values.get("PROFIT_TRAIL_PCT", "0.95")),
+            min_position_notional=float(values.get("MIN_POSITION_NOTIONAL", "0.0")),
         )
         return settings
 
@@ -481,6 +486,10 @@ class Settings:
             raise ValueError(
                 "PROFIT_TRAIL_PCT must be between 0 (exclusive) and 1.0 (exclusive); "
                 f"got {self.profit_trail_pct}"
+            )
+        if self.min_position_notional < 0:
+            raise ValueError(
+                f"MIN_POSITION_NOTIONAL must be >= 0, got {self.min_position_notional}"
             )
 
 
