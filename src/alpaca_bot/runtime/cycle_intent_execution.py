@@ -690,97 +690,211 @@ def _execute_exit(
                 quantity=position.quantity,
                 client_order_id=client_order_id,
             )
-    except Exception:
-        # Stops are already canceled at the broker (position is unprotected). Persist
-        # canceled stop records and an audit event unconditionally so the next cycle
-        # doesn't re-cancel them, hit "already canceled", and permanently abandon the exit.
+    except Exception as exc:
         exit_method = "submit_limit_exit" if limit_price is not None else "submit_market_exit"
-        logger.exception(
-            "cycle_intent_execution: %s failed for %s/%s; "
-            "position is unprotected — manual intervention required",
-            exit_method,
-            symbol,
-            strategy_name,
-        )
-        with lock_ctx:
+        exc_msg = str(exc).lower()
+
+        if "insufficient qty available" in exc_msg:
+            # 40310000: a phantom stop at the broker holds the full qty.
+            # Cancel blocking orders and retry the exit once (EOD time-constrained).
+            _cancel_blocking_orders(
+                exc=exc,
+                runtime=runtime,
+                broker=broker,
+                symbol=symbol,
+                event_type="blocking_stop_canceled_for_exit",
+                now=now,
+                lock_ctx=lock_ctx,
+            )
             try:
-                for record in canceled_order_records:
-                    runtime.order_store.save(record, commit=False)
-                runtime.audit_event_store.append(
-                    AuditEvent(
-                        event_type="exit_hard_failed",
+                if limit_price is not None:
+                    broker_order = broker.submit_limit_exit(
                         symbol=symbol,
-                        payload={
-                            "intent_type": "exit",
-                            "action": f"{exit_method}_failed",
-                            "reason": reason,
-                            "canceled_stop_count": canceled_stop_count,
-                        },
-                        created_at=now,
-                    ),
-                    commit=False,
+                        quantity=position.quantity,
+                        limit_price=limit_price,
+                        client_order_id=client_order_id,
+                    )
+                else:
+                    broker_order = broker.submit_market_exit(
+                        symbol=symbol,
+                        quantity=position.quantity,
+                        client_order_id=client_order_id,
+                    )
+                # Retry succeeded — fall through to success path below.
+            except Exception as retry_exc:
+                logger.exception(
+                    "cycle_intent_execution: %s retry after 40310000 also failed for %s/%s; "
+                    "position is unprotected — manual intervention required",
+                    exit_method, symbol, strategy_name,
                 )
-                # Re-queue a protective stop: we cancelled the broker stop but failed to
-                # submit the exit, leaving the position unprotected. Queue a recovery stop
-                # so the next dispatch cycle restores protection immediately.
-                if canceled_stop_count > 0 and position.stop_price is not None and position.stop_price > 0:
-                    _recovery_stop_id = (
-                        f"exit_failed_recovery:{settings.strategy_version}:"
-                        f"{now.date().isoformat()}:{symbol}:stop"
-                    )
-                    runtime.order_store.save(
-                        OrderRecord(
-                            client_order_id=_recovery_stop_id,
-                            symbol=symbol,
-                            side="sell",
-                            intent_type="stop",
-                            status="pending_submit",
-                            quantity=position.quantity,
-                            trading_mode=settings.trading_mode,
-                            strategy_version=settings.strategy_version,
-                            strategy_name=strategy_name,
-                            created_at=now,
-                            updated_at=now,
-                            stop_price=position.stop_price,
-                            initial_stop_price=position.initial_stop_price,
-                        ),
-                        commit=False,
-                    )
+                with lock_ctx:
+                    try:
+                        for record in canceled_order_records:
+                            runtime.order_store.save(record, commit=False)
+                        runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="exit_hard_failed",
+                                symbol=symbol,
+                                payload={
+                                    "intent_type": "exit",
+                                    "action": f"{exit_method}_retry_failed",
+                                    "reason": reason,
+                                    "canceled_stop_count": canceled_stop_count,
+                                    "retry_error": str(retry_exc),
+                                },
+                                created_at=now,
+                            ),
+                            commit=False,
+                        )
+                        if position.stop_price is not None and position.stop_price > 0:
+                            _recovery_stop_id = (
+                                f"exit_failed_recovery:{settings.strategy_version}:"
+                                f"{now.date().isoformat()}:{symbol}:stop"
+                            )
+                            runtime.order_store.save(
+                                OrderRecord(
+                                    client_order_id=_recovery_stop_id,
+                                    symbol=symbol,
+                                    side="sell",
+                                    intent_type="stop",
+                                    status="pending_submit",
+                                    quantity=position.quantity,
+                                    trading_mode=settings.trading_mode,
+                                    strategy_version=settings.strategy_version,
+                                    strategy_name=strategy_name,
+                                    created_at=now,
+                                    updated_at=now,
+                                    stop_price=position.stop_price,
+                                    initial_stop_price=position.initial_stop_price,
+                                ),
+                                commit=False,
+                            )
+                            runtime.audit_event_store.append(
+                                AuditEvent(
+                                    event_type="recovery_stop_queued_after_exit_failure",
+                                    symbol=symbol,
+                                    payload={
+                                        "client_order_id": _recovery_stop_id,
+                                        "stop_price": position.stop_price,
+                                    },
+                                    created_at=now,
+                                ),
+                                commit=False,
+                            )
+                        runtime.connection.commit()
+                    except Exception:
+                        try:
+                            runtime.connection.rollback()
+                        except Exception:
+                            pass
+                        raise
+                if notifier is not None:
+                    try:
+                        notifier.send(
+                            subject=f"Exit HARD FAILED: {symbol}/{strategy_name} — position UNPROTECTED",
+                            body=(
+                                f"40310000 blocking-stop cancel succeeded but {exit_method} retry raised "
+                                f"for {symbol} ({strategy_name}).\n"
+                                f"Position is live and unprotected. A recovery stop has been queued.\n"
+                                f"Manual verification required.\n"
+                                f"Reason: {reason}"
+                            ),
+                        )
+                    except Exception:
+                        logger.exception(
+                            "cycle_intent_execution: notifier failed for exit retry failure on %s", symbol
+                        )
+                return canceled_stop_count, 0, 1
+        else:
+            # Non-40310000 error: stops are already canceled (position is unprotected). Persist
+            # canceled stop records and an audit event unconditionally so the next cycle
+            # doesn't re-cancel them, hit "already canceled", and permanently abandon the exit.
+            logger.exception(
+                "cycle_intent_execution: %s failed for %s/%s; "
+                "position is unprotected — manual intervention required",
+                exit_method,
+                symbol,
+                strategy_name,
+            )
+            with lock_ctx:
+                try:
+                    for record in canceled_order_records:
+                        runtime.order_store.save(record, commit=False)
                     runtime.audit_event_store.append(
                         AuditEvent(
-                            event_type="recovery_stop_queued_after_exit_failure",
+                            event_type="exit_hard_failed",
                             symbol=symbol,
                             payload={
-                                "client_order_id": _recovery_stop_id,
-                                "stop_price": position.stop_price,
+                                "intent_type": "exit",
+                                "action": f"{exit_method}_failed",
+                                "reason": reason,
+                                "canceled_stop_count": canceled_stop_count,
                             },
                             created_at=now,
                         ),
                         commit=False,
                     )
-                runtime.connection.commit()
-            except Exception:
-                try:
-                    runtime.connection.rollback()
+                    # Re-queue a protective stop: we cancelled the broker stop but failed to
+                    # submit the exit, leaving the position unprotected. Queue a recovery stop
+                    # so the next dispatch cycle restores protection immediately.
+                    if canceled_stop_count > 0 and position.stop_price is not None and position.stop_price > 0:
+                        _recovery_stop_id = (
+                            f"exit_failed_recovery:{settings.strategy_version}:"
+                            f"{now.date().isoformat()}:{symbol}:stop"
+                        )
+                        runtime.order_store.save(
+                            OrderRecord(
+                                client_order_id=_recovery_stop_id,
+                                symbol=symbol,
+                                side="sell",
+                                intent_type="stop",
+                                status="pending_submit",
+                                quantity=position.quantity,
+                                trading_mode=settings.trading_mode,
+                                strategy_version=settings.strategy_version,
+                                strategy_name=strategy_name,
+                                created_at=now,
+                                updated_at=now,
+                                stop_price=position.stop_price,
+                                initial_stop_price=position.initial_stop_price,
+                            ),
+                            commit=False,
+                        )
+                        runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="recovery_stop_queued_after_exit_failure",
+                                symbol=symbol,
+                                payload={
+                                    "client_order_id": _recovery_stop_id,
+                                    "stop_price": position.stop_price,
+                                },
+                                created_at=now,
+                            ),
+                            commit=False,
+                        )
+                    runtime.connection.commit()
                 except Exception:
-                    pass
-                raise
-        if notifier is not None:
-            try:
-                notifier.send(
-                    subject=f"Exit HARD FAILED: {symbol}/{strategy_name} — position UNPROTECTED",
-                    body=(
-                        f"Stop cancel succeeded but {exit_method} raised for {symbol} ({strategy_name}).\n"
-                        f"Position is live and unprotected. A recovery stop has been queued.\n"
-                        f"Manual verification required.\n"
-                        f"Reason: {reason}"
-                    ),
-                )
-            except Exception:
-                logger.exception(
-                    "cycle_intent_execution: notifier failed for exit submission failure on %s", symbol
-                )
-        return canceled_stop_count, 0, 1  # hard_failed: exit submission raised
+                    try:
+                        runtime.connection.rollback()
+                    except Exception:
+                        pass
+                    raise
+            if notifier is not None:
+                try:
+                    notifier.send(
+                        subject=f"Exit HARD FAILED: {symbol}/{strategy_name} — position UNPROTECTED",
+                        body=(
+                            f"Stop cancel succeeded but {exit_method} raised for {symbol} ({strategy_name}).\n"
+                            f"Position is live and unprotected. A recovery stop has been queued.\n"
+                            f"Manual verification required.\n"
+                            f"Reason: {reason}"
+                        ),
+                    )
+                except Exception:
+                    logger.exception(
+                        "cycle_intent_execution: notifier failed for exit submission failure on %s", symbol
+                    )
+            return canceled_stop_count, 0, 1  # hard_failed: exit submission raised
 
     # Write all results under lock.
     with lock_ctx:
