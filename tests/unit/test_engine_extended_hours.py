@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType, evaluate_cycle
-from alpaca_bot.domain.models import Bar, OpenPosition
+from alpaca_bot.domain.models import Bar, EntrySignal, OpenPosition
 from alpaca_bot.strategy.session import SessionType
 
 
@@ -186,3 +186,39 @@ def test_no_session_type_defaults_to_regular_behaviour():
     exits = [i for i in result.intents if i.intent_type is CycleIntentType.EXIT]
     assert len(exits) == 1
     assert exits[0].limit_price is None  # market exit
+
+
+def test_afterhours_entry_not_blocked_by_stale_bars():
+    """Entries must be possible during afterhours even with 2.5-hour-old bars."""
+    settings = _settings()
+    # 6pm ET = 22:00 UTC; bar from 3:30pm ET = 19:30 UTC → 2.5h old → fails 30-min check
+    # Bar is at ENTRY_WINDOW_END (15:30 ET) so signal_index walk-back (Task 5) finds it.
+    now = datetime(2026, 4, 28, 22, 0, tzinfo=timezone.utc)
+    stale_bar = _bar("AAPL", close=105.0, ts=datetime(2026, 4, 28, 19, 30, tzinfo=timezone.utc))
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [stale_bar]},
+        daily_bars_by_symbol={"AAPL": [stale_bar]},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        session_type=SessionType.AFTER_HOURS,
+        signal_evaluator=lambda **kwargs: EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][-1],
+            entry_level=105.1,
+            relative_volume=2.0,
+            stop_price=103.0,
+            limit_price=105.2,
+            initial_stop_price=103.0,
+        ),
+    )
+    entries = [i for i in result.intents if i.intent_type is CycleIntentType.ENTRY]
+    assert entries, (
+        "AFTER_HOURS entries must not be blocked by the 30-minute bar-age check; "
+        "regular session bars are the correct and only available signal basis"
+    )

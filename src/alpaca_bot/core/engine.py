@@ -334,9 +334,10 @@ def evaluate_cycle(
                 if (symbol, session_day(latest_bar.timestamp, settings)) in traded_symbols_today:
                     continue
 
-                bar_age_seconds = (now - latest_bar.timestamp.astimezone(timezone.utc)).total_seconds()
-                if bar_age_seconds > 2 * settings.entry_timeframe_minutes * 60:
-                    continue
+                if not is_extended:
+                    bar_age_seconds = (now - latest_bar.timestamp.astimezone(timezone.utc)).total_seconds()
+                    if bar_age_seconds > 2 * settings.entry_timeframe_minutes * 60:
+                        continue
 
                 # News filter: skip entry if catalyst headline detected for this symbol.
                 if settings.enable_news_filter and news_by_symbol is not None:
