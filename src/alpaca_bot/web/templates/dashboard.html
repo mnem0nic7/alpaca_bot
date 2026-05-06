@@ -371,12 +371,24 @@
                 </tr>
               </thead>
               <tbody>
+                {% set ns = namespace(
+                    total_qty=0,
+                    total_risk=0.0,
+                    total_init_val=0.0,
+                    total_curr_val=0.0,
+                    total_upnl=0.0,
+                    weighted_stop_num=0.0,
+                    stop_denom=0.0,
+                    weighted_upnl_num=0.0,
+                    upnl_denom=0.0
+                ) %}
                 {% for position in snapshot.positions %}
                   {% set stop_dist_pct = ((position.entry_price - position.stop_price) / position.entry_price * 100) if (position.entry_price and position.stop_price) else none %}
                   {% set is_trailing = (position.stop_price and position.initial_stop_price and position.stop_price > position.initial_stop_price) %}
                   {% set stop_moved = (position.stop_price - position.initial_stop_price) if (position.stop_price and position.initial_stop_price) else none %}
                   {% set risk_dollars = (position.quantity * (position.entry_price - position.initial_stop_price)) if (position.quantity and position.entry_price and position.initial_stop_price) else none %}
                   {% set last_price = snapshot.latest_prices.get(position.symbol) %}
+                  {% set init_val = (position.entry_price * position.quantity) if position.entry_price else 0.0 %}
                   <tr>
                     <td class="mono">{{ position.symbol }}</td>
                     <td>{{ position.strategy_name }}</td>
@@ -420,10 +432,58 @@
                       <td class="muted">—</td>
                     {% endif %}
                   </tr>
+                  {%- set ns.total_qty = ns.total_qty + (position.quantity or 0) %}
+                  {%- if risk_dollars is not none %}{% set ns.total_risk = ns.total_risk + risk_dollars %}{% endif %}
+                  {%- set ns.total_init_val = ns.total_init_val + init_val %}
+                  {%- if last_price is not none %}{% set ns.total_curr_val = ns.total_curr_val + last_price * position.quantity %}{% endif %}
+                  {%- if last_price is not none and position.entry_price %}
+                    {%- set upnl_acc = (last_price - position.entry_price) * position.quantity %}
+                    {%- set upnl_pct_acc = (last_price - position.entry_price) / position.entry_price * 100 %}
+                    {%- set ns.total_upnl = ns.total_upnl + upnl_acc %}
+                    {%- set ns.weighted_upnl_num = ns.weighted_upnl_num + upnl_pct_acc * init_val %}
+                    {%- set ns.upnl_denom = ns.upnl_denom + init_val %}
+                  {%- endif %}
+                  {%- if stop_dist_pct is not none and init_val > 0 %}
+                    {%- set ns.weighted_stop_num = ns.weighted_stop_num + stop_dist_pct * init_val %}
+                    {%- set ns.stop_denom = ns.stop_denom + init_val %}
+                  {%- endif %}
                 {% else %}
                   <tr><td colspan="16" class="muted">No open positions.</td></tr>
                 {% endfor %}
               </tbody>
+              {% if snapshot.positions %}
+              <tfoot>
+                <tr>
+                  <td><strong>TOTAL</strong></td>
+                  <td>—</td>
+                  <td>{{ ns.total_qty }}</td>
+                  <td>—</td>
+                  <td class="muted">—</td>
+                  <td>—</td>
+                  <td class="muted">
+                    {% if ns.stop_denom > 0 %}{{ "%.2f" | format(ns.weighted_stop_num / ns.stop_denom) }}%{% else %}—{% endif %}
+                  </td>
+                  <td>—</td>
+                  <td>{{ "$%.0f" | format(ns.total_risk) }}</td>
+                  <td>—</td>
+                  <td class="muted">—</td>
+                  <td>—</td>
+                  <td>{{ "$%.0f" | format(ns.total_init_val) }}</td>
+                  <td>{{ "$%.0f" | format(ns.total_curr_val) }}</td>
+                  <td style="color: {{ 'var(--accent)' if ns.total_upnl >= 0 else '#c0392b' }}">
+                    {% if ns.total_upnl >= 0 %}+{{ format_price(ns.total_upnl) }}{% else %}-{{ format_price(0 - ns.total_upnl) }}{% endif %}
+                  </td>
+                  <td>
+                    {% if ns.upnl_denom > 0 %}
+                      {% set avg_upnl_pct = ns.weighted_upnl_num / ns.upnl_denom %}
+                      <span style="color: {{ 'var(--accent)' if avg_upnl_pct >= 0 else '#c0392b' }}">
+                        {% if avg_upnl_pct >= 0 %}+{{ "%.2f" | format(avg_upnl_pct) }}%{% else %}{{ "%.2f" | format(avg_upnl_pct) }}%{% endif %}
+                      </span>
+                    {% else %}—{% endif %}
+                  </td>
+                </tr>
+              </tfoot>
+              {% endif %}
             </table>
           </div>
         </div>

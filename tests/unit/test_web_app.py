@@ -1947,3 +1947,145 @@ def test_equity_chart_api_invalid_range():
     client = TestClient(app, raise_server_exceptions=False)
     resp = client.get("/api/equity-chart?range=5d")
     assert resp.status_code == 400
+
+
+def test_dashboard_open_positions_totals_row_rendered() -> None:
+    """TOTAL row appears in the Open Positions table when positions exist."""
+    now = datetime.now(timezone.utc)
+    settings = make_settings()
+    connection = FakeConnection(responses=[])
+
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([connection]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: TradingStatus(
+                trading_mode=TradingMode.PAPER,
+                strategy_version=settings.strategy_version,
+                status=TradingStatusValue.ENABLED,
+                kill_switch_enabled=False,
+                updated_at=now,
+            )
+        ),
+        daily_session_state_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: DailySessionState(
+                session_date=date(2026, 4, 25),
+                trading_mode=TradingMode.PAPER,
+                strategy_version=settings.strategy_version,
+                entries_disabled=False,
+                flatten_complete=False,
+                last_reconciled_at=now,
+                notes="ready",
+                updated_at=now,
+            )
+        ),
+        position_store_factory=lambda _connection: SimpleNamespace(
+            list_all=lambda **_kwargs: [
+                PositionRecord(
+                    symbol="AAPL",
+                    trading_mode=TradingMode.PAPER,
+                    strategy_version=settings.strategy_version,
+                    quantity=10,
+                    entry_price=100.0,
+                    stop_price=96.0,
+                    initial_stop_price=96.0,
+                    opened_at=now,
+                    updated_at=now,
+                ),
+                PositionRecord(
+                    symbol="MSFT",
+                    trading_mode=TradingMode.PAPER,
+                    strategy_version=settings.strategy_version,
+                    quantity=5,
+                    entry_price=200.0,
+                    stop_price=192.0,
+                    initial_stop_price=192.0,
+                    opened_at=now,
+                    updated_at=now,
+                ),
+            ]
+        ),
+        order_store_factory=lambda _connection: SimpleNamespace(
+            list_by_status=lambda **_kwargs: [],
+            list_recent=lambda **_kwargs: [],
+            list_closed_trades=lambda **_kwargs: [],
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: SimpleNamespace(
+                event_type="supervisor_cycle",
+                symbol=None,
+                payload={"entries_disabled": False},
+                created_at=now,
+            ),
+            list_by_event_types=lambda **_kwargs: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "TOTAL" in response.text
+    # Total qty = 10 + 5 = 15
+    assert ">15<" in response.text
+    # tfoot element is present
+    assert "<tfoot>" in response.text
+
+
+def test_dashboard_no_totals_row_without_positions() -> None:
+    """TOTAL row must NOT appear when there are no open positions."""
+    now = datetime.now(timezone.utc)
+    settings = make_settings()
+    connection = FakeConnection(responses=[])
+
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([connection]),
+        trading_status_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: TradingStatus(
+                trading_mode=TradingMode.PAPER,
+                strategy_version=settings.strategy_version,
+                status=TradingStatusValue.ENABLED,
+                kill_switch_enabled=False,
+                updated_at=now,
+            )
+        ),
+        daily_session_state_store_factory=lambda _connection: SimpleNamespace(
+            load=lambda **_kwargs: DailySessionState(
+                session_date=date(2026, 4, 25),
+                trading_mode=TradingMode.PAPER,
+                strategy_version=settings.strategy_version,
+                entries_disabled=False,
+                flatten_complete=False,
+                last_reconciled_at=now,
+                notes="ready",
+                updated_at=now,
+            )
+        ),
+        position_store_factory=lambda _connection: SimpleNamespace(
+            list_all=lambda **_kwargs: []
+        ),
+        order_store_factory=lambda _connection: SimpleNamespace(
+            list_by_status=lambda **_kwargs: [],
+            list_recent=lambda **_kwargs: [],
+            list_closed_trades=lambda **_kwargs: [],
+        ),
+        audit_event_store_factory=lambda _connection: SimpleNamespace(
+            list_recent=lambda **_kwargs: [],
+            load_latest=lambda **_kwargs: SimpleNamespace(
+                event_type="supervisor_cycle",
+                symbol=None,
+                payload={"entries_disabled": False},
+                created_at=now,
+            ),
+            list_by_event_types=lambda **_kwargs: [],
+        ),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/")
+
+    assert response.status_code == 200
+    assert "TOTAL" not in response.text
+    assert "<tfoot>" not in response.text
