@@ -222,7 +222,6 @@ def _execute_update_stop(
             broker_order = broker.replace_order(
                 order_id=active_stop.broker_order_id,
                 stop_price=stop_price,
-                client_order_id=active_stop.client_order_id,
             )
             updated_order = OrderRecord(
                 client_order_id=active_stop.client_order_id,

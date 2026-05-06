@@ -111,7 +111,7 @@ class RecordingBroker:
     def replace_order(self, **kwargs):
         self.replace_calls.append(dict(kwargs))
         return SimpleNamespace(
-            client_order_id=kwargs["client_order_id"],
+            client_order_id=kwargs.get("client_order_id", ""),
             broker_order_id=kwargs["order_id"],
             symbol="AAPL",
             side="sell",
@@ -215,7 +215,6 @@ def test_execute_cycle_intents_replaces_active_stop_and_updates_position() -> No
         {
             "order_id": "broker-stop-1",
             "stop_price": 111.7,
-            "client_order_id": active_stop.client_order_id,
         }
     ]
     assert runtime.order_store.saved == [
@@ -2818,3 +2817,79 @@ def test_execute_update_stop_cancels_partial_fill_entry_before_submitting_new_st
         e for e in audit_store.appended if e.event_type == "partial_fill_entry_canceled"
     )
     assert canceled_event.payload["context"] == "update_stop"
+
+
+# ---------------------------------------------------------------------------
+# Regression: replace_order must NOT pass client_order_id
+# ---------------------------------------------------------------------------
+
+def test_replace_stop_does_not_pass_client_order_id() -> None:
+    """replace_order must never include client_order_id in kwargs.
+
+    Passing the old ID causes Alpaca to reject with 'client_order_id must be
+    unique' because the old order (now 'replaced' status) still holds that ID.
+    Omitting it tells Alpaca to transfer the original ID automatically.
+    """
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:stop:2026-04-24T19:00:00+00:00",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-1",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="AAPL",
+                timestamp=now,
+                stop_price=111.7,
+            )],
+        ),
+        now=now,
+    )
+
+    assert len(broker.replace_calls) == 1
+    call = broker.replace_calls[0]
+    assert call["order_id"] == "broker-stop-1"
+    assert call["stop_price"] == 111.7
+    assert "client_order_id" not in call, (
+        "replace_order must NOT pass client_order_id — "
+        "Alpaca transfers the original ID automatically; "
+        "passing the old ID triggers 'client_order_id must be unique'"
+    )
