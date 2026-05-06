@@ -106,6 +106,7 @@ class Settings:
     after_hours_entry_window_end: time = time(19, 30)
     extended_hours_flatten_time: time = time(19, 45)
     extended_hours_limit_offset_pct: float = 0.001
+    extended_hours_max_spread_pct: float = 0.01
     vwap_dip_threshold_pct: float = 0.015
     gap_threshold_pct: float = 0.02
     gap_volume_threshold: float = 2.0
@@ -246,6 +247,9 @@ class Settings:
             ),
             extended_hours_limit_offset_pct=float(
                 values.get("EXTENDED_HOURS_LIMIT_OFFSET_PCT", "0.001")
+            ),
+            extended_hours_max_spread_pct=float(
+                values.get("EXTENDED_HOURS_MAX_SPREAD_PCT", "0.01")
             ),
             vwap_dip_threshold_pct=float(
                 values.get("VWAP_DIP_THRESHOLD_PCT", "0.015")
@@ -408,6 +412,11 @@ class Settings:
                     )
         if self.extended_hours_limit_offset_pct <= 0:
             raise ValueError("EXTENDED_HOURS_LIMIT_OFFSET_PCT must be positive")
+        if self.extended_hours_max_spread_pct < self.max_spread_pct:
+            raise ValueError(
+                f"EXTENDED_HOURS_MAX_SPREAD_PCT ({self.extended_hours_max_spread_pct}) "
+                f"must be >= MAX_SPREAD_PCT ({self.max_spread_pct})"
+            )
         if self.vwap_dip_threshold_pct <= 0:
             raise ValueError("VWAP_DIP_THRESHOLD_PCT must be positive")
         if self.vwap_dip_threshold_pct >= 1.0:

@@ -108,3 +108,17 @@ def test_validation_only_runs_when_enabled():
     }
     s = Settings.from_env(env)
     assert s.extended_hours_enabled is False
+
+
+def test_extended_hours_max_spread_pct_defaults_to_1_pct():
+    s = Settings.from_env(_base())
+    assert s.extended_hours_max_spread_pct == pytest.approx(0.01)
+
+
+def test_extended_hours_max_spread_pct_must_be_at_least_max_spread_pct():
+    with pytest.raises(ValueError, match="EXTENDED_HOURS_MAX_SPREAD_PCT"):
+        Settings.from_env({
+            **_base(),
+            "MAX_SPREAD_PCT": "0.01",
+            "EXTENDED_HOURS_MAX_SPREAD_PCT": "0.005",  # stricter than regular — invalid
+        })
