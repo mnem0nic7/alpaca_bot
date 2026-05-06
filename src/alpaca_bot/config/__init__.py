@@ -139,6 +139,7 @@ class Settings:
     option_dte_max: int = 60
     option_delta_target: float = 0.50
     enable_options_trading: bool = False
+    max_stop_pct: float = 0.05
 
     def __post_init__(self) -> None:
         self.validate()
@@ -301,6 +302,7 @@ class Settings:
             enable_options_trading=_parse_bool(
                 "ENABLE_OPTIONS_TRADING", values.get("ENABLE_OPTIONS_TRADING", "false")
             ),
+            max_stop_pct=float(values.get("MAX_STOP_PCT", "0.05")),
         )
         return settings
 
@@ -444,6 +446,10 @@ class Settings:
             raise ValueError("OPTION_DTE_MAX must be greater than OPTION_DTE_MIN")
         if not 0.0 < self.option_delta_target <= 1.0:
             raise ValueError("OPTION_DELTA_TARGET must be between 0 (exclusive) and 1.0 (inclusive)")
+        if not 0 < self.max_stop_pct <= 0.50:
+            raise ValueError(
+                "MAX_STOP_PCT must be between 0 (exclusive) and 0.50 (inclusive)"
+            )
         if self.extended_hours_enabled:
             if self.pre_market_entry_window_start >= self.pre_market_entry_window_end:
                 raise ValueError(
