@@ -541,11 +541,13 @@ Before:
 
 After:
 ```python
-                if is_extended:
-                    # bars[-1] may be a bar past ENTRY_WINDOW_END (e.g., 3:45pm when
-                    # ENTRY_WINDOW_END=15:30). Walk back to the last bar within the
-                    # regular entry window so is_entry_session_time() inside each
-                    # strategy evaluator does not reject the signal bar.
+                if session_type is SessionType.AFTER_HOURS:
+                    # During afterhours, bars[-1] is the last regular-session bar
+                    # (e.g., 3:45pm when ENTRY_WINDOW_END=15:30). Walk back to the
+                    # last bar within the regular entry window so is_entry_session_time()
+                    # inside each strategy evaluator does not reject the signal bar.
+                    # Do NOT apply this walk-back for PRE_MARKET: pre-market bars are
+                    # fresh and already pass is_entry_session_time().
                     signal_index = next(
                         (
                             i
@@ -567,7 +569,52 @@ After:
                 )
 ```
 
-- [ ] **Step 5: Run all tests to verify PASS**
+- [ ] **Step 5: Add PRE_MARKET regression test**
+
+Append to `tests/unit/test_engine_extended_hours.py`:
+
+```python
+def test_pre_market_signal_index_uses_last_bar():
+    """During PRE_MARKET, signal_index must be len(bars)-1 — no walk-back to REGULAR window."""
+    settings = _settings()  # pre_market_entry_window_start=04:00, end=09:20
+    # 8:00am ET = 12:00 UTC = pre-market, within PRE_MARKET entry window
+    now = datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc)
+    bar = _bar("AAPL", close=105.0, ts=datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc))  # 8am ET
+
+    seen_signal_index: list = []
+
+    def recording_evaluator(**kwargs) -> EntrySignal | None:
+        seen_signal_index.append(kwargs["signal_index"])
+        return EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=105.1,
+            relative_volume=2.0,
+            stop_price=103.0,
+            limit_price=105.2,
+            initial_stop_price=103.0,
+        )
+
+    evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": [bar]},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        session_type=SessionType.PRE_MARKET,
+        signal_evaluator=recording_evaluator,
+    )
+    assert seen_signal_index, "signal_evaluator must be called during PRE_MARKET"
+    assert seen_signal_index[0] == 0, (
+        "PRE_MARKET must use signal_index=len(bars)-1 (no REGULAR walk-back)"
+    )
+```
+
+- [ ] **Step 6: Run all tests to verify PASS**
 
 ```bash
 pytest tests/unit/test_engine_extended_hours.py tests/unit/test_settings_extended_hours.py -v
@@ -575,7 +622,7 @@ pytest tests/unit/test_engine_extended_hours.py tests/unit/test_settings_extende
 
 Expected: All pass
 
-- [ ] **Step 6: Run full test suite**
+- [ ] **Step 7: Run full test suite**
 
 ```bash
 pytest
@@ -583,7 +630,7 @@ pytest
 
 Expected: All pass
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/alpaca_bot/core/engine.py tests/unit/test_engine_extended_hours.py
