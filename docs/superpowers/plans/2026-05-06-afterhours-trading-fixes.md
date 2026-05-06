@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fix three concrete bugs that prevent `EXTENDED_HOURS_ENABLED=true` from working: stale-bar rejection, cap-up UPDATE_STOP spam, and over-tight spread filter.
+**Goal:** Fix four concrete bugs that prevent `EXTENDED_HOURS_ENABLED=true` from working: stale-bar rejection, wrong signal bar selection, cap-up UPDATE_STOP spam, and over-tight spread filter.
 
-**Architecture:** Three minimal, targeted changes to `core/engine.py` plus one new setting in `config/__init__.py`. Each engine change is gated by the existing `is_extended` flag (computed at `engine.py:110`).
+**Architecture:** Four targeted changes to `core/engine.py` plus one new setting in `config/__init__.py`. Each engine change is gated by the existing `is_extended` flag (computed at `engine.py:110`). A fifth engine change adjusts `signal_index` during extended hours to use the last bar within the regular entry window (not `bars[-1]` which is past `ENTRY_WINDOW_END` and blocked by `is_entry_session_time` inside every strategy evaluator).
 
 **Tech Stack:** Python 3.12, pytest, Alpaca-py
 
@@ -15,9 +15,9 @@
 | File | Change |
 |---|---|
 | `src/alpaca_bot/config/__init__.py` | Add `extended_hours_max_spread_pct: float = 0.01` field, `from_env()` parse, `validate()` assertion |
-| `src/alpaca_bot/core/engine.py` | Three targeted changes: bar age guard (line 337), cap-up guard (line 278), spread threshold (line 354) |
+| `src/alpaca_bot/core/engine.py` | Four targeted changes: bar age guard (line 337), signal_index walk-back (line 358), cap-up guard (line 278), spread threshold (line 354); plus import of `is_entry_window` |
 | `tests/unit/test_settings_extended_hours.py` | Two new tests for the new setting |
-| `tests/unit/test_engine_extended_hours.py` | Three new tests, one per engine behavior |
+| `tests/unit/test_engine_extended_hours.py` | Four new tests, one per engine behavior |
 
 ---
 
@@ -432,4 +432,158 @@ Expected: All pass
 ```bash
 git add src/alpaca_bot/core/engine.py tests/unit/test_engine_extended_hours.py
 git commit -m "fix: use extended_hours_max_spread_pct threshold during extended hours"
+```
+
+---
+
+## Task 5: Engine — walk back to last in-window bar as signal_index during extended hours
+
+**Background:** Every strategy evaluator (breakout, momentum, orb, etc.) calls
+`is_entry_session_time(signal_bar.timestamp, settings)` which checks that the bar's timestamp
+falls within `[ENTRY_WINDOW_START, ENTRY_WINDOW_END]`. During afterhours, `bars[-1]` is the
+3:45pm bar (timestamp past `ENTRY_WINDOW_END=15:30`) so ALL evaluators return `None` —
+even after the bar age fix. The engine must find the most recent bar within the regular entry
+window and pass that as `signal_index`.
+
+**Files:**
+- Modify: `src/alpaca_bot/core/engine.py` (line 21 import + lines 358–364)
+- Modify: `tests/unit/test_engine_extended_hours.py`
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `tests/unit/test_engine_extended_hours.py`:
+
+```python
+def test_afterhours_signal_uses_last_in_window_bar():
+    """During extended hours, signal_evaluator must receive the last bar within ENTRY_WINDOW_END."""
+    settings = _settings()  # ENTRY_WINDOW_END=15:30
+    now = datetime(2026, 4, 28, 22, 0, tzinfo=timezone.utc)  # 6pm ET
+
+    # Two bars: 3:30pm ET (within ENTRY_WINDOW_END=15:30) and 3:45pm ET (past it)
+    bar_in_window = _bar("AAPL", close=105.0, ts=datetime(2026, 4, 28, 19, 30, tzinfo=timezone.utc))
+    bar_past_window = _bar("AAPL", close=106.0, ts=datetime(2026, 4, 28, 19, 45, tzinfo=timezone.utc))
+
+    seen_signal_ts: list = []
+
+    def recording_evaluator(**kwargs) -> EntrySignal | None:
+        seen_signal_ts.append(kwargs["intraday_bars"][kwargs["signal_index"]].timestamp)
+        return EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=105.1,
+            relative_volume=2.0,
+            stop_price=103.0,
+            limit_price=105.2,
+            initial_stop_price=103.0,
+        )
+
+    evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar_in_window, bar_past_window]},
+        daily_bars_by_symbol={"AAPL": [bar_in_window]},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        session_type=SessionType.AFTER_HOURS,
+        signal_evaluator=recording_evaluator,
+    )
+    assert seen_signal_ts, "signal_evaluator must be called during AFTER_HOURS"
+    assert seen_signal_ts[0] == bar_in_window.timestamp, (
+        "signal_index must point to the last bar within ENTRY_WINDOW_END, not bars[-1]"
+    )
+```
+
+- [ ] **Step 2: Run to verify FAIL**
+
+```bash
+pytest tests/unit/test_engine_extended_hours.py::test_afterhours_signal_uses_last_in_window_bar -v
+```
+
+Expected: FAIL — `seen_signal_ts[0]` is `bar_past_window.timestamp` (3:45pm, i.e., `bars[-1]`), not `bar_in_window.timestamp`
+
+- [ ] **Step 3: Add import to engine**
+
+In `src/alpaca_bot/core/engine.py`, change line 21:
+
+Before:
+```python
+from alpaca_bot.strategy.session import SessionType, is_flatten_time as _session_flatten_time
+```
+
+After:
+```python
+from alpaca_bot.strategy.session import (
+    SessionType,
+    is_entry_window as _is_entry_window,
+    is_flatten_time as _session_flatten_time,
+)
+```
+
+- [ ] **Step 4: Apply engine change**
+
+In `src/alpaca_bot/core/engine.py`, replace lines 358–364:
+
+Before:
+```python
+                signal = signal_evaluator(
+                    symbol=symbol,
+                    intraday_bars=bars,
+                    signal_index=len(bars) - 1,
+                    daily_bars=daily_bars,
+                    settings=settings,
+                )
+```
+
+After:
+```python
+                if is_extended:
+                    # bars[-1] may be a bar past ENTRY_WINDOW_END (e.g., 3:45pm when
+                    # ENTRY_WINDOW_END=15:30). Walk back to the last bar within the
+                    # regular entry window so is_entry_session_time() inside each
+                    # strategy evaluator does not reject the signal bar.
+                    signal_index = next(
+                        (
+                            i
+                            for i in range(len(bars) - 1, -1, -1)
+                            if _is_entry_window(bars[i].timestamp, settings, SessionType.REGULAR)
+                        ),
+                        -1,
+                    )
+                    if signal_index < 0:
+                        continue
+                else:
+                    signal_index = len(bars) - 1
+                signal = signal_evaluator(
+                    symbol=symbol,
+                    intraday_bars=bars,
+                    signal_index=signal_index,
+                    daily_bars=daily_bars,
+                    settings=settings,
+                )
+```
+
+- [ ] **Step 5: Run all tests to verify PASS**
+
+```bash
+pytest tests/unit/test_engine_extended_hours.py tests/unit/test_settings_extended_hours.py -v
+```
+
+Expected: All pass
+
+- [ ] **Step 6: Run full test suite**
+
+```bash
+pytest
+```
+
+Expected: All pass
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/alpaca_bot/core/engine.py tests/unit/test_engine_extended_hours.py
+git commit -m "fix: walk back signal_index to last in-window bar during extended hours"
 ```
