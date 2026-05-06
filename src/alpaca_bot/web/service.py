@@ -159,6 +159,23 @@ class DashboardSnapshot:
     latest_prices: dict[str, float] = dc_field(default_factory=dict)
     realized_pnl: float | None = None
     loss_limit_amount: float | None = None
+    strategy_win_loss: dict[str, tuple[int, int]] = dc_field(default_factory=dict)
+    strategy_capital_pct: dict[str, float] = dc_field(default_factory=dict)
+
+
+def _compute_capital_pct(
+    positions: list,
+    latest_prices: dict[str, float],
+) -> dict[str, float]:
+    strategy_value: dict[str, float] = {}
+    for pos in positions:
+        price = latest_prices.get(pos.symbol, pos.entry_price)
+        val = price * pos.quantity
+        strategy_value[pos.strategy_name] = strategy_value.get(pos.strategy_name, 0.0) + val
+    total = sum(strategy_value.values())
+    if total <= 0:
+        return {}
+    return {name: round(val / total * 100, 1) for name, val in strategy_value.items()}
 
 
 def load_dashboard_snapshot(
@@ -222,6 +239,19 @@ def load_dashboard_snapshot(
         realized_pnl = None
         loss_limit_amount = None
 
+    positions = position_store.list_all(
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+    )
+    if hasattr(order_store, "win_loss_counts_by_strategy"):
+        strategy_win_loss: dict[str, tuple[int, int]] = order_store.win_loss_counts_by_strategy(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+        )
+    else:
+        strategy_win_loss = {}
+    strategy_capital_pct = _compute_capital_pct(positions, latest_prices or {})
+
     return DashboardSnapshot(
         generated_at=generated_at,
         trading_status=trading_status_store.load(
@@ -229,10 +259,7 @@ def load_dashboard_snapshot(
             strategy_version=settings.strategy_version,
         ),
         session_state=session_state,
-        positions=position_store.list_all(
-            trading_mode=settings.trading_mode,
-            strategy_version=settings.strategy_version,
-        ),
+        positions=positions,
         working_orders=order_store.list_by_status(
             trading_mode=settings.trading_mode,
             strategy_version=settings.strategy_version,
@@ -254,6 +281,8 @@ def load_dashboard_snapshot(
         latest_prices=latest_prices or {},
         realized_pnl=realized_pnl,
         loss_limit_amount=loss_limit_amount,
+        strategy_win_loss=strategy_win_loss,
+        strategy_capital_pct=strategy_capital_pct,
     )
 
 

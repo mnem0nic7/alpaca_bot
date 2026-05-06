@@ -12,6 +12,7 @@ from alpaca_bot.web.service import (
     WORKER_STALE_AFTER_SECONDS,
     WORKING_ORDER_STATUSES,
     AuditLogPage,
+    _compute_capital_pct,
     _load_worker_health,
     _max_drawdown_pct,
     _mean_return_pct,
@@ -69,7 +70,11 @@ def make_snapshot_stores(*, events=None, latest=None):
         trading_status_store=SimpleNamespace(load=lambda **_: None),
         daily_session_state_store=SimpleNamespace(load=lambda **_: None),
         position_store=SimpleNamespace(list_all=lambda **_: []),
-        order_store=SimpleNamespace(list_by_status=lambda **_: [], list_recent=lambda **_: []),
+        order_store=SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            win_loss_counts_by_strategy=lambda **_: {},
+        ),
         audit_event_store=make_audit_store(events=events, latest=latest),
         strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
     )
@@ -1271,3 +1276,109 @@ class TestLoadStrategyWeights:
         load_strategy_weights(settings=settings, connection=None, strategy_weight_store=store)
         assert store.last_load_kwargs.get("trading_mode") == settings.trading_mode
         assert store.last_load_kwargs.get("strategy_version") == settings.strategy_version
+
+
+# ---------------------------------------------------------------------------
+# _compute_capital_pct
+# ---------------------------------------------------------------------------
+
+def test_compute_capital_pct_empty_positions() -> None:
+    result = _compute_capital_pct([], {})
+    assert result == {}
+
+
+def test_compute_capital_pct_single_strategy_all_capital() -> None:
+    pos = SimpleNamespace(symbol="AAPL", entry_price=100.0, quantity=10, strategy_name="breakout")
+    result = _compute_capital_pct([pos], {"AAPL": 105.0})
+    assert result == {"breakout": pytest.approx(100.0)}
+
+
+def test_compute_capital_pct_two_strategies() -> None:
+    pos_a = SimpleNamespace(symbol="AAPL", entry_price=100.0, quantity=10, strategy_name="breakout")
+    pos_b = SimpleNamespace(symbol="MSFT", entry_price=200.0, quantity=5, strategy_name="momentum")
+    # AAPL: 10*100=1000, MSFT: 5*200=1000 (no latest_prices, uses entry_price)
+    result = _compute_capital_pct([pos_a, pos_b], {})
+    assert result["breakout"] == pytest.approx(50.0)
+    assert result["momentum"] == pytest.approx(50.0)
+
+
+def test_compute_capital_pct_uses_latest_price_over_entry_price() -> None:
+    pos = SimpleNamespace(symbol="AAPL", entry_price=100.0, quantity=10, strategy_name="breakout")
+    # latest price 110 → value 1100; still 100% (only one strategy)
+    result = _compute_capital_pct([pos], {"AAPL": 110.0})
+    assert result == {"breakout": pytest.approx(100.0)}
+
+
+def test_compute_capital_pct_falls_back_to_entry_price_when_no_latest() -> None:
+    pos_a = SimpleNamespace(symbol="AAPL", entry_price=100.0, quantity=10, strategy_name="breakout")
+    pos_b = SimpleNamespace(symbol="MSFT", entry_price=300.0, quantity=10, strategy_name="momentum")
+    # AAPL: 1000, MSFT: 3000 → breakout=25%, momentum=75%
+    result = _compute_capital_pct([pos_a, pos_b], {})
+    assert result["breakout"] == pytest.approx(25.0)
+    assert result["momentum"] == pytest.approx(75.0)
+
+
+def test_compute_capital_pct_rounds_to_one_decimal() -> None:
+    pos_a = SimpleNamespace(symbol="AAPL", entry_price=100.0, quantity=1, strategy_name="breakout")
+    pos_b = SimpleNamespace(symbol="MSFT", entry_price=200.0, quantity=1, strategy_name="momentum")
+    # breakout: 100/300 = 33.333...% → rounds to 33.3; momentum: 66.7
+    result = _compute_capital_pct([pos_a, pos_b], {})
+    assert result["breakout"] == pytest.approx(33.3, abs=0.05)
+    assert result["momentum"] == pytest.approx(66.7, abs=0.05)
+
+
+# ---------------------------------------------------------------------------
+# DashboardSnapshot.strategy_win_loss and strategy_capital_pct
+# ---------------------------------------------------------------------------
+
+def test_load_dashboard_snapshot_populates_strategy_win_loss() -> None:
+    fixed_now = datetime(2026, 5, 6, 14, 0, tzinfo=timezone.utc)
+    win_loss_data = {"breakout": (5, 2), "momentum": (1, 3)}
+
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=fixed_now,
+        **{
+            **make_snapshot_stores(),
+            "order_store": SimpleNamespace(
+                list_by_status=lambda **_: [],
+                list_recent=lambda **_: [],
+                win_loss_counts_by_strategy=lambda **_: win_loss_data,
+            ),
+        },
+    )
+
+    assert snapshot.strategy_win_loss == {"breakout": (5, 2), "momentum": (1, 3)}
+
+
+def test_load_dashboard_snapshot_strategy_win_loss_empty_when_no_closed_trades() -> None:
+    """strategy_win_loss is {} when win_loss_counts_by_strategy returns empty dict."""
+    fixed_now = datetime(2026, 5, 6, 14, 0, tzinfo=timezone.utc)
+
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=fixed_now,
+        **make_snapshot_stores(),
+    )
+
+    assert snapshot.strategy_win_loss == {}
+
+
+def test_load_dashboard_snapshot_populates_strategy_capital_pct() -> None:
+    fixed_now = datetime(2026, 5, 6, 14, 0, tzinfo=timezone.utc)
+    pos = SimpleNamespace(symbol="AAPL", entry_price=100.0, quantity=10, strategy_name="breakout")
+
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=fixed_now,
+        **{
+            **make_snapshot_stores(),
+            "position_store": SimpleNamespace(list_all=lambda **_: [pos]),
+        },
+        latest_prices={"AAPL": 105.0},
+    )
+
+    assert snapshot.strategy_capital_pct == {"breakout": pytest.approx(100.0)}
