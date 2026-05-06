@@ -36,7 +36,7 @@ class CycleIntent:
     intent_type: CycleIntentType
     symbol: str
     timestamp: datetime
-    quantity: int | None = None
+    quantity: float | None = None
     stop_price: float | None = None
     limit_price: float | None = None
     initial_stop_price: float | None = None

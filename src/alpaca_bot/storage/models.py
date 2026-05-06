@@ -43,7 +43,7 @@ class OrderRecord:
     side: str
     intent_type: str
     status: str
-    quantity: int
+    quantity: float
     trading_mode: TradingMode
     strategy_version: str
     strategy_name: str = "breakout"
@@ -55,7 +55,7 @@ class OrderRecord:
     broker_order_id: str | None = None
     signal_timestamp: datetime | None = None
     fill_price: float | None = None
-    filled_quantity: int | None = None
+    filled_quantity: float | None = None
     reconciliation_miss_count: int = 0
 
 
@@ -64,7 +64,7 @@ class PositionRecord:
     symbol: str
     trading_mode: TradingMode
     strategy_version: str
-    quantity: int
+    quantity: float
     entry_price: float
     stop_price: float
     initial_stop_price: float

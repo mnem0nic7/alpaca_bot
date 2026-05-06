@@ -216,7 +216,7 @@ def _row_to_order_record(row: Any) -> OrderRecord:
         side=row[2],
         intent_type=row[3],
         status=row[4],
-        quantity=int(row[5]),
+        quantity=float(row[5]),
         trading_mode=TradingMode(row[6]),
         strategy_version=row[7],
         created_at=row[8],
@@ -227,7 +227,7 @@ def _row_to_order_record(row: Any) -> OrderRecord:
         broker_order_id=row[13],
         signal_timestamp=row[14],
         fill_price=float(row[15]) if row[15] is not None else None,
-        filled_quantity=int(row[16]) if row[16] is not None else None,
+        filled_quantity=float(row[16]) if row[16] is not None else None,
         strategy_name=row[17] if row[17] is not None else "breakout",
         reconciliation_miss_count=int(row[18]) if row[18] is not None else 0,
     )
@@ -456,9 +456,9 @@ class OrderStore:
                 [row[0] for row in missing_entry],
             )
         return sum(
-            (float(row[2]) - float(row[1])) * int(row[3])
+            (float(row[2]) - float(row[1])) * float(row[3])
             if row[1] is not None
-            else -(float(row[2]) * int(row[3]))
+            else -(float(row[2]) * float(row[3]))
             for row in rows
             if row[2] is not None
         )
@@ -537,7 +537,7 @@ class OrderStore:
             symbol = row[0]
             entry_fill = row[1]
             exit_fill = float(row[2])
-            qty = int(row[3])
+            qty = float(row[3])
             pnl = (
                 (exit_fill - float(entry_fill)) * qty
                 if entry_fill is not None
@@ -640,7 +640,7 @@ class OrderStore:
                 "entry_time": row[5],
                 "exit_fill": float(row[6]) if row[6] is not None else None,
                 "exit_time": row[7],
-                "qty": int(row[8]),
+                "qty": float(row[8]),
             }
             for row in rows
             if row[3] is not None and row[6] is not None
@@ -699,7 +699,7 @@ class OrderStore:
             ),
         )
         return [
-            {"exit_time": row[0], "pnl": (float(row[2]) - float(row[3])) * int(row[1])}
+            {"exit_time": row[0], "pnl": (float(row[2]) - float(row[3])) * float(row[1])}
             for row in rows
             if row[3] is not None
         ]
@@ -761,7 +761,7 @@ class OrderStore:
             {
                 "strategy_name": row[0],
                 "exit_date": row[1],
-                "pnl": (float(row[3]) - float(row[4])) * int(row[2]),
+                "pnl": (float(row[3]) - float(row[4])) * float(row[2]),
             }
             for row in rows
             if row[4] is not None
@@ -1149,7 +1149,7 @@ class PositionStore:
                 trading_mode=TradingMode(row[1]),
                 strategy_version=row[2],
                 strategy_name=row[3],
-                quantity=int(row[4]),
+                quantity=float(row[4]),
                 entry_price=float(row[5]),
                 stop_price=float(row[6]),
                 initial_stop_price=float(row[7]),
