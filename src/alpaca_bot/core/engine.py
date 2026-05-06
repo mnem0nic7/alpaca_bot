@@ -145,9 +145,10 @@ def evaluate_cycle(
             continue
         latest_bar = bars[-1]
 
-        bar_age_seconds = (now - latest_bar.timestamp.astimezone(timezone.utc)).total_seconds()
-        if bar_age_seconds > 2 * settings.entry_timeframe_minutes * 60:
-            continue
+        if not is_extended:
+            bar_age_seconds = (now - latest_bar.timestamp.astimezone(timezone.utc)).total_seconds()
+            if bar_age_seconds > 2 * settings.entry_timeframe_minutes * 60:
+                continue
 
         if is_extended:
             continue

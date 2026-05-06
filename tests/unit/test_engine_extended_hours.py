@@ -300,6 +300,46 @@ def test_afterhours_spread_filter_uses_extended_threshold():
     )
 
 
+def test_position_bar_age_check_bypassed_in_after_hours():
+    """Position loop must not drop positions with stale bars during AFTER_HOURS.
+
+    Regression: the bar-age guard in the position loop was unconditional, so
+    an after-hours position whose latest bar was a regular-session bar (hours
+    old) was silently skipped before the is_extended guard could fire.
+    The flatten/EXIT path must still be reachable for such positions.
+    """
+    settings = _settings()  # EXTENDED_HOURS_FLATTEN_TIME=19:45 ET
+    # 7:50pm ET = 23:50 UTC: past flatten (7:45pm ET). Bar at 3:30pm ET = 19:30 UTC → 4h20m old.
+    now = datetime(2026, 4, 28, 23, 50, tzinfo=timezone.utc)
+    stale_bar = _bar("AAPL", close=100.0, ts=datetime(2026, 4, 28, 19, 30, tzinfo=timezone.utc))
+    position = OpenPosition(
+        symbol="AAPL",
+        quantity=10,
+        entry_price=100.0,
+        stop_price=95.0,
+        initial_stop_price=95.0,
+        entry_level=95.0,
+        entry_timestamp=datetime(2026, 4, 28, 14, 0, tzinfo=timezone.utc),
+    )
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [stale_bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+        session_type=SessionType.AFTER_HOURS,
+    )
+    exits = [i for i in result.intents if i.intent_type is CycleIntentType.EXIT]
+    assert exits, (
+        "Position with stale regular-session bar must still reach the flatten path "
+        "during AFTER_HOURS — bar-age check must be bypassed in the position loop"
+    )
+
+
 def test_afterhours_signal_uses_last_in_window_bar():
     """During extended hours, signal_evaluator must receive the last bar within ENTRY_WINDOW_END."""
     settings = _settings()  # ENTRY_WINDOW_END=15:30
