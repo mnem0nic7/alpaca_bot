@@ -1794,7 +1794,7 @@ def test_profit_trail_emits_when_trail_exceeds_stop_even_below_entry() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_fractionable_symbol_produces_fractional_quantity() -> None:
+def test_fractionable_symbol_produces_larger_position() -> None:
     """Symbol in fractionable_symbols bypasses math.floor, producing a fractional quantity.
 
     With CLOV: entry=$3.00, stop=$2.70 → risk_per_share=$0.30.
