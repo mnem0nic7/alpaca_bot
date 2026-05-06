@@ -242,6 +242,26 @@ class AlpacaExecutionAdapter:
             for order in raw_orders
         ]
 
+    def get_open_orders_for_symbol(self, symbol: str) -> list[BrokerOrder]:
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+        except ModuleNotFoundError:
+            filters: Any = {"status": "open", "symbols": [symbol], "limit": 500}
+        else:
+            filters = GetOrdersRequest(status="open", symbols=[symbol], limit=500)
+        raw_orders = _retry_with_backoff(lambda: self._trading.get_orders(filter=filters))
+        return [
+            BrokerOrder(
+                client_order_id=str(getattr(order, "client_order_id", "")),
+                broker_order_id=str(getattr(order, "id", "")) or None,
+                symbol=str(order.symbol).upper(),
+                side=order.side.value if hasattr(order.side, "value") else str(order.side),
+                status=order.status.value if hasattr(order.status, "value") else str(order.status),
+                quantity=int(float(order.qty)),
+            )
+            for order in raw_orders
+        ]
+
     def list_positions(self) -> list[BrokerPosition]:
         raw_positions = _retry_with_backoff(self._trading.get_all_positions)
         return [

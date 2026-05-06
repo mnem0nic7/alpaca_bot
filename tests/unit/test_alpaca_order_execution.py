@@ -196,3 +196,39 @@ def test_submit_market_exit_builds_market_sell_request_and_normalizes_order() ->
         status="accepted",
         quantity=5,
     )
+
+
+class TradingClientReadStub:
+    def __init__(self, orders: list[Any]) -> None:
+        self._orders = orders
+        self.last_filter: Any = None
+
+    def get_orders(self, filter: Any = None) -> list[Any]:
+        self.last_filter = filter
+        return self._orders
+
+
+def test_get_open_orders_for_symbol_returns_orders_matching_symbol() -> None:
+    stub_order = OrderStub(
+        client_order_id="v1:breakout:2026-01-02:AAPL:stop:2026-01-02T10:00:00",
+        id="broker-stop-1",
+        symbol="AAPL",
+        side="sell",
+        status="accepted",
+        qty="10",
+    )
+    trading_client = TradingClientReadStub(orders=[stub_order])
+    adapter = AlpacaExecutionAdapter(trading_client=trading_client)
+
+    orders = adapter.get_open_orders_for_symbol("AAPL")
+
+    assert orders == [
+        BrokerOrder(
+            client_order_id="v1:breakout:2026-01-02:AAPL:stop:2026-01-02T10:00:00",
+            broker_order_id="broker-stop-1",
+            symbol="AAPL",
+            side="sell",
+            status="accepted",
+            quantity=10,
+        )
+    ]

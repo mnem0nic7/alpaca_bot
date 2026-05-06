@@ -72,6 +72,8 @@ class BrokerProtocol(Protocol):
 
     def cancel_order(self, order_id: str) -> None: ...
 
+    def get_open_orders_for_symbol(self, symbol: str) -> list: ...
+
 
 @dataclass(frozen=True)
 class CycleIntentExecutionReport:
