@@ -133,13 +133,19 @@ def _fmt_pnl(v: float) -> str:
     return f"${v:.2f}"
 
 
-def trailing_consecutive_losses(*, order_store: object, settings: Settings, session_date: date) -> int:
-    """Count consecutive losses trailing into today (stub for Task 2)."""
-    # Stub implementation — will be implemented in Task 2
-    return 0
+def trailing_consecutive_losses(trades: list[dict]) -> int:
+    raise NotImplementedError
 
 
-def build_intraday_digest(*, settings: Settings, order_store: object) -> tuple[str, str]:
-    """Build (subject, body) for intra-day trade review (stub for Task 3)."""
-    # Stub implementation — will be implemented in Task 3
-    return "Intra-day Digest", ""
+def build_intraday_digest(
+    *,
+    settings: Settings,
+    trades: list[dict],
+    open_positions: list,
+    baseline_equity: float,
+    current_equity: float,
+    cycle_num: int,
+    timestamp,
+    session_date: date,
+) -> tuple[str, str]:
+    raise NotImplementedError
