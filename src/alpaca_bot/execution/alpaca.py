@@ -441,7 +441,7 @@ class AlpacaExecutionAdapter:
         self,
         *,
         order_id: str,
-        quantity: int | None = None,
+        quantity: float | None = None,
         limit_price: float | None = None,
         stop_price: float | None = None,
         client_order_id: str | None = None,
@@ -982,17 +982,18 @@ def _stop_order_request(
 
 def _replace_order_request(
     *,
-    quantity: int | None,
+    quantity: float | None,
     limit_price: float | None,
     stop_price: float | None,
     client_order_id: str | None,
 ) -> Any:
+    qty = round(quantity, 4) if quantity is not None else None
     try:
         from alpaca.trading.requests import ReplaceOrderRequest
     except ModuleNotFoundError:
         payload: dict[str, Any] = {}
-        if quantity is not None:
-            payload["qty"] = quantity
+        if qty is not None:
+            payload["qty"] = qty
         if limit_price is not None:
             payload["limit_price"] = limit_price
         if stop_price is not None:
@@ -1002,8 +1003,8 @@ def _replace_order_request(
         return payload
 
     _req_kwargs: dict[str, Any] = {}
-    if quantity is not None:
-        _req_kwargs["qty"] = quantity
+    if qty is not None:
+        _req_kwargs["qty"] = qty
     if limit_price is not None:
         _req_kwargs["limit_price"] = limit_price
     if stop_price is not None:
