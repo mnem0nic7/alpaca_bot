@@ -479,7 +479,6 @@ def _resync_duplicate_stop_order(
     now: datetime,
     strategy_name: str,
     lock_ctx: Any,
-    notifier: Any,
 ) -> bool:
     """Handle 40010001: broker already has a stop under this client_order_id.
 
@@ -489,8 +488,6 @@ def _resync_duplicate_stop_order(
     Returns True on success (caller can return "replaced"), False on any failure
     (caller should fall back to stop_update_failed logging).
     """
-    from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord as _PR
-
     try:
         broker_orders = broker.get_open_orders_for_symbol(symbol)
     except Exception as fetch_exc:
@@ -550,7 +547,7 @@ def _resync_duplicate_stop_order(
                 commit=False,
             )
             runtime.position_store.save(
-                _PR(
+                PositionRecord(
                     symbol=position.symbol,
                     trading_mode=position.trading_mode,
                     strategy_version=position.strategy_version,
@@ -613,7 +610,6 @@ Replace the `except Exception as exc:` block (lines 308–343) in `_execute_upda
                 now=now,
                 strategy_name=strategy_name,
                 lock_ctx=lock_ctx,
-                notifier=notifier,
             )
             if not success:
                 _emit_stop_update_failed(
@@ -659,8 +655,6 @@ def _emit_stop_update_failed(
     notifier: Any,
 ) -> None:
     """Log stop_update_failed audit event and optionally send notification."""
-    from alpaca_bot.storage import AuditEvent
-
     with lock_ctx:
         try:
             runtime.audit_event_store.append(
@@ -847,11 +841,11 @@ def _cancel_blocking_orders(
     """Handle 40310000: cancel broker orders that are holding shares for symbol.
 
     Parses related_orders from the error JSON, calls cancel_order() for each
-    (best-effort: ignores cancel failures), updates their DB status to pending_cancel,
-    and emits one audit event per canceled order.
+    (best-effort: ignores cancel failures), then tries to update their DB status
+    to pending_cancel (best-effort: a no-op if the order is already "canceled" in
+    the DB, which is the primary 40310000 scenario), and emits one audit event
+    per canceled order. The broker cancel and audit event are the critical operations.
     """
-    from alpaca_bot.storage import AuditEvent, OrderRecord
-
     related = _parse_related_orders_from_error(exc)
     if not related:
         logger.warning(
@@ -952,7 +946,6 @@ Update the restructured exception handler from Task 3, Step 4, to add the `elif 
                 now=now,
                 strategy_name=strategy_name,
                 lock_ctx=lock_ctx,
-                notifier=notifier,
             )
             if not success:
                 _emit_stop_update_failed(
@@ -1192,6 +1185,14 @@ def test_exit_insufficient_qty_emits_exit_hard_failed_when_retry_also_fails() ->
     )
     assert "exit_hard_failed" in event_types, "exit_hard_failed must be emitted when retry also fails"
     assert report.submitted_exit_count == 0
+    # The position has stop_price=2.40 and _cancel_blocking_orders() canceled the phantom
+    # broker stop, leaving the position unprotected. A recovery stop must always be queued
+    # when retry fails after 40310000 unblock, regardless of canceled_stop_count (which
+    # is 0 in this scenario because the DB stop was already "canceled").
+    assert "recovery_stop_queued_after_exit_failure" in event_types, (
+        "recovery_stop_queued_after_exit_failure must be emitted when retry fails "
+        "and position has a stop_price — canceled_stop_count==0 must not suppress it"
+    )
 
 
 def test_path_c_get_open_orders_for_symbol_raises_falls_back_to_stop_update_failed() -> None:
@@ -1343,7 +1344,12 @@ Replace with:
                             ),
                             commit=False,
                         )
-                        if canceled_stop_count > 0 and position.stop_price is not None and position.stop_price > 0:
+                        # Always queue a recovery stop when retry fails after 40310000 unblock.
+                        # canceled_stop_count is 0 in this scenario (the phantom stop was
+                        # already "canceled" in DB, so _active_stop_orders returned empty).
+                        # The _cancel_blocking_orders() call above actually canceled the broker
+                        # stop, leaving the position unprotected — queue recovery unconditionally.
+                        if position.stop_price is not None and position.stop_price > 0:
                             _recovery_stop_id = (
                                 f"exit_failed_recovery:{settings.strategy_version}:"
                                 f"{now.date().isoformat()}:{symbol}:stop"
