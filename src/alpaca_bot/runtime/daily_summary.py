@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from alpaca_bot.config import Settings
 
@@ -134,7 +134,20 @@ def _fmt_pnl(v: float) -> str:
 
 
 def trailing_consecutive_losses(trades: list[dict]) -> int:
-    raise NotImplementedError
+    """Return the current trailing consecutive-loss count from today's closed trades.
+
+    Trades without fill prices are skipped. Returns 0 if no trades or if the
+    most-recent trade was a win.
+    """
+    scored = [t for t in trades if t.get("entry_fill") and t.get("exit_fill")]
+    scored.sort(key=lambda t: t.get("exit_time") or "")
+    streak = 0
+    for t in reversed(scored):
+        if not _is_win(t):
+            streak += 1
+        else:
+            break
+    return streak
 
 
 def build_intraday_digest(
@@ -145,7 +158,55 @@ def build_intraday_digest(
     baseline_equity: float,
     current_equity: float,
     cycle_num: int,
-    timestamp,
+    timestamp: datetime,
     session_date: date,
 ) -> tuple[str, str]:
-    raise NotImplementedError
+    """Build (subject, body) for the intra-day performance digest notification.
+
+    Pure — no I/O, no side effects.
+    """
+    local_ts = timestamp.astimezone(settings.market_timezone)
+    time_str = local_ts.strftime("%H:%M")
+    mode = settings.trading_mode.value
+    interval = settings.intraday_digest_interval_cycles
+
+    subject = f"Intra-day digest — {session_date} {time_str} ET [{mode}]"
+
+    scored = [t for t in trades if t.get("entry_fill") and t.get("exit_fill")]
+    total_pnl = sum(_trade_pnl(t) for t in scored)
+    wins = sum(1 for t in scored if _is_win(t))
+    losses = len(scored) - wins
+
+    lines: list[str] = []
+    lines.append(f"Session: {session_date}  Cycle: {cycle_num}/{interval}")
+    lines.append("")
+
+    if scored:
+        win_rate = wins / len(scored)
+        lines.append(
+            f"P&L: {_fmt_pnl(total_pnl)}  |  Trades: {len(trades)}  |  "
+            f"Win rate: {win_rate:.1%}  ({wins}W / {losses}L)"
+        )
+    else:
+        lines.append(f"P&L: {_fmt_pnl(0.0)}  |  Trades: {len(trades)}")
+
+    loss_limit = settings.daily_loss_limit_pct * baseline_equity
+    session_pnl = current_equity - baseline_equity
+    headroom = max(0.0, loss_limit + session_pnl)
+    lines.append(
+        f"Loss limit headroom: {_fmt_pnl(headroom)} of {_fmt_pnl(loss_limit)} remaining"
+    )
+    lines.append("")
+
+    if open_positions:
+        parts = []
+        for pos in open_positions:
+            sym = getattr(pos, "symbol", "?")
+            qty = getattr(pos, "quantity", "?")
+            entry = getattr(pos, "entry_price", 0.0)
+            parts.append(f"{sym} x{qty} @ {entry:.2f}")
+        lines.append(f"Open positions: {len(open_positions)} ({', '.join(parts)})")
+    else:
+        lines.append("Open positions: 0")
+
+    return subject, "\n".join(lines)
