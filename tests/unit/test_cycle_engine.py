@@ -1787,3 +1787,137 @@ def test_profit_trail_emits_when_trail_exceeds_stop_even_below_entry() -> None:
     ]
     assert len(trail_intents) == 1
     assert trail_intents[0].stop_price == pytest.approx(9.45)
+
+
+# ---------------------------------------------------------------------------
+# Fractional shares + min_notional gate
+# ---------------------------------------------------------------------------
+
+
+def test_fractionable_symbol_produces_fractional_quantity() -> None:
+    """Symbol in fractionable_symbols bypasses math.floor, producing a fractional quantity.
+
+    With CLOV: entry=$3.00, stop=$2.70 → risk_per_share=$0.30.
+    At equity=$99_500, risk_budget=$248.75 → raw_qty=829.17.
+    max_notional = 99500 * 0.05 = 4975.0 → capped qty = 4975.0 / 3.0 = 1658.33...
+    Non-fractionable: floor(829.17) = 829 (integer).
+    Fractionable: raw_qty=829.17 (not capped because 829.17 * 3.0 = 2487.5 < 4975).
+    The fractional path returns 829.17 (not an integer).
+    """
+    import dataclasses
+    import math
+    from alpaca_bot.domain import EntrySignal
+
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    settings = dataclasses.replace(
+        make_settings(SYMBOLS="CLOV"),
+        fractionable_symbols=frozenset({"CLOV"}),
+    )
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    signal_bar = Bar(
+        symbol="CLOV",
+        timestamp=now,
+        open=2.95,
+        high=3.05,
+        low=2.90,
+        close=3.00,
+        volume=5000,
+    )
+
+    def _clov_signal_evaluator(**_kwargs):
+        return EntrySignal(
+            symbol="CLOV",
+            signal_bar=signal_bar,
+            entry_level=2.95,
+            limit_price=3.00,
+            stop_price=2.70,
+            initial_stop_price=2.70,
+            relative_volume=2.0,
+        )
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=99_500.0,
+        intraday_bars_by_symbol={"CLOV": [signal_bar]},
+        daily_bars_by_symbol={"CLOV": make_daily_bars("CLOV")},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=_clov_signal_evaluator,
+    )
+
+    entry_intents = [
+        i for i in result.intents
+        if i.intent_type == CycleIntentType.ENTRY and i.symbol == "CLOV"
+    ]
+    assert len(entry_intents) == 1, f"Expected one ENTRY intent for CLOV, got: {entry_intents}"
+    qty = entry_intents[0].quantity
+    assert qty is not None
+    # Fractionable path: raw_qty = 829.17... — not an exact integer
+    assert qty != math.floor(qty), (
+        f"Expected fractional qty from fractionable path, got integer qty={qty}"
+    )
+    assert qty > 1.0, f"Expected qty > 1, got {qty}"
+
+
+def test_min_notional_gate_drops_tiny_non_fractionable_position() -> None:
+    """Non-fractionable symbol whose position notional is below min_position_notional is dropped.
+
+    With tiny equity ($200): risk_budget = 200 * 0.0025 = $0.50.
+    CLOV: entry=$3.00, stop=$2.70, risk_per_share=$0.30.
+    raw_qty = 0.50 / 0.30 = 1.67 → floor = 1.
+    notional = 1 * 3.00 = $3.00 < min_position_notional=$100 → entry dropped.
+    """
+    from alpaca_bot.domain import EntrySignal
+
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    settings = make_settings(SYMBOLS="CLOV", MIN_POSITION_NOTIONAL="100.0")
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    signal_bar = Bar(
+        symbol="CLOV",
+        timestamp=now,
+        open=2.95,
+        high=3.05,
+        low=2.90,
+        close=3.00,
+        volume=5000,
+    )
+
+    def _clov_signal_evaluator(**_kwargs):
+        return EntrySignal(
+            symbol="CLOV",
+            signal_bar=signal_bar,
+            entry_level=2.95,
+            limit_price=3.00,
+            stop_price=2.70,
+            initial_stop_price=2.70,
+            relative_volume=2.0,
+        )
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=200.0,  # so tiny that floor(qty)=1, notional=$3.00 < $100 threshold
+        intraday_bars_by_symbol={"CLOV": [signal_bar]},
+        daily_bars_by_symbol={"CLOV": make_daily_bars("CLOV")},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=_clov_signal_evaluator,
+    )
+
+    entry_intents = [
+        i for i in result.intents
+        if i.intent_type == CycleIntentType.ENTRY and i.symbol == "CLOV"
+    ]
+    assert entry_intents == [], (
+        f"Expected no ENTRY intent — tiny position ($3.00 notional) below "
+        f"min_position_notional=$100 should be dropped; got: {entry_intents}"
+    )

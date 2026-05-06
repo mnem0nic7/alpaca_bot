@@ -412,13 +412,20 @@ def evaluate_cycle(
                         continue
                     cap_stop = round(signal.limit_price * (1 - settings.max_stop_pct), 2)
                     effective_initial_stop = max(signal.initial_stop_price, cap_stop)
+                    fractionable = signal.symbol in settings.fractionable_symbols
                     quantity = calculate_position_size(
                         equity=equity,
                         entry_price=signal.limit_price,
                         stop_price=effective_initial_stop,
                         settings=settings,
+                        fractionable=fractionable,
                     )
-                    if quantity < 1:
+                    if quantity <= 0.0:
+                        continue
+                    if (
+                        settings.min_position_notional > 0
+                        and quantity * signal.limit_price < settings.min_position_notional
+                    ):
                         continue
                     entry_candidates.append(
                         (
