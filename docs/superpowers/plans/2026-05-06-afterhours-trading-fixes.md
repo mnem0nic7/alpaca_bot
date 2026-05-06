@@ -127,11 +127,12 @@ Append to `tests/unit/test_engine_extended_hours.py`:
 
 ```python
 def test_afterhours_entry_not_blocked_by_stale_bars():
-    """Entries must be possible during afterhours even with 2-hour-old bars."""
+    """Entries must be possible during afterhours even with 2.5-hour-old bars."""
     settings = _settings()
-    # 6pm ET = 22:00 UTC; bar from 3:55pm ET = 19:55 UTC → 2h5m old → fails 30-min check
+    # 6pm ET = 22:00 UTC; bar from 3:30pm ET = 19:30 UTC → 2.5h old → fails 30-min check
+    # Bar is at ENTRY_WINDOW_END (15:30 ET) so signal_index walk-back (Task 5) finds it.
     now = datetime(2026, 4, 28, 22, 0, tzinfo=timezone.utc)
-    stale_bar = _bar("AAPL", close=105.0, ts=datetime(2026, 4, 28, 19, 55, tzinfo=timezone.utc))
+    stale_bar = _bar("AAPL", close=105.0, ts=datetime(2026, 4, 28, 19, 30, tzinfo=timezone.utc))
 
     result = evaluate_cycle(
         settings=settings,
@@ -167,7 +168,7 @@ def test_afterhours_entry_not_blocked_by_stale_bars():
 pytest tests/unit/test_engine_extended_hours.py::test_afterhours_entry_not_blocked_by_stale_bars -v
 ```
 
-Expected: FAIL — entries list is empty because bar_age is ~2h > 30-min limit → `continue`
+Expected: FAIL — entries list is empty because bar_age is ~2.5h > 30-min limit → `continue`
 
 - [ ] **Step 4: Apply engine change**
 
@@ -346,7 +347,8 @@ def test_afterhours_spread_filter_uses_extended_threshold():
         spread_pct = 0.005
 
     now = datetime(2026, 4, 28, 22, 0, tzinfo=timezone.utc)  # 6pm ET
-    bar = _bar("AAPL", close=105.0, ts=now)
+    # Bar at ENTRY_WINDOW_END (3:30pm ET = 19:30 UTC) so signal_index walk-back (Task 5) finds it.
+    bar = _bar("AAPL", close=105.0, ts=datetime(2026, 4, 28, 19, 30, tzinfo=timezone.utc))
 
     result = evaluate_cycle(
         settings=settings,
