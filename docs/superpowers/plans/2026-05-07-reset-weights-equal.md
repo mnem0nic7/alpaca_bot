@@ -4,9 +4,18 @@
 
 **Goal:** Add `alpaca-bot-admin reset-weights` that writes 1/N equal weights for all active strategies so every strategy starts fresh with equal capital allocation regardless of Sharpe history.
 
-**Architecture:** New subcommand in `admin/cli.py` following the existing `_run_close_excess()` pattern — a private `_reset_weights_equal()` function, injected store factories for testability, and an atomic AuditEvent write.
+**Architecture:** New subcommand in `admin/cli.py` following the existing `_run_close_excess()` pattern — a private `_reset_weights_equal()` function, injected store factories for testability, and an atomic AuditEvent + weight write (single commit).
 
 **Tech Stack:** Python, argparse, psycopg2 (via existing ConnectionProtocol), pytest
+
+---
+
+## Grilling decisions baked in
+
+- **Atomicity:** `StrategyWeightStore.upsert_many()` gains a `commit: bool = True` parameter so the weight rows and audit event can be committed in a single `connection.commit()` call, consistent with `_write_strategy_flag()` pattern.
+- **Empty-names guard:** If all strategies are disabled via flags, `_reset_weights_equal()` raises `ValueError` with a clear message rather than crashing with `ZeroDivisionError`.
+- **Paper vs live isolation:** `--mode` parameter scopes all DB writes to the specified trading mode. Paper and live weight rows are independent.
+- **Supervisor restart required:** The running supervisor's in-memory `_session_capital_weights` cache is not updated by this command. A restart is required for same-day effect.
 
 ---
 
@@ -14,6 +23,7 @@
 
 | File | Action | Responsibility |
 |---|---|---|
+| `src/alpaca_bot/storage/repositories.py` | Modify | Add `commit: bool = True` to `StrategyWeightStore.upsert_many()` |
 | `src/alpaca_bot/admin/cli.py` | Modify | Add `reset-weights` subparser, `_reset_weights_equal()` function, wire into `main()` |
 | `tests/unit/test_admin_reset_weights.py` | Create | All tests for the `reset-weights` command |
 
@@ -21,7 +31,139 @@ No migration needed — no schema changes.
 
 ---
 
-### Task 1: Write failing tests for `reset-weights`
+### Task 1: Add `commit` parameter to `StrategyWeightStore.upsert_many()`
+
+**Files:**
+- Modify: `src/alpaca_bot/storage/repositories.py` lines 1402–1443
+
+- [ ] **Step 1: Write a failing test for commit=False behavior**
+
+Add to `tests/unit/test_strategy_weight_store.py` (if it exists) or inline as a standalone test. Since the existing tests likely test the commit=True path, add a test that verifies commit=False does NOT commit:
+
+Check whether `tests/unit/test_strategy_weight_store.py` exists:
+```bash
+ls tests/unit/ | grep weight
+```
+
+If it doesn't exist, add the test to `tests/unit/test_admin_reset_weights.py` (Task 2 will include it). The key behavioral contract: `upsert_many(..., commit=False)` calls execute with commit=False but does NOT call `connection.commit()`.
+
+- [ ] **Step 2: Edit `upsert_many()` in `repositories.py`**
+
+Change the method signature and body. Find this block (lines 1402–1443):
+
+```python
+    def upsert_many(
+        self,
+        *,
+        weights: dict[str, float],
+        sharpes: dict[str, float],
+        trading_mode: TradingMode,
+        strategy_version: str,
+        computed_at: datetime,
+    ) -> None:
+        try:
+            for strategy_name, weight in weights.items():
+                execute(
+                    self._connection,
+                    """
+                    INSERT INTO strategy_weights (
+                        strategy_name, trading_mode, strategy_version,
+                        weight, sharpe, computed_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (strategy_name, trading_mode, strategy_version)
+                    DO UPDATE SET
+                        weight = EXCLUDED.weight,
+                        sharpe = EXCLUDED.sharpe,
+                        computed_at = EXCLUDED.computed_at
+                    """,
+                    (
+                        strategy_name,
+                        trading_mode.value,
+                        strategy_version,
+                        weight,
+                        sharpes.get(strategy_name, 0.0),
+                        computed_at,
+                    ),
+                    commit=False,
+                )
+            self._connection.commit()
+        except Exception:
+            try:
+                self._connection.rollback()
+            except Exception:
+                pass
+            raise
+```
+
+Replace with:
+
+```python
+    def upsert_many(
+        self,
+        *,
+        weights: dict[str, float],
+        sharpes: dict[str, float],
+        trading_mode: TradingMode,
+        strategy_version: str,
+        computed_at: datetime,
+        commit: bool = True,
+    ) -> None:
+        try:
+            for strategy_name, weight in weights.items():
+                execute(
+                    self._connection,
+                    """
+                    INSERT INTO strategy_weights (
+                        strategy_name, trading_mode, strategy_version,
+                        weight, sharpe, computed_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (strategy_name, trading_mode, strategy_version)
+                    DO UPDATE SET
+                        weight = EXCLUDED.weight,
+                        sharpe = EXCLUDED.sharpe,
+                        computed_at = EXCLUDED.computed_at
+                    """,
+                    (
+                        strategy_name,
+                        trading_mode.value,
+                        strategy_version,
+                        weight,
+                        sharpes.get(strategy_name, 0.0),
+                        computed_at,
+                    ),
+                    commit=False,
+                )
+            if commit:
+                self._connection.commit()
+        except Exception:
+            try:
+                self._connection.rollback()
+            except Exception:
+                pass
+            raise
+```
+
+- [ ] **Step 3: Run existing tests to verify no regressions**
+
+```bash
+cd /workspace/alpaca_bot
+pytest tests/unit/ -x -q 2>&1 | tail -10
+```
+
+Expected: All existing tests pass (existing callers use the default `commit=True`, so behavior is unchanged).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/alpaca_bot/storage/repositories.py
+git commit -m "feat: add commit param to StrategyWeightStore.upsert_many for atomic writes"
+```
+
+---
+
+### Task 2: Write failing tests for `reset-weights`
 
 **Files:**
 - Create: `tests/unit/test_admin_reset_weights.py`
@@ -36,11 +178,9 @@ import io
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import pytest
-
 from alpaca_bot.admin.cli import main
 from alpaca_bot.config import Settings, TradingMode
-from alpaca_bot.storage import AuditEvent, StrategyFlag, StrategyWeight
+from alpaca_bot.storage import AuditEvent, StrategyFlag
 from alpaca_bot.strategy import STRATEGY_REGISTRY, OPTION_STRATEGY_FACTORIES
 
 from tests.unit.helpers import _base_env
@@ -56,10 +196,8 @@ def _settings(*, enable_options: bool = False) -> Settings:
 class _StoreFactoryStub:
     def __init__(self, store: object) -> None:
         self.store = store
-        self.connections: list[object] = []
 
     def __call__(self, connection: object) -> object:
-        self.connections.append(connection)
         return self.store
 
 
@@ -75,13 +213,14 @@ class _RecordingStrategyWeightStore:
     def __init__(self) -> None:
         self.upserted: list[dict] = []
 
-    def upsert_many(self, *, weights, sharpes, trading_mode, strategy_version, computed_at) -> None:
+    def upsert_many(
+        self, *, weights, sharpes, trading_mode, strategy_version, computed_at, commit: bool = True
+    ) -> None:
         self.upserted.append({
             "weights": dict(weights),
             "sharpes": dict(sharpes),
             "trading_mode": trading_mode,
             "strategy_version": strategy_version,
-            "computed_at": computed_at,
         })
 
 
@@ -161,15 +300,13 @@ def test_reset_weights_includes_option_strategies_when_options_enabled() -> None
     """With options enabled, all 23 strategies (11 equity + 12 option) get 1/23 weight."""
     settings = _settings(enable_options=True)
     weight_store = _RecordingStrategyWeightStore()
-    flag_store = _RecordingStrategyFlagStore()
-    audit_store = _RecordingAuditEventStore()
 
     exit_code = _run(
         argv=["reset-weights", "--mode", "paper", "--strategy-version", "v1-breakout"],
         settings=settings,
         weight_store=weight_store,
-        flag_store=flag_store,
-        audit_store=audit_store,
+        flag_store=_RecordingStrategyFlagStore(),
+        audit_store=_RecordingAuditEventStore(),
     )
 
     assert exit_code == 0
@@ -186,14 +323,13 @@ def test_reset_weights_excludes_disabled_strategy() -> None:
     settings = _settings(enable_options=False)
     weight_store = _RecordingStrategyWeightStore()
     flag_store = _RecordingStrategyFlagStore(disabled=["breakout"])
-    audit_store = _RecordingAuditEventStore()
 
     exit_code = _run(
         argv=["reset-weights", "--mode", "paper", "--strategy-version", "v1-breakout"],
         settings=settings,
         weight_store=weight_store,
         flag_store=flag_store,
-        audit_store=audit_store,
+        audit_store=_RecordingAuditEventStore(),
     )
 
     assert exit_code == 0
@@ -206,6 +342,23 @@ def test_reset_weights_excludes_disabled_strategy() -> None:
         assert abs(w - expected_weight) < 1e-10
 
 
+def test_reset_weights_raises_when_all_strategies_disabled() -> None:
+    """If every strategy flag is disabled, command must raise ValueError with a clear message."""
+    import pytest
+    settings = _settings(enable_options=False)
+    all_disabled = list(STRATEGY_REGISTRY)
+    flag_store = _RecordingStrategyFlagStore(disabled=all_disabled)
+
+    with pytest.raises(SystemExit):
+        _run(
+            argv=["reset-weights", "--mode", "paper", "--strategy-version", "v1-breakout"],
+            settings=settings,
+            weight_store=_RecordingStrategyWeightStore(),
+            flag_store=flag_store,
+            audit_store=_RecordingAuditEventStore(),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Audit trail
 # ---------------------------------------------------------------------------
@@ -213,15 +366,13 @@ def test_reset_weights_excludes_disabled_strategy() -> None:
 def test_reset_weights_appends_audit_event() -> None:
     """reset-weights must append strategy_weights_reset AuditEvent."""
     settings = _settings(enable_options=False)
-    weight_store = _RecordingStrategyWeightStore()
-    flag_store = _RecordingStrategyFlagStore()
     audit_store = _RecordingAuditEventStore()
 
     _run(
         argv=["reset-weights", "--mode", "paper", "--strategy-version", "v1-breakout"],
         settings=settings,
-        weight_store=weight_store,
-        flag_store=flag_store,
+        weight_store=_RecordingStrategyWeightStore(),
+        flag_store=_RecordingStrategyFlagStore(),
         audit_store=audit_store,
     )
 
@@ -231,7 +382,6 @@ def test_reset_weights_appends_audit_event() -> None:
     assert event.payload["mode"] == "paper"
     assert event.payload["version"] == "v1-breakout"
     assert event.payload["strategy_count"] == str(len(STRATEGY_REGISTRY))
-    # All strategy names should appear in payload
     for name in STRATEGY_REGISTRY:
         assert name in event.payload
 
@@ -244,7 +394,6 @@ def test_reset_weights_dry_run_prints_plan_without_db_writes() -> None:
     """--dry-run must print summary and strategy names without touching the DB."""
     settings = _settings(enable_options=False)
     weight_store = _RecordingStrategyWeightStore()
-    flag_store = _RecordingStrategyFlagStore()
     audit_store = _RecordingAuditEventStore()
     stdout = io.StringIO()
 
@@ -252,7 +401,7 @@ def test_reset_weights_dry_run_prints_plan_without_db_writes() -> None:
         argv=["reset-weights", "--dry-run", "--mode", "paper", "--strategy-version", "v1-breakout"],
         settings=settings,
         weight_store=weight_store,
-        flag_store=flag_store,
+        flag_store=_RecordingStrategyFlagStore(),
         audit_store=audit_store,
         stdout=stdout,
     )
@@ -262,7 +411,6 @@ def test_reset_weights_dry_run_prints_plan_without_db_writes() -> None:
     assert audit_store.appended == [], "dry-run must not append audit events"
     rendered = stdout.getvalue()
     assert "dry-run" in rendered.lower()
-    # At least one equity strategy name should appear in dry-run output
     assert "breakout" in rendered
 
 
@@ -289,14 +437,14 @@ def test_reset_weights_prints_summary_to_stdout() -> None:
     assert "paper" in rendered
 ```
 
-- [ ] **Step 2: Run tests to confirm they fail with the expected error**
+- [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
 cd /workspace/alpaca_bot
-pytest tests/unit/test_admin_reset_weights.py -v 2>&1 | head -40
+pytest tests/unit/test_admin_reset_weights.py -v 2>&1 | head -30
 ```
 
-Expected: `error: argument command: invalid choice: 'reset-weights'` or similar — confirms tests exercise the right path.
+Expected: `error: argument command: invalid choice: 'reset-weights'` or similar.
 
 - [ ] **Step 3: Commit the failing tests**
 
@@ -307,26 +455,14 @@ git commit -m "test: failing tests for reset-weights admin command"
 
 ---
 
-### Task 2: Implement `reset-weights` in admin CLI
+### Task 3: Implement `reset-weights` in admin CLI
 
 **Files:**
 - Modify: `src/alpaca_bot/admin/cli.py`
 
-- [ ] **Step 1: Add imports at the top of `cli.py`**
+- [ ] **Step 1: Update imports**
 
-After the existing imports, add:
-
-```python
-from alpaca_bot.storage import (
-    ...existing imports...,
-    StrategyWeightStore,
-)
-from alpaca_bot.strategy import STRATEGY_REGISTRY, OPTION_STRATEGY_FACTORIES
-```
-
-The existing import block already imports `StrategyFlagStore` and `StrategyFlag`. Add `StrategyWeightStore` to the `from alpaca_bot.storage import (...)` block. Add `OPTION_STRATEGY_FACTORIES` to the `from alpaca_bot.strategy import STRATEGY_REGISTRY` line.
-
-Exact edit — change line 26 from:
+Change line 26 from:
 ```python
 from alpaca_bot.strategy import STRATEGY_REGISTRY
 ```
@@ -335,11 +471,11 @@ to:
 from alpaca_bot.strategy import OPTION_STRATEGY_FACTORIES, STRATEGY_REGISTRY
 ```
 
-And add `StrategyWeightStore,` to the storage import block after `StrategyFlagStore,`.
+Add `StrategyWeightStore,` to the `from alpaca_bot.storage import (...)` block, after the line `StrategyFlagStore,`.
 
 - [ ] **Step 2: Add `reset-weights` subparser in `build_parser()`**
 
-Insert after the `cpf_parser` block (before the closing `return parser`):
+Insert this block immediately before `return parser` (after the `cpf_parser` block):
 
 ```python
     rw_parser = subparsers.add_parser("reset-weights")
@@ -352,51 +488,18 @@ Insert after the `cpf_parser` block (before the closing `return parser`):
     rw_parser.add_argument("--dry-run", action="store_true")
 ```
 
-- [ ] **Step 3: Add `strategy_weight_store_factory` and `strategy_flag_store_factory` parameters to `main()`**
+- [ ] **Step 3: Add new factory parameters to `main()` signature**
 
-Change the `main()` signature from:
-
-```python
-def main(
-    argv: Sequence[str] | None = None,
-    *,
-    connect: Callable[[], ConnectionProtocol] | None = None,
-    trading_status_store_factory: Callable[[ConnectionProtocol], TradingStatusStore] = TradingStatusStore,
-    audit_event_store_factory: Callable[[ConnectionProtocol], AuditEventStore] = AuditEventStore,
-    now: Callable[[], datetime] | None = None,
-    stdout: TextIO | None = None,
-    settings: Settings | None = None,
-    notifier: Notifier | None = None,
-    broker_factory: Callable[["Settings"], object] | None = None,
-    position_store_factory: Callable[[ConnectionProtocol], PositionStore] = PositionStore,
-    order_store_factory: Callable[[ConnectionProtocol], OrderStore] = OrderStore,
-) -> int:
-```
-
-to:
+Add to the end of the parameter list (before `-> int:`):
 
 ```python
-def main(
-    argv: Sequence[str] | None = None,
-    *,
-    connect: Callable[[], ConnectionProtocol] | None = None,
-    trading_status_store_factory: Callable[[ConnectionProtocol], TradingStatusStore] = TradingStatusStore,
-    audit_event_store_factory: Callable[[ConnectionProtocol], AuditEventStore] = AuditEventStore,
-    now: Callable[[], datetime] | None = None,
-    stdout: TextIO | None = None,
-    settings: Settings | None = None,
-    notifier: Notifier | None = None,
-    broker_factory: Callable[["Settings"], object] | None = None,
-    position_store_factory: Callable[[ConnectionProtocol], PositionStore] = PositionStore,
-    order_store_factory: Callable[[ConnectionProtocol], OrderStore] = OrderStore,
     strategy_weight_store_factory: Callable[[ConnectionProtocol], StrategyWeightStore] = StrategyWeightStore,
     strategy_flag_store_factory: Callable[[ConnectionProtocol], StrategyFlagStore] = StrategyFlagStore,
-) -> int:
 ```
 
 - [ ] **Step 4: Wire the `reset-weights` case into `main()`**
 
-In `main()`, add the `reset-weights` handler before the `else: raise ValueError(...)` at the bottom. Insert it just before the `else` block:
+In `main()`, add the `elif args.command == "reset-weights":` block. Place it before the `else:` at the very end of the command dispatch chain (around line 404):
 
 ```python
         elif args.command == "reset-weights":
@@ -416,7 +519,7 @@ In `main()`, add the `reset-weights` handler before the `else: raise ValueError(
 
 - [ ] **Step 5: Add `_reset_weights_equal()` function**
 
-Add this function after `_run_cancel_partial_fills()`:
+Add this function after `_run_cancel_partial_fills()` and before `_make_default_broker()`:
 
 ```python
 def _reset_weights_equal(
@@ -447,6 +550,12 @@ def _reset_weights_equal(
         all_names += list(OPTION_STRATEGY_FACTORIES)
     active_names = [n for n in all_names if n not in disabled]
 
+    if not active_names:
+        raise ValueError(
+            "No active strategies — all strategy flags are disabled. "
+            "Enable at least one strategy before resetting weights."
+        )
+
     n = len(active_names)
     equal_weight = 1.0 / n
     weights = {name: equal_weight for name in active_names}
@@ -467,6 +576,7 @@ def _reset_weights_equal(
         trading_mode=trading_mode,
         strategy_version=strategy_version,
         computed_at=now,
+        commit=False,
     )
     event_store.append(
         AuditEvent(
@@ -480,8 +590,9 @@ def _reset_weights_equal(
             },
             created_at=now,
         ),
-        commit=True,
+        commit=False,
     )
+    connection.commit()
     print(
         f"reset strategy_count={n} equal_weight={equal_weight * 100:.1f}%"
         f" mode={trading_mode.value} version={strategy_version}",
@@ -489,25 +600,25 @@ def _reset_weights_equal(
     )
 ```
 
-- [ ] **Step 6: Run tests and verify they pass**
+- [ ] **Step 6: Run the new tests and verify they pass**
 
 ```bash
 cd /workspace/alpaca_bot
 pytest tests/unit/test_admin_reset_weights.py -v
 ```
 
-Expected output: All 6 tests pass.
+Expected: All 7 tests pass.
 
 - [ ] **Step 7: Run full test suite to catch regressions**
 
 ```bash
 cd /workspace/alpaca_bot
-pytest tests/unit/ -x -q 2>&1 | tail -20
+pytest tests/unit/ -x -q 2>&1 | tail -10
 ```
 
 Expected: All tests pass.
 
-- [ ] **Step 8: Commit the implementation**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add src/alpaca_bot/admin/cli.py
@@ -518,14 +629,17 @@ git commit -m "feat: add reset-weights admin command for equal allocation"
 
 ## Operator usage after deployment
 
-After both commits are deployed:
-
 ```bash
-# 1. Ensure ENABLE_OPTIONS_TRADING=true is in /etc/alpaca_bot/alpaca-bot.env
-# 2. Run reset-weights (preview first)
+# 1. Confirm options trading is enabled in env:
+grep ENABLE_OPTIONS_TRADING /etc/alpaca_bot/alpaca-bot.env
+
+# 2. Preview (dry run):
 docker exec deploy-supervisor-1 alpaca-bot-admin reset-weights --dry-run
-# 3. Apply
+
+# 3. Apply:
 docker exec deploy-supervisor-1 alpaca-bot-admin reset-weights
-# 4. Restart supervisor to clear in-memory weight cache
-docker restart deploy-supervisor-1
+
+# 4. Restart supervisor to pick up new weights in-memory:
+sudo -n docker compose -f /workspace/alpaca_bot/deploy/compose.yaml \
+  --env-file /etc/alpaca_bot/alpaca-bot.env restart supervisor
 ```
