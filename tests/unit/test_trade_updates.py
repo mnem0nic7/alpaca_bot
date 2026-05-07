@@ -1726,3 +1726,89 @@ class TestFractionalFillQuantity:
         )
         assert stop.stop_price == pytest.approx(418.50)
         assert stop.status == "pending_submit"
+
+
+# ---------------------------------------------------------------------------
+# Regression: option fill must call update_fill with int filled_quantity
+# ---------------------------------------------------------------------------
+
+class RecordingOptionStore:
+    """Minimal fake option_order_store that records update_fill calls."""
+
+    def __init__(self) -> None:
+        self.update_fill_calls: list[dict] = []
+
+    def update_fill(
+        self,
+        *,
+        client_order_id: str,
+        broker_order_id: str,
+        fill_price: float,
+        filled_quantity: int,
+        status: str,
+        updated_at,
+    ) -> None:
+        self.update_fill_calls.append({
+            "client_order_id": client_order_id,
+            "broker_order_id": broker_order_id,
+            "fill_price": fill_price,
+            "filled_quantity": filled_quantity,
+            "status": status,
+        })
+
+
+class TestOptionFillRouting:
+    def test_option_fill_calls_update_fill_with_int_filled_quantity(self):
+        """Option fills must call option_store.update_fill with int filled_quantity.
+
+        Production scenario: an option fill arrives with filled_qty='1.0' (a float
+        string from the broker). After the 2026-05-07 fractional-fill fix, this is
+        parsed as float(1.0) instead of int(1). The option_store.update_fill method
+        expects int (option contracts are always whole numbers; the DB column is
+        INTEGER). The call site must explicitly cast to int.
+        """
+        from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+        option_store = RecordingOptionStore()
+        runtime = SimpleNamespace(
+            order_store=RecordingOrderStore(),
+            position_store=RecordingPositionStore(),
+            audit_event_store=RecordingAuditEventStore(),
+            option_order_store=option_store,
+            connection=SimpleNamespace(commit=lambda: None),
+        )
+
+        update = {
+            "event": "fill",
+            "symbol": "MSFT",
+            "side": "buy",
+            "status": "filled",
+            "client_order_id": "option:v1-calls:2026-05-07:MSFT260516C00420000:entry",
+            "broker_order_id": "broker-option-1",
+            "qty": "1.0",
+            "filled_qty": "1.0",
+            "filled_avg_price": "5.30",
+            "timestamp": NOW.isoformat(),
+        }
+
+        result = apply_trade_update(
+            settings=make_settings(),
+            runtime=runtime,
+            update=update,
+            now=NOW,
+        )
+
+        assert result.get("routed_to") == "option_store", (
+            f"Expected option routing, got {result}"
+        )
+        assert len(option_store.update_fill_calls) == 1, (
+            f"update_fill must be called exactly once, got {len(option_store.update_fill_calls)} calls"
+        )
+        call = option_store.update_fill_calls[0]
+        assert isinstance(call["filled_quantity"], int), (
+            f"filled_quantity must be int (option contracts are whole numbers), "
+            f"got {type(call['filled_quantity']).__name__} = {call['filled_quantity']!r}. "
+            "This means the int() cast is missing at the call site in trade_updates.py."
+        )
+        assert call["filled_quantity"] == 1
+        assert call["fill_price"] == pytest.approx(5.30)

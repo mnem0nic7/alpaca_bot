@@ -105,7 +105,7 @@ def _apply_trade_update_locked(
                 client_order_id=client_order_id,
                 broker_order_id=normalized.broker_order_id or "",
                 fill_price=normalized.filled_avg_price,
-                filled_quantity=normalized.filled_qty,
+                filled_quantity=int(normalized.filled_qty),
                 status=normalized.status,
                 updated_at=timestamp,
             )
