@@ -60,10 +60,10 @@ def _bar(
 
 
 def _downtrend_daily_bars() -> list[Bar]:
-    """7 daily bars where prior close (80) is below 5-bar SMA (110) → downtrend True.
+    """7 daily bars where prior close (80) is below 5-bar SMA (104) → downtrend True.
 
-    window = daily_bars[-6:-1] = bars[1:6], closes=[110,110,110,110,80], sma=96
-    latest_close = window[-1].close = 80, 80 < 96 → True
+    window = daily_bars[-6:-1] = bars[1:6], closes=[110,110,110,110,80], sma=104
+    latest_close = window[-1].close = 80, 80 < 104 → True
     """
     closes = [110, 110, 110, 110, 110, 80, 80]
     bars = []
@@ -94,12 +94,13 @@ def _uptrend_daily_bars() -> list[Bar]:
 
 
 def _put_contract(*, strike: float = 95.0, delta: float = -0.5) -> OptionContract:
+    expiry = date(2024, 2, 16)
     return OptionContract(
-        occ_symbol="AAPL240216P00095000",
+        occ_symbol=f"AAPL{expiry.strftime('%y%m%d')}P{int(strike * 1000):08d}",
         underlying="AAPL",
         option_type="put",
         strike=strike,
-        expiry=date(2024, 2, 16),
+        expiry=expiry,
         bid=2.0,
         ask=2.10,
         delta=delta,

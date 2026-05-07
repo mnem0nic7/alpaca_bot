@@ -1,7 +1,5 @@
 from datetime import date
 
-import pytest
-
 from alpaca_bot.domain.models import OptionContract
 from alpaca_bot.strategy.breakout import daily_downtrend_filter_passes
 from alpaca_bot.strategy.option_selector import select_put_contract

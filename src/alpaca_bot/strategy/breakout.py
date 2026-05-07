@@ -40,6 +40,7 @@ def daily_downtrend_filter_passes(daily_bars: Sequence[Bar], settings: Settings)
     """Returns True when the prior close is BELOW the SMA — stock is in a downtrend."""
     if len(daily_bars) < settings.daily_sma_period + 1:
         return False
+    # Exclude the last bar which may be a partial (intraday) session bar.
     window = daily_bars[-settings.daily_sma_period - 1 : -1]
     sma = sum(bar.close for bar in window) / len(window)
     latest_close = window[-1].close
