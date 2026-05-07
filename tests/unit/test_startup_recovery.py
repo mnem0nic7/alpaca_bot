@@ -1334,3 +1334,57 @@ def test_reconciliation_grace_period_resets_count_when_stop_found_at_broker() ->
     )
     assert not any(e.event_type == "reconciliation_miss_count_incremented" for e in audit_store.appended)
     assert not any(e.event_type == "reconciled_missing_stop_cleared" for e in audit_store.appended)
+
+
+# ---------------------------------------------------------------------------
+# Regression: negative broker quantity must be skipped, not crash recovery
+# ---------------------------------------------------------------------------
+
+def test_recover_startup_state_skips_negative_qty_broker_position() -> None:
+    """A broker position with quantity <= 0 (e.g. short from a double-sell) must be
+    skipped and recorded as a mismatch — not inserted into the DB, which would
+    violate the CHECK (quantity >= 0) constraint and crash the supervisor every cycle.
+
+    The normal (positive-qty) position in the same call must still be processed.
+    """
+    settings = make_settings()
+    now = datetime(2026, 5, 7, 20, 0, tzinfo=timezone.utc)
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore()
+    audit_event_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+        audit_event_store=audit_event_store,
+    )
+
+    report = recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[
+            BrokerPosition(symbol="SKYT", quantity=-2, entry_price=33.61, market_value=-67.22),
+            BrokerPosition(symbol="AAPL", quantity=10, entry_price=189.25, market_value=1892.5),
+        ],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    # Must not raise — the crash loop is the core symptom this test guards against.
+
+    # SKYT must appear in mismatches (non-positive qty recorded for operator review).
+    skyt_mismatches = [m for m in report.mismatches if "SKYT" in m]
+    assert skyt_mismatches, (
+        f"Expected a mismatch entry for SKYT negative qty, got mismatches={report.mismatches}"
+    )
+
+    # SKYT must NOT appear in synced positions (should have been skipped entirely).
+    synced_symbols = {
+        pos.symbol
+        for call in position_store.replace_all_calls
+        for pos in call["positions"]
+    }
+    assert "SKYT" not in synced_symbols, "negative-qty SKYT must not be written to position_store"
+
+    # AAPL (normal positive qty) must still be processed correctly.
+    assert "AAPL" in synced_symbols, "normal AAPL position must still be synced"

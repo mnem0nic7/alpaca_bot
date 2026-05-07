@@ -105,6 +105,17 @@ def recover_startup_state(
     # Tracks brand-new positions (no prior local record) that need a stop order queued.
     new_positions_needing_stop: list[tuple[str, int, float, str]] = []  # (symbol, qty, stop_price, strategy_name)
     for broker_position in broker_open_positions:
+        if broker_position.quantity <= 0:
+            _log.warning(
+                "startup_recovery: skipping broker position %s with non-positive qty=%s "
+                "(possible short or stale position — manual review required)",
+                broker_position.symbol,
+                broker_position.quantity,
+            )
+            mismatches.append(
+                f"broker position non-positive quantity skipped: {broker_position.symbol} qty={broker_position.quantity}"
+            )
+            continue
         local_for_symbol = local_positions_by_symbol.get(broker_position.symbol, [])
 
         if not local_for_symbol:
