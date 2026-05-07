@@ -293,3 +293,37 @@ def test_update_session_weights_writes_audit_event() -> None:
     events = [e for e in audit_store.appended if e.event_type == "strategy_weights_updated"]
     assert len(events) == 1
     assert "breakout" in events[0].payload
+
+
+def test_update_session_weights_uses_all_time_start_date() -> None:
+    """Weight computation must use start_date=date(2000,1,1) for all-time Sharpe.
+
+    Before the fix, start_date = end_date - timedelta(days=28) — only 28
+    calendar days of trades feed into the Sharpe computation, so long-term
+    strategy performance has no influence on capital allocation.
+    """
+    captured_kwargs: list[dict] = []
+
+    class _CapturingOrderStore(_RecordingOrderStore):
+        def list_trade_pnl_by_strategy(self, **kwargs):
+            captured_kwargs.append(dict(kwargs))
+            return []
+
+    order_store = _CapturingOrderStore()
+    weight_store = _FakeWeightStore(preloaded=[])
+
+    settings = _make_settings()
+    supervisor, _ = _make_supervisor(
+        settings=settings,
+        weight_store=weight_store,
+        order_store=order_store,
+        only_breakout=True,
+    )
+
+    supervisor._update_session_weights(_SESSION_DATE)
+
+    assert len(captured_kwargs) == 1, "list_trade_pnl_by_strategy must be called exactly once"
+    assert captured_kwargs[0]["start_date"] == date(2000, 1, 1), (
+        f"Expected all-time start_date=date(2000,1,1), got {captured_kwargs[0]['start_date']}. "
+        "The 28-day rolling window has not been changed to all-time."
+    )
