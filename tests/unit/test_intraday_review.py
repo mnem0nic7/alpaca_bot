@@ -733,3 +733,83 @@ class TestMaybeSendIntradayDigest:
             current_equity=10_050.0,
             timestamp=_NOW,
         )
+
+
+# ── run_cycle_once integration tests ─────────────────────────────────────────
+
+
+from alpaca_bot.strategy.session import SessionType
+
+
+class TestRunCycleOnceIntegration:
+    def _run(self, *, settings, closed_trades=None, notifier=None):
+        sup, _ = _make_supervisor(
+            settings=settings,
+            closed_trades=closed_trades or [],
+            notifier=notifier,
+        )
+        sup.run_cycle_once(
+            now=lambda: _NOW,
+            session_type=SessionType.REGULAR,
+        )
+        return sup
+
+    def test_gate_fires_and_entries_disabled_in_cycle(self):
+        """After gate fires, run_cycle_once returns entries_disabled=True."""
+        settings = _make_settings(INTRADAY_CONSECUTIVE_LOSS_GATE="2")
+        losses = [
+            _trade(exit_fill=148.0, entry_fill=150.0, exit_time="2026-05-06T14:01:00+00:00"),
+            _trade(exit_fill=147.0, entry_fill=150.0, exit_time="2026-05-06T14:02:00+00:00"),
+        ]
+        module, RuntimeSupervisor = _load_supervisor_api()
+        sup, ctx = _make_supervisor(
+            settings=settings,
+            closed_trades=losses,
+        )
+        report = sup.run_cycle_once(
+            now=lambda: _NOW,
+            session_type=SessionType.REGULAR,
+        )
+        assert report.entries_disabled is True
+        assert _SESSION_DATE in sup._consecutive_loss_gate_fired
+
+    def test_gate_does_not_fire_during_non_regular_session(self):
+        """Gate is skipped when session_type is AFTER_HOURS (non-REGULAR)."""
+        settings = _make_settings(INTRADAY_CONSECUTIVE_LOSS_GATE="2")
+        losses = [
+            _trade(exit_fill=148.0, entry_fill=150.0, exit_time="2026-05-06T14:01:00+00:00"),
+            _trade(exit_fill=147.0, entry_fill=150.0, exit_time="2026-05-06T14:02:00+00:00"),
+        ]
+        sup, _ = _make_supervisor(settings=settings, closed_trades=losses)
+        sup.run_cycle_once(
+            now=lambda: _NOW,
+            session_type=SessionType.AFTER_HOURS,
+        )
+        assert _SESSION_DATE not in sup._consecutive_loss_gate_fired
+
+    def test_session_cycle_count_increments_only_during_regular(self):
+        """_session_cycle_count increments each REGULAR cycle, not for AFTER_HOURS."""
+        settings = _make_settings()
+        sup, _ = _make_supervisor(settings=settings)
+
+        sup.run_cycle_once(now=lambda: _NOW, session_type=SessionType.REGULAR)
+        sup.run_cycle_once(now=lambda: _NOW, session_type=SessionType.REGULAR)
+        sup.run_cycle_once(now=lambda: _NOW, session_type=SessionType.AFTER_HOURS)
+
+        assert sup._session_cycle_count.get(_SESSION_DATE, 0) == 2
+
+    def test_digest_sends_at_interval_via_run_cycle_once(self):
+        """Digest sends when session_cycle_count hits the interval."""
+        settings = _make_settings(INTRADAY_DIGEST_INTERVAL_CYCLES="2")
+        notifier = _RecordingNotifier()
+        trades = [_trade()]
+        sup, _ = _make_supervisor(settings=settings, closed_trades=trades, notifier=notifier)
+
+        # First regular cycle: cycle_num=1, not a multiple of 2 → no send
+        sup.run_cycle_once(now=lambda: _NOW, session_type=SessionType.REGULAR)
+        assert len(notifier.sent) == 0
+
+        # Second regular cycle: cycle_num=2, 2 % 2 == 0 → send
+        sup.run_cycle_once(now=lambda: _NOW, session_type=SessionType.REGULAR)
+        assert len(notifier.sent) == 1
+        assert "Intra-day digest" in notifier.sent[0][0]

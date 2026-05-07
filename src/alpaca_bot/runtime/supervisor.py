@@ -397,6 +397,41 @@ class RuntimeSupervisor:
                 except Exception:
                     logger.exception("Notifier failed to send daily loss limit alert")
 
+        # Intra-day consecutive-loss gate and digest (REGULAR session only)
+        _trades_for_review: list[dict] | None = None
+        if session_type is SessionType.REGULAR:
+            _intraday_lock = getattr(self.runtime, "store_lock", None)
+            try:
+                with _intraday_lock if _intraday_lock is not None else contextlib.nullcontext():
+                    _trades_for_review = self.runtime.order_store.list_closed_trades(
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                        session_date=session_date,
+                        market_timezone=str(self.settings.market_timezone),
+                    )
+            except Exception:
+                logger.exception(
+                    "run_cycle_once: list_closed_trades raised — skipping gate and digest"
+                )
+        if _trades_for_review is not None:
+            from alpaca_bot.runtime.daily_summary import trailing_consecutive_losses
+            self._session_cycle_count.setdefault(session_date, 0)
+            self._session_cycle_count[session_date] += 1
+            cl_streak = trailing_consecutive_losses(_trades_for_review)
+            if not daily_loss_limit_breached:
+                self._maybe_fire_consecutive_loss_gate(
+                    session_date=session_date,
+                    consecutive_losses=cl_streak,
+                    timestamp=timestamp,
+                )
+                self._maybe_send_intraday_digest(
+                    session_date=session_date,
+                    closed_trades=_trades_for_review,
+                    baseline_equity=baseline_equity,
+                    current_equity=account.equity,
+                    timestamp=timestamp,
+                )
+
         status = self._effective_trading_status(
             session_date=session_date, session_state=session_state
         )
@@ -404,6 +439,7 @@ class RuntimeSupervisor:
             status in {TradingStatusValue.CLOSE_ONLY, TradingStatusValue.HALTED}
             or bool(recovery_report.mismatches)
             or daily_loss_limit_breached
+            or session_date in self._consecutive_loss_gate_fired
         )
         open_positions = self._load_open_positions()
         working_order_symbols = {order.symbol for order in broker_open_orders}
