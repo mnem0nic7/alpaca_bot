@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Mapping, Protocol, Sequence
+
+logger = logging.getLogger(__name__)
 
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType, CycleResult, evaluate_cycle
@@ -157,5 +160,12 @@ def run_cycle(
             except Exception:
                 pass
             raise
+
+        decision_log_store = getattr(runtime, "decision_log_store", None)
+        if decision_log_store is not None and result.decision_records:
+            try:
+                decision_log_store.bulk_insert(result.decision_records, runtime.connection)
+            except Exception as exc:
+                logger.warning("decision log write failed: %s", exc)
 
     return result

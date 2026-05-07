@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Mapping, Sequence
 
 from alpaca_bot.config import Settings
-from alpaca_bot.domain import Bar, NewsItem, OpenPosition, Quote
+from alpaca_bot.domain import Bar, DecisionRecord, NewsItem, OpenPosition, Quote
 from alpaca_bot.risk import calculate_position_size
 from alpaca_bot.risk.option_sizing import calculate_option_position_size
 from alpaca_bot.risk.atr import calculate_atr
@@ -62,6 +62,7 @@ class CycleResult:
     regime_blocked: bool = False
     news_blocked_symbols: tuple[str, ...] = ()
     spread_blocked_symbols: tuple[str, ...] = ()
+    decision_records: tuple[DecisionRecord, ...] = ()
 
 
 def evaluate_cycle(
@@ -109,6 +110,9 @@ def evaluate_cycle(
         return CycleResult(as_of=now, intents=intents)
 
     intents: list[CycleIntent] = []
+    _decision_records: list[DecisionRecord] = []
+    _tm = settings.trading_mode.value
+    _sv = settings.strategy_version
     open_position_symbols = {position.symbol for position in open_positions}
     emitted_exit_symbols: set[str] = set()
     is_extended = session_type in (SessionType.PRE_MARKET, SessionType.AFTER_HOURS)
@@ -310,6 +314,31 @@ def evaluate_cycle(
             sma = sum(b.close for b in window) / len(window)
             if window[-1].close <= sma:
                 _regime_entries_blocked = True
+                if not entries_disabled:
+                    for _rsym in (symbols or settings.symbols):
+                        if _rsym in open_position_symbols or _rsym in working_order_symbols:
+                            continue
+                        _decision_records.append(DecisionRecord(
+                            cycle_at=now,
+                            symbol=_rsym,
+                            strategy_name=strategy_name,
+                            trading_mode=_tm,
+                            strategy_version=_sv,
+                            decision="rejected",
+                            reject_stage="pre_filter",
+                            reject_reason="regime_blocked",
+                            entry_level=None,
+                            signal_bar_close=None,
+                            relative_volume=None,
+                            atr=None,
+                            stop_price=None,
+                            limit_price=None,
+                            initial_stop_price=None,
+                            quantity=None,
+                            risk_per_share=None,
+                            equity=None,
+                            filter_results={"regime": False},
+                        ))
 
     _news_blocked: list[str] = []
     _spread_blocked: list[str] = []
@@ -322,6 +351,31 @@ def evaluate_cycle(
             available_slots = max(
                 settings.max_open_positions - len(open_positions) - len(working_order_symbols), 0
             )
+        if available_slots == 0:
+            for _csym in (symbols or settings.symbols):
+                if _csym in open_position_symbols or _csym in working_order_symbols:
+                    continue
+                _decision_records.append(DecisionRecord(
+                    cycle_at=now,
+                    symbol=_csym,
+                    strategy_name=strategy_name,
+                    trading_mode=_tm,
+                    strategy_version=_sv,
+                    decision="rejected",
+                    reject_stage="capacity",
+                    reject_reason="capacity_full",
+                    entry_level=None,
+                    signal_bar_close=None,
+                    relative_volume=None,
+                    atr=None,
+                    stop_price=None,
+                    limit_price=None,
+                    initial_stop_price=None,
+                    quantity=None,
+                    risk_per_share=None,
+                    equity=None,
+                    filter_results={},
+                ))
         if available_slots > 0:
             current_exposure = (
                 sum(p.entry_price * p.quantity for p in open_positions) / equity
@@ -329,8 +383,30 @@ def evaluate_cycle(
                 else 0.0
             )
             entry_candidates: list[tuple[float, float, CycleIntent]] = []
+            _candidate_signals: dict[str, tuple] = {}
             for symbol in (symbols or settings.symbols):
                 if symbol in open_position_symbols or symbol in working_order_symbols:
+                    _decision_records.append(DecisionRecord(
+                        cycle_at=now,
+                        symbol=symbol,
+                        strategy_name=strategy_name,
+                        trading_mode=_tm,
+                        strategy_version=_sv,
+                        decision="skipped_existing_position",
+                        reject_stage=None,
+                        reject_reason=None,
+                        entry_level=None,
+                        signal_bar_close=None,
+                        relative_volume=None,
+                        atr=None,
+                        stop_price=None,
+                        limit_price=None,
+                        initial_stop_price=None,
+                        quantity=None,
+                        risk_per_share=None,
+                        equity=None,
+                        filter_results={},
+                    ))
                     continue
                 bars = intraday_bars_by_symbol.get(symbol, ())
                 daily_bars = daily_bars_by_symbol.get(symbol, ())
@@ -338,6 +414,27 @@ def evaluate_cycle(
                     continue
                 latest_bar = bars[-1]
                 if (symbol, session_day(latest_bar.timestamp, settings)) in traded_symbols_today:
+                    _decision_records.append(DecisionRecord(
+                        cycle_at=now,
+                        symbol=symbol,
+                        strategy_name=strategy_name,
+                        trading_mode=_tm,
+                        strategy_version=_sv,
+                        decision="skipped_already_traded",
+                        reject_stage=None,
+                        reject_reason=None,
+                        entry_level=None,
+                        signal_bar_close=None,
+                        relative_volume=None,
+                        atr=None,
+                        stop_price=None,
+                        limit_price=None,
+                        initial_stop_price=None,
+                        quantity=None,
+                        risk_per_share=None,
+                        equity=None,
+                        filter_results={},
+                    ))
                     continue
 
                 if not is_extended:
@@ -389,6 +486,27 @@ def evaluate_cycle(
                     settings=settings,
                 )
                 if signal is None:
+                    _decision_records.append(DecisionRecord(
+                        cycle_at=now,
+                        symbol=symbol,
+                        strategy_name=strategy_name,
+                        trading_mode=_tm,
+                        strategy_version=_sv,
+                        decision="skipped_no_signal",
+                        reject_stage=None,
+                        reject_reason=None,
+                        entry_level=None,
+                        signal_bar_close=None,
+                        relative_volume=None,
+                        atr=None,
+                        stop_price=None,
+                        limit_price=None,
+                        initial_stop_price=None,
+                        quantity=None,
+                        risk_per_share=None,
+                        equity=None,
+                        filter_results={},
+                    ))
                     continue
 
                 if signal.option_contract is not None:
@@ -401,6 +519,11 @@ def evaluate_cycle(
                     if quantity < 1:
                         continue
                     contract = signal.option_contract
+                    _candidate_signals[contract.occ_symbol] = (
+                        signal.entry_level,
+                        signal.signal_bar.close,
+                        signal.relative_volume,
+                    )
                     entry_candidates.append(
                         (
                             round((signal.signal_bar.close / signal.entry_level) - 1, 6),
@@ -453,6 +576,11 @@ def evaluate_cycle(
                         and quantity * signal.limit_price < settings.min_position_notional
                     ):
                         continue
+                    _candidate_signals[symbol] = (
+                        signal.entry_level,
+                        signal.signal_bar.close,
+                        signal.relative_volume,
+                    )
                     entry_candidates.append(
                         (
                             round((signal.signal_bar.close / signal.entry_level) - 1, 6),
@@ -493,6 +621,36 @@ def evaluate_cycle(
                     continue
                 selected.append(candidate)
                 current_exposure += candidate_exposure
+            _selected_symbols = {c.symbol for c in selected}
+            for *_rank, candidate in entry_candidates:
+                _sig = _candidate_signals.get(candidate.symbol, (None, None, None))
+                _accepted = candidate.symbol in _selected_symbols
+                _rps = (
+                    round(candidate.limit_price - candidate.initial_stop_price, 4)
+                    if candidate.limit_price is not None and candidate.initial_stop_price is not None
+                    else None
+                )
+                _decision_records.append(DecisionRecord(
+                    cycle_at=now,
+                    symbol=candidate.symbol,
+                    strategy_name=candidate.strategy_name,
+                    trading_mode=_tm,
+                    strategy_version=_sv,
+                    decision="accepted" if _accepted else "rejected",
+                    reject_stage=None if _accepted else "capacity",
+                    reject_reason=None if _accepted else "capacity_full",
+                    entry_level=_sig[0],
+                    signal_bar_close=_sig[1],
+                    relative_volume=_sig[2],
+                    atr=None,
+                    stop_price=candidate.stop_price,
+                    limit_price=candidate.limit_price,
+                    initial_stop_price=candidate.initial_stop_price,
+                    quantity=candidate.quantity,
+                    risk_per_share=_rps,
+                    equity=equity,
+                    filter_results={},
+                ))
             intents.extend(selected)
 
     intents.sort(key=lambda intent: (intent.timestamp, intent.symbol, intent.intent_type.value))
@@ -502,6 +660,7 @@ def evaluate_cycle(
         regime_blocked=_regime_entries_blocked,
         news_blocked_symbols=tuple(sorted(_news_blocked)),
         spread_blocked_symbols=tuple(sorted(_spread_blocked)),
+        decision_records=tuple(_decision_records),
     )
 
 

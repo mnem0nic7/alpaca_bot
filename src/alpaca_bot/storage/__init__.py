@@ -21,6 +21,7 @@ from alpaca_bot.storage.models import (
 from alpaca_bot.storage.repositories import (
     AuditEventStore,
     DailySessionStateStore,
+    DecisionLogStore,
     OptionOrderRepository,
     OrderStore,
     PositionStore,
@@ -36,6 +37,7 @@ __all__ = [
     "AuditEventStore",
     "DailySessionState",
     "DailySessionStateStore",
+    "DecisionLogStore",
     "discover_migrations",
     "EQUITY_SESSION_STATE_STRATEGY_NAME",
     "GLOBAL_SESSION_STATE_STRATEGY_NAME",

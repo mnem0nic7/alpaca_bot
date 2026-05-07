@@ -1743,3 +1743,53 @@ def _load_json_payload(raw_payload: Any) -> dict[str, Any]:
     if isinstance(raw_payload, str):
         return json.loads(raw_payload)
     return dict(raw_payload or {})
+
+
+class DecisionLogStore:
+    def __init__(self, connection: ConnectionProtocol) -> None:
+        self._connection = connection
+
+    def bulk_insert(self, records: list, conn: ConnectionProtocol) -> None:
+        if not records:
+            return
+        sql = """
+            INSERT INTO decision_log (
+                cycle_at, symbol, strategy_name, trading_mode, strategy_version,
+                decision, reject_stage, reject_reason,
+                entry_level, signal_bar_close, relative_volume, atr,
+                stop_price, limit_price, initial_stop_price,
+                quantity, risk_per_share, equity, filter_results
+            ) VALUES (
+                %s, %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s, %s
+            )
+        """
+        params = [
+            (
+                r.cycle_at,
+                r.symbol,
+                r.strategy_name,
+                r.trading_mode,
+                r.strategy_version,
+                r.decision,
+                r.reject_stage,
+                r.reject_reason,
+                r.entry_level,
+                r.signal_bar_close,
+                r.relative_volume,
+                r.atr,
+                r.stop_price,
+                r.limit_price,
+                r.initial_stop_price,
+                r.quantity,
+                r.risk_per_share,
+                r.equity,
+                json.dumps(r.filter_results),
+            )
+            for r in records
+        ]
+        cur = conn.cursor()
+        cur.executemany(sql, params)
