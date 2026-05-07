@@ -262,3 +262,399 @@ class TestBuildIntradayDigest:
             current_equity=45_000.0,  # 1100 loss, limit is 461 → well past limit
         )
         assert "$0.00" in body
+
+
+# ── Supervisor test helpers ───────────────────────────────────────────────────
+
+
+def _load_supervisor_api():
+    module = import_module("alpaca_bot.runtime.supervisor")
+    return module, module.RuntimeSupervisor
+
+
+class _FakeConn:
+    def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
+        pass
+
+
+class _RecordingAuditStore:
+    def __init__(self) -> None:
+        self.appended: list[AuditEvent] = []
+
+    def append(self, event: AuditEvent, *, commit: bool = True) -> None:
+        self.appended.append(event)
+
+    def load_latest(self, **kwargs) -> AuditEvent | None:
+        return None
+
+    def list_recent(self, **kwargs) -> list[AuditEvent]:
+        return []
+
+    def list_by_event_types(self, **kwargs) -> list[AuditEvent]:
+        return []
+
+
+class _RecordingOrderStore:
+    def __init__(self, *, daily_pnl: float = 0.0, closed_trades: list | None = None) -> None:
+        self._daily_pnl = daily_pnl
+        self._closed_trades: list[dict] = closed_trades or []
+
+    def daily_realized_pnl(self, **kwargs) -> float:
+        return self._daily_pnl
+
+    def daily_realized_pnl_by_symbol(self, **kwargs) -> dict[str, float]:
+        return {}
+
+    def list_by_status(self, **kwargs) -> list:
+        return []
+
+    def list_pending_submit(self, **kwargs) -> list:
+        return []
+
+    def list_closed_trades(self, **kwargs) -> list[dict]:
+        return list(self._closed_trades)
+
+
+class _RecordingSessionStateStore:
+    def __init__(self) -> None:
+        self.saved: list[DailySessionState] = []
+
+    def load(self, *, session_date, trading_mode, strategy_version, strategy_name="breakout"):
+        return None
+
+    def save(self, state: DailySessionState) -> None:
+        self.saved.append(state)
+
+    def list_by_session(self, **kwargs) -> list:
+        return []
+
+
+class _RecordingNotifier:
+    def __init__(self) -> None:
+        self.sent: list[tuple[str, str]] = []
+
+    def send(self, subject: str, body: str) -> None:
+        self.sent.append((subject, body))
+
+
+class _FakeTradingStatusStore:
+    def load(self, **kwargs):
+        return None
+
+
+class _FakePositionStore:
+    def list_all(self, **kwargs) -> list:
+        return []
+
+    def replace_all(self, **kwargs) -> None:
+        pass
+
+
+class _FakeStrategyFlagStore:
+    def list_all(self, **kwargs) -> list:
+        return []
+
+    def load(self, **kwargs):
+        return None
+
+
+class _FakeWatchlistStore:
+    def list_enabled(self, *args) -> list[str]:
+        return ["AAPL"]
+
+    def list_ignored(self, *args) -> list[str]:
+        return []
+
+
+def _make_supervisor(
+    *,
+    settings: Settings,
+    closed_trades: list[dict] | None = None,
+    notifier=None,
+    session_state_store=None,
+):
+    _, RuntimeSupervisor = _load_supervisor_api()
+
+    class _FakeBroker:
+        def get_account(self):
+            return BrokerAccount(equity=10_000.0, buying_power=20_000.0, trading_blocked=False)
+
+        def list_open_orders(self):
+            return []
+
+    class _FakeMarketData:
+        def get_stock_bars(self, **kwargs):
+            return {}
+
+        def get_daily_bars(self, **kwargs):
+            return {}
+
+    _order_store = _RecordingOrderStore(closed_trades=closed_trades or [])
+    _sess_store = session_state_store or _RecordingSessionStateStore()
+    _audit_store = _RecordingAuditStore()
+
+    class _FakeRuntimeContext:
+        connection = _FakeConn()
+        store_lock = None
+        order_store = _order_store
+        trading_status_store = _FakeTradingStatusStore()
+        position_store = _FakePositionStore()
+        daily_session_state_store = _sess_store
+        audit_event_store = _audit_store
+        strategy_flag_store = _FakeStrategyFlagStore()
+        watchlist_store = _FakeWatchlistStore()
+
+        def commit(self):
+            pass
+
+    sup = RuntimeSupervisor(
+        settings=settings,
+        runtime=_FakeRuntimeContext(),
+        broker=_FakeBroker(),
+        market_data=_FakeMarketData(),
+        stream=None,
+        close_runtime_fn=lambda _: None,
+        connection_checker=lambda _: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        cycle_intent_executor=lambda **kwargs: SimpleNamespace(
+            submitted_exit_count=0, failed_exit_count=0
+        ),
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+    sup._session_equity_baseline[_SESSION_DATE] = 10_000.0
+    if notifier is not None:
+        sup._notifier = notifier
+    return sup, _FakeRuntimeContext()
+
+
+# ── _maybe_fire_consecutive_loss_gate tests ───────────────────────────────────
+
+
+class TestMaybeFireConsecutiveLossGate:
+    def test_gate_disabled_does_not_fire(self):
+        """INTRADAY_CONSECUTIVE_LOSS_GATE=0 → gate never fires."""
+        settings = _make_settings(INTRADAY_CONSECUTIVE_LOSS_GATE="0")
+        notifier = _RecordingNotifier()
+        sup, _ = _make_supervisor(settings=settings, notifier=notifier)
+
+        sup._maybe_fire_consecutive_loss_gate(
+            session_date=_SESSION_DATE,
+            consecutive_losses=5,
+            timestamp=_NOW,
+        )
+
+        assert _SESSION_DATE not in sup._consecutive_loss_gate_fired
+        assert notifier.sent == []
+
+    def test_gate_fires_when_threshold_met(self):
+        """consecutive_losses >= gate → adds to fired set, notifies."""
+        settings = _make_settings(INTRADAY_CONSECUTIVE_LOSS_GATE="3")
+        notifier = _RecordingNotifier()
+        sup, _ = _make_supervisor(settings=settings, notifier=notifier)
+
+        sup._maybe_fire_consecutive_loss_gate(
+            session_date=_SESSION_DATE,
+            consecutive_losses=3,
+            timestamp=_NOW,
+        )
+
+        assert _SESSION_DATE in sup._consecutive_loss_gate_fired
+        assert len(notifier.sent) == 1
+        assert "3 consecutive losses" in notifier.sent[0][1]
+
+    def test_gate_does_not_fire_below_threshold(self):
+        """consecutive_losses < gate → no fire."""
+        settings = _make_settings(INTRADAY_CONSECUTIVE_LOSS_GATE="3")
+        notifier = _RecordingNotifier()
+        sup, _ = _make_supervisor(settings=settings, notifier=notifier)
+
+        sup._maybe_fire_consecutive_loss_gate(
+            session_date=_SESSION_DATE,
+            consecutive_losses=2,
+            timestamp=_NOW,
+        )
+
+        assert _SESSION_DATE not in sup._consecutive_loss_gate_fired
+        assert notifier.sent == []
+
+    def test_gate_does_not_fire_twice(self):
+        """Gate fires at most once per session date."""
+        settings = _make_settings(INTRADAY_CONSECUTIVE_LOSS_GATE="3")
+        notifier = _RecordingNotifier()
+        sup, _ = _make_supervisor(settings=settings, notifier=notifier)
+
+        sup._maybe_fire_consecutive_loss_gate(
+            session_date=_SESSION_DATE, consecutive_losses=3, timestamp=_NOW
+        )
+        sup._maybe_fire_consecutive_loss_gate(
+            session_date=_SESSION_DATE, consecutive_losses=4, timestamp=_NOW
+        )
+
+        assert len(notifier.sent) == 1
+
+    def test_gate_appends_audit_event(self):
+        """Firing the gate appends an intraday_consecutive_loss_gate audit event."""
+        settings = _make_settings(INTRADAY_CONSECUTIVE_LOSS_GATE="3")
+        sup, ctx = _make_supervisor(settings=settings)
+
+        sup._maybe_fire_consecutive_loss_gate(
+            session_date=_SESSION_DATE, consecutive_losses=3, timestamp=_NOW
+        )
+
+        gate_events = [
+            e for e in ctx.audit_event_store.appended
+            if e.event_type == "intraday_consecutive_loss_gate"
+        ]
+        assert len(gate_events) == 1
+        assert gate_events[0].payload["consecutive_losses"] == 3
+        assert gate_events[0].payload["threshold"] == 3
+
+    def test_gate_saves_entries_disabled_session_state(self):
+        """Firing the gate saves DailySessionState with entries_disabled=True."""
+        settings = _make_settings(INTRADAY_CONSECUTIVE_LOSS_GATE="3")
+        sess_store = _RecordingSessionStateStore()
+        sup, _ = _make_supervisor(settings=settings, session_state_store=sess_store)
+
+        sup._maybe_fire_consecutive_loss_gate(
+            session_date=_SESSION_DATE, consecutive_losses=3, timestamp=_NOW
+        )
+
+        assert len(sess_store.saved) == 1
+        assert sess_store.saved[0].entries_disabled is True
+        assert sess_store.saved[0].session_date == _SESSION_DATE
+
+
+# ── _maybe_send_intraday_digest tests ────────────────────────────────────────
+
+
+class TestMaybeSendIntradayDigest:
+    def test_digest_disabled_does_not_send(self):
+        """INTRADAY_DIGEST_INTERVAL_CYCLES=0 → digest never sends."""
+        settings = _make_settings(INTRADAY_DIGEST_INTERVAL_CYCLES="0")
+        notifier = _RecordingNotifier()
+        sup, _ = _make_supervisor(settings=settings, notifier=notifier)
+        sup._session_cycle_count[_SESSION_DATE] = 60
+
+        sup._maybe_send_intraday_digest(
+            session_date=_SESSION_DATE,
+            closed_trades=[_trade()],
+            baseline_equity=10_000.0,
+            current_equity=10_142.80,
+            timestamp=_NOW,
+        )
+
+        assert notifier.sent == []
+
+    def test_digest_sends_at_interval(self):
+        """Sends when cycle_num % interval == 0 and cycle_num > 0 and trades present."""
+        settings = _make_settings(INTRADAY_DIGEST_INTERVAL_CYCLES="60")
+        notifier = _RecordingNotifier()
+        sup, _ = _make_supervisor(settings=settings, notifier=notifier)
+        sup._session_cycle_count[_SESSION_DATE] = 60
+
+        sup._maybe_send_intraday_digest(
+            session_date=_SESSION_DATE,
+            closed_trades=[_trade()],
+            baseline_equity=10_000.0,
+            current_equity=10_050.0,
+            timestamp=_NOW,
+        )
+
+        assert len(notifier.sent) == 1
+        assert "Intra-day digest" in notifier.sent[0][0]
+
+    def test_digest_does_not_send_between_intervals(self):
+        """No send when cycle_num % interval != 0."""
+        settings = _make_settings(INTRADAY_DIGEST_INTERVAL_CYCLES="60")
+        notifier = _RecordingNotifier()
+        sup, _ = _make_supervisor(settings=settings, notifier=notifier)
+        sup._session_cycle_count[_SESSION_DATE] = 45  # not a multiple of 60
+
+        sup._maybe_send_intraday_digest(
+            session_date=_SESSION_DATE,
+            closed_trades=[_trade()],
+            baseline_equity=10_000.0,
+            current_equity=10_050.0,
+            timestamp=_NOW,
+        )
+
+        assert notifier.sent == []
+
+    def test_digest_does_not_send_with_zero_trades(self):
+        """No send when closed_trades is empty."""
+        settings = _make_settings(INTRADAY_DIGEST_INTERVAL_CYCLES="60")
+        notifier = _RecordingNotifier()
+        sup, _ = _make_supervisor(settings=settings, notifier=notifier)
+        sup._session_cycle_count[_SESSION_DATE] = 60
+
+        sup._maybe_send_intraday_digest(
+            session_date=_SESSION_DATE,
+            closed_trades=[],
+            baseline_equity=10_000.0,
+            current_equity=10_000.0,
+            timestamp=_NOW,
+        )
+
+        assert notifier.sent == []
+
+    def test_digest_does_not_send_at_cycle_zero(self):
+        """No send at cycle 0 even if interval divides it."""
+        settings = _make_settings(INTRADAY_DIGEST_INTERVAL_CYCLES="60")
+        notifier = _RecordingNotifier()
+        sup, _ = _make_supervisor(settings=settings, notifier=notifier)
+        sup._session_cycle_count[_SESSION_DATE] = 0
+
+        sup._maybe_send_intraday_digest(
+            session_date=_SESSION_DATE,
+            closed_trades=[_trade()],
+            baseline_equity=10_000.0,
+            current_equity=10_050.0,
+            timestamp=_NOW,
+        )
+
+        assert notifier.sent == []
+
+    def test_digest_appends_audit_event(self):
+        """Successful send appends intraday_digest_sent audit event."""
+        settings = _make_settings(INTRADAY_DIGEST_INTERVAL_CYCLES="60")
+        notifier = _RecordingNotifier()
+        sup, ctx = _make_supervisor(settings=settings, notifier=notifier)
+        sup._session_cycle_count[_SESSION_DATE] = 60
+
+        sup._maybe_send_intraday_digest(
+            session_date=_SESSION_DATE,
+            closed_trades=[_trade()],
+            baseline_equity=10_000.0,
+            current_equity=10_050.0,
+            timestamp=_NOW,
+        )
+
+        digest_events = [
+            e for e in ctx.audit_event_store.appended
+            if e.event_type == "intraday_digest_sent"
+        ]
+        assert len(digest_events) == 1
+        assert digest_events[0].payload["cycle"] == 60
+        assert digest_events[0].payload["digest_num"] == 1
+
+    def test_digest_notifier_failure_does_not_raise(self):
+        """Notifier failure is logged, not propagated."""
+        class _FailingNotifier:
+            def send(self, *args, **kwargs):
+                raise RuntimeError("SMTP down")
+
+        settings = _make_settings(INTRADAY_DIGEST_INTERVAL_CYCLES="60")
+        sup, _ = _make_supervisor(settings=settings, notifier=_FailingNotifier())
+        sup._session_cycle_count[_SESSION_DATE] = 60
+
+        # Must not raise
+        sup._maybe_send_intraday_digest(
+            session_date=_SESSION_DATE,
+            closed_trades=[_trade()],
+            baseline_equity=10_000.0,
+            current_equity=10_050.0,
+            timestamp=_NOW,
+        )

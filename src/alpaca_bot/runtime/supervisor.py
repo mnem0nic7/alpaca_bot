@@ -137,6 +137,10 @@ class RuntimeSupervisor:
         # Dates on which at least one active cycle ran this process lifetime.
         self._session_had_active_cycle: set[date] = set()
         self._shutdown_requested: bool = False
+        # Intra-day review: keyed by session_date; reset to new dict each process lifetime.
+        self._session_cycle_count: dict[date, int] = {}
+        self._digest_sent_count: dict[date, int] = {}
+        self._consecutive_loss_gate_fired: set[date] = set()
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
@@ -1283,6 +1287,118 @@ class RuntimeSupervisor:
                 trading_mode=self.settings.trading_mode,
                 strategy_version=self.settings.strategy_version,
             )
+
+    def _maybe_fire_consecutive_loss_gate(
+        self,
+        *,
+        session_date: date,
+        consecutive_losses: int,
+        timestamp: datetime,
+    ) -> None:
+        """Fire the consecutive-loss entry gate if threshold is met and not yet fired today."""
+        gate = self.settings.intraday_consecutive_loss_gate
+        if gate == 0:
+            return
+        if session_date in self._consecutive_loss_gate_fired:
+            return
+        if consecutive_losses < gate:
+            return
+        self._consecutive_loss_gate_fired.add(session_date)
+        baseline_equity = self._session_equity_baseline.get(session_date, 0.0)
+        try:
+            self._save_session_state(
+                DailySessionState(
+                    session_date=session_date,
+                    trading_mode=self.settings.trading_mode,
+                    strategy_version=self.settings.strategy_version,
+                    strategy_name=EQUITY_SESSION_STATE_STRATEGY_NAME,
+                    entries_disabled=True,
+                    flatten_complete=False,
+                    equity_baseline=baseline_equity,
+                    updated_at=timestamp,
+                )
+            )
+        except Exception:
+            logger.exception("Failed to save session state after consecutive-loss gate fired")
+        self._append_audit(
+            AuditEvent(
+                event_type="intraday_consecutive_loss_gate",
+                payload={
+                    "consecutive_losses": consecutive_losses,
+                    "threshold": gate,
+                    "timestamp": timestamp.isoformat(),
+                },
+                created_at=timestamp,
+            )
+        )
+        if self._notifier is not None:
+            try:
+                self._notifier.send(
+                    subject="Entries disabled — consecutive losses",
+                    body=(
+                        f"Entries disabled — {consecutive_losses} consecutive losses this session. "
+                        "Resume manually to re-enable."
+                    ),
+                )
+            except Exception:
+                logger.exception("Notifier failed to send consecutive-loss gate alert")
+
+    def _maybe_send_intraday_digest(
+        self,
+        *,
+        session_date: date,
+        closed_trades: list[dict],
+        baseline_equity: float,
+        current_equity: float,
+        timestamp: datetime,
+    ) -> None:
+        """Send intra-day performance digest at configured cycle intervals."""
+        if self._notifier is None:
+            return
+        interval = self.settings.intraday_digest_interval_cycles
+        if interval == 0:
+            return
+        cycle_num = self._session_cycle_count.get(session_date, 0)
+        if cycle_num == 0 or cycle_num % interval != 0:
+            return
+        if not closed_trades:
+            return
+        from alpaca_bot.runtime.daily_summary import build_intraday_digest
+
+        store_lock = getattr(self.runtime, "store_lock", None)
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            open_positions = self.runtime.position_store.list_all(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+            )
+        try:
+            subject, body = build_intraday_digest(
+                settings=self.settings,
+                trades=closed_trades,
+                open_positions=open_positions,
+                baseline_equity=baseline_equity,
+                current_equity=current_equity,
+                cycle_num=cycle_num,
+                timestamp=timestamp,
+                session_date=session_date,
+            )
+            self._notifier.send(subject, body)
+        except Exception:
+            logger.exception("Notifier failed to send intraday digest for %s", session_date)
+            return
+        digest_num = cycle_num // interval
+        self._digest_sent_count[session_date] = digest_num
+        self._append_audit(
+            AuditEvent(
+                event_type="intraday_digest_sent",
+                payload={
+                    "cycle": cycle_num,
+                    "digest_num": digest_num,
+                    "timestamp": timestamp.isoformat(),
+                },
+                created_at=timestamp,
+            )
+        )
 
     def _send_daily_summary(self, *, session_date: date, timestamp: datetime) -> None:
         """Send end-of-session summary notification. Failures are logged, never raised."""
