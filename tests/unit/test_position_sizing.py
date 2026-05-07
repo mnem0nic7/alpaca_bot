@@ -103,7 +103,7 @@ class TestCalculatePositionSize:
 
 
 def test_fractional_sizing_returns_float():
-    settings = SimpleNamespace(risk_per_trade_pct=0.0025, max_position_pct=0.015)
+    settings = make_settings(risk_per_trade_pct=0.0025, max_position_pct=0.015)
     qty = calculate_position_size(
         equity=99_500.0,
         entry_price=3.00,
@@ -119,7 +119,7 @@ def test_fractional_sizing_returns_float():
 
 def test_fractional_sizing_no_floor_below_one():
     """For fractionable symbols, qty can be between 0 and 1."""
-    settings = SimpleNamespace(risk_per_trade_pct=0.0025, max_position_pct=0.0001)
+    settings = make_settings(risk_per_trade_pct=0.0025, max_position_pct=0.0001)
     qty = calculate_position_size(
         equity=99_500.0,
         entry_price=500.00,
@@ -132,7 +132,7 @@ def test_fractional_sizing_no_floor_below_one():
 
 
 def test_non_fractional_sizing_floors_to_integer_value():
-    settings = SimpleNamespace(risk_per_trade_pct=0.0025, max_position_pct=0.015)
+    settings = make_settings(risk_per_trade_pct=0.0025, max_position_pct=0.015)
     qty = calculate_position_size(
         equity=99_500.0,
         entry_price=3.00,
@@ -145,7 +145,7 @@ def test_non_fractional_sizing_floors_to_integer_value():
 
 def test_non_fractional_sizing_returns_zero_for_sub_one():
     """Non-fractionable symbol with < 1 share budget returns 0."""
-    settings = SimpleNamespace(risk_per_trade_pct=0.0025, max_position_pct=0.0001)
+    settings = make_settings(risk_per_trade_pct=0.0025, max_position_pct=0.0001)
     qty = calculate_position_size(
         equity=99_500.0,
         entry_price=500.00,
@@ -157,7 +157,7 @@ def test_non_fractional_sizing_returns_zero_for_sub_one():
 
 
 def test_fractionable_returns_zero_for_negative_risk():
-    settings = SimpleNamespace(risk_per_trade_pct=0.0025, max_position_pct=0.015)
+    settings = make_settings(risk_per_trade_pct=0.0025, max_position_pct=0.015)
     with pytest.raises(ValueError, match="stop_price must be below entry_price"):
         calculate_position_size(
             equity=99_500.0,
