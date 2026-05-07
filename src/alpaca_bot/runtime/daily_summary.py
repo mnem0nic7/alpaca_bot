@@ -3,6 +3,13 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from alpaca_bot.config import Settings
+from alpaca_bot.strategy.session import SessionType, detect_session_type
+
+_SESSION_LABELS: dict[SessionType, str] = {
+    SessionType.PRE_MARKET: "Pre-Market",
+    SessionType.REGULAR: "Regular",
+    SessionType.AFTER_HOURS: "After-Hours",
+}
 
 
 def build_daily_summary(
@@ -88,6 +95,28 @@ def _build_body(
             strat_pnl = sum(_trade_pnl(t) for t in group)
             lines.append(f"{name:<12}: {len(group)} trades  {_fmt_pnl(strat_pnl)} PnL")
         lines.append("")
+
+    # --- Session Breakdown (extended hours only) ---
+    if settings.extended_hours_enabled and trades:
+        by_session: dict[str, list[dict]] = {}
+        for t in trades:
+            exit_dt = t.get("exit_time")
+            if exit_dt is None:
+                continue
+            stype = detect_session_type(exit_dt, settings)
+            label = _SESSION_LABELS.get(stype)
+            if label is None:
+                continue  # CLOSED — skip
+            by_session.setdefault(label, []).append(t)
+        if by_session:
+            lines.append("--- Session Breakdown ---")
+            for label in ("Pre-Market", "Regular", "After-Hours"):
+                group = by_session.get(label)
+                if not group:
+                    continue
+                spnl = sum(_trade_pnl(t) for t in group)
+                lines.append(f"{label:<12}: {len(group)} trades  {_fmt_pnl(spnl)} PnL")
+            lines.append("")
 
     # --- Positions at Close ---
     lines.append("--- Positions at Close ---")

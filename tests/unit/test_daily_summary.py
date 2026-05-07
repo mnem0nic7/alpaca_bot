@@ -109,6 +109,48 @@ def _position(
     )
 
 
+def make_extended_settings() -> Settings:
+    return Settings.from_env(
+        {
+            "TRADING_MODE": "paper",
+            "ENABLE_LIVE_TRADING": "false",
+            "STRATEGY_VERSION": "v1-breakout",
+            "DATABASE_URL": "postgresql://test/db",
+            "MARKET_DATA_FEED": "sip",
+            "SYMBOLS": "AAPL",
+            "DAILY_SMA_PERIOD": "20",
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "ENTRY_TIMEFRAME_MINUTES": "15",
+            "RISK_PER_TRADE_PCT": "0.0025",
+            "MAX_POSITION_PCT": "0.05",
+            "MAX_OPEN_POSITIONS": "3",
+            "DAILY_LOSS_LIMIT_PCT": "0.01",
+            "STOP_LIMIT_BUFFER_PCT": "0.001",
+            "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+            "ENTRY_STOP_PRICE_BUFFER": "0.01",
+            "ENTRY_WINDOW_START": "10:00",
+            "ENTRY_WINDOW_END": "15:30",
+            "FLATTEN_TIME": "15:45",
+            "EXTENDED_HOURS_ENABLED": "true",
+        }
+    )
+
+
+def _trade_with_exit_time(exit_time: datetime, **kwargs) -> dict:
+    t = _trade(**kwargs)
+    t["exit_time"] = exit_time
+    return t
+
+
+# SESSION_DATE is 2026-04-28 (EDT = UTC-4)
+_REGULAR_EXIT = datetime(2026, 4, 28, 18, 0, tzinfo=timezone.utc)    # 2pm EDT
+_AFTERHOURS_EXIT = datetime(2026, 4, 28, 21, 0, tzinfo=timezone.utc)  # 5pm EDT
+_PREMARKET_EXIT = datetime(2026, 4, 28, 11, 0, tzinfo=timezone.utc)   # 7am EDT
+_CLOSED_EXIT = datetime(2026, 4, 29, 1, 0, tzinfo=timezone.utc)       # 9pm EDT
+
+
 # ---------------------------------------------------------------------------
 # build_daily_summary tests
 # ---------------------------------------------------------------------------
@@ -225,6 +267,89 @@ class TestBuildDailySummary:
         )
         assert "-$42.00" in body
         assert "$-" not in body
+
+
+# ---------------------------------------------------------------------------
+# Session breakdown tests
+# ---------------------------------------------------------------------------
+
+
+class TestSessionBreakdown:
+    def test_session_breakdown_omitted_when_extended_hours_disabled(self):
+        trades = [_trade_with_exit_time(_REGULAR_EXIT)]
+        settings = make_settings()  # extended_hours_enabled=False
+        _, body = build_daily_summary(
+            settings=settings,
+            order_store=FakeOrderStore(trades=trades, pnl=50.0),
+            position_store=FakePositionStore(),
+            session_date=SESSION_DATE,
+            daily_loss_limit_breached=False,
+        )
+        assert "Session Breakdown" not in body
+
+    def test_session_breakdown_shows_regular_and_afterhours(self):
+        trades = [
+            _trade_with_exit_time(_REGULAR_EXIT, entry_fill=100.0, exit_fill=110.0, qty=2),
+            _trade_with_exit_time(_AFTERHOURS_EXIT, entry_fill=100.0, exit_fill=95.0, qty=1),
+        ]
+        settings = make_extended_settings()
+        _, body = build_daily_summary(
+            settings=settings,
+            order_store=FakeOrderStore(trades=trades, pnl=15.0),
+            position_store=FakePositionStore(),
+            session_date=SESSION_DATE,
+            daily_loss_limit_breached=False,
+        )
+        assert "Session Breakdown" in body
+        assert "Regular     : 1 trades" in body
+        assert "$20.00" in body       # (110-100)*2
+        assert "After-Hours : 1 trades" in body
+        assert "-$5.00" in body       # (95-100)*1
+
+    def test_session_breakdown_omitted_with_no_trades(self):
+        settings = make_extended_settings()
+        _, body = build_daily_summary(
+            settings=settings,
+            order_store=FakeOrderStore(trades=[], pnl=0.0),
+            position_store=FakePositionStore(),
+            session_date=SESSION_DATE,
+            daily_loss_limit_breached=False,
+        )
+        assert "Session Breakdown" not in body
+
+    def test_session_breakdown_skips_closed_session_trades(self):
+        trades = [
+            _trade_with_exit_time(_REGULAR_EXIT),
+            _trade_with_exit_time(_CLOSED_EXIT),
+        ]
+        settings = make_extended_settings()
+        _, body = build_daily_summary(
+            settings=settings,
+            order_store=FakeOrderStore(trades=trades, pnl=50.0),
+            position_store=FakePositionStore(),
+            session_date=SESSION_DATE,
+            daily_loss_limit_breached=False,
+        )
+        assert "Session Breakdown" in body
+        assert "Regular     : 1 trades" in body
+        assert "Closed" not in body
+        assert "CLOSED" not in body
+
+    def test_session_breakdown_shows_premarket(self):
+        trades = [
+            _trade_with_exit_time(_PREMARKET_EXIT, entry_fill=100.0, exit_fill=102.0, qty=5)
+        ]
+        settings = make_extended_settings()
+        _, body = build_daily_summary(
+            settings=settings,
+            order_store=FakeOrderStore(trades=trades, pnl=10.0),
+            position_store=FakePositionStore(),
+            session_date=SESSION_DATE,
+            daily_loss_limit_breached=False,
+        )
+        assert "Session Breakdown" in body
+        assert "Pre-Market  : 1 trades" in body
+        assert "$10.00" in body       # (102-100)*5
 
 
 # ---------------------------------------------------------------------------
