@@ -114,6 +114,82 @@ def test_current_session_method_enabled_pre_market():
     assert result is SessionType.PRE_MARKET
 
 
+def test_effective_trading_status_flatten_gate_skipped_during_after_hours():
+    """entries_disabled from regular-session flatten must NOT block after-hours entries."""
+    from datetime import date
+    from unittest.mock import MagicMock
+    from alpaca_bot.runtime.supervisor import RuntimeSupervisor
+    from alpaca_bot.storage.models import DailySessionState
+
+    settings = _settings(
+        EXTENDED_HOURS_ENABLED="true",
+        AFTER_HOURS_ENTRY_WINDOW_START="16:05",
+        AFTER_HOURS_ENTRY_WINDOW_END="19:30",
+        EXTENDED_HOURS_FLATTEN_TIME="19:45",
+    )
+    sup = RuntimeSupervisor(
+        settings=settings,
+        runtime=MagicMock(),
+        broker=MagicMock(),
+        market_data=MagicMock(),
+        stream=None,
+    )
+    session_state = DailySessionState(
+        session_date=date(2026, 5, 7),
+        trading_mode="paper",
+        strategy_version="v1",
+        strategy_name="__global__",
+        entries_disabled=True,
+        flatten_complete=True,
+        updated_at=datetime(2026, 5, 7, 19, 45, tzinfo=timezone.utc),
+    )
+
+    status = sup._effective_trading_status(
+        session_date=date(2026, 5, 7),
+        session_state=session_state,
+        session_type=SessionType.AFTER_HOURS,
+    )
+
+    # Flatten-based entries_disabled must not return CLOSE_ONLY during AFTER_HOURS.
+    from alpaca_bot.storage.models import TradingStatusValue
+    assert status is not TradingStatusValue.CLOSE_ONLY
+
+
+def test_effective_trading_status_flatten_gate_applies_during_regular():
+    """entries_disabled from flatten IS honoured during the regular session."""
+    from datetime import date
+    from unittest.mock import MagicMock
+    from alpaca_bot.runtime.supervisor import RuntimeSupervisor
+    from alpaca_bot.storage.models import DailySessionState
+    from alpaca_bot.storage.models import TradingStatusValue
+
+    settings = _settings()
+    sup = RuntimeSupervisor(
+        settings=settings,
+        runtime=MagicMock(),
+        broker=MagicMock(),
+        market_data=MagicMock(),
+        stream=None,
+    )
+    session_state = DailySessionState(
+        session_date=date(2026, 5, 7),
+        trading_mode="paper",
+        strategy_version="v1",
+        strategy_name="__global__",
+        entries_disabled=True,
+        flatten_complete=True,
+        updated_at=datetime(2026, 5, 7, 19, 45, tzinfo=timezone.utc),
+    )
+
+    status = sup._effective_trading_status(
+        session_date=date(2026, 5, 7),
+        session_state=session_state,
+        session_type=SessionType.REGULAR,
+    )
+
+    assert status is TradingStatusValue.CLOSE_ONLY
+
+
 def test_current_session_regular_uses_broker_clock():
     """_current_session uses broker clock to confirm regular session is open."""
     settings = _settings()

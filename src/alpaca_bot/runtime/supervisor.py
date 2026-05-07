@@ -438,7 +438,7 @@ class RuntimeSupervisor:
                 )
 
         status = self._effective_trading_status(
-            session_date=session_date, session_state=session_state
+            session_date=session_date, session_state=session_state, session_type=session_type
         )
         entries_disabled = (
             status in {TradingStatusValue.CLOSE_ONLY, TradingStatusValue.HALTED}
@@ -657,9 +657,14 @@ class RuntimeSupervisor:
                 if strategy_session_state is not None and strategy_session_state.session_date != session_date:
                     strategy_session_state = None
 
+                _is_extended = session_type in {SessionType.PRE_MARKET, SessionType.AFTER_HOURS}
                 strategy_entries_disabled = (
                     entries_disabled
-                    or (strategy_session_state is not None and strategy_session_state.entries_disabled)
+                    or (
+                        strategy_session_state is not None
+                        and strategy_session_state.entries_disabled
+                        and not _is_extended
+                    )
                 )
                 if strategy_entries_disabled:
                     entries_disabled_strategies.add(strategy_name)
@@ -1304,11 +1309,16 @@ class RuntimeSupervisor:
         *,
         session_date: date,
         session_state: DailySessionState | None = None,
+        session_type: SessionType | None = None,
     ) -> TradingStatusValue | None:
         status = self._load_trading_status()
         if status in {TradingStatusValue.CLOSE_ONLY, TradingStatusValue.HALTED}:
             return status
-        if session_state is not None and session_state.entries_disabled:
+        # The session-state entries_disabled flag is set at end-of-regular-session flatten
+        # time. During extended-hours sessions (pre-market, after-hours) we start fresh —
+        # the flatten gate must not carry over and block the new session's entries.
+        is_extended = session_type in {SessionType.PRE_MARKET, SessionType.AFTER_HOURS}
+        if session_state is not None and session_state.entries_disabled and not is_extended:
             return TradingStatusValue.CLOSE_ONLY
         return status
 
