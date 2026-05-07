@@ -327,3 +327,19 @@ def test_update_session_weights_uses_all_time_start_date() -> None:
         f"Expected all-time start_date=date(2000,1,1), got {captured_kwargs[0]['start_date']}. "
         "The 28-day rolling window has not been changed to all-time."
     )
+
+
+def test_run_cycle_once_report_includes_account_equity() -> None:
+    """run_cycle_once() must populate account_equity on the returned report."""
+    settings = _make_settings()
+    supervisor, _ = _make_supervisor(
+        settings=settings,
+        broker_equity=12_345.67,
+        only_breakout=True,
+    )
+    supervisor._session_equity_baseline[_SESSION_DATE] = 12_345.67
+    supervisor._session_capital_weights[_SESSION_DATE] = {"breakout": 1.0}
+
+    report = supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert abs(report.account_equity - 12_345.67) < 1e-6

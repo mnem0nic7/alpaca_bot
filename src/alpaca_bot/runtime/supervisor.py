@@ -68,6 +68,7 @@ class SupervisorCycleReport:
     entries_disabled: bool
     cycle_result: object
     dispatch_report: object
+    account_equity: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -523,6 +524,7 @@ class RuntimeSupervisor:
                     entries_disabled=entries_disabled,
                     cycle_result=_SN(intents=[]),
                     dispatch_report={"submitted_count": 0},
+                    account_equity=account.equity,
                 )
             ignored_set = set(watchlist_store.list_ignored(self.settings.trading_mode.value))
             entry_symbols = tuple(s for s in watchlist_symbols if s not in ignored_set)
@@ -810,6 +812,7 @@ class RuntimeSupervisor:
                 entries_disabled=True,
                 cycle_result=cycle_result,
                 dispatch_report={"submitted_count": 0},
+                account_equity=account.equity,
             )
         if entries_disabled:
             dispatch_kwargs["allowed_intent_types"] = {"stop", "exit"}
@@ -862,6 +865,7 @@ class RuntimeSupervisor:
             entries_disabled=entries_disabled,
             cycle_result=cycle_result,
             dispatch_report=dispatch_report,
+            account_equity=account.equity,
         )
 
     def close(self) -> None:
@@ -1075,6 +1079,7 @@ class RuntimeSupervisor:
                             payload={
                                 "entries_disabled": cycle_report.entries_disabled,
                                 "timestamp": timestamp.isoformat(),
+                                "account_equity": cycle_report.account_equity,
                             },
                             created_at=timestamp,
                         )
