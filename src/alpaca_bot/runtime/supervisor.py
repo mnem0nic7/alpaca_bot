@@ -1319,6 +1319,9 @@ class RuntimeSupervisor:
                 )
             )
         except Exception:
+            # Deliberate: in-process _consecutive_loss_gate_fired set already holds the guard
+            # for this process lifetime. On restart the gate re-arms from the trade list —
+            # acceptable because the operator was notified and must manually resume.
             logger.exception("Failed to save session state after consecutive-loss gate fired")
         self._append_audit(
             AuditEvent(
