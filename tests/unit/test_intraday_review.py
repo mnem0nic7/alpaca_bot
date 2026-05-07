@@ -526,6 +526,44 @@ class TestMaybeFireConsecutiveLossGate:
         assert sess_store.saved[0].entries_disabled is True
         assert sess_store.saved[0].session_date == _SESSION_DATE
 
+    def test_gate_notifier_optional(self):
+        """Gate fires (audit event, fired set) even when notifier is None."""
+        settings = _make_settings(INTRADAY_CONSECUTIVE_LOSS_GATE="3")
+        sup, ctx = _make_supervisor(settings=settings, notifier=None)
+
+        sup._maybe_fire_consecutive_loss_gate(
+            session_date=_SESSION_DATE, consecutive_losses=3, timestamp=_NOW
+        )
+
+        assert _SESSION_DATE in sup._consecutive_loss_gate_fired
+        gate_events = [
+            e for e in ctx.audit_event_store.appended
+            if e.event_type == "intraday_consecutive_loss_gate"
+        ]
+        assert len(gate_events) == 1
+
+    def test_gate_db_failure_still_adds_to_fired_set(self):
+        """When DailySessionState save raises, gate still marks session fired and audits."""
+        class _FailingSessionStateStore(_RecordingSessionStateStore):
+            def save(self, state):
+                raise RuntimeError("DB unavailable")
+
+        settings = _make_settings(INTRADAY_CONSECUTIVE_LOSS_GATE="3")
+        sup, ctx = _make_supervisor(
+            settings=settings, session_state_store=_FailingSessionStateStore()
+        )
+
+        sup._maybe_fire_consecutive_loss_gate(
+            session_date=_SESSION_DATE, consecutive_losses=3, timestamp=_NOW
+        )
+
+        assert _SESSION_DATE in sup._consecutive_loss_gate_fired
+        gate_events = [
+            e for e in ctx.audit_event_store.appended
+            if e.event_type == "intraday_consecutive_loss_gate"
+        ]
+        assert len(gate_events) == 1
+
 
 # ── _maybe_send_intraday_digest tests ────────────────────────────────────────
 
@@ -639,6 +677,43 @@ class TestMaybeSendIntradayDigest:
         assert len(digest_events) == 1
         assert digest_events[0].payload["cycle"] == 60
         assert digest_events[0].payload["digest_num"] == 1
+
+    def test_digest_does_not_send_without_notifier(self):
+        """No notifier → returns immediately, no audit event, no error."""
+        settings = _make_settings(INTRADAY_DIGEST_INTERVAL_CYCLES="60")
+        sup, ctx = _make_supervisor(settings=settings, notifier=None)
+        sup._session_cycle_count[_SESSION_DATE] = 60
+
+        sup._maybe_send_intraday_digest(
+            session_date=_SESSION_DATE,
+            closed_trades=[_trade()],
+            baseline_equity=10_000.0,
+            current_equity=10_050.0,
+            timestamp=_NOW,
+        )
+
+        digest_events = [
+            e for e in ctx.audit_event_store.appended
+            if e.event_type == "intraday_digest_sent"
+        ]
+        assert digest_events == []
+
+    def test_digest_updates_sent_count(self):
+        """_digest_sent_count tracks digest_num correctly (cycle=20, interval=10 → num=2)."""
+        settings = _make_settings(INTRADAY_DIGEST_INTERVAL_CYCLES="10")
+        notifier = _RecordingNotifier()
+        sup, _ = _make_supervisor(settings=settings, notifier=notifier)
+        sup._session_cycle_count[_SESSION_DATE] = 20
+
+        sup._maybe_send_intraday_digest(
+            session_date=_SESSION_DATE,
+            closed_trades=[_trade()],
+            baseline_equity=10_000.0,
+            current_equity=10_050.0,
+            timestamp=_NOW,
+        )
+
+        assert sup._digest_sent_count[_SESSION_DATE] == 2
 
     def test_digest_notifier_failure_does_not_raise(self):
         """Notifier failure is logged, not propagated."""
