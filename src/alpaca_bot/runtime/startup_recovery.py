@@ -124,6 +124,7 @@ def recover_startup_state(
                 ),
                 commit=False,
             )
+            broker_positions_by_symbol.pop(broker_position.symbol, None)
             continue
         local_for_symbol = local_positions_by_symbol.get(broker_position.symbol, [])
 

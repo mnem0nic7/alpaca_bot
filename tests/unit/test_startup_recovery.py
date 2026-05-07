@@ -1397,3 +1397,74 @@ def test_recover_startup_state_skips_negative_qty_broker_position() -> None:
     assert skyt_audit_events, (
         f"Expected an audit event for SKYT negative qty skip, got events={[e.event_type for e in audit_event_store.appended]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Regression: zero-qty broker position must appear in cleared_position_count
+# ---------------------------------------------------------------------------
+
+def test_recover_startup_state_zero_qty_broker_position_counts_as_cleared() -> None:
+    """A broker position with quantity=0 (stale closed position not yet purged)
+    must be skipped by the guard AND counted in cleared_position_count when a
+    corresponding local position exists, so the report accurately reflects the
+    state change and operators can diagnose it.
+
+    Before the fix, cleared_position_count stays at 0 for the zero-qty symbol
+    because it is still in broker_positions_by_symbol when the clearing loop runs.
+    """
+    settings = make_settings()
+    now = datetime(2026, 5, 7, 20, 0, tzinfo=timezone.utc)
+    skyt_local = PositionRecord(
+        symbol="SKYT",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=2,
+        entry_price=33.61,
+        stop_price=33.0,
+        initial_stop_price=33.0,
+        opened_at=now,
+    )
+    position_store = RecordingPositionStore(existing_positions=[skyt_local])
+    order_store = RecordingOrderStore()
+    audit_event_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+        audit_event_store=audit_event_store,
+    )
+
+    report = recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[
+            BrokerPosition(symbol="SKYT", quantity=0, entry_price=33.61, market_value=0.0),
+        ],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    # The guard mismatch must fire (qty <= 0 skipped).
+    skyt_guard_mismatches = [m for m in report.mismatches if "non-positive quantity skipped" in m and "SKYT" in m]
+    assert skyt_guard_mismatches, (
+        f"Expected guard mismatch for SKYT, got mismatches={report.mismatches}"
+    )
+
+    # The clearing mismatch must also fire (local position now has no broker counterpart).
+    skyt_clearing_mismatches = [m for m in report.mismatches if "local position missing at broker" in m and "SKYT" in m]
+    assert skyt_clearing_mismatches, (
+        f"Expected 'local position missing at broker: SKYT' in mismatches, got {report.mismatches}"
+    )
+
+    # cleared_position_count must include SKYT.
+    assert report.cleared_position_count == 1, (
+        f"cleared_position_count should be 1, got {report.cleared_position_count}"
+    )
+
+    # SKYT must not appear in synced positions.
+    synced_symbols = {
+        pos.symbol
+        for call in position_store.replace_all_calls
+        for pos in call["positions"]
+    }
+    assert "SKYT" not in synced_symbols, "zero-qty SKYT must not be written to position_store"
