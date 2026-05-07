@@ -852,7 +852,7 @@ class OrderStore:
             """,
             (trading_mode.value, strategy_version),
         )
-        return {row[0]: float(row[1]) for row in rows}
+        return {row[0]: float(row[1]) for row in rows if row[0] is not None}
 
 
 class DailySessionStateStore:

@@ -786,3 +786,13 @@ class TestLifetimePnlByStrategy:
             strategy_version="v1",
         )
         assert isinstance(result["breakout"], float)
+
+    def test_none_strategy_name_row_is_excluded(self) -> None:
+        rows = [(None, 150.0), ("breakout", 300.0)]
+        store = self._make_store(rows)
+        result = store.lifetime_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert None not in result
+        assert result == {"breakout": pytest.approx(300.0)}
