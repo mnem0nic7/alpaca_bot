@@ -13,7 +13,7 @@ def compute_strategy_weights(
     trade_rows: list[dict],
     active_strategies: list[str],
     *,
-    min_weight: float = 0.05,
+    min_weight: float = 0.01,
     max_weight: float = 0.40,
     min_trades: int = 5,
 ) -> WeightResult:

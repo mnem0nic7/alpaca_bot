@@ -57,7 +57,27 @@ def test_floor_applied_when_strategy_has_low_sharpe() -> None:
             rows.append(_row(name, date(2026, 1, day + 1), s * (day + 1)))
     result = compute_strategy_weights(rows, strategies)
     for w in result.weights.values():
-        assert w >= 0.05 - 1e-9, f"weight {w} below floor"
+        assert w >= 0.01 - 1e-9, f"weight {w} below floor"
+    assert abs(sum(result.weights.values()) - 1.0) < 1e-9
+
+
+def test_floor_strategies_capped_at_one_percent_not_five() -> None:
+    # With 1 strong strategy and 20 zero-sharpe strategies, the floor strategies
+    # should each get exactly min_weight=0.01 (1%), NOT 0.05 (5%).
+    # With 5% floor: 20 * 5% = 100% consumed, strong strategy starved (gets ~0%).
+    # With 1% floor: 20 * 1% = 20% consumed, strong strategy can get up to cap (40%).
+    # We assert floor strategies are <= 0.03 — impossible at 5% floor, correct at 1%.
+    strategies = ["strong"] + [f"zero_{i}" for i in range(20)]
+    rows = []
+    for day in range(20):
+        rows.append(_row("strong", date(2026, 1, day + 1), 100.0 * (day + 1)))
+    # zero_0..zero_19 have no trade rows → sharpe=0 → hit the floor
+    result = compute_strategy_weights(rows, strategies)
+    for name in [f"zero_{i}" for i in range(20)]:
+        assert result.weights[name] <= 0.03, (
+            f"{name}: weight {result.weights[name]:.4f} is at 5% floor — "
+            "expected 1% floor after this change"
+        )
     assert abs(sum(result.weights.values()) - 1.0) < 1e-9
 
 
