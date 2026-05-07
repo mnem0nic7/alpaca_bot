@@ -294,17 +294,21 @@ def evaluate_cycle(
             latest_bar = bars[-1]
             trigger = position.entry_price * (1 + settings.breakeven_trigger_pct)
             effective_stop = _be_emitted.get(position.symbol, position.stop_price)
-            if latest_bar.high >= trigger and effective_stop < position.entry_price:
-                intents.append(
-                    CycleIntent(
-                        intent_type=CycleIntentType.UPDATE_STOP,
-                        symbol=position.symbol,
-                        timestamp=now,
-                        stop_price=position.entry_price,
-                        strategy_name=strategy_name,
-                        reason="breakeven",
+            if latest_bar.high >= trigger:
+                max_price = max(position.highest_price, latest_bar.high)
+                trail_stop = round(max_price * (1 - settings.breakeven_trail_pct), 2)
+                be_stop = max(position.entry_price, trail_stop)
+                if effective_stop < be_stop:
+                    intents.append(
+                        CycleIntent(
+                            intent_type=CycleIntentType.UPDATE_STOP,
+                            symbol=position.symbol,
+                            timestamp=now,
+                            stop_price=be_stop,
+                            strategy_name=strategy_name,
+                            reason="breakeven",
+                        )
                     )
-                )
 
     # Cap-up pass: raise stop to MAX_STOP_PCT cap for any existing position whose stop
     # is more than max_stop_pct below entry. Trailing logic ran first; use emitted

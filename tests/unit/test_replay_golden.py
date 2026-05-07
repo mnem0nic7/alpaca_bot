@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from alpaca_bot.config import Settings
 from alpaca_bot.domain import Bar
 from alpaca_bot.domain.enums import IntentType
@@ -49,10 +51,13 @@ def test_breakout_success_golden_scenario() -> None:
         IntentType.ENTRY_ORDER_PLACED,
         IntentType.ENTRY_FILLED,
         IntentType.STOP_UPDATED,
+        IntentType.STOP_UPDATED,
         IntentType.STOP_HIT,
     ]
     assert result.events[1].details["entry_price"] == 110.05
+    # ATR trailing raises stop to entry_price floor; breakeven trailing raises further to 0.2% below bar high
     assert result.events[2].details["stop_price"] == 110.05
+    assert result.events[3].details["stop_price"] == pytest.approx(111.78)
     assert result.final_position is None
 
 

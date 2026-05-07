@@ -132,9 +132,8 @@ def test_run_sweep_golden_scenario_produces_scored_candidates() -> None:
     }
     candidates = run_sweep(scenario=scenario, base_env=_base_env(), grid=small_grid, min_trades=1)
     assert len(candidates) == 1
-    # With tighter ATR stop (1.0 vs 1.5), trade hits stop at break-even, result
-    # is unscored (mean_return_pct=0, not eligible for positive score)
-    assert candidates[0].score is None
+    # Breakeven trailing raises stop to 0.2% below bar high (111.78), trade exits profitably
+    assert candidates[0].score is not None
 
 
 def test_run_sweep_sorted_scored_before_unscored() -> None:

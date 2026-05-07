@@ -320,6 +320,7 @@ def test_cap_up_does_not_duplicate_trailing_stop_intent():
         MAX_STOP_PCT="0.05",
         TRAILING_STOP_ATR_MULTIPLIER="0.5",
         TRAILING_STOP_PROFIT_TRIGGER_R="0.1",
+        ENABLE_BREAKEVEN_STOP="false",
     )
     # Entry 100, initial stop 95 (5%), trailing fires and raises stop to 97 (above cap)
     position = _make_position(
