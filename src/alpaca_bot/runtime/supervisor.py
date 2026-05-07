@@ -51,9 +51,8 @@ from alpaca_bot.storage import (
     PositionRecord,
     TradingStatusValue,
 )
-from alpaca_bot.strategy import OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY, StrategySignalEvaluator
+from alpaca_bot.strategy import OPTION_STRATEGY_FACTORIES, OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY, StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import evaluate_breakout_signal as _default_evaluator, is_past_flatten_time
-from alpaca_bot.strategy.breakout_calls import make_breakout_calls_evaluator
 from alpaca_bot.strategy.session import SessionType, detect_session_type
 from alpaca_bot.execution.option_chain import AlpacaOptionChainAdapter
 from alpaca_bot.runtime.option_dispatch import dispatch_pending_option_orders
@@ -607,8 +606,9 @@ class RuntimeSupervisor:
                 except Exception:
                     logger.exception("option chain fetch failed for %s", symbol)
             for opt_name in OPTION_STRATEGY_NAMES:
+                factory = OPTION_STRATEGY_FACTORIES[opt_name]
                 active_strategies.append(
-                    (opt_name, make_breakout_calls_evaluator(option_chains_by_symbol))
+                    (opt_name, factory(option_chains_by_symbol))
                 )
 
         # Add open option position underlying symbols to prevent double-entry.

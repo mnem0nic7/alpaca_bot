@@ -81,6 +81,13 @@ FLATTEN_TIME=15:45
 # OPTION_DTE_MIN=21        # minimum days-to-expiry when selecting contracts
 # OPTION_DTE_MAX=60        # maximum days-to-expiry when selecting contracts
 # OPTION_DELTA_TARGET=0.50 # target delta for contract selection (0 < value ≤ 1.0)
+#
+# Bear (put) strategies are activated alongside ENABLE_OPTIONS_TRADING. When enabled,
+# all 11 bearish strategies run in parallel with the existing breakout_calls strategy.
+# Each strategy uses the same put-contract selector (DTE/delta settings above).
+# To trade inverse ETFs instead of options, disable ENABLE_OPTIONS_TRADING and add
+# the inverse ETF ticker (e.g. SQQQ, SPXS) to SYMBOLS — the bearish equity signals
+# will then fire on those tickers directly without requiring an options chain.
 
 ALPACA_PAPER_API_KEY=replace-me
 ALPACA_PAPER_SECRET_KEY=replace-me
