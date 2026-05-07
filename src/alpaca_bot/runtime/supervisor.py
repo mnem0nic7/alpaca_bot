@@ -397,9 +397,13 @@ class RuntimeSupervisor:
                 except Exception:
                     logger.exception("Notifier failed to send daily loss limit alert")
 
-        # Intra-day consecutive-loss gate and digest (REGULAR session only)
+        # Intra-day consecutive-loss gate and digest (REGULAR session only, either feature enabled)
         _trades_for_review: list[dict] | None = None
-        if session_type is SessionType.REGULAR:
+        _intraday_enabled = (
+            self.settings.intraday_consecutive_loss_gate > 0
+            or self.settings.intraday_digest_interval_cycles > 0
+        )
+        if _intraday_enabled and session_type is SessionType.REGULAR:
             _intraday_lock = getattr(self.runtime, "store_lock", None)
             try:
                 with _intraday_lock if _intraday_lock is not None else contextlib.nullcontext():

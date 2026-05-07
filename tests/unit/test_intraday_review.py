@@ -197,7 +197,8 @@ class TestBuildIntradayDigest:
 
     def test_body_contains_cycle_info(self):
         _, body = self._call(cycle_num=60)
-        assert "Cycle: 60/60" in body
+        assert "Digest: #1" in body
+        assert "cycle 60" in body
 
     def test_body_with_zero_trades(self):
         _, body = self._call(trades=[])
@@ -789,7 +790,7 @@ class TestRunCycleOnceIntegration:
 
     def test_session_cycle_count_increments_only_during_regular(self):
         """_session_cycle_count increments each REGULAR cycle, not for AFTER_HOURS."""
-        settings = _make_settings()
+        settings = _make_settings(INTRADAY_CONSECUTIVE_LOSS_GATE="3")
         sup, _ = _make_supervisor(settings=settings)
 
         sup.run_cycle_once(now=lambda: _NOW, session_type=SessionType.REGULAR)

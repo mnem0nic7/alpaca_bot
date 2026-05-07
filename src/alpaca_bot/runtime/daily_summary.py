@@ -178,7 +178,8 @@ def build_intraday_digest(
     losses = len(scored) - wins
 
     lines: list[str] = []
-    lines.append(f"Session: {session_date}  Cycle: {cycle_num}/{interval}")
+    digest_num = cycle_num // interval if interval else 0
+    lines.append(f"Session: {session_date}  Digest: #{digest_num}  (cycle {cycle_num})")
     lines.append("")
 
     if scored:
