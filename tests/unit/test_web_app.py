@@ -1160,6 +1160,93 @@ def test_toggle_entries_returns_404_for_unknown_strategy() -> None:
     assert response.status_code == 404
 
 
+def test_toggle_entries_accepts_option_strategy_name() -> None:
+    saved_states: list = []
+    saved_events: list = []
+
+    def state_store_factory(_conn):
+        return SimpleNamespace(
+            load=lambda **_: None,
+            save=lambda state, *, commit=True: saved_states.append(state),
+        )
+
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=state_store_factory,
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+            append=lambda event, *, commit=True: saved_events.append(event),
+        ),
+        strategy_flag_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None, list_all=lambda **_: []),
+    )
+
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "toggle")
+    response = client.post(
+        "/strategies/bear_breakdown/toggle-entries",
+        data={"_csrf_token": token},
+    )
+
+    assert response.status_code == 303
+    assert len(saved_states) == 1
+    assert saved_states[0].strategy_name == "bear_breakdown"
+    assert saved_states[0].entries_disabled is True
+
+
+def test_toggle_accepts_option_strategy_name() -> None:
+    saved_flags: list = []
+    saved_events: list = []
+
+    def flag_store_factory(_conn):
+        return SimpleNamespace(
+            load=lambda **_: None,
+            save=lambda flag, *, commit=True: saved_flags.append(flag),
+            list_all=lambda **_: [],
+        )
+
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None, save=lambda **_: None),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+            append=lambda event, *, commit=True: saved_events.append(event),
+        ),
+        strategy_flag_store_factory=flag_store_factory,
+    )
+
+    client = TestClient(app, follow_redirects=False)
+    token = _csrf_token(client, "toggle")
+    response = client.post(
+        "/strategies/bear_breakdown/toggle",
+        data={"_csrf_token": token},
+    )
+
+    assert response.status_code == 303
+    assert len(saved_flags) == 1
+    assert saved_flags[0].strategy_name == "bear_breakdown"
+    assert saved_flags[0].enabled is False  # toggled from default True to False
+
+
 # ---------------------------------------------------------------------------
 # GET /audit route
 # ---------------------------------------------------------------------------
@@ -1658,7 +1745,8 @@ def test_healthz_includes_strategy_flags() -> None:
     payload = response.json()
     assert "strategy_flags" in payload
     flags = {f["name"]: f["enabled"] for f in payload["strategy_flags"]}
-    assert set(flags.keys()) == set(STRATEGY_REGISTRY.keys())
+    from alpaca_bot.strategy import ALL_STRATEGY_NAMES
+    assert set(flags.keys()) == ALL_STRATEGY_NAMES
     assert flags["breakout"] is True
 
 

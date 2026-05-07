@@ -31,7 +31,7 @@ from alpaca_bot.storage import (
     WatchlistStore,
 )
 from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres, execute
-from alpaca_bot.strategy import STRATEGY_REGISTRY
+from alpaca_bot.strategy import ALL_STRATEGY_NAMES, OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY
 from alpaca_bot.web.auth import (
     authenticate_operator,
     auth_enabled,
@@ -169,6 +169,7 @@ def create_app(
                 "operator_email": operator,
                 "auto_refresh": not bool(no_refresh),
                 "strategy_weights": strategy_weights,
+                "option_strategy_names": OPTION_STRATEGY_NAMES,
             },
         )
 
@@ -456,7 +457,7 @@ def create_app(
             request, token, settings=app_settings, action="toggle", csrf_secret=csrf_secret
         ):
             return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
-        if strategy_name not in STRATEGY_REGISTRY:
+        if strategy_name not in ALL_STRATEGY_NAMES:
             return HTMLResponse(status_code=status.HTTP_404_NOT_FOUND, content="Unknown strategy")
         now = datetime.now(timezone.utc)
         session_date = now.astimezone(app_settings.market_timezone).date()
@@ -517,7 +518,7 @@ def create_app(
             request, token, settings=app_settings, action="toggle", csrf_secret=csrf_secret
         ):
             return HTMLResponse(status_code=status.HTTP_403_FORBIDDEN, content="Forbidden")
-        if strategy_name not in STRATEGY_REGISTRY:
+        if strategy_name not in ALL_STRATEGY_NAMES:
             return HTMLResponse(
                 status_code=status.HTTP_404_NOT_FOUND,
                 content="Unknown strategy",

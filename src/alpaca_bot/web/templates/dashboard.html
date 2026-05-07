@@ -359,7 +359,12 @@
                 {%- set sw = strategy_weights | selectattr('strategy_name', 'equalto', name) | first | default(none) %}
                 {%- set ltpnl = snapshot.strategy_lifetime_pnl.get(name) %}
                 <tr>
-                  <td class="mono">{{ name }}</td>
+                  <td class="mono">
+                    {{ name }}
+                    {% if option_strategy_names is defined and name in option_strategy_names %}
+                      <span style="font-size: 0.7em; color: var(--muted); margin-left: 0.3em">OPT</span>
+                    {% endif %}
+                  </td>
                   <td class="{{ '' if is_enabled else 'warn' }}">{{ "Enabled" if is_enabled else "Disabled" }}</td>
                   <td style="white-space: nowrap">
                     <form method="post" action="/strategies/{{ name }}/toggle">
