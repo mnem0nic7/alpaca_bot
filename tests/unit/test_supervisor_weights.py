@@ -343,3 +343,59 @@ def test_run_cycle_once_report_includes_account_equity() -> None:
     report = supervisor.run_cycle_once(now=lambda: _NOW)
 
     assert abs(report.account_equity - 12_345.67) < 1e-6
+
+
+def test_update_session_weights_includes_option_names_when_options_enabled() -> None:
+    """When enable_options_trading=True, option strategy names join the weight pool."""
+    from alpaca_bot.strategy import OPTION_STRATEGY_NAMES
+
+    captured_names: list[list[str]] = []
+
+    import alpaca_bot.runtime.supervisor as _sup_mod
+    from alpaca_bot.risk.weighting import compute_strategy_weights as _orig
+
+    def capturing_compute(trade_rows, active_names):
+        captured_names.append(list(active_names))
+        return _orig(trade_rows, active_names)
+
+    original = _sup_mod.compute_strategy_weights
+    _sup_mod.compute_strategy_weights = capturing_compute
+    try:
+        settings = _make_settings(ENABLE_OPTIONS_TRADING="true")
+        supervisor, _ = _make_supervisor(settings=settings, weight_store=_FakeWeightStore(preloaded=[]), only_breakout=False)
+        supervisor._update_session_weights(_SESSION_DATE)
+    finally:
+        _sup_mod.compute_strategy_weights = original
+
+    assert len(captured_names) == 1
+    pool = set(captured_names[0])
+    for opt_name in OPTION_STRATEGY_NAMES:
+        assert opt_name in pool, f"Option strategy {opt_name!r} missing from weight pool"
+
+
+def test_update_session_weights_excludes_option_names_when_options_disabled() -> None:
+    """When enable_options_trading=False, option strategy names must NOT join the weight pool."""
+    from alpaca_bot.strategy import OPTION_STRATEGY_NAMES
+
+    captured_names: list[list[str]] = []
+
+    import alpaca_bot.runtime.supervisor as _sup_mod
+    from alpaca_bot.risk.weighting import compute_strategy_weights as _orig
+
+    def capturing_compute(trade_rows, active_names):
+        captured_names.append(list(active_names))
+        return _orig(trade_rows, active_names)
+
+    original = _sup_mod.compute_strategy_weights
+    _sup_mod.compute_strategy_weights = capturing_compute
+    try:
+        settings = _make_settings(ENABLE_OPTIONS_TRADING="false")
+        supervisor, _ = _make_supervisor(settings=settings, weight_store=_FakeWeightStore(preloaded=[]), only_breakout=False)
+        supervisor._update_session_weights(_SESSION_DATE)
+    finally:
+        _sup_mod.compute_strategy_weights = original
+
+    assert len(captured_names) == 1
+    pool = set(captured_names[0])
+    for opt_name in OPTION_STRATEGY_NAMES:
+        assert opt_name not in pool, f"Option strategy {opt_name!r} must not be in weight pool when options disabled"

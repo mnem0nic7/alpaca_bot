@@ -363,7 +363,8 @@ def test_load_dashboard_snapshot_includes_strategy_flags_from_store() -> None:
         **stores,
     )
 
-    assert len(snapshot.strategy_flags) == len(STRATEGY_REGISTRY)
+    from alpaca_bot.strategy import ALL_STRATEGY_NAMES
+    assert len(snapshot.strategy_flags) == len(ALL_STRATEGY_NAMES)
     flag_map = dict(snapshot.strategy_flags)
     assert flag_map["breakout"] is flag
     assert flag_map["breakout"].enabled is False
@@ -383,19 +384,14 @@ def test_load_dashboard_snapshot_sets_none_for_missing_flag_row() -> None:
         **stores,
     )
 
-    assert snapshot.strategy_flags == [
-        ("breakout", None),
-        ("momentum", None),
-        ("orb", None),
-        ("high_watermark", None),
-        ("ema_pullback", None),
-        ("vwap_reversion", None),
-        ("gap_and_go", None),
-        ("bull_flag", None),
-        ("vwap_cross", None),
-        ("bb_squeeze", None),
-        ("failed_breakdown", None),
-    ]
+    from alpaca_bot.strategy import ALL_STRATEGY_NAMES, OPTION_STRATEGY_FACTORIES, STRATEGY_REGISTRY
+    # All 23 strategies must appear, each with None flag (no DB rows)
+    assert len(snapshot.strategy_flags) == len(ALL_STRATEGY_NAMES)
+    assert all(flag is None for _, flag in snapshot.strategy_flags)
+    flag_names = [name for name, _ in snapshot.strategy_flags]
+    # Equity strategies come first (STRATEGY_REGISTRY order), then option strategies (sorted)
+    assert flag_names[:len(STRATEGY_REGISTRY)] == list(STRATEGY_REGISTRY)
+    assert flag_names[len(STRATEGY_REGISTRY):] == sorted(OPTION_STRATEGY_FACTORIES)
 
 
 # ---------------------------------------------------------------------------

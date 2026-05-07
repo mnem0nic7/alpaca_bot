@@ -1261,6 +1261,20 @@ class RuntimeSupervisor:
         weight_store = getattr(self.runtime, "strategy_weight_store", None)
         if weight_store is None:
             active_names = [name for name, _ in self._resolve_active_strategies()]
+            if self.settings.enable_options_trading:
+                _early_flag_store = getattr(self.runtime, "strategy_flag_store", None)
+                _early_lock = getattr(self.runtime, "store_lock", None)
+                with _early_lock if _early_lock is not None else contextlib.nullcontext():
+                    for opt_name in sorted(OPTION_STRATEGY_FACTORIES):
+                        if _early_flag_store is not None:
+                            _flag = _early_flag_store.load(
+                                strategy_name=opt_name,
+                                trading_mode=self.settings.trading_mode,
+                                strategy_version=self.settings.strategy_version,
+                            )
+                            if _flag is not None and not _flag.enabled:
+                                continue
+                        active_names.append(opt_name)
             n = max(len(active_names), 1)
             return {name: 1.0 / n for name in active_names}
 
@@ -1278,6 +1292,19 @@ class RuntimeSupervisor:
         end_date = session_date - timedelta(days=1)
         start_date = date(2000, 1, 1)
         active_names = [name for name, _ in self._resolve_active_strategies()]
+        if self.settings.enable_options_trading:
+            _wt_flag_store = getattr(self.runtime, "strategy_flag_store", None)
+            with lock_ctx:
+                for opt_name in sorted(OPTION_STRATEGY_FACTORIES):
+                    if _wt_flag_store is not None:
+                        _flag = _wt_flag_store.load(
+                            strategy_name=opt_name,
+                            trading_mode=self.settings.trading_mode,
+                            strategy_version=self.settings.strategy_version,
+                        )
+                        if _flag is not None and not _flag.enabled:
+                            continue
+                    active_names.append(opt_name)
 
         with lock_ctx:
             trade_rows = self.runtime.order_store.list_trade_pnl_by_strategy(
