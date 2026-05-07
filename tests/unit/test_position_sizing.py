@@ -11,10 +11,12 @@ def make_settings(
     *,
     risk_per_trade_pct: float = 0.0025,
     max_position_pct: float = 0.05,
+    max_loss_per_trade_dollars: float | None = None,
 ) -> object:
     return SimpleNamespace(
         risk_per_trade_pct=risk_per_trade_pct,
         max_position_pct=max_position_pct,
+        max_loss_per_trade_dollars=max_loss_per_trade_dollars,
     )
 
 
@@ -164,3 +166,55 @@ def test_fractionable_returns_zero_for_negative_risk():
             settings=settings,
             fractionable=True,
         )
+
+
+class TestDollarLossCap:
+    def test_dollar_cap_is_binding_when_stop_is_tight(self):
+        """When dollar cap < risk budget, quantity is reduced to honour the cap."""
+        # equity=10_000, risk=0.25% → budget=$25; entry=100, stop=99 → risk/share=$1 → qty=25
+        # dollar_cap=10 → dollar_cap_qty=10/1=10 → 10 < 25 → cap wins → qty=10
+        settings = make_settings(
+            risk_per_trade_pct=0.0025,
+            max_position_pct=0.50,
+            max_loss_per_trade_dollars=10.0,
+        )
+        qty = calculate_position_size(
+            equity=10_000.0,
+            entry_price=100.0,
+            stop_price=99.0,
+            settings=settings,
+        )
+        assert qty == 10
+
+    def test_dollar_cap_is_not_binding_when_stop_is_wide(self):
+        """When dollar cap > risk budget, the risk budget is the binding constraint."""
+        # equity=10_000, risk=0.25% → budget=$25; entry=100, stop=95 → risk/share=$5 → qty=5
+        # dollar_cap=50 → dollar_cap_qty=50/5=10 → 10 > 5 → risk budget wins → qty=5
+        settings = make_settings(
+            risk_per_trade_pct=0.0025,
+            max_position_pct=0.50,
+            max_loss_per_trade_dollars=50.0,
+        )
+        qty = calculate_position_size(
+            equity=10_000.0,
+            entry_price=100.0,
+            stop_price=95.0,
+            settings=settings,
+        )
+        assert qty == 5
+
+    def test_dollar_cap_none_preserves_existing_behaviour(self):
+        """When max_loss_per_trade_dollars is None, behaviour is unchanged."""
+        settings = make_settings(
+            risk_per_trade_pct=0.0025,
+            max_position_pct=0.50,
+            max_loss_per_trade_dollars=None,
+        )
+        qty = calculate_position_size(
+            equity=10_000.0,
+            entry_price=100.0,
+            stop_price=99.0,
+            settings=settings,
+        )
+        # risk_budget=$25, risk/share=$1 → qty=25 (no cap applied)
+        assert qty == 25
