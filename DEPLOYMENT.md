@@ -53,6 +53,15 @@ DAILY_LOSS_LIMIT_PCT=0.01
 INTRADAY_DIGEST_INTERVAL_CYCLES=0
 # Disable entries after N consecutive losing trades (0 = disabled, safe default)
 INTRADAY_CONSECUTIVE_LOSS_GATE=0
+# Extended-hours trading (pre-market 4am–9:20am ET and after-hours 4:05pm–7:30pm ET)
+# EXTENDED_HOURS_ENABLED=false
+# PRE_MARKET_ENTRY_WINDOW_START=04:00
+# PRE_MARKET_ENTRY_WINDOW_END=09:20
+# AFTER_HOURS_ENTRY_WINDOW_START=16:05
+# AFTER_HOURS_ENTRY_WINDOW_END=19:30
+# EXTENDED_HOURS_FLATTEN_TIME=19:45
+# EXTENDED_HOURS_LIMIT_OFFSET_PCT=0.001   # limit price slippage buffer vs. last trade price
+# EXTENDED_HOURS_MAX_SPREAD_PCT=0.01      # max bid-ask spread as fraction of price (1% default)
 STOP_LIMIT_BUFFER_PCT=0.001
 BREAKOUT_STOP_BUFFER_PCT=0.001
 ATR_PERIOD=14
