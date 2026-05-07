@@ -37,7 +37,7 @@ def evaluate_bear_breakdown_signal(
     if len(atr_window) < 2:
         return None
     trs = [
-        max(b.high - b.low, abs(b.high - atr_window[i].close), abs(b.low - atr_window[i].close))
+        max(b.high - b.low, abs(b.high - atr_window[i - 1].close), abs(b.low - atr_window[i - 1].close))
         for i, b in enumerate(atr_window[1:], 1)
     ]
     atr = sum(trs) / len(trs)
