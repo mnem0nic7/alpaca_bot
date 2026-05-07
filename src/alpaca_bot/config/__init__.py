@@ -150,6 +150,7 @@ class Settings:
     # Intra-day review: 0 = disabled (default)
     intraday_digest_interval_cycles: int = 0
     intraday_consecutive_loss_gate: int = 0
+    max_loss_per_trade_dollars: float | None = None
 
     def __post_init__(self) -> None:
         self.validate()
@@ -326,6 +327,11 @@ class Settings:
             ),
             intraday_consecutive_loss_gate=int(
                 values.get("INTRADAY_CONSECUTIVE_LOSS_GATE", "0")
+            ),
+            max_loss_per_trade_dollars=(
+                float(values["MAX_LOSS_PER_TRADE_DOLLARS"])
+                if "MAX_LOSS_PER_TRADE_DOLLARS" in values
+                else None
             ),
         )
         return settings
@@ -513,6 +519,8 @@ class Settings:
             raise ValueError("INTRADAY_DIGEST_INTERVAL_CYCLES must be >= 0")
         if self.intraday_consecutive_loss_gate < 0:
             raise ValueError("INTRADAY_CONSECUTIVE_LOSS_GATE must be >= 0")
+        if self.max_loss_per_trade_dollars is not None and self.max_loss_per_trade_dollars <= 0:
+            raise ValueError("MAX_LOSS_PER_TRADE_DOLLARS must be > 0")
 
 
 def _validate_positive_fraction(name: str, value: float) -> None:
