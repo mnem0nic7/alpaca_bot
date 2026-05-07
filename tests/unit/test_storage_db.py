@@ -725,3 +725,64 @@ class TestStrategyWeightStore:
         assert len(executed) == 2
         names_stored = {p[0] for p in executed}
         assert names_stored == {"breakout", "momentum"}
+
+
+# ── test_lifetime_pnl_by_strategy ─────────────────────────────────────────────
+
+class TestLifetimePnlByStrategy:
+    """Unit tests for OrderStore.lifetime_pnl_by_strategy()."""
+
+    def _make_store(self, rows: list[tuple]) -> "OrderStore":
+        return OrderStore(_make_fake_connection(rows))
+
+    def test_returns_empty_dict_when_no_closed_trades(self) -> None:
+        store = self._make_store([])
+        result = store.lifetime_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert result == {}
+
+    def test_single_strategy_positive_pnl(self) -> None:
+        # row: (strategy_name, total_pnl)
+        rows = [("breakout", 1234.56)]
+        store = self._make_store(rows)
+        result = store.lifetime_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert result == {"breakout": pytest.approx(1234.56)}
+
+    def test_single_strategy_negative_pnl(self) -> None:
+        rows = [("breakout", -500.0)]
+        store = self._make_store(rows)
+        result = store.lifetime_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert result == {"breakout": pytest.approx(-500.0)}
+
+    def test_multiple_strategies_returned(self) -> None:
+        rows = [
+            ("breakout", 1234.56),
+            ("momentum", -200.0),
+        ]
+        store = self._make_store(rows)
+        result = store.lifetime_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert result == {
+            "breakout": pytest.approx(1234.56),
+            "momentum": pytest.approx(-200.0),
+        }
+
+    def test_returns_float_values(self) -> None:
+        """Values must be Python float, not Decimal or int."""
+        rows = [("breakout", 100)]  # simulate DB returning int-like Decimal
+        store = self._make_store(rows)
+        result = store.lifetime_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert isinstance(result["breakout"], float)

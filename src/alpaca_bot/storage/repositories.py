@@ -811,6 +811,49 @@ class OrderStore:
         )
         return {row[0]: (int(row[1]), int(row[2])) for row in rows}
 
+    def lifetime_pnl_by_strategy(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+    ) -> dict[str, float]:
+        rows = fetch_all(
+            self._connection,
+            """
+            WITH trade_pnl AS (
+                SELECT x.strategy_name,
+                       (x.fill_price - e.fill_price)
+                           * COALESCE(x.filled_quantity, x.quantity) AS pnl
+                  FROM orders x
+                  JOIN LATERAL (
+                      SELECT fill_price
+                        FROM orders e
+                       WHERE e.symbol = x.symbol
+                         AND e.trading_mode = x.trading_mode
+                         AND e.strategy_version = x.strategy_version
+                         AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
+                         AND e.intent_type = 'entry'
+                         AND e.fill_price IS NOT NULL
+                         AND e.status = 'filled'
+                         AND e.updated_at <= x.updated_at
+                       ORDER BY e.updated_at DESC
+                       LIMIT 1
+                  ) e ON true
+                 WHERE x.trading_mode = %s
+                   AND x.strategy_version = %s
+                   AND x.intent_type IN ('stop', 'exit')
+                   AND x.fill_price IS NOT NULL
+                   AND x.status = 'filled'
+            )
+            SELECT strategy_name,
+                   SUM(pnl) AS total_pnl
+              FROM trade_pnl
+             GROUP BY strategy_name
+            """,
+            (trading_mode.value, strategy_version),
+        )
+        return {row[0]: float(row[1]) for row in rows}
+
 
 class DailySessionStateStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
