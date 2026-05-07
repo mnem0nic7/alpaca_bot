@@ -358,7 +358,16 @@ class RuntimeSupervisor:
         total_pnl = account.equity - baseline_equity
         if total_pnl < -loss_limit:
             self._loss_limit_fired.add(session_date)
-        daily_loss_limit_breached = session_date in self._loss_limit_fired
+        # During extended-hours sessions the _loss_limit_fired set may have been
+        # populated by the regular-session consecutive-loss gate (not an actual
+        # loss-limit breach). Re-evaluate against real-time P&L so a small-loss
+        # regular session doesn't silently block the entire after-hours session.
+        _is_extended_session = session_type in {SessionType.PRE_MARKET, SessionType.AFTER_HOURS}
+        daily_loss_limit_breached = (
+            total_pnl < -loss_limit
+            if _is_extended_session
+            else session_date in self._loss_limit_fired
+        )
         if daily_loss_limit_breached and session_date not in self._loss_limit_alerted:
             self._loss_limit_alerted.add(session_date)
             self._save_session_state(

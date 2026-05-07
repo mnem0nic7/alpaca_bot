@@ -2717,6 +2717,79 @@ def test_daily_loss_limit_uses_unrealized_pnl_via_equity_delta(monkeypatch) -> N
     assert breach_events[0].payload["total_pnl"] == pytest.approx(-600.0)
 
 
+def test_consecutive_loss_gate_does_not_block_after_hours_entries(monkeypatch) -> None:
+    """The consecutive-loss gate persists via _equity.entries_disabled — but during after-hours
+    that flag must not gate entries when actual P&L is still within the daily loss limit.
+
+    Scenario: regular session consecutive-loss gate fired (small loss), supervisor
+    restarted. _loss_limit_fired is populated from persisted _equity state. After-hours
+    session should still allow entries because actual P&L is under the loss limit.
+    """
+    from alpaca_bot.strategy.session import SessionType
+
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = Settings.from_env(
+        {
+            "TRADING_MODE": "paper",
+            "ENABLE_LIVE_TRADING": "false",
+            "STRATEGY_VERSION": "v1-breakout",
+            "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+            "MARKET_DATA_FEED": "sip",
+            "SYMBOLS": "AAPL",
+            "DAILY_SMA_PERIOD": "20",
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "ENTRY_TIMEFRAME_MINUTES": "15",
+            "RISK_PER_TRADE_PCT": "0.0025",
+            "MAX_POSITION_PCT": "0.05",
+            "MAX_OPEN_POSITIONS": "3",
+            "DAILY_LOSS_LIMIT_PCT": "0.05",  # 5% — $500 on $10k
+            "STOP_LIMIT_BUFFER_PCT": "0.001",
+            "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+            "ENTRY_STOP_PRICE_BUFFER": "0.01",
+            "ENTRY_WINDOW_START": "10:00",
+            "ENTRY_WINDOW_END": "15:30",
+            "FLATTEN_TIME": "15:45",
+            "EXTENDED_HOURS_ENABLED": "true",
+            "AFTER_HOURS_ENTRY_WINDOW_START": "16:05",
+            "AFTER_HOURS_ENTRY_WINDOW_END": "19:30",
+            "EXTENDED_HOURS_FLATTEN_TIME": "19:45",
+        }
+    )
+    # 21:30 UTC = 5:30 PM ET — in the after-hours window
+    now = datetime(2026, 4, 25, 21, 30, tzinfo=timezone.utc)
+    # Small loss ($22) — well under the $500 5% limit
+    order_store = RecordingOrderStore(daily_pnl=-22.0)
+    broker = FakeBroker(
+        account=BrokerAccount(equity=9_978.0, buying_power=19_956.0, trading_blocked=False)
+    )
+    supervisor, runtime = _make_minimal_supervisor(
+        module,
+        RuntimeSupervisor,
+        settings=settings,
+        order_store=order_store,
+        broker=broker,
+        now=now,
+        equity_baseline=10_000.0,
+    )
+    # Simulate: consecutive-loss gate fired during regular session — _loss_limit_fired is set
+    from datetime import date
+    session_date = date(2026, 4, 25)
+    supervisor._loss_limit_fired.add(session_date)
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    report = supervisor.run_cycle_once(now=lambda: now, session_type=SessionType.AFTER_HOURS)
+
+    assert report.entries_disabled is False, (
+        "After-hours entries must not be blocked by the regular-session consecutive-loss gate "
+        "when actual P&L is within the daily loss limit"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Round 40: flatten_complete only set when executor succeeds, not on exception
 # ---------------------------------------------------------------------------
