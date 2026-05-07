@@ -27,7 +27,7 @@ from alpaca_bot.storage import (
 )
 from alpaca_bot.storage.repositories import TuningResultStore
 from alpaca_bot.storage.db import ConnectionProtocol
-from alpaca_bot.strategy import STRATEGY_REGISTRY
+from alpaca_bot.strategy import ALL_STRATEGY_NAMES, OPTION_STRATEGY_FACTORIES, STRATEGY_REGISTRY
 
 ADMIN_EVENT_TYPES = ["trading_status_changed", "strategy_flag_changed"]
 
@@ -211,7 +211,10 @@ def load_dashboard_snapshot(
             strategy_version=settings.strategy_version,
         )
     }
-    strategy_flags = [(name, flags_by_name.get(name)) for name in STRATEGY_REGISTRY]
+    strategy_flags = (
+        [(name, flags_by_name.get(name)) for name in STRATEGY_REGISTRY]
+        + [(name, flags_by_name.get(name)) for name in sorted(OPTION_STRATEGY_FACTORIES)]
+    )
 
     if hasattr(daily_session_state_store, "list_by_session"):
         session_states = daily_session_state_store.list_by_session(
@@ -345,7 +348,10 @@ def load_health_snapshot(
             strategy_version=settings.strategy_version,
         )
     }
-    strategy_flags = [(name, flags_by_name.get(name, False)) for name in STRATEGY_REGISTRY]
+    strategy_flags = (
+        [(name, flags_by_name.get(name, True)) for name in STRATEGY_REGISTRY]
+        + [(name, flags_by_name.get(name, True)) for name in sorted(OPTION_STRATEGY_FACTORIES)]
+    )
     return HealthSnapshot(
         trading_status=store.load(
             trading_mode=settings.trading_mode,

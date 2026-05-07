@@ -245,7 +245,7 @@ def test_load_health_snapshot_requests_12_events() -> None:
 
 
 def test_load_health_snapshot_includes_strategy_flags() -> None:
-    from alpaca_bot.strategy import STRATEGY_REGISTRY
+    from alpaca_bot.strategy import ALL_STRATEGY_NAMES
 
     enabled_flag = SimpleNamespace(strategy_name="breakout", enabled=True)
     snapshot = load_health_snapshot(
@@ -261,8 +261,38 @@ def test_load_health_snapshot_includes_strategy_flags() -> None:
     )
 
     flag_dict = dict(snapshot.strategy_flags)
-    assert set(flag_dict.keys()) == set(STRATEGY_REGISTRY.keys())
+    assert set(flag_dict.keys()) == ALL_STRATEGY_NAMES
     assert flag_dict["breakout"] is True
+
+
+def test_load_dashboard_snapshot_includes_option_strategy_rows() -> None:
+    from alpaca_bot.strategy import OPTION_STRATEGY_NAMES
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc),
+        **make_snapshot_stores(),
+    )
+    names_in_table = [name for name, _ in snapshot.strategy_flags]
+    for opt_name in OPTION_STRATEGY_NAMES:
+        assert opt_name in names_in_table, f"Option strategy {opt_name!r} missing from strategy_flags"
+
+
+def test_load_health_snapshot_includes_option_strategy_names() -> None:
+    from alpaca_bot.strategy import ALL_STRATEGY_NAMES
+    snapshot = load_health_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        trading_status_store=SimpleNamespace(load=lambda **_: None),
+        audit_event_store=SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
+    )
+    flag_names = {name for name, _ in snapshot.strategy_flags}
+    assert flag_names == ALL_STRATEGY_NAMES
 
 
 # ---------------------------------------------------------------------------
