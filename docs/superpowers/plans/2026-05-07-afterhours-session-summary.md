@@ -137,9 +137,9 @@ class TestSessionBreakdown:
             daily_loss_limit_breached=False,
         )
         assert "Session Breakdown" in body
-        assert "Regular" in body
+        assert "Regular     : 1 trades" in body
         assert "$20.00" in body       # regular PnL: (110-100)*2 = $20
-        assert "After-Hours" in body
+        assert "After-Hours : 1 trades" in body
         assert "-$5.00" in body       # after-hours PnL: (95-100)*1 = -$5
 
     def test_session_breakdown_omitted_with_no_trades(self):
@@ -173,6 +173,23 @@ class TestSessionBreakdown:
         # CLOSED trade must not create a row
         assert "Closed" not in body
         assert "CLOSED" not in body
+
+    def test_session_breakdown_shows_premarket(self):
+        """Pre-Market row appears with correct count and PnL."""
+        trades = [
+            _trade_with_exit_time(_PREMARKET_EXIT, entry_fill=100.0, exit_fill=102.0, qty=5),
+        ]
+        settings = make_extended_settings()
+        _, body = build_daily_summary(
+            settings=settings,
+            order_store=FakeOrderStore(trades=trades, pnl=10.0),
+            position_store=FakePositionStore(),
+            session_date=SESSION_DATE,
+            daily_loss_limit_breached=False,
+        )
+        assert "Session Breakdown" in body
+        assert "Pre-Market  : 1 trades" in body
+        assert "$10.00" in body       # pre-market PnL: (102-100)*5 = $10
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -181,9 +198,7 @@ class TestSessionBreakdown:
 pytest tests/unit/test_daily_summary.py::TestSessionBreakdown -v
 ```
 
-Expected: 4 FAILED — `test_session_breakdown_omitted_when_extended_hours_disabled` will pass (no section yet), the others will fail on `assert "Session Breakdown" in body`.
-
-Actually all 4 may fail or pass differently — what matters is that the implementation is absent.
+Expected: `test_session_breakdown_omitted_when_extended_hours_disabled` PASSES (section doesn't exist yet — the negative assertion is satisfied). The remaining 4 tests FAIL with `AssertionError: assert 'Session Breakdown' in body`.
 
 - [ ] **Step 3: Implement the session breakdown in `daily_summary.py`**
 
