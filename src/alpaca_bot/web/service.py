@@ -161,6 +161,7 @@ class DashboardSnapshot:
     loss_limit_amount: float | None = None
     strategy_win_loss: dict[str, tuple[int, int]] = dc_field(default_factory=dict)
     strategy_capital_pct: dict[str, float] = dc_field(default_factory=dict)
+    strategy_lifetime_pnl: dict[str, float] = dc_field(default_factory=dict)
 
 
 def _compute_capital_pct(
@@ -250,6 +251,13 @@ def load_dashboard_snapshot(
         )
     else:
         strategy_win_loss = {}
+    if hasattr(order_store, "lifetime_pnl_by_strategy"):
+        strategy_lifetime_pnl: dict[str, float] = order_store.lifetime_pnl_by_strategy(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+        )
+    else:
+        strategy_lifetime_pnl = {}
     strategy_capital_pct = _compute_capital_pct(positions, latest_prices or {})
 
     return DashboardSnapshot(
@@ -283,6 +291,7 @@ def load_dashboard_snapshot(
         loss_limit_amount=loss_limit_amount,
         strategy_win_loss=strategy_win_loss,
         strategy_capital_pct=strategy_capital_pct,
+        strategy_lifetime_pnl=strategy_lifetime_pnl,
     )
 
 

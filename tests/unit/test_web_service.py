@@ -74,6 +74,7 @@ def make_snapshot_stores(*, events=None, latest=None):
             list_by_status=lambda **_: [],
             list_recent=lambda **_: [],
             win_loss_counts_by_strategy=lambda **_: {},
+            lifetime_pnl_by_strategy=lambda **_: {},
         ),
         audit_event_store=make_audit_store(events=events, latest=latest),
         strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
@@ -1382,3 +1383,39 @@ def test_load_dashboard_snapshot_populates_strategy_capital_pct() -> None:
     )
 
     assert snapshot.strategy_capital_pct == {"breakout": pytest.approx(100.0)}
+
+
+def test_load_dashboard_snapshot_populates_strategy_lifetime_pnl() -> None:
+    fixed_now = datetime(2026, 5, 7, 14, 0, tzinfo=timezone.utc)
+    lifetime_data = {"breakout": 1234.56, "momentum": -200.0}
+
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=fixed_now,
+        **{
+            **make_snapshot_stores(),
+            "order_store": SimpleNamespace(
+                list_by_status=lambda **_: [],
+                list_recent=lambda **_: [],
+                win_loss_counts_by_strategy=lambda **_: {},
+                lifetime_pnl_by_strategy=lambda **_: lifetime_data,
+            ),
+        },
+    )
+
+    assert snapshot.strategy_lifetime_pnl == {"breakout": pytest.approx(1234.56), "momentum": pytest.approx(-200.0)}
+
+
+def test_load_dashboard_snapshot_strategy_lifetime_pnl_empty_when_no_closed_trades() -> None:
+    """strategy_lifetime_pnl is {} when lifetime_pnl_by_strategy returns {}."""
+    fixed_now = datetime(2026, 5, 7, 14, 0, tzinfo=timezone.utc)
+
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=fixed_now,
+        **make_snapshot_stores(),
+    )
+
+    assert snapshot.strategy_lifetime_pnl == {}
