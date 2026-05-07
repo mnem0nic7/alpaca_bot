@@ -47,8 +47,8 @@ class TradeUpdate:
     symbol: str
     side: str | None
     status: str
-    quantity: int | None
-    filled_qty: int | None
+    quantity: float | None
+    filled_qty: float | None
     filled_avg_price: float | None
     timestamp: datetime
 
@@ -186,7 +186,7 @@ def _apply_trade_update_locked(
         fill_price = normalized.filled_avg_price
         qty = normalized.filled_qty if normalized.filled_qty is not None else matched_order.quantity
         logger.info(
-            "trade_updates: entry fill %s — order_qty=%d filled_qty=%s fill_price=%s",
+            "trade_updates: entry fill %s — order_qty=%g filled_qty=%s fill_price=%s",
             matched_order.symbol,
             matched_order.quantity,
             normalized.filled_qty,
@@ -478,8 +478,8 @@ def _normalize_trade_update(update: Any) -> TradeUpdate:
         symbol=_enum_str(payload.get("symbol", "")).upper(),
         side=_optional_str(_enum_str(payload.get("side")) or None),
         status=_enum_str(payload.get("status") or payload.get("event") or "").lower(),
-        quantity=_optional_int(payload.get("qty")),
-        filled_qty=_optional_int(payload.get("filled_qty")),
+        quantity=_optional_float(payload.get("qty")),
+        filled_qty=_optional_float(payload.get("filled_qty")),
         filled_avg_price=_optional_float(payload.get("filled_avg_price")),
         timestamp=_as_datetime(timestamp_value),
     )

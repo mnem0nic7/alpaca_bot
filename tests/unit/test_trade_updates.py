@@ -1645,3 +1645,84 @@ def test_entry_fill_does_not_duplicate_stop_when_existing_stop_is_pending() -> N
     stop_saves = [o for o in runtime.order_store.saved if o.client_order_id == stop_id]
     for s in stop_saves:
         assert s.status == "pending_submit", "Existing pending stop must not be changed to a new status"
+
+
+# ---------------------------------------------------------------------------
+# Regression: fractional filled_qty must not be truncated to zero
+# ---------------------------------------------------------------------------
+
+class TestFractionalFillQuantity:
+    def test_normalize_preserves_fractional_filled_qty(self):
+        """_normalize_trade_update must return filled_qty as a float, not truncated int.
+
+        Production scenario: MSFT fill arrived with filled_qty=0.7737. The handler
+        stored it as int(float(0.7737)) == 0, causing the protective stop to be
+        submitted with qty=0 and rejected by Alpaca ('qty must be > 0').
+        """
+        from alpaca_bot.runtime.trade_updates import _normalize_trade_update
+
+        payload = {
+            "event": "fill",
+            "symbol": "MSFT",
+            "side": "buy",
+            "status": "filled",
+            "client_order_id": "v1-breakout:2026-04-25:MSFT:entry:2026-04-25T14:00:00+00:00",
+            "broker_order_id": "broker-msft-1",
+            "qty": "0.7737",
+            "filled_qty": "0.7737",
+            "filled_avg_price": "425.63",
+            "timestamp": NOW.isoformat(),
+        }
+
+        normalized = _normalize_trade_update(payload)
+
+        assert normalized.filled_qty == pytest.approx(0.7737), (
+            f"filled_qty was truncated: expected ~0.7737, got {normalized.filled_qty!r}. "
+            "This means _optional_int is still being used instead of _optional_float."
+        )
+        assert normalized.quantity == pytest.approx(0.7737), (
+            f"quantity was truncated: expected ~0.7737, got {normalized.quantity!r}."
+        )
+
+    def test_apply_fractional_fill_creates_stop_with_correct_qty(self):
+        """A fractional entry fill must produce a protective stop with the fractional qty.
+
+        Production scenario: MSFT partially filled 0.7737 shares. Stop was created
+        with quantity=0 (truncated by _optional_int), causing Alpaca to reject it.
+        After the fix, stop.quantity == 0.7737.
+        """
+        entry_order = _make_entry_order(
+            client_order_id="v1-breakout:2026-04-25:MSFT:entry:2026-04-25T14:00:00+00:00",
+            symbol="MSFT",
+            initial_stop_price=418.50,
+            quantity=1,
+        )
+        runtime = _make_runtime(orders=[entry_order])
+
+        update = {
+            "event": "fill",
+            "symbol": "MSFT",
+            "side": "buy",
+            "status": "filled",
+            "client_order_id": entry_order.client_order_id,
+            "broker_order_id": "broker-msft-1",
+            "qty": "0.7737",
+            "filled_qty": "0.7737",
+            "filled_avg_price": "425.63",
+            "timestamp": NOW.isoformat(),
+        }
+
+        result = _apply(runtime, update)
+
+        assert result["position_updated"] is True
+        assert result["protective_stop_queued"] is True
+
+        stop_orders = [o for o in runtime.order_store.saved if o.intent_type == "stop"]
+        assert len(stop_orders) == 1, "exactly one stop order must be created"
+        stop = stop_orders[0]
+        assert stop.quantity == pytest.approx(0.7737), (
+            f"stop.quantity was {stop.quantity!r}, expected ~0.7737. "
+            "A stop with qty=0 would be rejected by Alpaca with 'qty must be > 0'."
+        )
+        assert stop.stop_price == pytest.approx(418.50)
+        assert stop.status == "pending_submit"
