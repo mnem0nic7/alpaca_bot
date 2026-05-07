@@ -8,7 +8,7 @@ from alpaca_bot.strategy.breakout import daily_downtrend_filter_passes
 from alpaca_bot.strategy.option_selector import select_put_contract
 
 
-def evaluate_bear_breakdown_signal(
+def evaluate_bear_momentum_signal(
     *,
     symbol: str,
     intraday_bars: Sequence[Bar],
@@ -16,24 +16,17 @@ def evaluate_bear_breakdown_signal(
     daily_bars: Sequence[Bar],
     settings: Settings,
 ) -> EntrySignal | None:
-    if not intraday_bars or signal_index < 0 or signal_index >= len(intraday_bars):
+    if not intraday_bars or signal_index < 3 or signal_index >= len(intraday_bars):
         return None
     if not daily_downtrend_filter_passes(daily_bars, settings):
         return None
-    min_lookback = max(settings.breakout_lookback_bars, settings.relative_volume_lookback_bars)
-    if signal_index < min_lookback:
-        return None
     signal_bar = intraday_bars[signal_index]
-    lookback = settings.breakout_lookback_bars
-    window = intraday_bars[signal_index - lookback : signal_index]
-    prior_low = min(bar.low for bar in window)
-    if signal_bar.low >= prior_low:
+    if not (
+        intraday_bars[signal_index - 2].close
+        > intraday_bars[signal_index - 1].close
+        > intraday_bars[signal_index].close
+    ):
         return None
-    vol_lookback = settings.relative_volume_lookback_bars
-    avg_vol = sum(b.volume for b in intraday_bars[signal_index - vol_lookback : signal_index]) / vol_lookback
-    if avg_vol <= 0 or signal_bar.volume / avg_vol < settings.relative_volume_threshold:
-        return None
-    # ATR-based stop above breakdown level
     atr_window = intraday_bars[max(0, signal_index - settings.atr_period) : signal_index + 1]
     if len(atr_window) < 2:
         return None
@@ -42,12 +35,12 @@ def evaluate_bear_breakdown_signal(
         for i, b in enumerate(atr_window[1:], 1)
     ]
     atr = sum(trs) / len(trs)
-    stop_price = signal_bar.low + atr * settings.atr_stop_multiplier
+    stop_price = signal_bar.high + atr * settings.atr_stop_multiplier
     return EntrySignal(
         symbol=symbol,
         signal_bar=signal_bar,
-        entry_level=signal_bar.low,
-        relative_volume=signal_bar.volume / avg_vol,
+        entry_level=signal_bar.close,
+        relative_volume=1.0,
         stop_price=stop_price,
         limit_price=0.0,       # equity-only field; factory overwrites with contract.ask
         initial_stop_price=0.01,  # no stop order on option contracts; EOD flatten is the exit
@@ -55,7 +48,7 @@ def evaluate_bear_breakdown_signal(
     )
 
 
-def make_bear_breakdown_evaluator(
+def make_bear_momentum_evaluator(
     option_chains_by_symbol: Mapping[str, Sequence[OptionContract]],
 ) -> Callable[..., EntrySignal | None]:
     def evaluate(
@@ -69,7 +62,7 @@ def make_bear_breakdown_evaluator(
         chains = option_chains_by_symbol.get(symbol, ())
         if not chains:
             return None
-        equity_signal = evaluate_bear_breakdown_signal(
+        equity_signal = evaluate_bear_momentum_signal(
             symbol=symbol,
             intraday_bars=intraday_bars,
             signal_index=signal_index,
