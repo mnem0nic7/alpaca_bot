@@ -132,7 +132,7 @@ def recover_startup_state(
             mismatches.append(f"broker position missing locally: {broker_position.symbol}")
             resolved_entry_price = broker_position.entry_price
             if resolved_entry_price is not None and resolved_entry_price != 0.0:
-                stop_price = resolved_entry_price * (1 - settings.breakout_stop_buffer_pct)
+                stop_price = round(resolved_entry_price * (1 - settings.breakout_stop_buffer_pct), 2)
                 initial_stop_price = stop_price
             else:
                 stop_price = 0.0

@@ -264,8 +264,8 @@ def test_recover_startup_state_syncs_broker_only_positions_and_orders() -> None:
                     strategy_version="v1-breakout",
                     quantity=10,
                     entry_price=189.25,
-                    stop_price=189.25 * (1 - settings.breakout_stop_buffer_pct),
-                    initial_stop_price=189.25 * (1 - settings.breakout_stop_buffer_pct),
+                    stop_price=round(189.25 * (1 - settings.breakout_stop_buffer_pct), 2),
+                    initial_stop_price=round(189.25 * (1 - settings.breakout_stop_buffer_pct), 2),
                     opened_at=now,
                     updated_at=now,
                 )
@@ -473,7 +473,7 @@ def test_broker_only_position_gets_conservative_stop_price() -> None:
     )
 
     entry_price = 189.25
-    expected_stop = entry_price * (1 - settings.breakout_stop_buffer_pct)
+    expected_stop = round(entry_price * (1 - settings.breakout_stop_buffer_pct), 2)
 
     recover_startup_state(
         settings=settings,
@@ -760,9 +760,9 @@ def test_brand_new_broker_position_without_local_record_gets_stop_queued() -> No
         "startup_recovery must queue exactly one pending_submit stop for a brand-new position"
     )
     stop = stop_saves[0]
-    expected_stop_price = 175.00 * (1 - settings.breakout_stop_buffer_pct)
-    assert stop.stop_price == pytest.approx(expected_stop_price), (
-        "stop_price must be computed from entry_price * (1 - breakout_stop_buffer_pct)"
+    expected_stop_price = round(175.00 * (1 - settings.breakout_stop_buffer_pct), 2)
+    assert stop.stop_price == expected_stop_price, (
+        "stop_price must be computed from entry_price * (1 - breakout_stop_buffer_pct), rounded to 2 dp"
     )
     assert stop.quantity == 20
     assert stop.side == "sell"

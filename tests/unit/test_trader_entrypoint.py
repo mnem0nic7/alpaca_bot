@@ -284,8 +284,8 @@ def test_main_runs_trader_startup_and_persists_positions_with_summary() -> None:
                     strategy_version="v1-breakout",
                     quantity=10,
                     entry_price=189.25,
-                    stop_price=189.06075,
-                    initial_stop_price=189.06075,
+                    stop_price=round(189.25 * (1 - 0.001), 2),
+                    initial_stop_price=round(189.25 * (1 - 0.001), 2),
                     opened_at=now,
                     updated_at=now,
                 ),
@@ -295,8 +295,8 @@ def test_main_runs_trader_startup_and_persists_positions_with_summary() -> None:
                     strategy_version="v1-breakout",
                     quantity=5,
                     entry_price=421.10,
-                    stop_price=420.6789,
-                    initial_stop_price=420.6789,
+                    stop_price=round(421.10 * (1 - 0.001), 2),
+                    initial_stop_price=round(421.10 * (1 - 0.001), 2),
                     opened_at=now,
                     updated_at=now,
                 ),
@@ -324,10 +324,10 @@ def test_main_runs_trader_startup_and_persists_positions_with_summary() -> None:
     entry_saves = [r for r in order_store.saved if r.client_order_id == "entry-1"]
     assert len(aapl_stop_saves) == 1
     assert aapl_stop_saves[0].status == "pending_submit"
-    assert aapl_stop_saves[0].stop_price == pytest.approx(189.06075)
+    assert aapl_stop_saves[0].stop_price == round(189.25 * (1 - 0.001), 2)
     assert len(msft_stop_saves) == 1
     assert msft_stop_saves[0].status == "pending_submit"
-    assert msft_stop_saves[0].stop_price == pytest.approx(420.6789)
+    assert msft_stop_saves[0].stop_price == round(421.10 * (1 - 0.001), 2)
     assert len(entry_saves) == 1
     assert entry_saves[0] == OrderRecord(
         client_order_id="entry-1",
