@@ -44,6 +44,11 @@ RELATIVE_VOLUME_LOOKBACK_BARS=20
 RELATIVE_VOLUME_THRESHOLD=1.5
 ENTRY_TIMEFRAME_MINUTES=15
 RISK_PER_TRADE_PCT=0.0025
+# Per-trade dollar loss cap: limit how much a single stopped-out trade can lose in absolute
+# dollar terms. When set, position size is reduced so that a clean stop-out loses at most
+# this amount. Composable with RISK_PER_TRADE_PCT — the tighter constraint wins.
+# (unset = disabled; recommended starting value for a ~$10K account: 12)
+# MAX_LOSS_PER_TRADE_DOLLARS=12
 MAX_POSITION_PCT=0.015
 MAX_OPEN_POSITIONS=20
 MAX_PORTFOLIO_EXPOSURE_PCT=0.30
