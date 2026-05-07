@@ -614,11 +614,22 @@ class RuntimeSupervisor:
                         option_chains_by_symbol[symbol] = chains
                 except Exception:
                     logger.exception("option chain fetch failed for %s", symbol)
-            for opt_name in OPTION_STRATEGY_NAMES:
-                factory = OPTION_STRATEGY_FACTORIES[opt_name]
-                active_strategies.append(
-                    (opt_name, factory(option_chains_by_symbol))
-                )
+            _flag_store = getattr(self.runtime, "strategy_flag_store", None)
+            _store_lock = getattr(self.runtime, "store_lock", None)
+            with _store_lock if _store_lock is not None else contextlib.nullcontext():
+                for opt_name in OPTION_STRATEGY_NAMES:
+                    if _flag_store is not None:
+                        _flag = _flag_store.load(
+                            strategy_name=opt_name,
+                            trading_mode=self.settings.trading_mode,
+                            strategy_version=self.settings.strategy_version,
+                        )
+                        if _flag is not None and not _flag.enabled:
+                            continue
+                    factory = OPTION_STRATEGY_FACTORIES[opt_name]
+                    active_strategies.append(
+                        (opt_name, factory(option_chains_by_symbol))
+                    )
 
         # Add open option position underlying symbols to prevent double-entry.
         if option_order_store is not None:

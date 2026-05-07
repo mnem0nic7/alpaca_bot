@@ -86,3 +86,99 @@ def test_deduplication_uses_underlying_symbol():
     )
     underlying_symbols = {open_opt.underlying_symbol}
     assert "AAPL" in underlying_symbols
+
+
+def test_disabled_option_strategy_excluded_from_cycle() -> None:
+    """A bear strategy with enabled=False in the flag store must not be added to active_strategies."""
+    from importlib import import_module
+    from types import SimpleNamespace
+    from tests.unit.helpers import _base_env
+    from alpaca_bot.config import Settings, TradingMode
+    from alpaca_bot.storage import StrategyFlag
+
+    module = import_module("alpaca_bot.runtime.supervisor")
+    RuntimeSupervisor = module.RuntimeSupervisor
+
+    _NOW = datetime(2026, 5, 1, 14, 30, tzinfo=timezone.utc)
+    env = {**_base_env(), "ENABLE_OPTIONS_TRADING": "true"}
+    settings = Settings.from_env(env)
+
+    disabled_flag = StrategyFlag(
+        strategy_name="bear_breakdown",
+        trading_mode=TradingMode.PAPER,
+        strategy_version=settings.strategy_version,
+        enabled=False,
+        updated_at=_NOW,
+    )
+
+    active_strategy_names: list[str] = []
+
+    def recording_cycle_runner(*, strategy_name, **kwargs):
+        active_strategy_names.append(strategy_name)
+        return SimpleNamespace(intents=[])
+
+    class _FakeConn:
+        def commit(self): pass
+        def rollback(self): pass
+
+    class _FakeStrategyFlagStore:
+        def list_all(self, **kwargs): return [disabled_flag]
+        def load(self, *, strategy_name, **kwargs):
+            if strategy_name == "bear_breakdown":
+                return disabled_flag
+            return None
+
+    class _FakeOptionChainAdapter:
+        def get_option_chain(self, symbol, settings):
+            return []
+
+    class _FakeRuntime:
+        connection = _FakeConn()
+        store_lock = None
+        order_store = SimpleNamespace(
+            save=lambda *a, **k: None,
+            list_by_status=lambda **k: [],
+            list_pending_submit=lambda **k: [],
+            daily_realized_pnl=lambda **k: 0.0,
+            daily_realized_pnl_by_symbol=lambda **k: {},
+        )
+        strategy_weight_store = None
+        trading_status_store = SimpleNamespace(load=lambda **_: None)
+        position_store = SimpleNamespace(list_all=lambda **_: [], replace_all=lambda **_: None)
+        daily_session_state_store = SimpleNamespace(
+            load=lambda **_: None, save=lambda state, **_: None, list_by_session=lambda **_: []
+        )
+        audit_event_store = SimpleNamespace(
+            append=lambda *a, **k: None,
+            load_latest=lambda **_: None,
+            list_recent=lambda **_: [],
+            list_by_event_types=lambda **_: [],
+        )
+        strategy_flag_store = _FakeStrategyFlagStore()
+        watchlist_store = SimpleNamespace(list_enabled=lambda *a: ["AAPL"], list_ignored=lambda *a: [])
+        option_order_store = None
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=_FakeRuntime(),
+        broker=SimpleNamespace(
+            get_account=lambda: SimpleNamespace(equity=10_000.0, buying_power=20_000.0, trading_blocked=False),
+            list_open_orders=lambda: [],
+            get_open_positions=lambda: [],
+            get_clock=lambda: SimpleNamespace(is_open=False),
+        ),
+        market_data=SimpleNamespace(get_stock_bars=lambda **_: {}, get_daily_bars=lambda **_: {}),
+        stream=None,
+        close_runtime_fn=lambda _: None,
+        connection_checker=lambda _: True,
+        cycle_runner=recording_cycle_runner,
+        cycle_intent_executor=lambda **kwargs: SimpleNamespace(submitted_exit_count=0, failed_exit_count=0),
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+        option_chain_adapter=_FakeOptionChainAdapter(),
+    )
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert "bear_breakdown" not in active_strategy_names, (
+        "bear_breakdown has enabled=False flag — must not appear in cycle"
+    )
