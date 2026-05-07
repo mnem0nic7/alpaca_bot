@@ -1388,3 +1388,12 @@ def test_recover_startup_state_skips_negative_qty_broker_position() -> None:
 
     # AAPL (normal positive qty) must still be processed correctly.
     assert "AAPL" in synced_symbols, "normal AAPL position must still be synced"
+
+    # A durable AuditEvent must be emitted so the skip is traceable even if recovery raises later.
+    skyt_audit_events = [
+        e for e in audit_event_store.appended
+        if e.event_type == "startup_recovery_skipped_nonpositive_qty" and e.symbol == "SKYT"
+    ]
+    assert skyt_audit_events, (
+        f"Expected an audit event for SKYT negative qty skip, got events={[e.event_type for e in audit_event_store.appended]}"
+    )

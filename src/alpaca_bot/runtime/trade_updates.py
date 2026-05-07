@@ -521,12 +521,6 @@ def _optional_str(value: Any) -> str | None:
     return str(value)
 
 
-def _optional_int(value: Any) -> int | None:
-    if value is None or value == "":
-        return None
-    return int(float(value))
-
-
 def _optional_float(value: Any) -> float | None:
     if value is None or value == "":
         return None

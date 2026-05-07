@@ -115,6 +115,15 @@ def recover_startup_state(
             mismatches.append(
                 f"broker position non-positive quantity skipped: {broker_position.symbol} qty={broker_position.quantity}"
             )
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="startup_recovery_skipped_nonpositive_qty",
+                    symbol=broker_position.symbol,
+                    payload={"symbol": broker_position.symbol, "qty": broker_position.quantity},
+                    created_at=timestamp,
+                ),
+                commit=False,
+            )
             continue
         local_for_symbol = local_positions_by_symbol.get(broker_position.symbol, [])
 
