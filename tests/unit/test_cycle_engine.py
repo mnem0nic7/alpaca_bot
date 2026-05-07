@@ -864,7 +864,7 @@ def test_stale_bar_suppresses_trailing_stop_update() -> None:
     now = datetime(2026, 4, 24, 15, 30, tzinfo=timezone.utc)
 
     result = evaluate_cycle(
-        settings=make_settings(),
+        settings=make_settings(ENABLE_BREAKEVEN_STOP="false"),
         now=now,
         equity=100_000.0,
         intraday_bars_by_symbol={"AAPL": [stale_bar]},
@@ -1103,6 +1103,7 @@ def test_trailing_stop_profit_trigger_r_controls_activation() -> None:
         settings=make_settings(
             TRAILING_STOP_ATR_MULTIPLIER="1.5",
             TRAILING_STOP_PROFIT_TRIGGER_R="2.0",
+            ENABLE_BREAKEVEN_STOP="false",  # isolate ATR trigger-R behaviour
         ),
         now=latest_bar.timestamp,
         equity=100_000.0,
@@ -1787,6 +1788,228 @@ def test_profit_trail_emits_when_trail_exceeds_stop_even_below_entry() -> None:
     ]
     assert len(trail_intents) == 1
     assert trail_intents[0].stop_price == pytest.approx(9.45)
+
+
+# ---------------------------------------------------------------------------
+# Breakeven stop
+# ---------------------------------------------------------------------------
+
+
+def test_breakeven_stop_emits_when_up_trigger_pct() -> None:
+    """bar.high >= entry * 1.0025 and stop < entry → UPDATE_STOP at entry_price."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    entry_price = 100.0
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=100.10,
+        high=100.30,  # 0.30% above entry → above 0.25% threshold
+        low=99.90,
+        close=100.20,
+        volume=2000,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=entry_price,
+        quantity=100,
+        entry_level=99.50,
+        initial_stop_price=98.00,
+        stop_price=98.00,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_BREAKEVEN_STOP="true",
+            BREAKEVEN_TRIGGER_PCT="0.0025",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1000",  # disable ATR trailing
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    be_intents = [
+        i for i in result.intents
+        if i.intent_type == CycleIntentType.UPDATE_STOP and i.reason == "breakeven"
+    ]
+    assert len(be_intents) == 1
+    assert be_intents[0].stop_price == entry_price
+    assert be_intents[0].symbol == "AAPL"
+
+
+def test_breakeven_stop_no_emit_below_threshold() -> None:
+    """bar.high < entry * 1.0025 → no breakeven UPDATE_STOP."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=100.10,
+        high=100.20,  # only 0.20% above entry — below 0.25% trigger
+        low=99.90,
+        close=100.15,
+        volume=2000,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=100.0,
+        quantity=100,
+        entry_level=99.50,
+        initial_stop_price=98.00,
+        stop_price=98.00,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_BREAKEVEN_STOP="true",
+            BREAKEVEN_TRIGGER_PCT="0.0025",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1000",
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    be_intents = [i for i in result.intents if getattr(i, "reason", None) == "breakeven"]
+    assert be_intents == []
+
+
+def test_breakeven_stop_no_emit_when_stop_already_at_entry() -> None:
+    """Stop already at entry_price → no duplicate UPDATE_STOP emitted."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=101.0,
+        high=102.0,
+        low=100.5,
+        close=101.5,
+        volume=2000,
+    )
+    entry_price = 100.0
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=entry_price,
+        quantity=100,
+        entry_level=99.50,
+        initial_stop_price=98.00,
+        stop_price=entry_price,  # already at breakeven
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_BREAKEVEN_STOP="true",
+            BREAKEVEN_TRIGGER_PCT="0.0025",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1000",
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    be_intents = [i for i in result.intents if getattr(i, "reason", None) == "breakeven"]
+    assert be_intents == []
+
+
+def test_breakeven_stop_disabled_by_flag() -> None:
+    """ENABLE_BREAKEVEN_STOP=false → no breakeven intent even when threshold met."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=100.10,
+        high=100.50,
+        low=99.90,
+        close=100.30,
+        volume=2000,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=100.0,
+        quantity=100,
+        entry_level=99.50,
+        initial_stop_price=98.00,
+        stop_price=98.00,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_BREAKEVEN_STOP="false",
+            BREAKEVEN_TRIGGER_PCT="0.0025",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1000",
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    be_intents = [i for i in result.intents if getattr(i, "reason", None) == "breakeven"]
+    assert be_intents == []
+
+
+def test_breakeven_stop_defers_when_trailing_already_emitted_above_entry() -> None:
+    """If ATR trailing already raised stop above entry, breakeven doesn't emit a duplicate."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    # ATR trailing fires: latest_bar.high=110, entry=100, initial_stop=99 → profit_trigger=100+1*1=101
+    # high=110 >= 101 → trailing fires at max(99, 100, 110-0.1*atr)
+    # Breakeven trigger also met (high=110 >> 100.25)
+    # Expected: only one UPDATE_STOP emitted (from ATR trailing, stop >> entry_price)
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=105.0,
+        high=110.0,
+        low=104.0,
+        close=108.0,
+        volume=5000,
+    )
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 18, 45, tzinfo=timezone.utc),
+        entry_price=100.0,
+        quantity=100,
+        entry_level=99.50,
+        initial_stop_price=99.0,
+        stop_price=99.0,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_BREAKEVEN_STOP="true",
+            BREAKEVEN_TRIGGER_PCT="0.0025",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1.0",
+            TRAILING_STOP_ATR_MULTIPLIER="0.0",  # no ATR, uses bar.low
+        ),
+        now=bar.timestamp,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    update_stops = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    # Exactly one UPDATE_STOP — from ATR trailing (stop=max(99, 100, 104)=104)
+    assert len(update_stops) == 1
+    assert update_stops[0].stop_price >= 100.0  # at or above entry
+    # No separate breakeven intent
+    be_intents = [i for i in update_stops if i.reason == "breakeven"]
+    assert be_intents == []
 
 
 # ---------------------------------------------------------------------------

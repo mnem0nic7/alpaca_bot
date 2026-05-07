@@ -273,6 +273,39 @@ def evaluate_cycle(
                     )
                 )
 
+    # Breakeven pass: once a position is up BREAKEVEN_TRIGGER_PCT from entry, raise
+    # stop to entry price so the trade cannot become a loss.
+    # Gated on regular hours: stop order mechanics differ in pre/after market.
+    if settings.enable_breakeven_stop and not is_extended:
+        _be_exit_syms = {i.symbol for i in intents if i.intent_type == CycleIntentType.EXIT}
+        _be_emitted: dict[str, float] = {
+            i.symbol: (i.stop_price or 0.0)
+            for i in intents
+            if i.intent_type == CycleIntentType.UPDATE_STOP
+        }
+        for position in open_positions:
+            if position.symbol in _be_exit_syms:
+                continue
+            if position.entry_price <= 0:
+                continue
+            bars = intraday_bars_by_symbol.get(position.symbol, ())
+            if not bars:
+                continue
+            latest_bar = bars[-1]
+            trigger = position.entry_price * (1 + settings.breakeven_trigger_pct)
+            effective_stop = _be_emitted.get(position.symbol, position.stop_price)
+            if latest_bar.high >= trigger and effective_stop < position.entry_price:
+                intents.append(
+                    CycleIntent(
+                        intent_type=CycleIntentType.UPDATE_STOP,
+                        symbol=position.symbol,
+                        timestamp=now,
+                        stop_price=position.entry_price,
+                        strategy_name=strategy_name,
+                        reason="breakeven",
+                    )
+                )
+
     # Cap-up pass: raise stop to MAX_STOP_PCT cap for any existing position whose stop
     # is more than max_stop_pct below entry. Trailing logic ran first; use emitted
     # UPDATE_STOP intents so we don't emit a duplicate for the same symbol.

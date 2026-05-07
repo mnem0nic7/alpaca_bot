@@ -143,6 +143,8 @@ class Settings:
     max_stop_pct: float = 0.05
     enable_profit_trail: bool = False
     profit_trail_pct: float = 0.95
+    enable_breakeven_stop: bool = True
+    breakeven_trigger_pct: float = 0.0025
     # Not from env — populated at startup after broker lookup
     fractionable_symbols: frozenset[str] = field(default_factory=frozenset)
     # From env — configurable threshold; 0.0 = disabled (default)
@@ -321,6 +323,10 @@ class Settings:
                 "ENABLE_PROFIT_TRAIL", values.get("ENABLE_PROFIT_TRAIL", "false")
             ),
             profit_trail_pct=float(values.get("PROFIT_TRAIL_PCT", "0.95")),
+            enable_breakeven_stop=_parse_bool(
+                "ENABLE_BREAKEVEN_STOP", values.get("ENABLE_BREAKEVEN_STOP", "true")
+            ),
+            breakeven_trigger_pct=float(values.get("BREAKEVEN_TRIGGER_PCT", "0.0025")),
             min_position_notional=float(values.get("MIN_POSITION_NOTIONAL", "0.0")),
             intraday_digest_interval_cycles=int(
                 values.get("INTRADAY_DIGEST_INTERVAL_CYCLES", "0")
@@ -511,6 +517,8 @@ class Settings:
                 "PROFIT_TRAIL_PCT must be between 0 (exclusive) and 1.0 (exclusive); "
                 f"got {self.profit_trail_pct}"
             )
+        if self.breakeven_trigger_pct < 0:
+            raise ValueError("BREAKEVEN_TRIGGER_PCT must be >= 0")
         if self.min_position_notional < 0:
             raise ValueError(
                 f"MIN_POSITION_NOTIONAL must be >= 0, got {self.min_position_notional}"

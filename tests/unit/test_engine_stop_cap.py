@@ -222,7 +222,7 @@ def _make_position(
 
 def test_existing_position_stop_beyond_cap_emits_update_stop():
     """Position with stop 10% below entry gets an UPDATE_STOP to the 5% cap level."""
-    settings = make_settings(MAX_STOP_PCT="0.05")
+    settings = make_settings(MAX_STOP_PCT="0.05", ENABLE_BREAKEVEN_STOP="false")
     position = _make_position(entry_price=100.0, stop_price=90.0, initial_stop_price=90.0)
     intraday_bars = _make_intraday_bars(101.0)
 
