@@ -31,6 +31,13 @@ class TestOptionStrategyRegistry:
             evaluator = factory({})
             assert callable(evaluator), f"{name} factory did not return a callable"
 
+    def test_all_strategy_names_contains_equity_and_option_strategies(self):
+        from alpaca_bot.strategy import ALL_STRATEGY_NAMES, STRATEGY_REGISTRY, OPTION_STRATEGY_NAMES
+        assert ALL_STRATEGY_NAMES == frozenset(STRATEGY_REGISTRY) | OPTION_STRATEGY_NAMES
+        assert "breakout" in ALL_STRATEGY_NAMES
+        assert "bear_breakdown" in ALL_STRATEGY_NAMES
+        assert "breakout_calls" in ALL_STRATEGY_NAMES
+
     def test_each_evaluator_returns_none_without_chains(self):
         from datetime import datetime, timezone
         from alpaca_bot.domain.models import Bar

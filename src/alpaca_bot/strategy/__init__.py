@@ -75,3 +75,5 @@ OPTION_STRATEGY_FACTORIES: dict[str, OptionEvaluatorFactory] = {
 }
 
 OPTION_STRATEGY_NAMES: frozenset[str] = frozenset(OPTION_STRATEGY_FACTORIES)
+
+ALL_STRATEGY_NAMES: frozenset[str] = frozenset(STRATEGY_REGISTRY) | OPTION_STRATEGY_NAMES
