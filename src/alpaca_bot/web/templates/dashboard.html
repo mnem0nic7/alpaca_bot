@@ -329,6 +329,7 @@
                 <th></th>
                 <th>W / L</th>
                 <th style="text-align: right">Win %</th>
+                <th style="text-align: right">Total P&amp;L</th>
                 <th style="text-align: right">Alloc %</th>
                 <th style="text-align: right">Capital</th>
                 <th style="text-align: right">Open</th>
@@ -347,6 +348,7 @@
                 {%- set today_count = strat_trades | length %}
                 {%- set today_pnl = strat_trades | map(attribute='pnl') | sum %}
                 {%- set sw = strategy_weights | selectattr('strategy_name', 'equalto', name) | first | default(none) %}
+                {%- set ltpnl = snapshot.strategy_lifetime_pnl.get(name) %}
                 <tr>
                   <td class="mono">{{ name }}</td>
                   <td class="{{ '' if is_enabled else 'warn' }}">{{ "Enabled" if is_enabled else "Disabled" }}</td>
@@ -365,6 +367,11 @@
                   </td>
                   <td>{% if wl %}{{ wl[0] }}W / {{ wl[1] }}L{% else %}—{% endif %}</td>
                   <td style="text-align: right">{% if wl and (wl[0] + wl[1]) > 0 %}{{ "%.0f%%" | format(wl[0] / (wl[0] + wl[1]) * 100) }}{% else %}—{% endif %}</td>
+                  <td style="text-align: right; color: {{ 'var(--accent)' if ltpnl is not none and ltpnl >= 0 else ('#c0392b' if ltpnl is not none and ltpnl < 0 else 'inherit') }}">
+                    {%- if ltpnl is not none -%}
+                      {%- if ltpnl >= 0 %}+{{ format_price(ltpnl) }}{% else %}-{{ format_price(0 - ltpnl) }}{% endif %}
+                    {%- else %}—{% endif %}
+                  </td>
                   <td style="text-align: right">{% if sw %}{{ "%.0f%%"|format(sw.weight * 100) }}{% else %}—{% endif %}</td>
                   <td style="text-align: right">{% if cap > 0 %}{{ "%.1f" | format(cap) }}%{% else %}0%{% endif %}</td>
                   <td style="text-align: right">{{ open_count }}</td>
