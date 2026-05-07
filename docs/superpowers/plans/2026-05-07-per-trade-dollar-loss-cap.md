@@ -168,7 +168,7 @@ git commit -m "feat: add MAX_LOSS_PER_TRADE_DOLLARS to Settings"
 In `calculate_position_size()`, after the line `if quantity <= 0.0: return 0.0` (line 29) and **before** the `max_notional` cap block, insert:
 
 ```python
-if getattr(settings, "max_loss_per_trade_dollars", None) is not None:
+if settings.max_loss_per_trade_dollars is not None:
     dollar_cap_qty = settings.max_loss_per_trade_dollars / risk_per_share
     quantity = min(quantity, dollar_cap_qty)
     if not fractionable:
@@ -179,7 +179,7 @@ if getattr(settings, "max_loss_per_trade_dollars", None) is not None:
         return 0.0
 ```
 
-The `getattr` with a default of `None` means the function still works with legacy `SimpleNamespace` objects in tests that don't set this field.
+Direct attribute access is correct: every caller either uses real `Settings` (which will have the field after Task 2) or the updated `SimpleNamespace` from `make_settings()` in `test_position_sizing.py` (updated in Task 1).
 
 - [ ] **Step 2: Run the new dollar cap tests**
 
@@ -297,4 +297,30 @@ Expected: all tests pass.
 ```bash
 git add tests/unit/test_settings_dollar_cap.py
 git commit -m "test: Settings validation for MAX_LOSS_PER_TRADE_DOLLARS"
+```
+
+---
+
+### Task 5: Document `MAX_LOSS_PER_TRADE_DOLLARS` in DEPLOYMENT.md
+
+**Files:**
+- Modify: `DEPLOYMENT.md`
+
+- [ ] **Step 1: Add the env var near `RISK_PER_TRADE_PCT`**
+
+In `DEPLOYMENT.md`, after the `RISK_PER_TRADE_PCT=0.0025` line (around line 46), add:
+
+```
+# Per-trade dollar loss cap: limit how much a single stopped-out trade can lose in absolute
+# dollar terms. When set, position size is reduced so that a clean stop-out loses at most
+# this amount. Composable with RISK_PER_TRADE_PCT — the tighter constraint wins.
+# (unset = disabled; recommended starting value for a ~$10K account: 12)
+# MAX_LOSS_PER_TRADE_DOLLARS=12
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add DEPLOYMENT.md
+git commit -m "docs: document MAX_LOSS_PER_TRADE_DOLLARS in DEPLOYMENT.md env template"
 ```
