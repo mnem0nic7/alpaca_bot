@@ -162,6 +162,8 @@ class DashboardSnapshot:
     strategy_win_loss: dict[str, tuple[int, int]] = dc_field(default_factory=dict)
     strategy_capital_pct: dict[str, float] = dc_field(default_factory=dict)
     strategy_lifetime_pnl: dict[str, float] = dc_field(default_factory=dict)
+    account_equity: float | None = None
+    total_deployed_notional: float = 0.0
 
 
 def _compute_capital_pct(
@@ -260,6 +262,21 @@ def load_dashboard_snapshot(
         strategy_lifetime_pnl = {}
     strategy_capital_pct = _compute_capital_pct(positions, latest_prices or {})
 
+    latest_cycle_loader = getattr(audit_event_store, "load_latest", None)
+    latest_cycle_event = (
+        latest_cycle_loader(event_types=["supervisor_cycle"])
+        if callable(latest_cycle_loader)
+        else None
+    )
+    account_equity: float | None = (
+        latest_cycle_event.payload.get("account_equity")
+        if latest_cycle_event is not None
+        else None
+    )
+    total_deployed_notional: float = sum(
+        pos.quantity * pos.entry_price for pos in positions
+    )
+
     return DashboardSnapshot(
         generated_at=generated_at,
         trading_status=trading_status_store.load(
@@ -292,6 +309,8 @@ def load_dashboard_snapshot(
         strategy_win_loss=strategy_win_loss,
         strategy_capital_pct=strategy_capital_pct,
         strategy_lifetime_pnl=strategy_lifetime_pnl,
+        account_equity=account_equity,
+        total_deployed_notional=total_deployed_notional,
     )
 
 

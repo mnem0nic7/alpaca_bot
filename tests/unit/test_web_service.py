@@ -1419,3 +1419,57 @@ def test_load_dashboard_snapshot_strategy_lifetime_pnl_empty_when_no_closed_trad
     )
 
     assert snapshot.strategy_lifetime_pnl == {}
+
+
+def test_load_dashboard_snapshot_populates_account_equity() -> None:
+    """account_equity is read from the latest supervisor_cycle audit event payload."""
+    fixed_now = datetime(2026, 5, 7, 14, 0, tzinfo=timezone.utc)
+    cycle_event = SimpleNamespace(
+        event_type="supervisor_cycle",
+        created_at=fixed_now,
+        payload={"entries_disabled": False, "account_equity": 9_234.56},
+    )
+
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=fixed_now,
+        **make_snapshot_stores(latest=cycle_event),
+    )
+
+    assert snapshot.account_equity is not None
+    assert abs(snapshot.account_equity - 9_234.56) < 1e-6
+
+
+def test_load_dashboard_snapshot_account_equity_none_when_no_cycle_event() -> None:
+    """account_equity is None when no supervisor_cycle event exists."""
+    fixed_now = datetime(2026, 5, 7, 14, 0, tzinfo=timezone.utc)
+
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=fixed_now,
+        **make_snapshot_stores(latest=None),
+    )
+
+    assert snapshot.account_equity is None
+
+
+def test_load_dashboard_snapshot_populates_total_deployed_notional() -> None:
+    """total_deployed_notional sums quantity * entry_price over open positions."""
+    fixed_now = datetime(2026, 5, 7, 14, 0, tzinfo=timezone.utc)
+    pos1 = SimpleNamespace(symbol="AAPL", quantity=10.0, entry_price=150.0, strategy_name="breakout")
+    pos2 = SimpleNamespace(symbol="MSFT", quantity=5.0, entry_price=300.0, strategy_name="orb")
+
+    stores = make_snapshot_stores()
+    stores["position_store"] = SimpleNamespace(list_all=lambda **_: [pos1, pos2])
+
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        now=fixed_now,
+        **stores,
+    )
+
+    # 10 * 150 + 5 * 300 = 1500 + 1500 = 3000
+    assert abs(snapshot.total_deployed_notional - 3_000.0) < 1e-6
