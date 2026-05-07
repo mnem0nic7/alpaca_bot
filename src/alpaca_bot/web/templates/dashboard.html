@@ -262,6 +262,15 @@
             </div>
             {% endif %}
             {% endif %}
+            <div>
+              <p class="eyebrow">Capital Deployed</p>
+              <p class="value">
+                {{ format_price(snapshot.total_deployed_notional) }}
+                {% if snapshot.account_equity %}
+                  <span class="muted" style="font-size: 0.85em;">({{ "%.1f"|format(snapshot.total_deployed_notional / snapshot.account_equity * 100) }}% of {{ format_price(snapshot.account_equity) }})</span>
+                {% endif %}
+              </p>
+            </div>
           </div>
         </div>
         <div class="panel">

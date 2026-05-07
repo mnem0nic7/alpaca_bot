@@ -3014,7 +3014,7 @@ def test_stream_heartbeat_stale_fires_audit_and_notifier(monkeypatch) -> None:
         if iteration >= 2:
             _alive_event.set()  # unblock the thread so test cleanup is fast
             raise SystemExit(0)
-        return SimpleNamespace(entries_disabled=False, cycle_result=None, dispatch_report=None)
+        return SimpleNamespace(entries_disabled=False, cycle_result=None, dispatch_report=None, account_equity=0.0)
 
     monkeypatch.setattr(supervisor, "run_cycle_once", fake_run_cycle_once)
 
@@ -3073,7 +3073,7 @@ def test_stream_heartbeat_alert_fires_only_once_per_stale_window(monkeypatch) ->
         if cycle_count >= 4:
             _alive_event.set()
             raise SystemExit(0)
-        return SimpleNamespace(entries_disabled=False, cycle_result=None, dispatch_report=None)
+        return SimpleNamespace(entries_disabled=False, cycle_result=None, dispatch_report=None, account_equity=0.0)
 
     monkeypatch.setattr(supervisor, "run_cycle_once", fake_run_cycle_once)
 
