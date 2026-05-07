@@ -727,20 +727,43 @@ Expected: first test FAIL (option names not in pool), second test PASS (they hap
 
 - [ ] **Step 3: Update `_update_session_weights` in `src/alpaca_bot/runtime/supervisor.py`**
 
-Find the block around line 1260 inside `_update_session_weights`:
+There are **two** `active_names = [name for name, _ in self._resolve_active_strategies()]` lines in `_update_session_weights`:
+
+1. The early-return path (when `weight_store is None`) around line 1252.
+2. The main computation path around line 1269 (after the early-return block).
+
+Both must be extended. The early-return path uses equal weights with no DB lookup (used when weight_store is absent — not the production path, but fix for correctness). The main path uses the already-defined `lock_ctx` variable (defined a few lines above as `lock_ctx = store_lock if store_lock is not None else contextlib.nullcontext()`).
+
+**Early-return patch** (find the `if weight_store is None:` block ~line 1251):
 
 ```python
-        active_names = [name for name, _ in self._resolve_active_strategies()]
+        if weight_store is None:
+            active_names = [name for name, _ in self._resolve_active_strategies()]
+            if self.settings.enable_options_trading:
+                _early_flag_store = getattr(self.runtime, "strategy_flag_store", None)
+                _early_lock = getattr(self.runtime, "store_lock", None)
+                with _early_lock if _early_lock is not None else contextlib.nullcontext():
+                    for opt_name in sorted(OPTION_STRATEGY_FACTORIES):
+                        if _early_flag_store is not None:
+                            _flag = _early_flag_store.load(
+                                strategy_name=opt_name,
+                                trading_mode=self.settings.trading_mode,
+                                strategy_version=self.settings.strategy_version,
+                            )
+                            if _flag is not None and not _flag.enabled:
+                                continue
+                        active_names.append(opt_name)
+            n = max(len(active_names), 1)
+            return {name: 1.0 / n for name in active_names}
 ```
 
-Replace with:
+**Main computation patch** (find the line `active_names = [name for name, _ in self._resolve_active_strategies()]` after the early-return block, ~line 1269). Insert option names immediately after it, reusing `lock_ctx` that is already defined a few lines above:
 
 ```python
         active_names = [name for name, _ in self._resolve_active_strategies()]
         if self.settings.enable_options_trading:
             _wt_flag_store = getattr(self.runtime, "strategy_flag_store", None)
-            _wt_lock = getattr(self.runtime, "store_lock", None)
-            with _wt_lock if _wt_lock is not None else contextlib.nullcontext():
+            with lock_ctx:
                 for opt_name in sorted(OPTION_STRATEGY_FACTORIES):
                     if _wt_flag_store is not None:
                         _flag = _wt_flag_store.load(
@@ -752,6 +775,8 @@ Replace with:
                             continue
                     active_names.append(opt_name)
 ```
+
+Note: `lock_ctx` is already defined at the top of the main path as `lock_ctx = store_lock if store_lock is not None else contextlib.nullcontext()`. Do NOT redefine it — just use it.
 
 `OPTION_STRATEGY_FACTORIES` is already imported at the top of `supervisor.py` (line 54). No new import needed.
 
