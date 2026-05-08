@@ -241,6 +241,33 @@ def dispatch_pending_orders(
         if order.intent_type == "stop" and session_type is not None:
             from alpaca_bot.strategy.session import SessionType as _ST
             if session_type in (_ST.PRE_MARKET, _ST.AFTER_HOURS):
+                logger.debug(
+                    "order_dispatch: deferring stop for %s during %s — will submit at regular open",
+                    order.symbol,
+                    session_type,
+                )
+                with lock_ctx:
+                    try:
+                        runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="stop_dispatch_deferred_extended_hours",
+                                symbol=order.symbol,
+                                payload={
+                                    "client_order_id": order.client_order_id,
+                                    "session_type": str(session_type),
+                                    "stop_price": order.stop_price,
+                                },
+                                created_at=timestamp,
+                            ),
+                            commit=False,
+                        )
+                        runtime.connection.commit()
+                    except Exception:
+                        try:
+                            runtime.connection.rollback()
+                        except Exception:
+                            pass
+                        raise
                 continue  # Alpaca rejects stops during extended hours; submit at regular-session open
         with lock_ctx:
             try:

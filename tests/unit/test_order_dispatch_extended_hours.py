@@ -330,3 +330,39 @@ def test_submitted_stop_still_expires_at_next_session():
     assert len(expired_saves) == 1, "Stale submitted stop must be saved with status='expired'"
     expired_audit = [a for a in audits if a.event_type == "order_expired_stale_stop"]
     assert len(expired_audit) == 1, "Stale submitted stop must emit order_expired_stale_stop audit event"
+
+
+# ---------------------------------------------------------------------------
+# Gap 4 — audit event on stop dispatch deferral during extended hours
+# ---------------------------------------------------------------------------
+
+def test_deferred_stop_emits_audit_event_after_hours():
+    """
+    When a stop is deferred during AFTER_HOURS, dispatch_pending_orders must append a
+    stop_dispatch_deferred_extended_hours AuditEvent so operators can confirm in the
+    audit trail that stops are being held — not silently dropped.
+    """
+    settings = _settings()
+    runtime, saved, audits = _fake_runtime([_pending_stop_order()])
+    broker = _fake_broker()
+    now = datetime(2026, 4, 28, 21, 0, tzinfo=timezone.utc)  # 5pm ET = after hours
+
+    dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        now=now,
+        session_type=SessionType.AFTER_HOURS,
+    )
+
+    deferred_events = [
+        a for a in audits if a.event_type == "stop_dispatch_deferred_extended_hours"
+    ]
+    assert len(deferred_events) == 1, (
+        "dispatch_pending_orders must emit stop_dispatch_deferred_extended_hours "
+        "audit event when deferring a stop during AFTER_HOURS"
+    )
+    assert deferred_events[0].symbol == "AAPL"
+    payload = deferred_events[0].payload
+    assert payload["session_type"] == str(SessionType.AFTER_HOURS)
+    assert payload["stop_price"] == pytest.approx(95.0)
