@@ -7,6 +7,7 @@ from alpaca_bot.storage.migrations import (
 )
 from alpaca_bot.storage.models import (
     AuditEvent,
+    ConfidenceFloor,
     DailySessionState,
     EQUITY_SESSION_STATE_STRATEGY_NAME,
     GLOBAL_SESSION_STATE_STRATEGY_NAME,
@@ -20,6 +21,7 @@ from alpaca_bot.storage.models import (
 )
 from alpaca_bot.storage.repositories import (
     AuditEventStore,
+    ConfidenceFloorStore,
     DailySessionStateStore,
     DecisionLogStore,
     OptionOrderRepository,
@@ -35,6 +37,8 @@ from alpaca_bot.storage.repositories import (
 __all__ = [
     "AuditEvent",
     "AuditEventStore",
+    "ConfidenceFloor",
+    "ConfidenceFloorStore",
     "DailySessionState",
     "DailySessionStateStore",
     "DecisionLogStore",

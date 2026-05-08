@@ -126,3 +126,15 @@ class StrategyWeight:
     weight: float
     sharpe: float
     computed_at: datetime
+
+
+@dataclass(frozen=True)
+class ConfidenceFloor:
+    trading_mode: TradingMode
+    strategy_version: str
+    floor_value: float
+    manual_floor_baseline: float  # last operator-set value; system raises floor_value but never this
+    equity_high_watermark: float
+    set_by: str  # 'system' | 'operator'
+    reason: str
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

@@ -7,6 +7,7 @@ import threading
 from alpaca_bot.config import Settings
 from alpaca_bot.storage import (
     AuditEventStore,
+    ConfidenceFloorStore,
     DailySessionStateStore,
     DecisionLogStore,
     MigrationRunner,
@@ -41,6 +42,7 @@ class RuntimeContext:
     watchlist_store: WatchlistStore | None = None
     option_order_store: OptionOrderRepository | None = None
     strategy_weight_store: StrategyWeightStore | None = None
+    confidence_floor_store: ConfidenceFloorStore | None = None
     decision_log_store: DecisionLogStore | None = None
     # Protects all store operations against concurrent access from the trade update stream thread
     store_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -88,6 +90,7 @@ def bootstrap_runtime(
         watchlist_store=watchlist_store,
         option_order_store=OptionOrderRepository(runtime_connection),
         strategy_weight_store=StrategyWeightStore(runtime_connection),
+        confidence_floor_store=ConfidenceFloorStore(runtime_connection),
         decision_log_store=DecisionLogStore(runtime_connection),
     )
 
@@ -122,6 +125,7 @@ def reconnect_runtime_connection(
         "watchlist_store",
         "option_order_store",
         "strategy_weight_store",
+        "confidence_floor_store",
         "decision_log_store",
     ):
         store = getattr(context, attr, None)

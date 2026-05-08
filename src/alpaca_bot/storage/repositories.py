@@ -13,6 +13,7 @@ from alpaca_bot.config import TradingMode
 from alpaca_bot.storage.db import ConnectionProtocol, execute, fetch_all, fetch_one
 from alpaca_bot.storage.models import (
     AuditEvent,
+    ConfidenceFloor,
     DailySessionState,
     EQUITY_SESSION_STATE_STRATEGY_NAME,
     OptionOrderRecord,
@@ -1472,6 +1473,70 @@ class StrategyWeightStore:
             )
             for row in rows
         ]
+
+
+class ConfidenceFloorStore:
+    def __init__(self, connection: ConnectionProtocol) -> None:
+        self._connection = connection
+
+    def upsert(self, rec: ConfidenceFloor, *, commit: bool = True) -> None:
+        execute(
+            self._connection,
+            """
+            INSERT INTO confidence_floor_store (
+                trading_mode, strategy_version, floor_value,
+                manual_floor_baseline, equity_high_watermark,
+                set_by, reason, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (trading_mode, strategy_version)
+            DO UPDATE SET
+                floor_value = EXCLUDED.floor_value,
+                manual_floor_baseline = EXCLUDED.manual_floor_baseline,
+                equity_high_watermark = EXCLUDED.equity_high_watermark,
+                set_by = EXCLUDED.set_by,
+                reason = EXCLUDED.reason,
+                updated_at = EXCLUDED.updated_at
+            """,
+            (
+                rec.trading_mode.value,
+                rec.strategy_version,
+                rec.floor_value,
+                rec.manual_floor_baseline,
+                rec.equity_high_watermark,
+                rec.set_by,
+                rec.reason,
+                rec.updated_at,
+            ),
+            commit=commit,
+        )
+
+    def load(
+        self, *, trading_mode: TradingMode, strategy_version: str
+    ) -> ConfidenceFloor | None:
+        row = fetch_one(
+            self._connection,
+            """
+            SELECT trading_mode, strategy_version, floor_value,
+                   manual_floor_baseline, equity_high_watermark,
+                   set_by, reason, updated_at
+            FROM confidence_floor_store
+            WHERE trading_mode = %s AND strategy_version = %s
+            """,
+            (trading_mode.value, strategy_version),
+        )
+        if row is None:
+            return None
+        return ConfidenceFloor(
+            trading_mode=TradingMode(row[0]),
+            strategy_version=row[1],
+            floor_value=float(row[2]),
+            manual_floor_baseline=float(row[3]),
+            equity_high_watermark=float(row[4]),
+            set_by=row[5],
+            reason=row[6],
+            updated_at=row[7],
+        )
 
 
 @dataclass(frozen=True)
