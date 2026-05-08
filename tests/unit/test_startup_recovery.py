@@ -145,6 +145,9 @@ class RecordingOrderStore:
                 return order
         return None
 
+    def list_trade_pnl_by_strategy(self, **kwargs) -> list[dict]:
+        return []
+
 
 class FakeConnection:
     def commit(self) -> None:
@@ -1740,3 +1743,68 @@ def test_startup_recovery_queues_exit_when_stop_equals_market() -> None:
 
     exit_saves = [o for o in order_store.saved if o.intent_type == "exit" and o.symbol == "GME"]
     assert len(exit_saves) == 1, "stop_price == current_price must route to exit (Alpaca requires strictly less)"
+
+
+def test_uuid_stop_inherits_strategy_name_from_position() -> None:
+    """Replacement stops created by broker.replace_order() receive UUID client_order_ids.
+    When startup_recovery syncs such a broker order with no matching local record, it must
+    infer strategy_name from the synced position (not default to 'breakout'), so that
+    daily_realized_pnl correlation queries match correctly."""
+    settings = make_settings()
+    now = datetime(2026, 5, 8, 16, 0, tzinfo=timezone.utc)
+    uuid_client_order_id = "b3e8a1c2-4f0d-4321-abcd-9876543210ef"
+
+    pos = PositionRecord(
+        symbol="TSLA",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="bull_flag",
+        quantity=5,
+        entry_price=200.0,
+        stop_price=195.0,
+        initial_stop_price=190.0,
+        opened_at=now,
+        updated_at=now,
+    )
+    # Broker has an active stop with UUID client_order_id (from replace_order call)
+    broker_stop = BrokerOrder(
+        client_order_id=uuid_client_order_id,
+        broker_order_id="alpaca-stop-uuid-1",
+        symbol="TSLA",
+        side="sell",
+        status="new",
+        quantity=5,
+    )
+    broker_position = BrokerPosition(
+        symbol="TSLA",
+        quantity=5,
+        entry_price=200.0,
+        market_value=1020.0,  # $204/share — stop $195 is below market, normal path
+    )
+
+    position_store = RecordingPositionStore(existing_positions=[pos])
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[broker_stop],
+        now=now,
+    )
+
+    # The synced order record for the UUID stop must carry strategy_name="bull_flag",
+    # not "breakout" (which would be the default from client_order_id parsing).
+    synced_stops = [
+        o for o in order_store.saved
+        if o.client_order_id == uuid_client_order_id
+    ]
+    assert len(synced_stops) == 1, "UUID stop must be synced into a local OrderRecord"
+    assert synced_stops[0].strategy_name == "bull_flag", (
+        "UUID stop must inherit strategy_name from the synced position, not default to 'breakout'"
+    )

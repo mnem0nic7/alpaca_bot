@@ -150,6 +150,9 @@ class RecordingOrderStore:
                 return order
         return None
 
+    def list_trade_pnl_by_strategy(self, **kwargs) -> list[dict]:
+        return []
+
 
 class RecordingAuditEventStore:
     def __init__(self) -> None:

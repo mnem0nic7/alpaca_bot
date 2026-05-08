@@ -131,6 +131,9 @@ class RecordingOrderStore:
     def daily_realized_pnl_by_symbol(self, *, trading_mode, strategy_version, session_date, market_timezone="America/New_York", strategy_name=None) -> dict:
         return {}
 
+    def list_trade_pnl_by_strategy(self, **kwargs) -> list[dict]:
+        return []
+
 
 class RecordingPositionStore:
     def __init__(self, existing_positions: list[PositionRecord] | None = None) -> None:

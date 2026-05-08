@@ -209,6 +209,9 @@ class RecordingOrderStore:
                 return order
         return None
 
+    def list_trade_pnl_by_strategy(self, **kwargs) -> list[dict]:
+        return []
+
 
 def make_runtime_context(
     settings: Settings,

@@ -97,6 +97,9 @@ class _RecordingOrderStore:
     def daily_realized_pnl_by_symbol(self, **kwargs) -> dict[str, float]:
         return dict(self._pnl_by_symbol)
 
+    def list_trade_pnl_by_strategy(self, **kwargs) -> list[dict]:
+        return []
+
 
 class _RecordingSessionStateStore:
     def __init__(self, preloaded: DailySessionState | None = None) -> None:

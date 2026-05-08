@@ -46,6 +46,7 @@ def _make_runtime(flags=None):
             list_by_status=lambda **_: [],
             list_pending_submit=lambda **_: [],
             daily_realized_pnl=lambda **_: 0.0,
+            list_trade_pnl_by_strategy=lambda **_: [],
         ),
         daily_session_state_store=SimpleNamespace(
             load=lambda **_: None,
@@ -354,6 +355,7 @@ def test_prior_cycle_pending_submit_blocks_all_strategies() -> None:
         list_by_status=lambda **_: [],
         list_pending_submit=lambda **_: [pending_msft],
         daily_realized_pnl=lambda **_: 0.0,
+        list_trade_pnl_by_strategy=lambda **_: [],
     )
 
     settings = _make_settings(symbols=("AAPL", "MSFT"))

@@ -77,6 +77,9 @@ class _RecordingOrderStore:
     ) -> dict[str, float]:
         return {}
 
+    def list_trade_pnl_by_strategy(self, **kwargs) -> list[dict]:
+        return []
+
 
 class _RecordingPositionStore:
     def list_all(self, *, trading_mode, strategy_version: str) -> list[PositionRecord]:

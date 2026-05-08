@@ -318,6 +318,9 @@ class _RecordingOrderStore:
     def list_closed_trades(self, **kwargs) -> list[dict]:
         return list(self._closed_trades)
 
+    def list_trade_pnl_by_strategy(self, **kwargs) -> list[dict]:
+        return []
+
 
 class _RecordingSessionStateStore:
     def __init__(self) -> None:

@@ -115,3 +115,34 @@ def compute_strategy_weights(
     # Normalise to guard against accumulated floating-point drift.
     total = sum(weights.values())
     return WeightResult({name: w / total for name, w in weights.items()}, sharpes)
+
+
+def compute_losing_day_streaks(
+    trade_rows: list[dict],
+    active_strategies: list[str],
+) -> dict[str, int]:
+    """Return trailing consecutive losing-day count per strategy.
+
+    A 'losing day' is any date where the strategy's net PnL for that day is negative.
+    Returns 0 if the most recent traded day was a win (or no trades).
+    """
+    # Build {strategy: {date: net_pnl}}
+    daily_pnl: dict[str, dict] = {name: {} for name in active_strategies}
+    for row in trade_rows:
+        name = row.get("strategy_name")
+        if name not in daily_pnl:
+            continue
+        d = row["exit_date"]
+        daily_pnl[name][d] = daily_pnl[name].get(d, 0.0) + row["pnl"]
+
+    streaks: dict[str, int] = {}
+    for name in active_strategies:
+        days = sorted(daily_pnl[name].keys())
+        streak = 0
+        for d in reversed(days):
+            if daily_pnl[name][d] < 0:
+                streak += 1
+            else:
+                break
+        streaks[name] = streak
+    return streaks

@@ -141,6 +141,8 @@ class RuntimeSupervisor:
         # Dates on which at least one active cycle ran this process lifetime.
         self._session_had_active_cycle: set[date] = set()
         self._shutdown_requested: bool = False
+        # Strategies currently excluded due to consecutive losing-day streaks.
+        self._strategy_streak_excluded: set[str] = set()
         # Intra-day review: keyed by session_date; reset to new dict each process lifetime.
         self._session_cycle_count: dict[date, int] = {}
         self._digest_sent_count: dict[date, int] = {}
@@ -360,6 +362,50 @@ class RuntimeSupervisor:
         confidence_floor = self._load_confidence_floor()
         session_sharpes = self._session_sharpes.get(session_date, {})
         session_confidence_scores = compute_confidence_scores(session_sharpes, confidence_floor)
+        # Per-strategy losing streak exclusion.
+        # Any strategy with >= losing_streak_n consecutive losing days has entries disabled
+        # until it logs a winning day. The _strategy_streak_excluded set tracks state
+        # across cycles so audit events fire exactly once per transition.
+        if self.settings.losing_streak_n > 0 and session_sharpes:
+            from alpaca_bot.risk.weighting import compute_losing_day_streaks
+            _streak_lock = getattr(self.runtime, "store_lock", None)
+            with _streak_lock if _streak_lock is not None else contextlib.nullcontext():
+                _streak_rows = self.runtime.order_store.list_trade_pnl_by_strategy(
+                    trading_mode=self.settings.trading_mode,
+                    strategy_version=self.settings.strategy_version,
+                    start_date=date(2000, 1, 1),
+                    end_date=session_date - timedelta(days=1),
+                )
+            _streaks = compute_losing_day_streaks(_streak_rows, list(session_sharpes.keys()))
+            _losing_streak_excluded: set[str] = {
+                name
+                for name, streak in _streaks.items()
+                if streak >= self.settings.losing_streak_n
+            }
+        else:
+            _losing_streak_excluded = set()
+
+        # Emit audit events for transitions: newly excluded strategies and newly restored ones.
+        for name in _losing_streak_excluded - self._strategy_streak_excluded:
+            self._append_audit(AuditEvent(
+                event_type="strategy_confidence_excluded",
+                payload={
+                    "strategy_name": name,
+                    "reason": f"losing_streak >= {self.settings.losing_streak_n}",
+                    "timestamp": timestamp.isoformat(),
+                },
+                created_at=timestamp,
+            ))
+        for name in self._strategy_streak_excluded - _losing_streak_excluded:
+            self._append_audit(AuditEvent(
+                event_type="strategy_confidence_restored",
+                payload={
+                    "strategy_name": name,
+                    "timestamp": timestamp.isoformat(),
+                },
+                created_at=timestamp,
+            ))
+        self._strategy_streak_excluded = _losing_streak_excluded
         loss_limit = self.settings.daily_loss_limit_pct * baseline_equity
         # Include unrealized losses via broker-reported equity delta so open
         # positions with large drawdowns trigger the limit before stops fill.
@@ -719,6 +765,9 @@ class RuntimeSupervisor:
                     # Strategy's Sharpe rank is below the confidence floor — disable entries
                     strategy_entries_disabled = True
                     confidence_score = confidence_floor  # used for sizing (entries disabled anyway)
+
+                if strategy_name in _losing_streak_excluded:
+                    strategy_entries_disabled = True
 
                 if strategy_entries_disabled:
                     entries_disabled_strategies.add(strategy_name)

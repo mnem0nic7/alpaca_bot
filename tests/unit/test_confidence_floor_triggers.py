@@ -272,3 +272,44 @@ def test_both_triggers_active_raises_floor_by_one_step_only() -> None:
     assert len(floor_store.upserted) == 1
     # Should advance by ONE step (0.10), not two (0.20)
     assert floor_store.upserted[0].floor_value == pytest.approx(0.35)  # 0.25 + 0.10
+
+
+def test_compute_losing_day_streaks_detects_consecutive_losses() -> None:
+    from datetime import date
+    from alpaca_bot.risk.weighting import compute_losing_day_streaks
+
+    rows = [
+        {"strategy_name": "breakout", "exit_date": date(2026, 5, 1), "pnl": -100.0},
+        {"strategy_name": "breakout", "exit_date": date(2026, 5, 2), "pnl": -50.0},
+        {"strategy_name": "breakout", "exit_date": date(2026, 5, 3), "pnl": -75.0},
+        {"strategy_name": "momentum", "exit_date": date(2026, 5, 1), "pnl": 200.0},
+        {"strategy_name": "momentum", "exit_date": date(2026, 5, 2), "pnl": -10.0},
+    ]
+    streaks = compute_losing_day_streaks(rows, ["breakout", "momentum"])
+    assert streaks["breakout"] == 3  # three consecutive losing days
+    assert streaks["momentum"] == 1  # only one consecutive losing day
+
+
+def test_compute_losing_day_streaks_resets_on_win() -> None:
+    from datetime import date
+    from alpaca_bot.risk.weighting import compute_losing_day_streaks
+
+    rows = [
+        {"strategy_name": "breakout", "exit_date": date(2026, 5, 1), "pnl": -100.0},
+        {"strategy_name": "breakout", "exit_date": date(2026, 5, 2), "pnl": 50.0},  # win
+        {"strategy_name": "breakout", "exit_date": date(2026, 5, 3), "pnl": -25.0},
+    ]
+    streaks = compute_losing_day_streaks(rows, ["breakout"])
+    assert streaks["breakout"] == 1  # only the final day counts
+
+
+def test_compute_losing_day_streaks_zero_when_last_day_was_win() -> None:
+    from datetime import date
+    from alpaca_bot.risk.weighting import compute_losing_day_streaks
+
+    rows = [
+        {"strategy_name": "breakout", "exit_date": date(2026, 5, 1), "pnl": -100.0},
+        {"strategy_name": "breakout", "exit_date": date(2026, 5, 2), "pnl": 50.0},
+    ]
+    streaks = compute_losing_day_streaks(rows, ["breakout"])
+    assert streaks["breakout"] == 0

@@ -141,6 +141,7 @@ def test_disabled_option_strategy_excluded_from_cycle() -> None:
             list_pending_submit=lambda **k: [],
             daily_realized_pnl=lambda **k: 0.0,
             daily_realized_pnl_by_symbol=lambda **k: {},
+            list_trade_pnl_by_strategy=lambda **k: [],
         )
         strategy_weight_store = None
         trading_status_store = SimpleNamespace(load=lambda **_: None)
