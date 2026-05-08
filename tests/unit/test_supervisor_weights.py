@@ -96,6 +96,7 @@ def _make_supervisor(
     order_store: _RecordingOrderStore | None = None,
     cycle_runner=None,
     only_breakout: bool = True,
+    order_dispatcher=None,
 ):
     module = import_module("alpaca_bot.runtime.supervisor")
     RuntimeSupervisor = module.RuntimeSupervisor
@@ -173,7 +174,7 @@ def _make_supervisor(
         cycle_intent_executor=lambda **kwargs: SimpleNamespace(
             submitted_exit_count=0, failed_exit_count=0
         ),
-        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+        order_dispatcher=order_dispatcher or (lambda **kwargs: {"submitted_count": 0}),
     )
     return supervisor, _FakeRuntimeContext
 
@@ -618,3 +619,102 @@ def test_strategy_below_confidence_floor_has_entries_disabled() -> None:
     )
     # equity = account.equity * confidence_floor (fallback for None case)
     assert recorded_equities[0] == pytest.approx(10_000.0 * 0.50)
+
+
+def test_losing_streak_exclusion_emits_excluded_audit_event() -> None:
+    """When a strategy has >= LOSING_STREAK_N consecutive losing days, run_cycle_once emits
+    strategy_confidence_excluded and adds the strategy to _strategy_streak_excluded."""
+    settings = _make_settings(LOSING_STREAK_N="2")
+    order_store = _RecordingOrderStore(pnl_rows=[
+        {"strategy_name": "breakout", "exit_date": date(2026, 4, 30), "pnl": -50.0},
+        {"strategy_name": "breakout", "exit_date": date(2026, 4, 29), "pnl": -30.0},
+    ])
+    supervisor, _ = _make_supervisor(
+        settings=settings,
+        order_store=order_store,
+        only_breakout=True,
+    )
+    supervisor._session_equity_baseline[_SESSION_DATE] = 10_000.0
+    supervisor._session_capital_weights[_SESSION_DATE] = {"breakout": 1.0}
+    supervisor._session_sharpes[_SESSION_DATE] = {"breakout": 2.0}
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    audit_store = supervisor.runtime.audit_event_store
+    excluded_events = [
+        e for e in audit_store.appended if e.event_type == "strategy_confidence_excluded"
+    ]
+    assert len(excluded_events) == 1, (
+        f"Expected 1 strategy_confidence_excluded event, got {len(excluded_events)}"
+    )
+    assert excluded_events[0].payload["strategy_name"] == "breakout"
+    assert supervisor._strategy_streak_excluded == {"breakout"}
+
+
+def test_losing_streak_excluded_strategy_blocked_from_dispatch() -> None:
+    """A losing-streak-excluded strategy must appear in blocked_strategy_names passed to
+    the order dispatcher, preventing pending entry orders from being submitted."""
+    captured_dispatch_kwargs: list[dict] = []
+
+    def capturing_dispatcher(**kwargs):
+        captured_dispatch_kwargs.append(dict(kwargs))
+        return {"submitted_count": 0}
+
+    settings = _make_settings(LOSING_STREAK_N="2")
+    order_store = _RecordingOrderStore(pnl_rows=[
+        {"strategy_name": "breakout", "exit_date": date(2026, 4, 30), "pnl": -50.0},
+        {"strategy_name": "breakout", "exit_date": date(2026, 4, 29), "pnl": -30.0},
+    ])
+    supervisor, _ = _make_supervisor(
+        settings=settings,
+        order_store=order_store,
+        only_breakout=True,
+        order_dispatcher=capturing_dispatcher,
+    )
+    supervisor._session_equity_baseline[_SESSION_DATE] = 10_000.0
+    supervisor._session_capital_weights[_SESSION_DATE] = {"breakout": 1.0}
+    supervisor._session_sharpes[_SESSION_DATE] = {"breakout": 2.0}
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert len(captured_dispatch_kwargs) == 1, "order_dispatcher must be called exactly once"
+    blocked = captured_dispatch_kwargs[0]["blocked_strategy_names"]
+    assert "breakout" in blocked, (
+        f"Expected 'breakout' in blocked_strategy_names, got: {blocked}"
+    )
+
+
+def test_losing_streak_restoration_emits_restored_audit_event() -> None:
+    """When a previously-excluded strategy logs a winning day (streak broken), run_cycle_once
+    emits strategy_confidence_restored and removes the strategy from _strategy_streak_excluded.
+    No strategy_confidence_excluded event must fire in the same cycle."""
+    settings = _make_settings(LOSING_STREAK_N="2")
+    order_store = _RecordingOrderStore(pnl_rows=[
+        {"strategy_name": "breakout", "exit_date": date(2026, 4, 30), "pnl": 25.0},
+        {"strategy_name": "breakout", "exit_date": date(2026, 4, 29), "pnl": -30.0},
+    ])
+    supervisor, _ = _make_supervisor(
+        settings=settings,
+        order_store=order_store,
+        only_breakout=True,
+    )
+    supervisor._session_equity_baseline[_SESSION_DATE] = 10_000.0
+    supervisor._session_capital_weights[_SESSION_DATE] = {"breakout": 1.0}
+    supervisor._session_sharpes[_SESSION_DATE] = {"breakout": 2.0}
+    supervisor._strategy_streak_excluded = {"breakout"}
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    audit_store = supervisor.runtime.audit_event_store
+    restored_events = [
+        e for e in audit_store.appended if e.event_type == "strategy_confidence_restored"
+    ]
+    excluded_events = [
+        e for e in audit_store.appended if e.event_type == "strategy_confidence_excluded"
+    ]
+    assert len(restored_events) == 1, (
+        f"Expected 1 strategy_confidence_restored event, got {len(restored_events)}"
+    )
+    assert restored_events[0].payload["strategy_name"] == "breakout"
+    assert len(excluded_events) == 0, "No excluded event must fire in the same restoration cycle"
+    assert supervisor._strategy_streak_excluded == set()
