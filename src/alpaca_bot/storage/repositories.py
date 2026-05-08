@@ -1762,6 +1762,70 @@ class OptionOrderRepository:
             statuses=["filled"],
         )
 
+    def list_trade_pnl_by_strategy(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        start_date: date,
+        end_date: date,
+        market_timezone: str = "America/New_York",
+    ) -> list[dict]:
+        """Return one dict per closed option trade in the date range with strategy attribution.
+
+        Each dict: {strategy_name: str, exit_date: date, pnl: float}
+        pnl = (sell_fill_price - buy_fill_price) * qty * 100
+        Rows where the correlated buy has no fill_price are excluded.
+        """
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT x.strategy_name,
+                   DATE(x.updated_at AT TIME ZONE %s) AS exit_date,
+                   COALESCE(x.filled_quantity, x.quantity) AS qty,
+                   x.fill_price AS exit_fill,
+                   (SELECT e.fill_price
+                      FROM option_orders e
+                     WHERE e.occ_symbol = x.occ_symbol
+                       AND e.trading_mode = x.trading_mode
+                       AND e.strategy_version = x.strategy_version
+                       AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
+                       AND e.side = 'buy'
+                       AND e.fill_price IS NOT NULL
+                       AND e.status = 'filled'
+                       AND e.updated_at <= x.updated_at
+                     ORDER BY e.updated_at DESC
+                     LIMIT 1) AS entry_fill
+              FROM option_orders x
+             WHERE x.trading_mode = %s
+               AND x.strategy_version = %s
+               AND x.side = 'sell'
+               AND x.fill_price IS NOT NULL
+               AND x.status = 'filled'
+               AND DATE(x.updated_at AT TIME ZONE %s) >= %s
+               AND DATE(x.updated_at AT TIME ZONE %s) <= %s
+             ORDER BY x.updated_at
+            """,
+            (
+                market_timezone,
+                trading_mode.value,
+                strategy_version,
+                market_timezone,
+                start_date,
+                market_timezone,
+                end_date,
+            ),
+        )
+        return [
+            {
+                "strategy_name": row[0],
+                "exit_date": row[1],
+                "pnl": (float(row[3]) - float(row[4])) * float(row[2]) * 100,
+            }
+            for row in rows
+            if row[4] is not None
+        ]
+
     def load_by_broker_order_id(self, broker_order_id: str) -> OptionOrderRecord | None:
         row = fetch_one(
             self._connection,
