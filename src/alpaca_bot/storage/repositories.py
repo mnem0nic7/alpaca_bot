@@ -1037,9 +1037,10 @@ class PositionStore:
                 stop_price,
                 initial_stop_price,
                 opened_at,
-                updated_at
+                updated_at,
+                highest_price
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (symbol, trading_mode, strategy_version, strategy_name)
             DO UPDATE SET
                 quantity = EXCLUDED.quantity,
@@ -1047,7 +1048,8 @@ class PositionStore:
                 stop_price = EXCLUDED.stop_price,
                 initial_stop_price = EXCLUDED.initial_stop_price,
                 opened_at = EXCLUDED.opened_at,
-                updated_at = EXCLUDED.updated_at
+                updated_at = EXCLUDED.updated_at,
+                highest_price = COALESCE(EXCLUDED.highest_price, positions.highest_price)
             """,
             (
                 position.symbol,
@@ -1060,6 +1062,7 @@ class PositionStore:
                 position.initial_stop_price,
                 position.opened_at,
                 position.updated_at,
+                position.highest_price,
             ),
             commit=commit,
         )
@@ -1102,9 +1105,10 @@ class PositionStore:
                         stop_price,
                         initial_stop_price,
                         opened_at,
-                        updated_at
+                        updated_at,
+                        highest_price
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (symbol, trading_mode, strategy_version, strategy_name)
                     DO UPDATE SET
                         quantity = EXCLUDED.quantity,
@@ -1112,7 +1116,8 @@ class PositionStore:
                         stop_price = EXCLUDED.stop_price,
                         initial_stop_price = EXCLUDED.initial_stop_price,
                         opened_at = EXCLUDED.opened_at,
-                        updated_at = EXCLUDED.updated_at
+                        updated_at = EXCLUDED.updated_at,
+                        highest_price = COALESCE(EXCLUDED.highest_price, positions.highest_price)
                     """,
                     (
                         position.symbol,
@@ -1125,6 +1130,7 @@ class PositionStore:
                         position.initial_stop_price,
                         position.opened_at,
                         position.updated_at,
+                        position.highest_price,
                     ),
                     commit=False,
                 )
@@ -1156,6 +1162,31 @@ class PositionStore:
             commit=commit,
         )
 
+    def update_highest_price(
+        self,
+        *,
+        symbol: str,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        strategy_name: str,
+        highest_price: float,
+        commit: bool = True,
+    ) -> None:
+        execute(
+            self._connection,
+            """
+            UPDATE positions
+               SET highest_price = %s,
+                   updated_at = NOW()
+             WHERE symbol = %s
+               AND trading_mode = %s
+               AND strategy_version = %s
+               AND strategy_name = %s
+            """,
+            (highest_price, symbol, trading_mode.value, strategy_version, strategy_name),
+            commit=commit,
+        )
+
     def list_all(
         self,
         *,
@@ -1178,7 +1209,8 @@ class PositionStore:
                 stop_price,
                 initial_stop_price,
                 opened_at,
-                updated_at
+                updated_at,
+                highest_price
             FROM positions
             WHERE trading_mode = %s AND strategy_version = %s
               {strategy_clause}
@@ -1199,6 +1231,7 @@ class PositionStore:
                 initial_stop_price=float(row[7]),
                 opened_at=row[8],
                 updated_at=row[9],
+                highest_price=float(row[10]) if row[10] is not None else None,
             )
             for row in rows
         ]

@@ -419,6 +419,7 @@ def test_position_store_save_list_and_delete() -> None:
                     109.89,
                     now,
                     now,
+                    None,  # highest_price
                 )
             ]
         ]
