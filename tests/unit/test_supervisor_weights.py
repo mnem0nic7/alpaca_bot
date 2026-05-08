@@ -718,3 +718,132 @@ def test_losing_streak_restoration_emits_restored_audit_event() -> None:
     assert restored_events[0].payload["strategy_name"] == "breakout"
     assert len(excluded_events) == 0, "No excluded event must fire in the same restoration cycle"
     assert supervisor._strategy_streak_excluded == set()
+
+
+# ── option_chains_fetched audit event tests ───────────────────────────────────
+
+
+class _FakeOptionChainAdapter:
+    """Returns the provided chains dict on every call; empty list if symbol not found."""
+    def __init__(self, chains_by_symbol: dict | None = None):
+        self._chains = chains_by_symbol or {}
+
+    def get_option_chain(self, symbol: str, settings):
+        return self._chains.get(symbol, [])
+
+
+def _make_supervisor_with_option_adapter(adapter):
+    """Build a supervisor with an injected option chain adapter for audit event tests."""
+    s = _make_settings()
+    module = import_module("alpaca_bot.runtime.supervisor")
+    RuntimeSupervisor = module.RuntimeSupervisor
+
+    class _FakeBroker:
+        def get_account(self):
+            return BrokerAccount(equity=10_000.0, buying_power=20_000.0, trading_blocked=False)
+        def list_open_orders(self): return []
+
+    class _FakeMarketData:
+        def get_stock_bars(self, **kwargs): return {}
+        def get_daily_bars(self, **kwargs): return {}
+
+    class _FakeConn2:
+        def commit(self): pass
+        def rollback(self): pass
+
+    class _FakeTradingStatusStore:
+        def load(self, **kwargs): return None
+
+    class _FakePositionStore:
+        def list_all(self, **kwargs): return []
+        def replace_all(self, **kwargs): pass
+
+    class _FakeStrategyFlagStore:
+        def list_all(self, **kwargs): return []
+        def load(self, *, strategy_name, **kwargs):
+            from alpaca_bot.storage import StrategyFlag
+            return StrategyFlag(
+                strategy_name=strategy_name,
+                trading_mode=s.trading_mode,
+                strategy_version=s.strategy_version,
+                enabled=False,
+                updated_at=_NOW,
+            )
+
+    class _FakeSessionStateStore:
+        def load(self, **kwargs): return None
+        def save(self, state=None, **kwargs): pass
+        def list_by_session(self, **kwargs): return []
+
+    class _FakeWatchlistStore:
+        def list_enabled(self, *args): return list(s.symbols)
+        def list_ignored(self, *args): return []
+
+    audit_store = _RecordingAuditStore()
+
+    class _FakeRuntimeCtx:
+        connection = _FakeConn2()
+        store_lock = None
+        order_store = _RecordingOrderStore()
+        strategy_weight_store = None
+        trading_status_store = _FakeTradingStatusStore()
+        position_store = _FakePositionStore()
+        daily_session_state_store = _FakeSessionStateStore()
+        audit_event_store = audit_store
+        strategy_flag_store = _FakeStrategyFlagStore()
+        watchlist_store = _FakeWatchlistStore()
+        def commit(self): pass
+
+    runtime_ctx = _FakeRuntimeCtx()
+
+    supervisor = RuntimeSupervisor(
+        settings=s,
+        runtime=runtime_ctx,
+        broker=_FakeBroker(),
+        market_data=_FakeMarketData(),
+        stream=None,
+        close_runtime_fn=lambda _: None,
+        connection_checker=lambda _: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        cycle_intent_executor=lambda **kwargs: SimpleNamespace(
+            submitted_exit_count=0, failed_exit_count=0
+        ),
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+        option_chain_adapter=adapter,
+    )
+    # Pre-seed session state to bypass session-open DB writes
+    supervisor._session_equity_baseline[_SESSION_DATE] = 10_000.0
+    supervisor._session_capital_weights[_SESSION_DATE] = {}
+    supervisor._session_sharpes[_SESSION_DATE] = {}
+    return supervisor, runtime_ctx
+
+
+def test_option_chains_fetched_event_emitted_when_adapter_set() -> None:
+    """option_chains_fetched audit event is emitted once per cycle when adapter is configured."""
+    adapter = _FakeOptionChainAdapter()  # returns [] for every symbol
+    supervisor, ctx = _make_supervisor_with_option_adapter(adapter)
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    fetched_events = [
+        e for e in ctx.audit_event_store.appended
+        if e.event_type == "option_chains_fetched"
+    ]
+    assert len(fetched_events) == 1
+
+
+def test_option_chains_fetched_payload_shows_zero_when_chains_empty() -> None:
+    """When all chain fetches return [], the payload contains 0 for every symbol."""
+    adapter = _FakeOptionChainAdapter()  # returns [] for all symbols
+    supervisor, ctx = _make_supervisor_with_option_adapter(adapter)
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    fetched_events = [
+        e for e in ctx.audit_event_store.appended
+        if e.event_type == "option_chains_fetched"
+    ]
+    assert len(fetched_events) == 1
+    payload = fetched_events[0].payload
+    # _make_settings uses SYMBOLS="AAPL,MSFT"
+    assert payload == {"AAPL": 0, "MSFT": 0}

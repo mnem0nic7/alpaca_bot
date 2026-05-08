@@ -697,6 +697,18 @@ class RuntimeSupervisor:
                     active_strategies.append(
                         (opt_name, factory(option_chains_by_symbol))
                     )
+            option_chain_counts = {
+                sym: len(chains) for sym, chains in option_chains_by_symbol.items()
+            }
+            for sym in self.settings.symbols:
+                option_chain_counts.setdefault(sym, 0)
+            self._append_audit(
+                AuditEvent(
+                    event_type="option_chains_fetched",
+                    payload=option_chain_counts,
+                    created_at=timestamp,
+                )
+            )
 
         # Add open option position underlying symbols to prevent double-entry.
         if option_order_store is not None:
