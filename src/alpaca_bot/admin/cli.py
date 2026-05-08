@@ -749,10 +749,9 @@ def _run_set_confidence_floor(
     stdout: TextIO,
 ) -> str:
     if not (0.0 <= value <= 1.0):
-        import sys as _sys
         print(
             f"Error: --value must be between 0.0 and 1.0 (got {value})",
-            file=_sys.stderr,
+            file=sys.stderr,
         )
         raise SystemExit(1)
 
@@ -782,6 +781,8 @@ def _run_set_confidence_floor(
                 "reason": reason,
                 "previous_value": previous_value,
                 "timestamp": now.isoformat(),
+                "trading_mode": trading_mode.value if hasattr(trading_mode, "value") else trading_mode,
+                "strategy_version": strategy_version,
             },
             created_at=now,
         ),
@@ -796,7 +797,6 @@ def _run_set_confidence_floor(
         f" previous={previous_value}"
         f" reason={reason}"
     )
-    print(msg, file=stdout)
     return msg
 
 

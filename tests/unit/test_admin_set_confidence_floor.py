@@ -170,6 +170,8 @@ def test_set_confidence_floor_emits_audit_event_with_correct_payload() -> None:
     assert event.payload["reason"] == "vol spike"
     assert event.payload["previous_value"] == 0.10
     assert "timestamp" in event.payload
+    assert event.payload["trading_mode"] == "paper"
+    assert event.payload["strategy_version"] == "v1-breakout"
 
 
 def test_set_confidence_floor_audit_event_previous_value_is_none_when_no_existing_record() -> None:
@@ -298,5 +300,6 @@ def test_set_confidence_floor_success_prints_confirmation_message() -> None:
     output = stdout.getvalue()
     assert len(output) > 0
     assert "confidence_floor set" in output
+    assert output.count("confidence_floor set") == 1
     assert "0.35" in output
     assert "market change" in output
