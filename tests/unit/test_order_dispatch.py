@@ -1069,6 +1069,7 @@ def test_dispatch_stale_stop_order_expires_with_prior_day_created_at() -> None:
     assert audit_store.appended[0].symbol == "AAPL"
     assert audit_store.appended[0].payload["created_date"] == "2026-04-24"
     assert audit_store.appended[0].payload["session_date"] == "2026-04-25"
+    assert audit_store.appended[0].payload["broker_order_id"] == "brk123"
     assert report["submitted_count"] == 0
 
 
