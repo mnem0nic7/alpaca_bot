@@ -247,3 +247,86 @@ def test_stop_order_submitted_normally_during_regular_session():
     )
     stop_calls = [c for c in broker.calls if c[0] == "stop_order"]
     assert len(stop_calls) == 1, "broker.submit_stop_order must be called during REGULAR session"
+
+
+# ---------------------------------------------------------------------------
+# Bug 3 — AH stop expiration at regular-session open
+# ---------------------------------------------------------------------------
+
+def _pending_stop_order_from_ah(broker_order_id: str | None = None) -> OrderRecord:
+    """Stop created during AH session (yesterday evening) — may or may not be submitted."""
+    return OrderRecord(
+        client_order_id="test:v1:2026-05-07:AAPL:stop:2026-05-07T21:42:00+00:00",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=10,
+        trading_mode="paper",
+        strategy_version="v1",
+        strategy_name="breakout",
+        created_at=datetime(2026, 5, 7, 21, 42, tzinfo=timezone.utc),   # 17:42 ET May 7
+        updated_at=datetime(2026, 5, 7, 21, 42, tzinfo=timezone.utc),
+        stop_price=95.0,
+        limit_price=None,
+        initial_stop_price=95.0,
+        signal_timestamp=datetime(2026, 5, 7, 21, 42, tzinfo=timezone.utc),  # 17:42 ET May 7
+        broker_order_id=broker_order_id,
+    )
+
+
+def test_ah_stop_not_expired_at_regular_session_open():
+    """
+    A pending_submit stop with no broker_order_id (never submitted during AH) must be
+    dispatched — not expired — when regular session opens the next morning.
+    """
+    settings = _settings()
+    order = _pending_stop_order_from_ah(broker_order_id=None)
+    runtime, saved, audits = _fake_runtime([order])
+    broker = _fake_broker()
+    now = datetime(2026, 5, 8, 14, 0, tzinfo=timezone.utc)  # 10:00 ET May 8 = regular session
+
+    dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        now=now,
+        session_type=SessionType.REGULAR,
+    )
+
+    stop_calls = [c for c in broker.calls if c[0] == "stop_order"]
+    assert len(stop_calls) == 1, (
+        "AH-deferred stop (broker_order_id=None) must be submitted at regular-session open"
+    )
+    expired_saves = [s for s in saved if s.status == "expired"]
+    assert expired_saves == [], "AH-deferred stop must NOT be expired"
+    expired_audit = [a for a in audits if a.event_type == "order_expired_stale_stop"]
+    assert expired_audit == [], "AH-deferred stop must NOT emit order_expired_stale_stop audit event"
+
+
+def test_submitted_stop_still_expires_at_next_session():
+    """
+    A stop that was previously submitted to the broker (broker_order_id set) but has a
+    signal_timestamp from a prior session must still be expired — this is the original
+    stale-stop guard for submitted-then-disappeared orders.
+    """
+    settings = _settings()
+    order = _pending_stop_order_from_ah(broker_order_id="brk123")
+    runtime, saved, audits = _fake_runtime([order])
+    broker = _fake_broker()
+    now = datetime(2026, 5, 8, 14, 0, tzinfo=timezone.utc)  # 10:00 ET May 8 = regular session
+
+    dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        now=now,
+        session_type=SessionType.REGULAR,
+    )
+
+    stop_calls = [c for c in broker.calls if c[0] == "stop_order"]
+    assert stop_calls == [], "Stale submitted stop must NOT be re-submitted"
+    expired_saves = [s for s in saved if s.status == "expired"]
+    assert len(expired_saves) == 1, "Stale submitted stop must be saved with status='expired'"
+    expired_audit = [a for a in audits if a.event_type == "order_expired_stale_stop"]
+    assert len(expired_audit) == 1, "Stale submitted stop must emit order_expired_stale_stop audit event"

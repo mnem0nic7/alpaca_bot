@@ -166,56 +166,68 @@ def dispatch_pending_orders(
                     ref_ts = ref_ts.replace(tzinfo=timezone.utc)
                 created_date_et = ref_ts.astimezone(settings.market_timezone).date()
             if ref_ts is not None and created_date_et < session_date_et:
-                logger.warning(
-                    "order_dispatch: expiring stale stop order for %s (created %s, today %s)",
-                    order.symbol,
-                    created_date_et,
-                    session_date_et,
-                )
-                with lock_ctx:
-                    try:
-                        runtime.order_store.save(
-                            OrderRecord(
-                                client_order_id=order.client_order_id,
-                                symbol=order.symbol,
-                                side=order.side,
-                                intent_type=order.intent_type,
-                                status="expired",
-                                quantity=order.quantity,
-                                trading_mode=order.trading_mode,
-                                strategy_version=order.strategy_version,
-                                strategy_name=order.strategy_name,
-                                created_at=order.created_at,
-                                updated_at=timestamp,
-                                stop_price=order.stop_price,
-                                limit_price=order.limit_price,
-                                initial_stop_price=order.initial_stop_price,
-                                broker_order_id=order.broker_order_id,
-                                signal_timestamp=order.signal_timestamp,
-                            ),
-                            commit=False,
-                        )
-                        runtime.audit_event_store.append(
-                            AuditEvent(
-                                event_type="order_expired_stale_stop",
-                                symbol=order.symbol,
-                                payload={
-                                    "client_order_id": order.client_order_id,
-                                    "created_date": created_date_et.isoformat(),
-                                    "session_date": session_date_et.isoformat(),
-                                },
-                                created_at=timestamp,
-                            ),
-                            commit=False,
-                        )
-                        runtime.connection.commit()
-                    except Exception:
+                if order.broker_order_id is None and order.signal_timestamp is not None:
+                    # Never submitted to broker AND has a signal_timestamp — this is an AH/PM-deferred
+                    # stop that is safe to dispatch now. Fall through to the session-type guard below.
+                    pass
+                else:
+                    # Either: (1) previously submitted stop that disappeared from the broker — genuinely
+                    # stale, OR (2) stop with no signal context and stale creation date.
+                    # Expire it to prevent re-submitting against a position that may no longer exist.
+                    logger.warning(
+                        "order_dispatch: expiring stale stop order for %s "
+                        "(broker_order_id=%s, signal_timestamp=%s, created %s, today %s)",
+                        order.symbol,
+                        order.broker_order_id,
+                        order.signal_timestamp,
+                        created_date_et,
+                        session_date_et,
+                    )
+                    with lock_ctx:
                         try:
-                            runtime.connection.rollback()
+                            runtime.order_store.save(
+                                OrderRecord(
+                                    client_order_id=order.client_order_id,
+                                    symbol=order.symbol,
+                                    side=order.side,
+                                    intent_type=order.intent_type,
+                                    status="expired",
+                                    quantity=order.quantity,
+                                    trading_mode=order.trading_mode,
+                                    strategy_version=order.strategy_version,
+                                    strategy_name=order.strategy_name,
+                                    created_at=order.created_at,
+                                    updated_at=timestamp,
+                                    stop_price=order.stop_price,
+                                    limit_price=order.limit_price,
+                                    initial_stop_price=order.initial_stop_price,
+                                    broker_order_id=order.broker_order_id,
+                                    signal_timestamp=order.signal_timestamp,
+                                ),
+                                commit=False,
+                            )
+                            runtime.audit_event_store.append(
+                                AuditEvent(
+                                    event_type="order_expired_stale_stop",
+                                    symbol=order.symbol,
+                                    payload={
+                                        "client_order_id": order.client_order_id,
+                                        "created_date": created_date_et.isoformat(),
+                                        "session_date": session_date_et.isoformat(),
+                                        "broker_order_id": order.broker_order_id,
+                                    },
+                                    created_at=timestamp,
+                                ),
+                                commit=False,
+                            )
+                            runtime.connection.commit()
                         except Exception:
-                            pass
-                        raise
-                continue
+                            try:
+                                runtime.connection.rollback()
+                            except Exception:
+                                pass
+                            raise
+                    continue
         if order.intent_type == "stop":
             if not _cancel_partial_fill_entry(
                 order=order,
