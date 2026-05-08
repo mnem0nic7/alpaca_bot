@@ -29,7 +29,7 @@ from alpaca_bot.runtime.bootstrap import (
     close_runtime,
     reconnect_runtime_connection,
 )
-from alpaca_bot.risk.weighting import WeightResult, compute_strategy_weights
+from alpaca_bot.risk.weighting import WeightResult, compute_strategy_weights, compute_losing_day_streaks
 from alpaca_bot.risk.confidence import compute_confidence_scores
 from alpaca_bot.storage.db import check_connection
 from alpaca_bot.runtime.cli import _list_open_orders, _list_open_positions
@@ -367,7 +367,6 @@ class RuntimeSupervisor:
         # until it logs a winning day. The _strategy_streak_excluded set tracks state
         # across cycles so audit events fire exactly once per transition.
         if self.settings.losing_streak_n > 0 and session_sharpes:
-            from alpaca_bot.risk.weighting import compute_losing_day_streaks
             _streak_lock = getattr(self.runtime, "store_lock", None)
             with _streak_lock if _streak_lock is not None else contextlib.nullcontext():
                 _streak_rows = self.runtime.order_store.list_trade_pnl_by_strategy(

@@ -129,7 +129,7 @@ def compute_losing_day_streaks(
     # Build {strategy: {date: net_pnl}}
     daily_pnl: dict[str, dict] = {name: {} for name in active_strategies}
     for row in trade_rows:
-        name = row.get("strategy_name")
+        name = row["strategy_name"]
         if name not in daily_pnl:
             continue
         d = row["exit_date"]
