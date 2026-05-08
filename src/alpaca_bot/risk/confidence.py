@@ -48,4 +48,4 @@ def compute_confidence_scores(
                 raw = idx / (n - 1)  # [0.0, 1.0]
             scores[name] = floor + raw * (1.0 - floor)
 
-    return {k: v for k, v in scores.items() if v >= floor}
+    return scores
