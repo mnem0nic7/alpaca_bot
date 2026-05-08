@@ -1468,3 +1468,275 @@ def test_recover_startup_state_zero_qty_broker_position_counts_as_cleared() -> N
         for pos in call["positions"]
     }
     assert "SKYT" not in synced_symbols, "zero-qty SKYT must not be written to position_store"
+
+
+# ---------------------------------------------------------------------------
+# Recovery exit when stop_price >= current market price (infinite-loop fix)
+# ---------------------------------------------------------------------------
+
+def test_startup_recovery_queues_exit_when_stop_above_market() -> None:
+    """When a position's stored stop_price is at or above the current market price
+    (as derived from BrokerPosition.market_value), startup_recovery must queue a
+    market exit order instead of the stale stop.  Without this guard the stale stop
+    is re-queued every cycle, Alpaca rejects it with 42210000, and the loop never
+    terminates."""
+    settings = make_settings()
+    now = datetime(2026, 5, 8, 16, 0, tzinfo=timezone.utc)
+
+    # DB position: stop_price=$16.34, but market has fallen to ~$15.47
+    arlo_position = PositionRecord(
+        symbol="ARLO",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="bull_flag",
+        quantity=10,
+        entry_price=16.27,
+        stop_price=16.34,   # stale — above current market
+        initial_stop_price=16.34,
+        opened_at=now,
+        updated_at=now,
+    )
+    # Broker reports market_value=$154.70, so current_price = 154.70/10 = $15.47
+    broker_position = BrokerPosition(
+        symbol="ARLO",
+        quantity=10,
+        entry_price=16.27,
+        market_value=154.70,
+    )
+    position_store = RecordingPositionStore(existing_positions=[arlo_position])
+    order_store = RecordingOrderStore()
+    audit_event_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+        audit_event_store=audit_event_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    exit_saves = [o for o in order_store.saved if o.intent_type == "exit" and o.symbol == "ARLO"]
+    stop_saves = [o for o in order_store.saved if o.intent_type == "stop" and o.symbol == "ARLO"]
+    assert len(exit_saves) == 1, "Must queue exactly one exit order when stop is above market"
+    assert stop_saves == [], "Must NOT queue a stop order when stop_price >= current_price"
+
+    ex = exit_saves[0]
+    assert ex.status == "pending_submit"
+    assert ex.side == "sell"
+    assert ex.quantity == 10
+    assert ex.stop_price is None
+    assert ":exit" in ex.client_order_id
+
+    exit_audit = [
+        e for e in audit_event_store.appended
+        if e.event_type == "recovery_exit_queued_stop_above_market" and e.symbol == "ARLO"
+    ]
+    assert len(exit_audit) == 1, "Must emit recovery_exit_queued_stop_above_market audit event"
+    assert exit_audit[0].payload["stop_price"] == 16.34
+    assert abs(exit_audit[0].payload["current_price"] - 15.47) < 0.01
+
+
+def test_startup_recovery_falls_back_to_stop_when_market_value_none() -> None:
+    """When broker_position.market_value is None, current_price cannot be computed.
+    Startup_recovery must fall back to the existing stop-queue path — the safe default
+    preserves protection even when the Alpaca response omits market_value."""
+    settings = make_settings()
+    now = datetime(2026, 5, 8, 16, 0, tzinfo=timezone.utc)
+
+    pos = PositionRecord(
+        symbol="NVDA",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="bull_flag",
+        quantity=5,
+        entry_price=900.0,
+        stop_price=880.0,
+        initial_stop_price=880.0,
+        opened_at=now,
+        updated_at=now,
+    )
+    broker_position = BrokerPosition(
+        symbol="NVDA",
+        quantity=5,
+        entry_price=900.0,
+        market_value=None,
+    )
+    position_store = RecordingPositionStore(existing_positions=[pos])
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    stop_saves = [o for o in order_store.saved if o.intent_type == "stop" and o.symbol == "NVDA"]
+    exit_saves = [o for o in order_store.saved if o.intent_type == "exit" and o.symbol == "NVDA"]
+    assert len(stop_saves) == 1, "Must queue stop when market_value is None (safe fallback)"
+    assert exit_saves == [], "Must NOT queue exit when market_value is unavailable"
+
+
+def test_startup_recovery_skips_symbol_with_active_exit() -> None:
+    """When a pending_submit exit order already exists for a symbol (e.g. queued in a
+    prior cycle but not yet dispatched), startup_recovery must not queue another exit
+    or stop.  Without this guard a second exit order would be submitted and the
+    position could be double-sold."""
+    settings = make_settings()
+    now = datetime(2026, 5, 8, 16, 0, tzinfo=timezone.utc)
+
+    pos = PositionRecord(
+        symbol="ARLO",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="bull_flag",
+        quantity=10,
+        entry_price=16.27,
+        stop_price=16.34,
+        initial_stop_price=16.34,
+        opened_at=now,
+        updated_at=now,
+    )
+    existing_exit = OrderRecord(
+        client_order_id=f"startup_recovery:{settings.strategy_version}:{now.date().isoformat()}:ARLO:exit",
+        symbol="ARLO",
+        side="sell",
+        intent_type="exit",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version=settings.strategy_version,
+        created_at=now,
+        updated_at=now,
+        stop_price=None,
+        initial_stop_price=None,
+        signal_timestamp=None,
+        broker_order_id=None,
+    )
+    broker_position = BrokerPosition(
+        symbol="ARLO",
+        quantity=10,
+        entry_price=16.27,
+        market_value=154.70,
+    )
+    position_store = RecordingPositionStore(existing_positions=[pos])
+    order_store = RecordingOrderStore(existing_orders=[existing_exit])
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    new_orders = [o for o in order_store.saved if o.symbol == "ARLO"]
+    assert new_orders == [], "Must not queue any new order when active exit already exists"
+
+
+def test_startup_recovery_queues_stop_when_stop_below_market() -> None:
+    """Regression guard: when stop_price is legitimately below the current market price,
+    startup_recovery must queue the normal stop order, not an exit."""
+    settings = make_settings()
+    now = datetime(2026, 5, 8, 16, 0, tzinfo=timezone.utc)
+
+    pos = PositionRecord(
+        symbol="MSFT",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="bull_flag",
+        quantity=5,
+        entry_price=420.0,
+        stop_price=410.0,
+        initial_stop_price=410.0,
+        opened_at=now,
+        updated_at=now,
+    )
+    broker_position = BrokerPosition(
+        symbol="MSFT",
+        quantity=5,
+        entry_price=420.0,
+        market_value=2150.0,  # 2150/5 = $430 current price; stop=$410 < $430 — valid
+    )
+    position_store = RecordingPositionStore(existing_positions=[pos])
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    stop_saves = [o for o in order_store.saved if o.intent_type == "stop" and o.symbol == "MSFT"]
+    exit_saves = [o for o in order_store.saved if o.intent_type == "exit" and o.symbol == "MSFT"]
+    assert len(stop_saves) == 1, "Must queue a stop when stop_price is below current market price"
+    assert exit_saves == [], "Must NOT queue an exit when stop is valid"
+
+
+def test_startup_recovery_queues_exit_when_stop_equals_market() -> None:
+    """Edge: stop_price == current_price (boundary condition).
+    Alpaca rejects sell stops at exactly the current price (42210000 requires strictly less),
+    so the boundary must route to the exit path."""
+    settings = make_settings()
+    now = datetime(2026, 5, 8, 16, 0, tzinfo=timezone.utc)
+
+    pos = PositionRecord(
+        symbol="GME",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="bull_flag",
+        quantity=10,
+        entry_price=20.0,
+        stop_price=18.50,
+        initial_stop_price=18.50,
+        opened_at=now,
+        updated_at=now,
+    )
+    broker_position = BrokerPosition(
+        symbol="GME",
+        quantity=10,
+        entry_price=20.0,
+        market_value=185.0,  # 185/10 = $18.50 exactly — boundary case
+    )
+    position_store = RecordingPositionStore(existing_positions=[pos])
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    exit_saves = [o for o in order_store.saved if o.intent_type == "exit" and o.symbol == "GME"]
+    assert len(exit_saves) == 1, "stop_price == current_price must route to exit (Alpaca requires strictly less)"

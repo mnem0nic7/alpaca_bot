@@ -47,6 +47,8 @@ class BrokerProtocol(Protocol):
 
     def submit_stop_order(self, **kwargs) -> BrokerOrder: ...
 
+    def submit_market_exit(self, **kwargs) -> BrokerOrder: ...
+
     def cancel_order(self, order_id: str) -> None: ...
 
 
@@ -475,6 +477,12 @@ def _submit_order(
             symbol=order.symbol,
             quantity=order.quantity,
             stop_price=order.stop_price,
+            client_order_id=order.client_order_id,
+        )
+    if order.intent_type == "exit":
+        return broker.submit_market_exit(
+            symbol=order.symbol,
+            quantity=order.quantity,
             client_order_id=order.client_order_id,
         )
     raise ValueError(f"Unsupported pending order intent_type: {order.intent_type}")

@@ -98,6 +98,7 @@ class RecordingBroker:
     def __init__(self, *, cancel_raises: Exception | None = None) -> None:
         self.entry_calls: list[dict[str, object]] = []
         self.stop_calls: list[dict[str, object]] = []
+        self.exit_calls: list[dict[str, object]] = []
         self.cancel_calls: list[str] = []
         self._cancel_raises = cancel_raises
 
@@ -120,6 +121,17 @@ class RecordingBroker:
             symbol=kwargs["symbol"],
             side="sell",
             status="NEW",
+            quantity=kwargs["quantity"],
+        )
+
+    def submit_market_exit(self, **kwargs: object) -> SimpleNamespace:
+        self.exit_calls.append(dict(kwargs))
+        return SimpleNamespace(
+            client_order_id=kwargs["client_order_id"],
+            broker_order_id="broker-exit-1",
+            symbol=kwargs["symbol"],
+            side="sell",
+            status="ACCEPTED",
             quantity=kwargs["quantity"],
         )
 
@@ -776,18 +788,18 @@ def test_dispatch_notifier_not_called_on_success() -> None:
 
 
 def test_dispatch_unsupported_intent_type_sets_order_to_error_status() -> None:
-    """An order with an unsupported intent_type (e.g. 'exit') that somehow reaches
-    pending_submit must be marked as 'error' — not submitted — and must emit an
+    """An order with an unsupported intent_type that somehow reaches pending_submit
+    must be marked as 'error' — not submitted — and must emit an
     order_dispatch_failed audit event."""
     _, dispatch_pending_orders = load_order_dispatch_api()
     settings = make_settings()
     now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
 
     rogue_order = OrderRecord(
-        client_order_id="paper:v1-breakout:AAPL:exit:rogue",
+        client_order_id="paper:v1-breakout:AAPL:update_stop:rogue",
         symbol="AAPL",
         side="sell",
-        intent_type="exit",
+        intent_type="update_stop",
         status="pending_submit",
         quantity=10,
         trading_mode=TradingMode.PAPER,
@@ -1339,4 +1351,48 @@ def test_dispatch_stop_skips_when_partial_fill_cancel_fails() -> None:
     # Audit event for failed cancel was recorded.
     event_types = [e.event_type for e in audit_store.appended]
     assert "partial_fill_cancel_failed" in event_types
+
+
+def test_dispatch_exit_order_calls_submit_market_exit() -> None:
+    """An exit OrderRecord (intent_type='exit') must be dispatched via
+    broker.submit_market_exit, not raise ValueError."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+
+    exit_order = OrderRecord(
+        client_order_id="startup_recovery:v1-breakout:2026-04-24:ARLO:exit",
+        symbol="ARLO",
+        side="sell",
+        intent_type="exit",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=None,
+        signal_timestamp=None,
+    )
+    order_store = RecordingOrderStore([exit_order])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    assert report["submitted_count"] == 1
+    assert len(broker.exit_calls) == 1
+    assert broker.exit_calls[0]["symbol"] == "ARLO"
+    assert broker.exit_calls[0]["quantity"] == 10
+    assert broker.exit_calls[0]["client_order_id"] == exit_order.client_order_id
+    assert broker.stop_calls == []
+    assert broker.entry_calls == []
+    saved_statuses = [o.status for o in order_store.saved]
+    assert "submitting" in saved_statuses
+    assert "accepted" in saved_statuses
 

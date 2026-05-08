@@ -273,6 +273,9 @@ def recover_startup_state(
     active_stop_symbols = {
         o.symbol for o in local_active_orders if o.intent_type == "stop"
     }
+    active_exit_symbols = {
+        o.symbol for o in local_active_orders if o.intent_type == "exit"
+    }
     # Also exclude symbols that already have a pending_submit entry order — queuing
     # a recovery stop alongside an unsubmitted entry would leave the stop orphaned if
     # the entry subsequently fails or is cancelled.
@@ -354,6 +357,8 @@ def recover_startup_state(
         for pos in synced_positions:
             if pos.symbol in active_stop_symbols:
                 continue
+            if pos.symbol in active_exit_symbols:
+                continue
             if pos.symbol in pending_entry_symbols:
                 _log.warning(
                     "startup_recovery: skipping recovery stop for %s — pending_submit entry order exists",
@@ -379,58 +384,111 @@ def recover_startup_state(
                     pos.stop_price,
                 )
                 continue
-            recovery_stop_id = (
-                f"startup_recovery:{settings.strategy_version}:"
-                f"{timestamp.date().isoformat()}:{pos.symbol}:stop"
-            )
-            # Belt-and-suspenders: don't re-queue if a non-terminal stop already exists
-            # for this exact recovery ID (prevents duplicate write on repeated cycles
-            # before dispatch, and prevents duplicating the new_positions_needing_stop pass).
-            existing_recovery_stop = runtime.order_store.load(recovery_stop_id)
-            if existing_recovery_stop is not None and existing_recovery_stop.status not in {
-                "expired", "cancelled", "canceled", "error"
-            }:
-                continue
-            _log.warning(
-                "startup_recovery: position %s has no active stop — "
-                "queuing recovery stop at %.4f (qty=%d)",
-                pos.symbol,
-                pos.stop_price,
-                pos.quantity,
-            )
-            runtime.order_store.save(
-                OrderRecord(
-                    client_order_id=recovery_stop_id,
-                    symbol=pos.symbol,
-                    side="sell",
-                    intent_type="stop",
-                    status="pending_submit",
-                    quantity=pos.quantity,
-                    trading_mode=settings.trading_mode,
-                    strategy_version=settings.strategy_version,
-                    strategy_name=pos.strategy_name,
-                    created_at=timestamp,
-                    updated_at=timestamp,
-                    stop_price=pos.stop_price,
-                    initial_stop_price=pos.stop_price,
-                    signal_timestamp=None,
-                ),
-                commit=False,
-            )
-            runtime.audit_event_store.append(
-                AuditEvent(
-                    event_type="recovery_stop_queued_for_open_position",
-                    symbol=pos.symbol,
-                    payload={
-                        "client_order_id": recovery_stop_id,
-                        "stop_price": pos.stop_price,
-                        "quantity": pos.quantity,
-                    },
-                    created_at=timestamp,
-                ),
-                commit=False,
-            )
-            active_stop_symbols.add(pos.symbol)
+            broker_pos = broker_positions_by_symbol.get(pos.symbol)
+            current_price: float | None = None
+            if broker_pos and broker_pos.market_value is not None and broker_pos.quantity > 0:
+                current_price = broker_pos.market_value / broker_pos.quantity
+
+            if current_price is not None and pos.stop_price >= current_price:
+                recovery_exit_id = (
+                    f"startup_recovery:{settings.strategy_version}:"
+                    f"{timestamp.date().isoformat()}:{pos.symbol}:exit"
+                )
+                _log.warning(
+                    "startup_recovery: position %s stop_price=%.4f >= current_price=%.4f — "
+                    "queuing market exit instead of stale stop (qty=%d)",
+                    pos.symbol,
+                    pos.stop_price,
+                    current_price,
+                    pos.quantity,
+                )
+                runtime.order_store.save(
+                    OrderRecord(
+                        client_order_id=recovery_exit_id,
+                        symbol=pos.symbol,
+                        side="sell",
+                        intent_type="exit",
+                        status="pending_submit",
+                        quantity=pos.quantity,
+                        trading_mode=settings.trading_mode,
+                        strategy_version=settings.strategy_version,
+                        strategy_name=pos.strategy_name,
+                        created_at=timestamp,
+                        updated_at=timestamp,
+                        stop_price=None,
+                        initial_stop_price=None,
+                        signal_timestamp=None,
+                    ),
+                    commit=False,
+                )
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="recovery_exit_queued_stop_above_market",
+                        symbol=pos.symbol,
+                        payload={
+                            "client_order_id": recovery_exit_id,
+                            "stop_price": pos.stop_price,
+                            "current_price": current_price,
+                            "quantity": pos.quantity,
+                        },
+                        created_at=timestamp,
+                    ),
+                    commit=False,
+                )
+                active_exit_symbols.add(pos.symbol)
+            else:
+                recovery_stop_id = (
+                    f"startup_recovery:{settings.strategy_version}:"
+                    f"{timestamp.date().isoformat()}:{pos.symbol}:stop"
+                )
+                # Belt-and-suspenders: don't re-queue if a non-terminal stop already exists
+                # for this exact recovery ID (prevents duplicate write on repeated cycles
+                # before dispatch, and prevents duplicating the new_positions_needing_stop pass).
+                existing_recovery_stop = runtime.order_store.load(recovery_stop_id)
+                if existing_recovery_stop is not None and existing_recovery_stop.status not in {
+                    "expired", "cancelled", "canceled", "error"
+                }:
+                    continue
+                _log.warning(
+                    "startup_recovery: position %s has no active stop — "
+                    "queuing recovery stop at %.4f (qty=%d)",
+                    pos.symbol,
+                    pos.stop_price,
+                    pos.quantity,
+                )
+                runtime.order_store.save(
+                    OrderRecord(
+                        client_order_id=recovery_stop_id,
+                        symbol=pos.symbol,
+                        side="sell",
+                        intent_type="stop",
+                        status="pending_submit",
+                        quantity=pos.quantity,
+                        trading_mode=settings.trading_mode,
+                        strategy_version=settings.strategy_version,
+                        strategy_name=pos.strategy_name,
+                        created_at=timestamp,
+                        updated_at=timestamp,
+                        stop_price=pos.stop_price,
+                        initial_stop_price=pos.stop_price,
+                        signal_timestamp=None,
+                    ),
+                    commit=False,
+                )
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="recovery_stop_queued_for_open_position",
+                        symbol=pos.symbol,
+                        payload={
+                            "client_order_id": recovery_stop_id,
+                            "stop_price": pos.stop_price,
+                            "quantity": pos.quantity,
+                        },
+                        created_at=timestamp,
+                    ),
+                    commit=False,
+                )
+                active_stop_symbols.add(pos.symbol)
         for broker_order in broker_open_orders:
             existing = None
             if broker_order.broker_order_id is not None:
