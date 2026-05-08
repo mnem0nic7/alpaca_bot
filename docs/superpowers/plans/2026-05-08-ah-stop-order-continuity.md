@@ -128,6 +128,8 @@ def test_ah_stop_not_expired_at_regular_session_open():
     )
     expired_saves = [s for s in saved if s.status == "expired"]
     assert expired_saves == [], "AH-deferred stop must NOT be expired"
+    expired_audit = [a for a in audits if a.event_type == "order_expired_stale_stop"]
+    assert expired_audit == [], "AH-deferred stop must NOT emit order_expired_stale_stop audit event"
 
 
 def test_submitted_stop_still_expires_at_next_session():
@@ -337,6 +339,8 @@ Lines 230–233 of `order_dispatch.py` (after Task 1 the line numbers may shift 
             if session_type in (_ST.PRE_MARKET, _ST.AFTER_HOURS):
                 continue  # Alpaca rejects stops during extended hours; submit at regular-session open
 ```
+
+**Per-cycle event volume:** The deferral audit event fires once per dispatch cycle. During a typical AH session (4pm–midnight ET = 8 hours with 60s cycles), each deferred stop generates ~480 events. With 13 concurrent positions that is ~6,240 rows per AH session. This is expected and acceptable — the audit log is append-only Postgres and the rows are small. Operators can query `WHERE event_type = 'stop_dispatch_deferred_extended_hours'` to confirm deferral without being flooded in tooling that filters by type.
 
 The `lock_ctx` pattern used elsewhere in this function:
 
