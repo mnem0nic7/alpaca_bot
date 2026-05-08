@@ -166,9 +166,9 @@ def dispatch_pending_orders(
                     ref_ts = ref_ts.replace(tzinfo=timezone.utc)
                 created_date_et = ref_ts.astimezone(settings.market_timezone).date()
             if ref_ts is not None and created_date_et < session_date_et:
-                if order.broker_order_id is None and order.signal_timestamp is not None:
-                    # Never submitted to broker AND has a signal_timestamp — this is an AH/PM-deferred
-                    # stop that is safe to dispatch now. Fall through to the session-type guard below.
+                if order.broker_order_id is None:
+                    # Never submitted to broker — this is an AH/PM-deferred stop that is
+                    # safe to dispatch now. Fall through to the session-type guard below.
                     pass
                 else:
                     # Either: (1) previously submitted stop that disappeared from the broker — genuinely
@@ -176,10 +176,9 @@ def dispatch_pending_orders(
                     # Expire it to prevent re-submitting against a position that may no longer exist.
                     logger.warning(
                         "order_dispatch: expiring stale stop order for %s "
-                        "(broker_order_id=%s, signal_timestamp=%s, created %s, today %s)",
+                        "(broker_order_id=%s, created %s, today %s)",
                         order.symbol,
                         order.broker_order_id,
-                        order.signal_timestamp,
                         created_date_et,
                         session_date_et,
                     )

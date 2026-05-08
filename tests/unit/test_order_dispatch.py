@@ -1025,13 +1025,14 @@ def test_dispatch_entry_order_with_none_stop_price_records_error_status() -> Non
 
 
 def test_dispatch_stale_stop_order_expires_with_prior_day_created_at() -> None:
-    """A pending_submit stop order with no signal_timestamp and yesterday's created_at
-    must be expired — it corresponds to a position that should have been flattened at EOD."""
+    """A pending_submit stop order with broker_order_id set (previously submitted to broker)
+    and a stale created_at must be expired — it corresponds to a submitted stop that
+    disappeared from the broker and may protect a closed position."""
     _, dispatch_pending_orders = load_order_dispatch_api()
     settings = make_settings()
     # now is 10:00 ET on 2026-04-25 (14:00 UTC)
     now = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)
-    # Stop was created yesterday, no signal_timestamp → falls back to created_at
+    # Stop was created yesterday
     yesterday = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
     stale_stop = OrderRecord(
         client_order_id="paper:v1-breakout:AAPL:stop:stale",
@@ -1047,7 +1048,7 @@ def test_dispatch_stale_stop_order_expires_with_prior_day_created_at() -> None:
         stop_price=99.75,
         initial_stop_price=99.75,
         signal_timestamp=None,
-        broker_order_id=None,
+        broker_order_id="brk123",  # Was previously submitted to broker
     )
     order_store = RecordingOrderStore([stale_stop])
     audit_store = RecordingAuditEventStore()
