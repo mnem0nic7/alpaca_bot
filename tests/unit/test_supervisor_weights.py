@@ -557,9 +557,11 @@ def test_effective_equity_uses_full_account_equity_scaled_by_confidence() -> Non
 def test_low_confidence_strategy_receives_floor_equity() -> None:
     """A sole strategy with no Sharpe history should receive floor-scaled equity."""
     entries_disabled_flags: list[bool] = []
+    recorded_equities: list[float] = []
 
-    def fake_cycle_runner(*, entries_disabled, **kwargs):
+    def fake_cycle_runner(*, entries_disabled, equity, **kwargs):
         entries_disabled_flags.append(entries_disabled)
+        recorded_equities.append(equity)
         return SimpleNamespace(intents=[])
 
     settings = _make_settings(
@@ -569,9 +571,50 @@ def test_low_confidence_strategy_receives_floor_equity() -> None:
     # No preloaded weights → _update_session_weights computes equal weights,
     # all sharpes default to 0.0 → all-zero case → all strategies get floor (0.60).
     # Single breakout strategy → not disabled (0.60 >= floor 0.60 → in score dict).
-    supervisor, _ = _make_supervisor(settings=settings)
+    supervisor, _ = _make_supervisor(settings=settings, cycle_runner=fake_cycle_runner)
     supervisor.run_cycle_once(now=lambda: _NOW)
 
     assert all(not d for d in entries_disabled_flags), (
         f"Unexpected entries disabled: {entries_disabled_flags}"
     )
+    # Floor is 0.60 with all-zero Sharpes (no history) → confidence_score = 0.60
+    # effective_equity = 10000 * 0.60 = 6000
+    assert recorded_equities, "cycle_runner was never called"
+    assert max(recorded_equities) == pytest.approx(6000.0)
+
+
+def test_strategy_below_confidence_floor_has_entries_disabled() -> None:
+    """When a strategy's score is None (below floor), entries must be disabled."""
+    entries_disabled_flags: list[bool] = []
+    recorded_equities: list[float] = []
+
+    def fake_cycle_runner(*, entries_disabled, equity, **kwargs):
+        entries_disabled_flags.append(entries_disabled)
+        recorded_equities.append(equity)
+        return SimpleNamespace(intents=[])
+
+    settings = _make_settings(
+        CONFIDENCE_FLOOR="0.50",
+        MAX_OPEN_POSITIONS="3",
+    )
+    supervisor, _ = _make_supervisor(
+        settings=settings,
+        cycle_runner=fake_cycle_runner,
+    )
+
+    # Pre-populate _session_capital_weights so the weight update block is skipped.
+    # Also pre-populate _session_sharpes with an empty dict — breakout is absent,
+    # so compute_confidence_scores({}, 0.50) returns {} (early-exit for empty sharpes).
+    # Then session_confidence_scores.get("breakout") returns None, triggering the None branch.
+    supervisor._session_equity_baseline[_SESSION_DATE] = 10_000.0
+    supervisor._session_capital_weights[_SESSION_DATE] = {"breakout": 1.0}
+    supervisor._session_sharpes[_SESSION_DATE] = {}  # breakout absent → None from get()
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert len(entries_disabled_flags) >= 1, "cycle_runner was never called"
+    assert entries_disabled_flags[0] is True, (
+        "Strategy absent from confidence scores should have entries disabled"
+    )
+    # equity = account.equity * confidence_floor (fallback for None case)
+    assert recorded_equities[0] == pytest.approx(10_000.0 * 0.50)

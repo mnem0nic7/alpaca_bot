@@ -700,14 +700,15 @@ class RuntimeSupervisor:
                         and not _is_extended
                     )
                 )
-                if strategy_entries_disabled:
-                    entries_disabled_strategies.add(strategy_name)
-
                 confidence_score = session_confidence_scores.get(strategy_name)
                 if confidence_score is None:
                     # Strategy's Sharpe rank is below the confidence floor — disable entries
                     strategy_entries_disabled = True
                     confidence_score = confidence_floor  # used for sizing (entries disabled anyway)
+
+                if strategy_entries_disabled:
+                    entries_disabled_strategies.add(strategy_name)
+
                 effective_equity = account.equity * confidence_score
                 cycle_result = self._cycle_runner(
                     settings=self.settings,
