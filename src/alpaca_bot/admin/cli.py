@@ -12,6 +12,8 @@ from alpaca_bot.notifications.factory import build_notifier
 from alpaca_bot.storage import (
     AuditEvent,
     AuditEventStore,
+    ConfidenceFloor,
+    ConfidenceFloorStore,
     OrderRecord,
     OrderStore,
     PositionRecord,
@@ -91,6 +93,16 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     )
     rw_parser.add_argument("--strategy-version", default=defaults.strategy_version)
     rw_parser.add_argument("--dry-run", action="store_true")
+
+    scf_parser = subparsers.add_parser("set-confidence-floor")
+    scf_parser.add_argument(
+        "--mode",
+        choices=[mode.value for mode in TradingMode],
+        default=defaults.trading_mode.value,
+    )
+    scf_parser.add_argument("--strategy-version", default=defaults.strategy_version)
+    scf_parser.add_argument("--value", type=float, required=True)
+    scf_parser.add_argument("--reason", required=True)
 
     return parser
 
@@ -332,6 +344,7 @@ def main(
     order_store_factory: Callable[[ConnectionProtocol], OrderStore] = OrderStore,
     strategy_weight_store_factory: Callable[[ConnectionProtocol], StrategyWeightStore] = StrategyWeightStore,
     strategy_flag_store_factory: Callable[[ConnectionProtocol], StrategyFlagStore] = StrategyFlagStore,
+    confidence_floor_store_factory: Callable[[ConnectionProtocol], ConfidenceFloorStore] = ConfidenceFloorStore,
 ) -> int:
     parsed_argv = list(sys.argv[1:] if argv is None else argv)
     if settings is not None:
@@ -425,6 +438,18 @@ def main(
                 stdout=stdout or sys.stdout,
                 weight_store=strategy_weight_store_factory(connection),
                 flag_store=strategy_flag_store_factory(connection),
+            )
+        elif args.command == "set-confidence-floor":
+            output = _run_set_confidence_floor(
+                connection=connection,
+                event_store=audit_store,
+                floor_store=confidence_floor_store_factory(connection),
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                value=args.value,
+                reason=args.reason,
+                now=timestamp,
+                stdout=stdout or sys.stdout,
             )
         else:
             command_reason = getattr(args, "reason", None)
@@ -709,6 +734,70 @@ def _run_reset_weights_equal(
         f" mode={trading_mode.value} version={strategy_version}",
         file=stdout,
     )
+
+
+def _run_set_confidence_floor(
+    *,
+    connection: ConnectionProtocol,
+    event_store: AuditEventStore,
+    floor_store: ConfidenceFloorStore,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    value: float,
+    reason: str,
+    now: datetime,
+    stdout: TextIO,
+) -> str:
+    if not (0.0 <= value <= 1.0):
+        import sys as _sys
+        print(
+            f"Error: --value must be between 0.0 and 1.0 (got {value})",
+            file=_sys.stderr,
+        )
+        raise SystemExit(1)
+
+    existing = floor_store.load(
+        trading_mode=trading_mode,
+        strategy_version=strategy_version,
+    )
+    previous_value = existing.floor_value if existing is not None else None
+    equity_high_watermark = existing.equity_high_watermark if existing is not None else 0.0
+
+    rec = ConfidenceFloor(
+        trading_mode=trading_mode,
+        strategy_version=strategy_version,
+        floor_value=value,
+        manual_floor_baseline=value,
+        equity_high_watermark=equity_high_watermark,
+        set_by="operator",
+        reason=reason,
+        updated_at=now,
+    )
+    floor_store.upsert(rec, commit=False)
+    event_store.append(
+        AuditEvent(
+            event_type="confidence_floor_manual_set",
+            payload={
+                "value": value,
+                "reason": reason,
+                "previous_value": previous_value,
+                "timestamp": now.isoformat(),
+            },
+            created_at=now,
+        ),
+        commit=False,
+    )
+    connection.commit()
+    msg = (
+        f"confidence_floor set"
+        f" mode={trading_mode.value}"
+        f" version={strategy_version}"
+        f" floor={value}"
+        f" previous={previous_value}"
+        f" reason={reason}"
+    )
+    print(msg, file=stdout)
+    return msg
 
 
 def _make_default_broker(settings: Settings) -> object:
