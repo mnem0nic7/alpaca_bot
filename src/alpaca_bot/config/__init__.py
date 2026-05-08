@@ -107,6 +107,7 @@ class Settings:
     extended_hours_flatten_time: time = time(19, 45)
     extended_hours_limit_offset_pct: float = 0.001
     extended_hours_max_spread_pct: float = 0.01
+    extended_hours_signal_max_age_minutes: int = 60
     vwap_dip_threshold_pct: float = 0.015
     gap_threshold_pct: float = 0.02
     gap_volume_threshold: float = 2.0
@@ -257,6 +258,9 @@ class Settings:
             ),
             extended_hours_max_spread_pct=float(
                 values.get("EXTENDED_HOURS_MAX_SPREAD_PCT", "0.01")
+            ),
+            extended_hours_signal_max_age_minutes=int(
+                values.get("EXTENDED_HOURS_SIGNAL_MAX_AGE_MINUTES", "60")
             ),
             vwap_dip_threshold_pct=float(
                 values.get("VWAP_DIP_THRESHOLD_PCT", "0.015")

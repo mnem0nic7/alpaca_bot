@@ -155,6 +155,19 @@ def evaluate_cycle(
                 continue
 
         if is_extended:
+            if position.stop_price > 0 and latest_bar.close <= position.stop_price:
+                intents.append(
+                    CycleIntent(
+                        intent_type=CycleIntentType.EXIT,
+                        symbol=position.symbol,
+                        timestamp=now,
+                        reason="stop_breach_extended_hours",
+                        limit_price=round(
+                            latest_bar.close * (1 - settings.extended_hours_limit_offset_pct), 2
+                        ),
+                        strategy_name=strategy_name,
+                    )
+                )
             continue
 
         position_age_s = (
@@ -511,6 +524,11 @@ def evaluate_cycle(
                         -1,
                     )
                     if signal_index < 0:
+                        continue
+                    signal_bar_age_s = (
+                        now - bars[signal_index].timestamp.astimezone(timezone.utc)
+                    ).total_seconds()
+                    if signal_bar_age_s > settings.extended_hours_signal_max_age_minutes * 60:
                         continue
                 else:
                     signal_index = len(bars) - 1

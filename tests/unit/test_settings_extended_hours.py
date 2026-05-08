@@ -122,3 +122,13 @@ def test_extended_hours_max_spread_pct_must_be_at_least_max_spread_pct():
             "MAX_SPREAD_PCT": "0.01",
             "EXTENDED_HOURS_MAX_SPREAD_PCT": "0.005",  # stricter than regular — invalid
         })
+
+
+def test_extended_hours_signal_max_age_minutes_defaults_to_60():
+    s = Settings.from_env(_base())
+    assert s.extended_hours_signal_max_age_minutes == 60
+
+
+def test_extended_hours_signal_max_age_minutes_parses_from_env():
+    s = Settings.from_env({**_base(), "EXTENDED_HOURS_SIGNAL_MAX_AGE_MINUTES": "90"})
+    assert s.extended_hours_signal_max_age_minutes == 90

@@ -227,6 +227,10 @@ def dispatch_pending_orders(
             ):
                 # Cancel failed — leave stop as pending_submit for next cycle retry.
                 continue
+        if order.intent_type == "stop" and session_type is not None:
+            from alpaca_bot.strategy.session import SessionType as _ST
+            if session_type in (_ST.PRE_MARKET, _ST.AFTER_HOURS):
+                continue  # Alpaca rejects stops during extended hours; submit at regular-session open
         with lock_ctx:
             try:
                 runtime.order_store.save(

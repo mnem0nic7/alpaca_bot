@@ -190,7 +190,9 @@ def test_no_session_type_defaults_to_regular_behaviour():
 
 def test_afterhours_entry_not_blocked_by_stale_bars():
     """Entries must be possible during afterhours even with 2.5-hour-old bars."""
-    settings = _settings()
+    # Set a large max-age so the staleness guard does not interfere; this test
+    # specifically verifies the bar-age check in the position loop is bypassed.
+    settings = _settings(EXTENDED_HOURS_SIGNAL_MAX_AGE_MINUTES="180")
     # 6pm ET = 22:00 UTC; bar from 3:30pm ET = 19:30 UTC → 2.5h old → fails 30-min check
     # Bar is at ENTRY_WINDOW_END (15:30 ET) so signal_index walk-back (Task 5) finds it.
     now = datetime(2026, 4, 28, 22, 0, tzinfo=timezone.utc)
@@ -263,6 +265,7 @@ def test_afterhours_spread_filter_uses_extended_threshold():
         EXTENDED_HOURS_MAX_SPREAD_PCT="0.01",
         ENABLE_SPREAD_FILTER="true",
         MAX_SPREAD_PCT="0.002",
+        EXTENDED_HOURS_SIGNAL_MAX_AGE_MINUTES="180",  # bar is 2.5h old; not testing staleness here
     )
     # 0.5% spread: blocked by regular 0.2% threshold, allowed by extended 1% threshold
     class FakeQuote:
@@ -342,7 +345,7 @@ def test_position_bar_age_check_bypassed_in_after_hours():
 
 def test_afterhours_signal_uses_last_in_window_bar():
     """During extended hours, signal_evaluator must receive the last bar within ENTRY_WINDOW_END."""
-    settings = _settings()  # ENTRY_WINDOW_END=15:30
+    settings = _settings(EXTENDED_HOURS_SIGNAL_MAX_AGE_MINUTES="180")  # ENTRY_WINDOW_END=15:30
     now = datetime(2026, 4, 28, 22, 0, tzinfo=timezone.utc)  # 6pm ET
 
     # Two bars: 3:30pm ET (within ENTRY_WINDOW_END=15:30) and 3:45pm ET (past it)
@@ -420,3 +423,146 @@ def test_pre_market_signal_index_uses_last_bar():
     assert seen_signal_index[0] == 0, (
         "PRE_MARKET must use signal_index=len(bars)-1 (no REGULAR walk-back)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Stale-signal staleness guard (Bug 1 fix)
+# ---------------------------------------------------------------------------
+
+def test_stale_ah_signal_rejected_when_bar_age_exceeds_threshold():
+    """Signal bar older than EXTENDED_HOURS_SIGNAL_MAX_AGE_MINUTES must suppress the entry."""
+    # Bar at 3:30pm ET (19:30 UTC), now at 6pm ET (22:00 UTC) = 150 min > 60 min threshold.
+    settings = _settings(EXTENDED_HOURS_SIGNAL_MAX_AGE_MINUTES="60")
+    now = datetime(2026, 4, 28, 22, 0, tzinfo=timezone.utc)
+    old_bar = _bar("AAPL", close=105.0, ts=datetime(2026, 4, 28, 19, 30, tzinfo=timezone.utc))
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [old_bar]},
+        daily_bars_by_symbol={"AAPL": [old_bar]},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        session_type=SessionType.AFTER_HOURS,
+        signal_evaluator=lambda **kwargs: EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=105.1,
+            relative_volume=2.0,
+            stop_price=103.0,
+            limit_price=105.2,
+            initial_stop_price=103.0,
+        ),
+    )
+    entries = [i for i in result.intents if i.intent_type is CycleIntentType.ENTRY]
+    assert entries == [], "Signal bar 150 min old must be rejected (threshold=60 min)"
+
+
+def test_fresh_ah_signal_fires_within_threshold():
+    """Signal bar within EXTENDED_HOURS_SIGNAL_MAX_AGE_MINUTES must not be rejected."""
+    # Bar at 3:30pm ET (19:30 UTC), now at 4:15pm ET (20:15 UTC) = 45 min < 60 min threshold.
+    settings = _settings(EXTENDED_HOURS_SIGNAL_MAX_AGE_MINUTES="60")
+    now = datetime(2026, 4, 28, 20, 15, tzinfo=timezone.utc)
+    fresh_bar = _bar("AAPL", close=105.0, ts=datetime(2026, 4, 28, 19, 30, tzinfo=timezone.utc))
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [fresh_bar]},
+        daily_bars_by_symbol={"AAPL": [fresh_bar]},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        session_type=SessionType.AFTER_HOURS,
+        signal_evaluator=lambda **kwargs: EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=105.1,
+            relative_volume=2.0,
+            stop_price=103.0,
+            limit_price=105.2,
+            initial_stop_price=103.0,
+        ),
+    )
+    entries = [i for i in result.intents if i.intent_type is CycleIntentType.ENTRY]
+    assert entries, "Signal bar 45 min old must fire when threshold=60 min"
+
+
+# ---------------------------------------------------------------------------
+# Soft-stop EXIT during extended hours (Bug 2B fix)
+# ---------------------------------------------------------------------------
+
+def test_soft_stop_exit_emitted_when_close_breaches_stop_during_ah():
+    """close <= stop_price during AFTER_HOURS must emit EXIT(stop_breach_extended_hours)."""
+    settings = _settings()
+    now = datetime(2026, 4, 28, 21, 0, tzinfo=timezone.utc)  # 5pm ET
+    position = _position(stop_price=95.0)
+    bar = _bar("AAPL", close=94.0, ts=now)  # close < stop_price
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+        session_type=SessionType.AFTER_HOURS,
+    )
+    exits = [i for i in result.intents if i.intent_type is CycleIntentType.EXIT]
+    assert len(exits) == 1
+    assert exits[0].reason == "stop_breach_extended_hours"
+    assert exits[0].limit_price == pytest.approx(round(94.0 * (1 - 0.001), 2), rel=1e-5)
+
+
+def test_no_soft_stop_exit_when_close_above_stop_price_during_ah():
+    """close > stop_price during AFTER_HOURS must not emit EXIT."""
+    settings = _settings()
+    now = datetime(2026, 4, 28, 21, 0, tzinfo=timezone.utc)  # 5pm ET
+    position = _position(stop_price=95.0)
+    bar = _bar("AAPL", close=100.0, ts=now)  # close > stop_price
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+        session_type=SessionType.AFTER_HOURS,
+    )
+    exits = [i for i in result.intents if i.intent_type is CycleIntentType.EXIT]
+    assert exits == [], "No EXIT emitted when price is above stop during extended hours"
+
+
+def test_no_soft_stop_exit_when_stop_price_zero_during_ah():
+    """stop_price=0 during AFTER_HOURS must not emit EXIT (position has no stop set)."""
+    settings = _settings()
+    now = datetime(2026, 4, 28, 21, 0, tzinfo=timezone.utc)  # 5pm ET
+    position = _position(stop_price=0.0)
+    bar = _bar("AAPL", close=50.0, ts=now)
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+        session_type=SessionType.AFTER_HOURS,
+    )
+    exits = [i for i in result.intents if i.intent_type is CycleIntentType.EXIT]
+    assert exits == [], "stop_price=0 must not trigger soft-stop EXIT"

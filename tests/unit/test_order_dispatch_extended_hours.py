@@ -169,3 +169,81 @@ def test_after_hours_uses_limit_entry():
         session_type=SessionType.AFTER_HOURS,
     )
     assert broker.calls[0][0] == "limit_entry"
+
+
+def _pending_stop_order() -> OrderRecord:
+    return OrderRecord(
+        client_order_id="test:v1:2026-04-28:AAPL:stop:2026-04-28T14:00:00+00:00",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=10,
+        trading_mode="paper",
+        strategy_version="v1",
+        strategy_name="breakout",
+        created_at=datetime(2026, 4, 28, 14, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 28, 14, 0, tzinfo=timezone.utc),
+        stop_price=95.0,
+        limit_price=None,
+        initial_stop_price=95.0,
+        signal_timestamp=datetime(2026, 4, 28, 14, 0, tzinfo=timezone.utc),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stop order dispatch: AH/PM skip (Bug 2A fix)
+# ---------------------------------------------------------------------------
+
+def test_stop_order_skipped_during_after_hours():
+    """Stop orders must be left pending_submit during AFTER_HOURS — Alpaca rejects them."""
+    settings = _settings()
+    runtime, saved, audits = _fake_runtime([_pending_stop_order()])
+    broker = _fake_broker()
+    now = datetime(2026, 4, 28, 21, 0, tzinfo=timezone.utc)  # 5pm ET = after hours
+
+    dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        now=now,
+        session_type=SessionType.AFTER_HOURS,
+    )
+    stop_calls = [c for c in broker.calls if c[0] == "stop_order"]
+    assert stop_calls == [], "broker.submit_stop_order must not be called during AFTER_HOURS"
+
+
+def test_stop_order_skipped_during_pre_market():
+    """Stop orders must be left pending_submit during PRE_MARKET — Alpaca rejects them."""
+    settings = _settings()
+    runtime, saved, audits = _fake_runtime([_pending_stop_order()])
+    broker = _fake_broker()
+    now = datetime(2026, 4, 28, 10, 0, tzinfo=timezone.utc)  # 6am ET = pre-market
+
+    dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        now=now,
+        session_type=SessionType.PRE_MARKET,
+    )
+    stop_calls = [c for c in broker.calls if c[0] == "stop_order"]
+    assert stop_calls == [], "broker.submit_stop_order must not be called during PRE_MARKET"
+
+
+def test_stop_order_submitted_normally_during_regular_session():
+    """Stop orders must reach the broker during a REGULAR session."""
+    settings = _settings()
+    runtime, saved, audits = _fake_runtime([_pending_stop_order()])
+    broker = _fake_broker()
+    now = datetime(2026, 4, 28, 14, 0, tzinfo=timezone.utc)  # 10am ET = regular
+
+    dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        now=now,
+        session_type=SessionType.REGULAR,
+    )
+    stop_calls = [c for c in broker.calls if c[0] == "stop_order"]
+    assert len(stop_calls) == 1, "broker.submit_stop_order must be called during REGULAR session"
