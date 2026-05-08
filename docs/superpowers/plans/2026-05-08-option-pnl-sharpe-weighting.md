@@ -34,23 +34,10 @@ Create `tests/unit/test_option_order_repository_pnl.py`:
 ```python
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
-
-import pytest
+from datetime import date
 
 from alpaca_bot.config import TradingMode
 from alpaca_bot.storage.repositories import OptionOrderRepository
-
-
-class _FakeConnection:
-    def __init__(self, rows=None):
-        self._rows = rows or []
-
-    def commit(self): pass
-    def rollback(self): pass
-
-    def cursor(self):
-        return _FakeCursor(self._rows)
 
 
 class _FakeCursor:
@@ -72,15 +59,14 @@ class _FakeCursor:
 
 
 def _repo(rows=None) -> tuple[OptionOrderRepository, _FakeCursor]:
-    conn = _FakeConnection(rows)
-    cursor = conn.cursor()
-    conn._cursor = cursor  # hold reference for param inspection
+    cursor = _FakeCursor(rows or [])
 
-    class _TrackingConn(_FakeConnection):
-        def cursor(self):
-            return cursor
+    class _Conn:
+        def commit(self): pass
+        def rollback(self): pass
+        def cursor(self): return cursor
 
-    return OptionOrderRepository(_TrackingConn(rows)), cursor
+    return OptionOrderRepository(_Conn()), cursor
 
 
 def test_returns_empty_when_no_closed_sells():
