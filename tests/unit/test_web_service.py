@@ -18,6 +18,7 @@ from alpaca_bot.web.service import (
     _mean_return_pct,
     _win_rate,
     load_audit_page,
+    load_confidence_floor_info,
     load_dashboard_snapshot,
     load_equity_chart_data,
     load_health_snapshot,
@@ -1508,9 +1509,6 @@ def test_load_dashboard_snapshot_populates_total_deployed_notional() -> None:
 # ---------------------------------------------------------------------------
 # load_confidence_floor_info
 # ---------------------------------------------------------------------------
-
-
-from alpaca_bot.web.service import load_confidence_floor_info
 
 
 def _make_confidence_floor_record(**overrides):

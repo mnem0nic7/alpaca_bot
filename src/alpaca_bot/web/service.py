@@ -736,7 +736,7 @@ def _parse_confidence_trigger(reason: str | None) -> str | None:
     lower = reason.lower()
     if "drawdown" in lower:
         return "drawdown"
-    if "volatility" in lower or "vol" in lower:
+    if "volatility" in lower or "vol " in lower:
         return "volatility"
     return None
 
@@ -744,8 +744,7 @@ def _parse_confidence_trigger(reason: str | None) -> str | None:
 def load_confidence_floor_info(
     *,
     settings: Settings,
-    confidence_floor_store: ConfidenceFloorStore | None = None,
-    connection: object = None,
+    confidence_floor_store: ConfidenceFloorStore,
 ) -> dict:
     """Load confidence floor data for dashboard display.
 
@@ -758,16 +757,9 @@ def load_confidence_floor_info(
       trigger           – "drawdown" | "volatility" | None (parsed from reason)
       no_record         – True if no DB record exists
     """
-    store = confidence_floor_store or (
-        ConfidenceFloorStore(connection) if connection is not None else None
-    )
-    record = (
-        store.load(
-            trading_mode=settings.trading_mode,
-            strategy_version=settings.strategy_version,
-        )
-        if store is not None
-        else None
+    record = confidence_floor_store.load(
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
     )
 
     if record is None:
