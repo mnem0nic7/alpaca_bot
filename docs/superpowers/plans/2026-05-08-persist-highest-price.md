@@ -581,6 +581,8 @@ def _make_supervisor(settings, position_store=None):
     module = import_module("alpaca_bot.runtime.supervisor")
     RuntimeSupervisor = module.RuntimeSupervisor
 
+    _position_store = position_store or _RecordingPositionStore()
+
     class _FakeRuntimeContext:
         connection = SimpleNamespace(commit=lambda: None, rollback=lambda: None)
         store_lock = None
@@ -594,7 +596,7 @@ def _make_supervisor(settings, position_store=None):
         strategy_weight_store = None
         option_order_store = None
         trading_status_store = SimpleNamespace(load=lambda **kw: None)
-        position_store = position_store or _RecordingPositionStore()
+        position_store = _position_store
         daily_session_state_store = SimpleNamespace(
             load=lambda **kw: None, save=lambda **kw: None, list_by_session=lambda **kw: []
         )
@@ -630,8 +632,7 @@ def test_apply_highest_price_updates_bar_high_exceeds_current():
     """When bar.high > position.highest_price: DB updated, returned list has new value."""
     settings = _make_settings()
     pstore = _RecordingPositionStore()
-    supervisor, = [_make_supervisor(settings, pstore)]
-    supervisor.runtime.position_store = pstore
+    supervisor = _make_supervisor(settings, pstore)
 
     position = _make_position(highest_price=3.00)
     bars = {"AAPL": [_make_bar(high=3.20)]}
@@ -650,7 +651,6 @@ def test_apply_highest_price_updates_bar_high_equal_no_update():
     settings = _make_settings()
     pstore = _RecordingPositionStore()
     supervisor = _make_supervisor(settings, pstore)
-    supervisor.runtime.position_store = pstore
 
     position = _make_position(highest_price=3.20)
     bars = {"AAPL": [_make_bar(high=3.20)]}
@@ -666,7 +666,6 @@ def test_apply_highest_price_updates_bar_high_lower_no_update():
     settings = _make_settings()
     pstore = _RecordingPositionStore()
     supervisor = _make_supervisor(settings, pstore)
-    supervisor.runtime.position_store = pstore
 
     position = _make_position(highest_price=3.20)
     bars = {"AAPL": [_make_bar(high=3.09)]}
@@ -682,7 +681,6 @@ def test_apply_highest_price_updates_no_bars_skipped():
     settings = _make_settings()
     pstore = _RecordingPositionStore()
     supervisor = _make_supervisor(settings, pstore)
-    supervisor.runtime.position_store = pstore
 
     position = _make_position(highest_price=3.00)
     bars = {}  # no bars for AAPL
@@ -711,7 +709,6 @@ def test_apply_highest_price_updates_store_lock_held():
     pstore.update_highest_price = recording_update
 
     supervisor = _make_supervisor(settings, pstore)
-    supervisor.runtime.position_store = pstore
     supervisor.runtime.store_lock = lock
 
     position = _make_position(highest_price=3.00)
@@ -912,7 +909,7 @@ Create `tests/unit/test_cycle_engine_highest_price.py`:
 ```python
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType, evaluate_cycle
@@ -943,8 +940,7 @@ def _make_settings(**overrides) -> Settings:
         "ENTRY_WINDOW_END": "15:30",
         "FLATTEN_TIME": "15:45",
         "PER_SYMBOL_LOSS_LIMIT_PCT": "0.0",
-        "BREAKEVEN_TRAIL_PCT": "0.002",
-        "BREAKEVEN_TRIGGER_PCT": "0.0025",
+        # BREAKEVEN_TRIGGER_PCT defaults to 0.0025, BREAKEVEN_TRAIL_PCT to 0.002
     }
     base.update(overrides)
     return Settings.from_env(base)
@@ -1019,20 +1015,19 @@ def test_breakeven_trail_uses_highest_price_not_current_bar():
     intraday_bars = {"AAPL": [historical_bar] * 19 + [current_bar]}
     daily_bars = {"AAPL": [daily_bar] * 60}
 
+    # session_type=None → is_extended=False inside engine (line 118 of engine.py)
     now = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
-    session_date = date(2026, 5, 1)
 
     result = evaluate_cycle(
         settings=settings,
-        timestamp=now,
-        session_date=session_date,
-        account_equity=10_000.0,
+        now=now,
+        equity=10_000.0,
         open_positions=[position],
         intraday_bars_by_symbol=intraday_bars,
         daily_bars_by_symbol=daily_bars,
-        entry_symbols=(),
-        is_entry_window=True,
-        is_extended=False,
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
     )
 
     update_intents = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
