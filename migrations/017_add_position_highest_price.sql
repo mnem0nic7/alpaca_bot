@@ -1,0 +1,2 @@
+ALTER TABLE positions
+    ADD COLUMN IF NOT EXISTS highest_price NUMERIC DEFAULT NULL;
