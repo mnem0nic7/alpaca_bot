@@ -43,16 +43,18 @@
 
 ```sql
 CREATE TABLE IF NOT EXISTS confidence_floor_store (
-    trading_mode     TEXT    NOT NULL,
-    strategy_version TEXT    NOT NULL,
-    floor_value      REAL    NOT NULL,
-    equity_high_watermark REAL NOT NULL DEFAULT 0.0,
-    set_by           TEXT    NOT NULL,
-    reason           TEXT    NOT NULL,
-    updated_at       TIMESTAMPTZ NOT NULL,
+    trading_mode          TEXT    NOT NULL,
+    strategy_version      TEXT    NOT NULL,
+    floor_value           REAL    NOT NULL,
+    manual_floor_baseline REAL    NOT NULL DEFAULT 0.25,
+    equity_high_watermark REAL    NOT NULL DEFAULT 0.0,
+    set_by                TEXT    NOT NULL,
+    reason                TEXT    NOT NULL,
+    updated_at            TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (trading_mode, strategy_version),
     CHECK (trading_mode IN ('paper', 'live')),
-    CHECK (floor_value >= 0.0 AND floor_value <= 1.0)
+    CHECK (floor_value >= 0.0 AND floor_value <= 1.0),
+    CHECK (manual_floor_baseline >= 0.0 AND manual_floor_baseline <= 1.0)
 );
 ```
 
@@ -127,7 +129,7 @@ class _FakeCursor:
             self._result = list(self._conn._rows)
         else:
             if "INSERT" in sql.upper():
-                self._conn._rows = [params[:7]]
+                self._conn._rows = [params[:8]]
 
     def fetchone(self):
         return self._result[0] if self._result else None
@@ -144,6 +146,7 @@ def _make_floor(**kwargs) -> ConfidenceFloor:
         trading_mode=TradingMode.PAPER,
         strategy_version="v1",
         floor_value=0.25,
+        manual_floor_baseline=0.25,
         equity_high_watermark=10000.0,
         set_by="operator",
         reason="test",
@@ -167,12 +170,13 @@ def test_confidence_floor_upsert_then_load() -> None:
     store.upsert(rec)
     # Simulate that the row is now in the fake DB
     conn._rows = [(
-        "paper", "v1", 0.40, 10000.0, "operator", "test",
+        "paper", "v1", 0.40, 0.25, 10000.0, "operator", "test",
         datetime(2026, 5, 8, 12, 0, tzinfo=timezone.utc),
     )]
     loaded = store.load(trading_mode=TradingMode.PAPER, strategy_version="v1")
     assert loaded is not None
     assert loaded.floor_value == pytest.approx(0.40)
+    assert loaded.manual_floor_baseline == pytest.approx(0.25)
     assert loaded.set_by == "operator"
     assert loaded.equity_high_watermark == pytest.approx(10000.0)
 
@@ -183,10 +187,10 @@ def test_confidence_floor_raises_stored_correctly() -> None:
     rec = _make_floor(floor_value=0.50, set_by="system", reason="drawdown trigger")
     store.upsert(rec)
     assert "INSERT" in conn._last_sql.upper()
-    # params: (trading_mode, strategy_version, floor_value, equity_high_watermark, set_by, reason, updated_at)
+    # params: (trading_mode, strategy_version, floor_value, manual_floor_baseline, equity_high_watermark, set_by, reason, updated_at)
     params = conn._last_params
     assert params[2] == pytest.approx(0.50)
-    assert params[4] == "system"
+    assert params[5] == "system"
 ```
 
 - [ ] **Step 2: Run tests — confirm they fail**
@@ -207,6 +211,7 @@ class ConfidenceFloor:
     trading_mode: TradingMode
     strategy_version: str
     floor_value: float
+    manual_floor_baseline: float  # last operator-set value; system raises floor_value but never this
     equity_high_watermark: float
     set_by: str  # 'system' | 'operator'
     reason: str
@@ -239,12 +244,14 @@ class ConfidenceFloorStore:
             """
             INSERT INTO confidence_floor_store (
                 trading_mode, strategy_version, floor_value,
-                equity_high_watermark, set_by, reason, updated_at
+                manual_floor_baseline, equity_high_watermark,
+                set_by, reason, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (trading_mode, strategy_version)
             DO UPDATE SET
                 floor_value = EXCLUDED.floor_value,
+                manual_floor_baseline = EXCLUDED.manual_floor_baseline,
                 equity_high_watermark = EXCLUDED.equity_high_watermark,
                 set_by = EXCLUDED.set_by,
                 reason = EXCLUDED.reason,
@@ -254,6 +261,7 @@ class ConfidenceFloorStore:
                 rec.trading_mode.value,
                 rec.strategy_version,
                 rec.floor_value,
+                rec.manual_floor_baseline,
                 rec.equity_high_watermark,
                 rec.set_by,
                 rec.reason,
@@ -269,7 +277,8 @@ class ConfidenceFloorStore:
             self._connection,
             """
             SELECT trading_mode, strategy_version, floor_value,
-                   equity_high_watermark, set_by, reason, updated_at
+                   manual_floor_baseline, equity_high_watermark,
+                   set_by, reason, updated_at
             FROM confidence_floor_store
             WHERE trading_mode = %s AND strategy_version = %s
             """,
@@ -281,10 +290,11 @@ class ConfidenceFloorStore:
             trading_mode=TradingMode(row[0]),
             strategy_version=row[1],
             floor_value=float(row[2]),
-            equity_high_watermark=float(row[3]),
-            set_by=row[4],
-            reason=row[5],
-            updated_at=row[6],
+            manual_floor_baseline=float(row[3]),
+            equity_high_watermark=float(row[4]),
+            set_by=row[5],
+            reason=row[6],
+            updated_at=row[7],
         )
 ```
 
@@ -695,20 +705,22 @@ def test_effective_equity_uses_full_account_equity_scaled_by_confidence() -> Non
     """With confidence score, sizing should use account.equity * confidence_score,
     not account.equity * strategy_weight (the old weight-shrunk approach)."""
     from alpaca_bot.storage import StrategyWeight
-    from datetime import datetime, timezone
 
     recorded_equities: list[float] = []
 
     def fake_cycle_runner(*, equity, **kwargs):
         recorded_equities.append(equity)
-        return SimpleNamespace(intents=[], signals_evaluated=0)
+        return SimpleNamespace(intents=[])
 
     settings = _make_settings(
         MAX_POSITION_PCT="0.015",
         MAX_OPEN_POSITIONS="3",
         CONFIDENCE_FLOOR="0.0",
     )
-    # Two strategies with different Sharpes: breakout=2.0, momentum=0.5
+    # Only breakout is active (only_breakout=True). Sharpe=2.0 → sole strategy
+    # gets confidence score 1.0 (single-strategy all-equal case → floor=0.0).
+    # Old behavior: equity = 10000 * weight (e.g. 0.80 → 8000).
+    # New behavior: equity = 10000 * 1.0 = 10000 (full equity, floor=0.0 → score=1.0).
     preloaded_weights = [
         StrategyWeight(
             strategy_name="breakout",
@@ -718,66 +730,38 @@ def test_effective_equity_uses_full_account_equity_scaled_by_confidence() -> Non
             sharpe=2.0,
             computed_at=datetime(_SESSION_DATE.year, _SESSION_DATE.month, _SESSION_DATE.day, 0, 0, tzinfo=timezone.utc),
         ),
-        StrategyWeight(
-            strategy_name="momentum",
-            trading_mode=TradingMode.PAPER,
-            strategy_version="v1",
-            weight=0.20,
-            sharpe=0.5,
-            computed_at=datetime(_SESSION_DATE.year, _SESSION_DATE.month, _SESSION_DATE.day, 0, 0, tzinfo=timezone.utc),
-        ),
     ]
     weight_store = _FakeWeightStore(preloaded=preloaded_weights)
-    rt = _make_runtime(weight_store=weight_store, cycle_runner=fake_cycle_runner)
-    supervisor = _make_supervisor(rt, settings=settings)
+    supervisor, _ = _make_supervisor(
+        settings=settings,
+        weight_store=weight_store,
+        cycle_runner=fake_cycle_runner,
+    )
     supervisor.run_cycle_once(now=_NOW)
 
-    # Old behavior: equities would be 0.80*10000=8000 and 0.20*10000=2000
-    # New behavior: equities are 10000 * confidence_score where scores are
-    # based on Sharpe percentile (0.0 floor → lowest gets 0.0, highest gets 1.0)
-    # With floor=0.0: momentum=0th percentile=0.0, breakout=1st percentile=1.0
-    # So equity for breakout=10000*1.0=10000, momentum=10000*0.0=0 (entries disabled)
-    # With floor=0.0, zero-score strategies still get entries disabled
-    # The key assertion: breakout gets full equity (10000), not weight-shrunk (8000)
     assert len(recorded_equities) >= 1
+    # Key assertion: full equity (10000), not weight-shrunk (8000)
     assert max(recorded_equities) == pytest.approx(10000.0)
 
 
-def test_low_confidence_strategy_has_entries_disabled() -> None:
-    """Strategies below the confidence floor should have entries disabled."""
-    from alpaca_bot.storage import StrategyWeight
-    from datetime import datetime, timezone
-
+def test_low_confidence_strategy_receives_floor_equity() -> None:
+    """A sole strategy with no Sharpe history should receive floor-scaled equity."""
     entries_disabled_flags: list[bool] = []
 
     def fake_cycle_runner(*, entries_disabled, **kwargs):
         entries_disabled_flags.append(entries_disabled)
-        return SimpleNamespace(intents=[], signals_evaluated=0)
+        return SimpleNamespace(intents=[])
 
     settings = _make_settings(
-        CONFIDENCE_FLOOR="0.60",  # high floor
+        CONFIDENCE_FLOOR="0.60",
         MAX_OPEN_POSITIONS="3",
     )
-    # momentum has Sharpe 0 (no history) → gets floor score (0.60) → passes gate
-    # breakout has Sharpe 2.0 → gets high score → also passes
-    # With floor=0.60, both pass since zero-Sharpe gets floor
-    preloaded_weights = [
-        StrategyWeight(
-            strategy_name="breakout",
-            trading_mode=TradingMode.PAPER,
-            strategy_version="v1",
-            weight=1.0,
-            sharpe=2.0,
-            computed_at=datetime(_SESSION_DATE.year, _SESSION_DATE.month, _SESSION_DATE.day, 0, 0, tzinfo=timezone.utc),
-        ),
-    ]
-    weight_store = _FakeWeightStore(preloaded=preloaded_weights)
-    rt = _make_runtime(weight_store=weight_store, cycle_runner=fake_cycle_runner)
-    supervisor = _make_supervisor(rt, settings=settings)
+    # No preloaded weights → _update_session_weights computes equal weights,
+    # all sharpes default to 0.0 → all-zero case → all strategies get floor (0.60).
+    # Single breakout strategy → not disabled (0.60 >= floor 0.60 → in score dict).
+    supervisor, _ = _make_supervisor(settings=settings)
     supervisor.run_cycle_once(now=_NOW)
 
-    # No entries disabled unexpectedly for strategies with Sharpe data
-    # (breakout passes since it's the only strategy and gets score=floor=0.60)
     assert all(not d for d in entries_disabled_flags), (
         f"Unexpected entries disabled: {entries_disabled_flags}"
     )
@@ -869,13 +853,12 @@ if session_date not in self._session_capital_weights:
 Then, immediately after (before the strategy loop), add:
 
 ```python
-from alpaca_bot.risk.confidence import compute_confidence_scores
 confidence_floor = self._load_confidence_floor()
 session_sharpes = self._session_sharpes.get(session_date, {})
 session_confidence_scores = compute_confidence_scores(session_sharpes, confidence_floor)
 ```
 
-(The import can go at the top of the file instead — preferred.)
+(`compute_confidence_scores` is imported at the top of the file in step 7.)
 
 - [ ] **Step 5: Replace weight-shrunk equity with confidence-based equity in the strategy loop**
 
@@ -967,11 +950,12 @@ from alpaca_bot.config import TradingMode
 from alpaca_bot.storage.models import ConfidenceFloor
 
 
-def _make_floor(floor_value: float, watermark: float) -> ConfidenceFloor:
+def _make_floor(floor_value: float, watermark: float, manual_baseline: float | None = None) -> ConfidenceFloor:
     return ConfidenceFloor(
         trading_mode=TradingMode.PAPER,
         strategy_version="v1",
         floor_value=floor_value,
+        manual_floor_baseline=manual_baseline if manual_baseline is not None else floor_value,
         equity_high_watermark=watermark,
         set_by="system",
         reason="test",
@@ -993,14 +977,13 @@ class _FakeFloorStore:
 
 
 def _make_supervisor_with_floor(settings_overrides=None):
-    """Helper that imports and instantiates RuntimeSupervisor with floor store injected."""
-    from tests.unit.test_supervisor_weights import _make_settings, _make_runtime, _make_supervisor
+    """Return (supervisor, floor_store) with floor store injected into _FakeRuntimeContext."""
+    from tests.unit.test_supervisor_weights import _make_settings, _make_supervisor
     overrides = settings_overrides or {}
     settings = _make_settings(**overrides)
     floor_store = _FakeFloorStore()
-    rt = _make_runtime()
-    rt.confidence_floor_store = floor_store
-    sup = _make_supervisor(rt, settings=settings)
+    sup, _FakeRt = _make_supervisor(settings=settings)
+    _FakeRt.confidence_floor_store = floor_store
     return sup, floor_store
 
 
@@ -1013,8 +996,9 @@ def test_drawdown_trigger_raises_floor() -> None:
     })
     now = datetime(2026, 5, 8, 14, 30, tzinfo=timezone.utc)
 
-    # Watermark was 10000, current equity is 9000 → 10% drop, exceeds 5% threshold
-    rec = _make_floor(floor_value=0.25, watermark=10000.0)
+    # Watermark was 10000, current equity is 9000 → 10% drop, exceeds 5% threshold.
+    # manual_baseline=0.25 (same as floor_value so it was operator-set initially).
+    rec = _make_floor(floor_value=0.25, watermark=10000.0, manual_baseline=0.25)
     floor_store._rec = rec
 
     sup._check_and_update_floor_triggers(
@@ -1026,6 +1010,7 @@ def test_drawdown_trigger_raises_floor() -> None:
     assert len(floor_store.upserted) == 1
     raised = floor_store.upserted[0]
     assert raised.floor_value == pytest.approx(0.35)  # 0.25 + 0.10
+    assert raised.manual_floor_baseline == pytest.approx(0.25)  # unchanged by auto-raise
     assert raised.set_by == "system"
     assert "drawdown" in raised.reason.lower()
 
@@ -1077,7 +1062,7 @@ def test_floor_capped_at_0_80() -> None:
         "FLOOR_RAISE_STEP": "0.10",
         "CONFIDENCE_FLOOR": "0.25",
     })
-    rec = _make_floor(floor_value=0.75, watermark=10000.0)
+    rec = _make_floor(floor_value=0.75, watermark=10000.0, manual_baseline=0.25)
     floor_store._rec = rec
 
     sup._check_and_update_floor_triggers(
@@ -1089,16 +1074,38 @@ def test_floor_capped_at_0_80() -> None:
     assert floor_store.upserted[0].floor_value == pytest.approx(0.80)  # capped at 0.80
 
 
-def test_vol_trigger_raises_floor() -> None:
-    from alpaca_bot.domain import Bar
-    from datetime import date
-
+def test_floor_clears_to_manual_baseline_when_triggers_resolve() -> None:
+    """When drawdown recovers, floor_value returns to manual_floor_baseline."""
     sup, floor_store = _make_supervisor_with_floor({
-        "VOL_RAISE_THRESHOLD": "0.02",  # 2% daily vol threshold
+        "DRAWDOWN_RAISE_PCT": "0.05",
         "FLOOR_RAISE_STEP": "0.10",
         "CONFIDENCE_FLOOR": "0.25",
     })
-    rec = _make_floor(floor_value=0.25, watermark=10000.0)
+    # floor was auto-raised to 0.40; operator's baseline is 0.25.
+    # Equity recovered to 9800 (from watermark 10000) → drawdown = 2% < 5% threshold/2.
+    rec = _make_floor(floor_value=0.40, watermark=10000.0, manual_baseline=0.25)
+    floor_store._rec = rec
+
+    sup._check_and_update_floor_triggers(
+        current_equity=9800.0,  # recovered enough (drawdown < 2.5%)
+        now=datetime(2026, 5, 8, 14, 30, tzinfo=timezone.utc),
+        daily_bars_for_vol=[],
+    )
+
+    assert len(floor_store.upserted) == 1
+    cleared = floor_store.upserted[0]
+    assert cleared.floor_value == pytest.approx(0.25)  # reset to manual baseline
+
+
+def test_vol_trigger_raises_floor() -> None:
+    from alpaca_bot.domain import Bar
+
+    sup, floor_store = _make_supervisor_with_floor({
+        "VOL_RAISE_THRESHOLD": "0.02",  # 2% average daily move threshold
+        "FLOOR_RAISE_STEP": "0.10",
+        "CONFIDENCE_FLOOR": "0.25",
+    })
+    rec = _make_floor(floor_value=0.25, watermark=10000.0, manual_baseline=0.25)
     floor_store._rec = rec
 
     # Build 6 daily bars with ~3% daily moves (exceeds 2% threshold)
@@ -1159,6 +1166,7 @@ def _check_and_update_floor_triggers(
         )
 
     current_floor = rec.floor_value if rec is not None else self.settings.confidence_floor
+    manual_baseline = rec.manual_floor_baseline if rec is not None else self.settings.confidence_floor
     watermark = rec.equity_high_watermark if rec is not None else current_equity
     new_floor = current_floor
     reason_parts: list[str] = []
@@ -1166,14 +1174,20 @@ def _check_and_update_floor_triggers(
     # Update high-watermark if equity improved
     new_watermark = max(watermark, current_equity)
 
-    # Drawdown trigger
+    # Drawdown trigger — raises above drawdown_raise_pct; stays raised until < half that
+    # (hysteresis prevents flapping near the threshold)
     if watermark > 0:
         drawdown_pct = (watermark - current_equity) / watermark
+        clear_threshold = self.settings.drawdown_raise_pct / 2
+        already_raised = current_floor > manual_baseline + 1e-9
         if drawdown_pct > self.settings.drawdown_raise_pct:
             new_floor = min(current_floor + self.settings.floor_raise_step, 0.80)
             reason_parts.append(f"drawdown {drawdown_pct:.1%}")
+        elif already_raised and drawdown_pct > clear_threshold:
+            # Still in the hysteresis band — keep the raise alive
+            reason_parts.append(f"drawdown hysteresis {drawdown_pct:.1%}")
 
-    # Volatility trigger
+    # Volatility trigger — raises above vol_raise_threshold; clears below 80% of that
     if daily_bars_for_vol and len(daily_bars_for_vol) >= 6:
         closes = [bar.close for bar in daily_bars_for_vol[-6:]]
         returns = [
@@ -1181,11 +1195,27 @@ def _check_and_update_floor_triggers(
             for i in range(1, len(closes))
         ]
         daily_vol = sum(returns) / len(returns)
+        vol_clear_threshold = self.settings.vol_raise_threshold * 0.8
+        already_raised = current_floor > manual_baseline + 1e-9
         if daily_vol > self.settings.vol_raise_threshold:
             new_floor = min(
                 max(new_floor, current_floor + self.settings.floor_raise_step), 0.80
             )
             reason_parts.append(f"vol {daily_vol:.2%}")
+        elif already_raised and daily_vol > vol_clear_threshold:
+            # Still in the hysteresis band — keep the raise alive
+            reason_parts.append(f"vol hysteresis {daily_vol:.2%}")
+
+    # Auto-clear: when no trigger fired and floor was previously auto-raised,
+    # restore it to the last operator-set baseline (hysteresis applied above).
+    # The drawdown trigger uses stricter clear threshold: < drawdown_raise_pct / 2.
+    # The vol trigger uses: < vol_raise_threshold * 0.8.
+    # We only clear if *no* trigger is currently active (reason_parts is empty).
+    if not reason_parts and new_floor > manual_baseline + 1e-9:
+        new_floor = manual_baseline
+        reason_parts_for_clear = "all triggers cleared"
+    else:
+        reason_parts_for_clear = None
 
     floor_changed = abs(new_floor - current_floor) > 1e-9
     watermark_changed = abs(new_watermark - watermark) > 1e-9
@@ -1193,11 +1223,16 @@ def _check_and_update_floor_triggers(
     if not floor_changed and not watermark_changed:
         return
 
-    reason = f"auto-raised: {', '.join(reason_parts)}" if reason_parts else "watermark update"
+    reason = (
+        f"auto-raised: {', '.join(reason_parts)}"
+        if reason_parts
+        else (reason_parts_for_clear or "watermark update")
+    )
     updated = ConfidenceFloor(
         trading_mode=self.settings.trading_mode,
         strategy_version=self.settings.strategy_version,
         floor_value=new_floor,
+        manual_floor_baseline=manual_baseline,  # never changed by system
         equity_high_watermark=new_watermark,
         set_by="system",
         reason=reason,
@@ -1208,8 +1243,13 @@ def _check_and_update_floor_triggers(
         floor_store.upsert(updated)
 
     if floor_changed:
+        event_type = (
+            "confidence_floor_auto_cleared"
+            if reason_parts_for_clear
+            else "confidence_floor_auto_raised"
+        )
         self._append_audit(AuditEvent(
-            event_type="confidence_floor_auto_raised",
+            event_type=event_type,
             payload={
                 "old_floor": current_floor,
                 "new_floor": new_floor,
@@ -1369,17 +1409,25 @@ def compute_losing_day_streaks(
     return streaks
 ```
 
-- [ ] **Step 3: Add losing streak check in `supervisor.py`**
+- [ ] **Step 3: Add `_strategy_streak_excluded` to `RuntimeSupervisor.__init__`**
+
+In `src/alpaca_bot/runtime/supervisor.py`, in `RuntimeSupervisor.__init__`, add alongside `_session_capital_weights` and `_session_sharpes`:
+
+```python
+self._strategy_streak_excluded: set[str] = set()
+```
+
+- [ ] **Step 4: Add losing streak check in `supervisor.py`**
 
 In `run_cycle_once`, after the confidence score computation (after step 4 of Task 5), add:
 
 ```python
-# Per-strategy losing streak exclusion
-# Reuse trade_rows already fetched in _update_session_weights (stored in sharpes).
-# If any strategy has >= losing_streak_n consecutive losing days, disable its entries.
+# Per-strategy losing streak exclusion.
+# Any strategy with >= losing_streak_n consecutive losing days has entries disabled
+# until it logs a winning day.  The _strategy_streak_excluded set tracks state
+# across cycles so entry/exit audit events fire exactly once per transition.
 if self.settings.losing_streak_n > 0 and session_sharpes:
     from alpaca_bot.risk.weighting import compute_losing_day_streaks
-    # Fetch trade rows for streak analysis (same date range as weight computation)
     _streak_lock = getattr(self.runtime, "store_lock", None)
     with _streak_lock if _streak_lock is not None else contextlib.nullcontext():
         _streak_rows = self.runtime.order_store.list_trade_pnl_by_strategy(
@@ -1396,6 +1444,24 @@ if self.settings.losing_streak_n > 0 and session_sharpes:
     }
 else:
     _losing_streak_excluded: set[str] = set()
+
+# Emit audit events for transitions: newly excluded strategies and newly restored ones.
+for name in _losing_streak_excluded - self._strategy_streak_excluded:
+    self._append_audit(AuditEvent(
+        event_type="strategy_confidence_excluded",
+        payload={
+            "strategy_name": name,
+            "reason": f"losing_streak >= {self.settings.losing_streak_n}",
+        },
+        created_at=timestamp,
+    ))
+for name in self._strategy_streak_excluded - _losing_streak_excluded:
+    self._append_audit(AuditEvent(
+        event_type="strategy_confidence_restored",
+        payload={"strategy_name": name},
+        created_at=timestamp,
+    ))
+self._strategy_streak_excluded = _losing_streak_excluded
 ```
 
 Then in the per-strategy loop, after computing `confidence_score`, add:
@@ -1403,19 +1469,7 @@ Then in the per-strategy loop, after computing `confidence_score`, add:
 ```python
 if strategy_name in _losing_streak_excluded:
     strategy_entries_disabled = True
-    if not getattr(self, f"_streak_logged_{strategy_name}", False):
-        setattr(self, f"_streak_logged_{strategy_name}", True)
-        self._append_audit(AuditEvent(
-            event_type="strategy_confidence_excluded",
-            payload={
-                "strategy_name": strategy_name,
-                "reason": f"losing_streak >= {self.settings.losing_streak_n}",
-            },
-            created_at=timestamp,
-        ))
 ```
-
-Note: The per-strategy exclusion logging uses a simple instance flag to avoid spamming one audit event per cycle. This is sufficient for the MVP.
 
 - [ ] **Step 4: Run tests — confirm they pass**
 
