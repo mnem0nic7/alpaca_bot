@@ -1407,6 +1407,7 @@ class StrategyWeightStore:
         trading_mode: TradingMode,
         strategy_version: str,
         computed_at: datetime,
+        commit: bool = True,
     ) -> None:
         try:
             for strategy_name, weight in weights.items():
@@ -1434,7 +1435,8 @@ class StrategyWeightStore:
                     ),
                     commit=False,
                 )
-            self._connection.commit()
+            if commit:
+                self._connection.commit()
         except Exception:
             try:
                 self._connection.rollback()
