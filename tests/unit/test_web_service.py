@@ -1503,3 +1503,170 @@ def test_load_dashboard_snapshot_populates_total_deployed_notional() -> None:
 
     # 10 * 150 + 5 * 300 = 1500 + 1500 = 3000
     assert abs(snapshot.total_deployed_notional - 3_000.0) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# load_confidence_floor_info
+# ---------------------------------------------------------------------------
+
+
+from alpaca_bot.web.service import load_confidence_floor_info
+
+
+def _make_confidence_floor_record(**overrides):
+    """Build a minimal fake ConfidenceFloor-like namespace."""
+    defaults = dict(
+        floor_value=0.30,
+        manual_floor_baseline=0.25,
+        set_by="system",
+        reason="auto-raised: drawdown",
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def _make_floor_store(record=None):
+    """Return a fake store whose load() returns record."""
+    return SimpleNamespace(load=lambda **_: record)
+
+
+def test_load_confidence_floor_info_with_record_auto_raised_drawdown() -> None:
+    """When a DB record exists with floor_value > manual_floor_baseline, auto_raised=True
+    and trigger is parsed from the reason field."""
+    settings = make_settings()
+    record = _make_confidence_floor_record(
+        floor_value=0.35,
+        manual_floor_baseline=0.25,
+        set_by="system",
+        reason="auto-raised: drawdown",
+    )
+    result = load_confidence_floor_info(settings=settings, confidence_floor_store=_make_floor_store(record))
+
+    assert result["floor_value"] == pytest.approx(0.35)
+    assert result["manual_baseline"] == pytest.approx(0.25)
+    assert result["set_by"] == "system"
+    assert result["reason"] == "auto-raised: drawdown"
+    assert result["auto_raised"] is True
+    assert result["trigger"] == "drawdown"
+    assert result["no_record"] is False
+
+
+def test_load_confidence_floor_info_with_record_auto_raised_volatility() -> None:
+    """trigger is 'volatility' when reason contains 'volatility'."""
+    settings = make_settings()
+    record = _make_confidence_floor_record(
+        floor_value=0.32,
+        manual_floor_baseline=0.25,
+        set_by="system",
+        reason="auto-raised: volatility spike",
+    )
+    result = load_confidence_floor_info(settings=settings, confidence_floor_store=_make_floor_store(record))
+
+    assert result["auto_raised"] is True
+    assert result["trigger"] == "volatility"
+
+
+def test_load_confidence_floor_info_with_record_auto_raised_vol_abbreviation() -> None:
+    """trigger is 'volatility' when reason contains 'vol' (abbreviation)."""
+    settings = make_settings()
+    record = _make_confidence_floor_record(
+        floor_value=0.32,
+        manual_floor_baseline=0.25,
+        set_by="system",
+        reason="auto-raised: vol subsided",
+    )
+    result = load_confidence_floor_info(settings=settings, confidence_floor_store=_make_floor_store(record))
+
+    assert result["trigger"] == "volatility"
+
+
+def test_load_confidence_floor_info_trigger_none_for_operator_reason() -> None:
+    """trigger is None when reason is 'operator' or does not match known patterns."""
+    settings = make_settings()
+    record = _make_confidence_floor_record(
+        floor_value=0.25,
+        manual_floor_baseline=0.25,
+        set_by="operator",
+        reason="operator",
+    )
+    result = load_confidence_floor_info(settings=settings, confidence_floor_store=_make_floor_store(record))
+
+    assert result["trigger"] is None
+
+
+def test_load_confidence_floor_info_trigger_none_for_manual_reason() -> None:
+    """trigger is None when reason is 'manual set'."""
+    settings = make_settings()
+    record = _make_confidence_floor_record(
+        floor_value=0.25,
+        manual_floor_baseline=0.25,
+        set_by="operator",
+        reason="manual set",
+    )
+    result = load_confidence_floor_info(settings=settings, confidence_floor_store=_make_floor_store(record))
+
+    assert result["trigger"] is None
+
+
+def test_load_confidence_floor_info_auto_raised_false_when_equal() -> None:
+    """auto_raised is False when floor_value == manual_floor_baseline."""
+    settings = make_settings()
+    record = _make_confidence_floor_record(
+        floor_value=0.25,
+        manual_floor_baseline=0.25,
+        set_by="operator",
+        reason="operator",
+    )
+    result = load_confidence_floor_info(settings=settings, confidence_floor_store=_make_floor_store(record))
+
+    assert result["auto_raised"] is False
+
+
+def test_load_confidence_floor_info_no_record_falls_back_to_settings() -> None:
+    """When no DB record exists, floor_value and manual_baseline use settings.confidence_floor."""
+    settings = make_settings()  # default confidence_floor = 0.25
+    result = load_confidence_floor_info(settings=settings, confidence_floor_store=_make_floor_store(None))
+
+    assert result["floor_value"] == pytest.approx(settings.confidence_floor)
+    assert result["manual_baseline"] == pytest.approx(settings.confidence_floor)
+    assert result["set_by"] == "operator"
+    assert result["reason"] is None
+    assert result["auto_raised"] is False
+    assert result["trigger"] is None
+    assert result["no_record"] is True
+
+
+def test_load_confidence_floor_info_no_record_has_no_record_true() -> None:
+    """no_record is True when the store returns None."""
+    settings = make_settings()
+    result = load_confidence_floor_info(settings=settings, confidence_floor_store=_make_floor_store(None))
+
+    assert result["no_record"] is True
+
+
+def test_load_confidence_floor_info_with_record_no_record_false() -> None:
+    """no_record is False when a record exists."""
+    settings = make_settings()
+    record = _make_confidence_floor_record()
+    result = load_confidence_floor_info(settings=settings, confidence_floor_store=_make_floor_store(record))
+
+    assert result["no_record"] is False
+
+
+def test_load_confidence_floor_info_store_called_with_trading_mode_and_strategy_version() -> None:
+    """The store is called with the correct trading_mode and strategy_version from settings."""
+    settings = make_settings()
+    captured: list[dict] = []
+
+    def recording_load(**kwargs):
+        captured.append(dict(kwargs))
+        return None
+
+    load_confidence_floor_info(
+        settings=settings,
+        confidence_floor_store=SimpleNamespace(load=recording_load),
+    )
+
+    assert len(captured) == 1
+    assert captured[0]["trading_mode"] == settings.trading_mode
+    assert captured[0]["strategy_version"] == settings.strategy_version

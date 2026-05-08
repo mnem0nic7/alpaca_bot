@@ -18,6 +18,7 @@ import re
 from alpaca_bot.storage import (
     AuditEvent,
     AuditEventStore,
+    ConfidenceFloorStore,
     DailySessionState,
     DailySessionStateStore,
     OrderStore,
@@ -46,6 +47,7 @@ from alpaca_bot.web.service import (
     EquityChartData,
     StrategyWeightRow,
     load_audit_page,
+    load_confidence_floor_info,
     load_dashboard_snapshot,
     load_equity_chart_data,
     load_health_snapshot,
@@ -77,6 +79,7 @@ def create_app(
     strategy_flag_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     watchlist_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     strategy_weight_store_factory: Callable[[ConnectionProtocol], object] | None = None,
+    confidence_floor_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     notifier: Notifier | None = None,
     market_data_adapter: object | None = None,
     portfolio_reader: object | None = None,
@@ -121,6 +124,7 @@ def create_app(
     app.state.strategy_flag_store_factory = strategy_flag_store_factory or StrategyFlagStore
     app.state.watchlist_store_factory = watchlist_store_factory or WatchlistStore
     app.state.strategy_weight_store_factory = strategy_weight_store_factory or StrategyWeightStore
+    app.state.confidence_floor_store_factory = confidence_floor_store_factory or ConfidenceFloorStore
     app.state.notifier = notifier or build_notifier(app_settings)
     if market_data_adapter is None:
         try:
@@ -148,7 +152,7 @@ def create_app(
                 next_path=request.url.path,
             )
         try:
-            snapshot, metrics, strategy_weights = _load_dashboard_data(app)
+            snapshot, metrics, strategy_weights, confidence_floor = _load_dashboard_data(app)
         except Exception:
             return HTMLResponse(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -170,6 +174,7 @@ def create_app(
                 "auto_refresh": not bool(no_refresh),
                 "strategy_weights": strategy_weights,
                 "option_strategy_names": OPTION_STRATEGY_NAMES,
+                "confidence_floor": confidence_floor,
             },
         )
 
@@ -950,7 +955,11 @@ def _load_dashboard_data(app: FastAPI) -> tuple:
             connection=connection,
             strategy_weight_store=_build_store(app.state.strategy_weight_store_factory, connection),
         )
-        return snapshot, metrics, strategy_weights
+        confidence_floor = load_confidence_floor_info(
+            settings=settings,
+            confidence_floor_store=_build_store(app.state.confidence_floor_store_factory, connection),
+        )
+        return snapshot, metrics, strategy_weights, confidence_floor
     finally:
         close = getattr(connection, "close", None)
         if callable(close):

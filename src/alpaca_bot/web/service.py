@@ -10,6 +10,7 @@ from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord, report_f
 from alpaca_bot.storage import (
     AuditEvent,
     AuditEventStore,
+    ConfidenceFloorStore,
     DailySessionState,
     DailySessionStateStore,
     EQUITY_SESSION_STATE_STRATEGY_NAME,
@@ -726,6 +727,71 @@ def _build_multi_session_series(
         pct_change=round(pct_change, 4),
         label=_equity_label(range_code),
     )
+
+
+def _parse_confidence_trigger(reason: str | None) -> str | None:
+    """Parse the trigger type from a confidence floor reason string."""
+    if reason is None:
+        return None
+    lower = reason.lower()
+    if "drawdown" in lower:
+        return "drawdown"
+    if "volatility" in lower or "vol" in lower:
+        return "volatility"
+    return None
+
+
+def load_confidence_floor_info(
+    *,
+    settings: Settings,
+    confidence_floor_store: ConfidenceFloorStore | None = None,
+    connection: object = None,
+) -> dict:
+    """Load confidence floor data for dashboard display.
+
+    Returns a dict with:
+      floor_value       – current floor (from store or settings fallback)
+      manual_baseline   – last operator-set baseline
+      set_by            – "operator" | "system"
+      reason            – reason string from the store, or None
+      auto_raised       – True if floor_value > manual_floor_baseline
+      trigger           – "drawdown" | "volatility" | None (parsed from reason)
+      no_record         – True if no DB record exists
+    """
+    store = confidence_floor_store or (
+        ConfidenceFloorStore(connection) if connection is not None else None
+    )
+    record = (
+        store.load(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+        )
+        if store is not None
+        else None
+    )
+
+    if record is None:
+        default_floor = settings.confidence_floor
+        return {
+            "floor_value": default_floor,
+            "manual_baseline": default_floor,
+            "set_by": "operator",
+            "reason": None,
+            "auto_raised": False,
+            "trigger": None,
+            "no_record": True,
+        }
+
+    auto_raised = record.floor_value > record.manual_floor_baseline
+    return {
+        "floor_value": record.floor_value,
+        "manual_baseline": record.manual_floor_baseline,
+        "set_by": record.set_by,
+        "reason": record.reason,
+        "auto_raised": auto_raised,
+        "trigger": _parse_confidence_trigger(record.reason),
+        "no_record": False,
+    }
 
 
 def _load_worker_health(

@@ -271,6 +271,18 @@
                 {% endif %}
               </p>
             </div>
+            {% if confidence_floor is defined and confidence_floor %}
+            <div>
+              <p class="eyebrow">Confidence Floor</p>
+              <p class="value">
+                {{ "%.0f"|format(confidence_floor.floor_value * 100) }}%
+                {% if confidence_floor.auto_raised %}
+                  <span class="warn" style="font-size: 0.85em;">&#8593; auto-raised{% if confidence_floor.trigger %}: {{ confidence_floor.trigger }}{% endif %}</span>
+                {% endif %}
+              </p>
+              <p class="muted" style="font-size: 0.82em; margin-top: 0.1rem;">{{ confidence_floor.set_by }}</p>
+            </div>
+            {% endif %}
           </div>
         </div>
         <div class="panel">
