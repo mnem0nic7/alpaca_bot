@@ -840,9 +840,9 @@ def test_runtime_supervisor_run_cycle_once_gathers_runtime_inputs_and_dispatches
     assert cycle_calls[0]["settings"] == settings
     assert cycle_calls[0]["runtime"] is runtime
     assert cycle_calls[0]["now"] == now
-    # equity is now account.equity * strategy_weight; with no weight_store all
-    # strategies share equal weight (1/N), so verify it's a fraction of the full equity.
-    assert cycle_calls[0]["equity"] == pytest.approx(123_456.78 / len(STRATEGY_REGISTRY))
+    # equity is now account.equity * confidence_score; with no weight_store all Sharpes
+    # default to 0.0, so all strategies receive the confidence floor (0.25 default).
+    assert cycle_calls[0]["equity"] == pytest.approx(123_456.78 * 0.25)
     assert cycle_calls[0]["intraday_bars_by_symbol"] == market_data.intraday_bars_by_symbol
     assert cycle_calls[0]["daily_bars_by_symbol"] == market_data.daily_bars_by_symbol
     assert cycle_calls[0]["working_order_symbols"] == {"MSFT"}

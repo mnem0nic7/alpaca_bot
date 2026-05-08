@@ -29,7 +29,8 @@ from alpaca_bot.runtime.bootstrap import (
     close_runtime,
     reconnect_runtime_connection,
 )
-from alpaca_bot.risk.weighting import compute_strategy_weights
+from alpaca_bot.risk.weighting import WeightResult, compute_strategy_weights
+from alpaca_bot.risk.confidence import compute_confidence_scores
 from alpaca_bot.storage.db import check_connection
 from alpaca_bot.runtime.cli import _list_open_orders, _list_open_positions
 from alpaca_bot.core.engine import CycleIntentType
@@ -126,6 +127,8 @@ class RuntimeSupervisor:
         self._session_equity_baseline: dict[date, float] = {}
         # Per-session capital weights: keyed by session_date, populated once per day.
         self._session_capital_weights: dict[date, dict[str, float]] = {}
+        # Per-session Sharpe ratios: keyed by session_date, populated alongside weights.
+        self._session_sharpes: dict[date, dict[str, float]] = {}
         # Dates for which the daily loss limit alert has already been sent (once per day).
         self._loss_limit_alerted: set[date] = set()
         # Dates for which the daily loss limit has ever fired; sticky — never cleared on recovery.
@@ -350,8 +353,12 @@ class RuntimeSupervisor:
                 )
         baseline_equity = self._session_equity_baseline[session_date]
         if session_date not in self._session_capital_weights:
-            weights = self._update_session_weights(session_date)
-            self._session_capital_weights[session_date] = weights
+            weight_result = self._update_session_weights(session_date)
+            self._session_capital_weights[session_date] = weight_result.weights
+            self._session_sharpes[session_date] = weight_result.sharpes
+        confidence_floor = self._load_confidence_floor()
+        session_sharpes = self._session_sharpes.get(session_date, {})
+        session_confidence_scores = compute_confidence_scores(session_sharpes, confidence_floor)
         loss_limit = self.settings.daily_loss_limit_pct * baseline_equity
         # Include unrealized losses via broker-reported equity delta so open
         # positions with large drawdowns trigger the limit before stops fill.
@@ -640,6 +647,13 @@ class RuntimeSupervisor:
             for opt_pos in open_options:
                 working_order_symbols.add(opt_pos.underlying_symbol)
 
+        # Sort highest-confidence strategies first so they fill slots before lower-confidence ones.
+        active_strategies = sorted(
+            active_strategies,
+            key=lambda pair: session_confidence_scores.get(pair[0], confidence_floor),
+            reverse=True,
+        )
+
         all_cycle_results: list[tuple[str, object]] = []
         entries_disabled_strategies: set[str] = set()
         # Track occupied slots globally across all strategies so no single
@@ -689,10 +703,12 @@ class RuntimeSupervisor:
                 if strategy_entries_disabled:
                     entries_disabled_strategies.add(strategy_name)
 
-                strategy_weight = self._session_capital_weights[session_date].get(
-                    strategy_name, 1.0 / max(len(active_strategies), 1)
-                )
-                effective_equity = account.equity * strategy_weight
+                confidence_score = session_confidence_scores.get(strategy_name)
+                if confidence_score is None:
+                    # Strategy's Sharpe rank is below the confidence floor — disable entries
+                    strategy_entries_disabled = True
+                    confidence_score = confidence_floor  # used for sizing (entries disabled anyway)
+                effective_equity = account.equity * confidence_score
                 cycle_result = self._cycle_runner(
                     settings=self.settings,
                     runtime=self.runtime,
@@ -1257,7 +1273,7 @@ class RuntimeSupervisor:
                     pass
                 raise
 
-    def _update_session_weights(self, session_date: date) -> dict[str, float]:
+    def _update_session_weights(self, session_date: date) -> WeightResult:
         weight_store = getattr(self.runtime, "strategy_weight_store", None)
         if weight_store is None:
             active_names = [name for name, _ in self._resolve_active_strategies()]
@@ -1276,7 +1292,10 @@ class RuntimeSupervisor:
                                 continue
                         active_names.append(opt_name)
             n = max(len(active_names), 1)
-            return {name: 1.0 / n for name in active_names}
+            return WeightResult(
+                {name: 1.0 / n for name in active_names},
+                {name: 0.0 for name in active_names},
+            )
 
         store_lock = getattr(self.runtime, "store_lock", None)
         lock_ctx = store_lock if store_lock is not None else contextlib.nullcontext()
@@ -1307,7 +1326,10 @@ class RuntimeSupervisor:
             and all(w.computed_at.date() == session_date for w in existing)
             and existing_names == set(active_names)
         ):
-            return {w.strategy_name: w.weight for w in existing}
+            return WeightResult(
+                {w.strategy_name: w.weight for w in existing},
+                {w.strategy_name: w.sharpe for w in existing},
+            )
 
         end_date = session_date - timedelta(days=1)
         start_date = date(2000, 1, 1)
@@ -1339,7 +1361,7 @@ class RuntimeSupervisor:
                 created_at=now,
             )
         )
-        return result.weights
+        return result
 
     def _append_audit(self, event: AuditEvent) -> None:
         """Append an AuditEvent while holding store_lock to prevent races with the stream thread."""
@@ -1356,6 +1378,18 @@ class RuntimeSupervisor:
                     self.runtime.connection.rollback()
                 except Exception:
                     pass
+
+    def _load_confidence_floor(self) -> float:
+        floor_store = getattr(self.runtime, "confidence_floor_store", None)
+        if floor_store is None:
+            return self.settings.confidence_floor
+        store_lock = getattr(self.runtime, "store_lock", None)
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            rec = floor_store.load(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+            )
+        return rec.floor_value if rec is not None else self.settings.confidence_floor
 
     def _effective_trading_status(
         self,

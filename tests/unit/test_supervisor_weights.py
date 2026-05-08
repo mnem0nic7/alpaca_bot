@@ -136,7 +136,7 @@ def _make_supervisor(
 
     class _FakeSessionStateStore:
         def load(self, **kwargs): return None
-        def save(self, **kwargs): pass
+        def save(self, state=None, **kwargs): pass
         def list_by_session(self, **kwargs): return []
 
     class _FakeWatchlistStore:
@@ -178,9 +178,9 @@ def _make_supervisor(
     return supervisor, _FakeRuntimeContext
 
 
-def test_effective_equity_uses_strategy_weight() -> None:
-    """Supervisor passes account.equity * weight to cycle_runner, not account.equity."""
-    settings = _make_settings()
+def test_effective_equity_uses_confidence_score() -> None:
+    """Supervisor passes account.equity * confidence_score to cycle_runner, not weight-shrunk equity."""
+    settings = _make_settings(CONFIDENCE_FLOOR="0.0")
     runner = _CapturingCycleRunner()
     supervisor, _ = _make_supervisor(
         settings=settings,
@@ -188,19 +188,22 @@ def test_effective_equity_uses_strategy_weight() -> None:
         cycle_runner=runner,
         only_breakout=True,
     )
-    # Pre-populate session state to bypass session-open DB writes
+    # Pre-populate session state to bypass session-open DB writes.
+    # Breakout is the only strategy with sharpe=2.0 → confidence score = 1.0 (sole positive Sharpe).
     supervisor._session_equity_baseline[_SESSION_DATE] = 10_000.0
     supervisor._session_capital_weights[_SESSION_DATE] = {"breakout": 0.6}
+    supervisor._session_sharpes[_SESSION_DATE] = {"breakout": 2.0}
 
     supervisor.run_cycle_once(now=lambda: _NOW)
 
     assert runner.captured_strategy_names == ["breakout"]
-    assert abs(runner.captured_equities[0] - 6_000.0) < 1e-6
+    # confidence_score = 1.0 (sole positive-Sharpe strategy) → full equity, not weight-shrunk
+    assert abs(runner.captured_equities[0] - 10_000.0) < 1e-6
 
 
-def test_effective_equity_fallback_for_missing_weight() -> None:
-    """When strategy has no entry in weights dict, use equal weight fallback."""
-    settings = _make_settings()
+def test_effective_equity_uses_floor_when_sharpe_is_zero() -> None:
+    """When strategy Sharpe is zero (no trade history), equity is scaled by the confidence floor."""
+    settings = _make_settings(CONFIDENCE_FLOOR="0.25")
     runner = _CapturingCycleRunner()
     supervisor, _ = _make_supervisor(
         settings=settings,
@@ -208,15 +211,16 @@ def test_effective_equity_fallback_for_missing_weight() -> None:
         cycle_runner=runner,
         only_breakout=True,
     )
-    # Pre-populate session state with empty weights dict
+    # Zero Sharpe → no positive history → confidence score = floor = 0.25
     supervisor._session_equity_baseline[_SESSION_DATE] = 10_000.0
-    supervisor._session_capital_weights[_SESSION_DATE] = {}
+    supervisor._session_capital_weights[_SESSION_DATE] = {"breakout": 1.0}
+    supervisor._session_sharpes[_SESSION_DATE] = {"breakout": 0.0}
 
     supervisor.run_cycle_once(now=lambda: _NOW)
 
-    # Only breakout active → fallback = 1.0 / 1 = 1.0 → full equity
+    # confidence_score = 0.25 (floor) → 10000 * 0.25 = 2500
     assert runner.captured_strategy_names == ["breakout"]
-    assert abs(runner.captured_equities[0] - 10_000.0) < 1e-6
+    assert abs(runner.captured_equities[0] - 2_500.0) < 1e-6
 
 
 def test_update_session_weights_uses_cached_db_weights_on_crash_recovery() -> None:
@@ -242,9 +246,10 @@ def test_update_session_weights_uses_cached_db_weights_on_crash_recovery() -> No
         order_store=order_store,
     )
 
-    weights = supervisor._update_session_weights(_SESSION_DATE)
+    result = supervisor._update_session_weights(_SESSION_DATE)
 
-    assert weights == {"breakout": 0.7}
+    assert result.weights == {"breakout": 0.7}
+    assert result.sharpes == {"breakout": 2.1}
     # order_store.list_trade_pnl_by_strategy was never called (returned cached weights)
     assert weight_store.upserted == []
 
@@ -268,9 +273,9 @@ def test_update_session_weights_computes_and_stores_when_no_cache() -> None:
         only_breakout=True,
     )
 
-    weights = supervisor._update_session_weights(_SESSION_DATE)
+    result = supervisor._update_session_weights(_SESSION_DATE)
 
-    assert "breakout" in weights
+    assert "breakout" in result.weights
     assert len(weight_store.upserted) == 1
 
 
@@ -331,7 +336,7 @@ def test_update_session_weights_uses_all_time_start_date() -> None:
 
 def test_run_cycle_once_report_includes_account_equity() -> None:
     """run_cycle_once() must populate account_equity on the returned report."""
-    settings = _make_settings()
+    settings = _make_settings(CONFIDENCE_FLOOR="0.0")
     supervisor, _ = _make_supervisor(
         settings=settings,
         broker_equity=12_345.67,
@@ -339,6 +344,7 @@ def test_run_cycle_once_report_includes_account_equity() -> None:
     )
     supervisor._session_equity_baseline[_SESSION_DATE] = 12_345.67
     supervisor._session_capital_weights[_SESSION_DATE] = {"breakout": 1.0}
+    supervisor._session_sharpes[_SESSION_DATE] = {"breakout": 1.5}
 
     report = supervisor.run_cycle_once(now=lambda: _NOW)
 
@@ -503,3 +509,69 @@ def test_confidence_floor_validation_rejects_out_of_range() -> None:
     }
     with pytest.raises(ValueError, match="CONFIDENCE_FLOOR"):
         Settings.from_env(base)
+
+
+def test_effective_equity_uses_full_account_equity_scaled_by_confidence() -> None:
+    """With confidence score, sizing should use account.equity * confidence_score,
+    not account.equity * strategy_weight (the old weight-shrunk approach)."""
+    from alpaca_bot.storage import StrategyWeight
+
+    recorded_equities: list[float] = []
+
+    def fake_cycle_runner(*, equity, **kwargs):
+        recorded_equities.append(equity)
+        return SimpleNamespace(intents=[])
+
+    settings = _make_settings(
+        MAX_POSITION_PCT="0.015",
+        MAX_OPEN_POSITIONS="3",
+        CONFIDENCE_FLOOR="0.0",
+    )
+    # Only breakout is active. Sharpe=2.0 → sole strategy
+    # gets confidence score 1.0 (single-strategy → raw=1.0 when only positive Sharpe).
+    # Old behavior: equity = 10000 * weight (e.g. 0.80 → 8000).
+    # New behavior: equity = 10000 * 1.0 = 10000 (full equity).
+    preloaded_weights = [
+        StrategyWeight(
+            strategy_name="breakout",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            weight=0.80,
+            sharpe=2.0,
+            computed_at=datetime(_SESSION_DATE.year, _SESSION_DATE.month, _SESSION_DATE.day, 0, 0, tzinfo=timezone.utc),
+        ),
+    ]
+    weight_store = _FakeWeightStore(preloaded=preloaded_weights)
+    supervisor, _ = _make_supervisor(
+        settings=settings,
+        weight_store=weight_store,
+        cycle_runner=fake_cycle_runner,
+    )
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert len(recorded_equities) >= 1
+    # Key assertion: full equity (10000), not weight-shrunk (8000)
+    assert max(recorded_equities) == pytest.approx(10000.0)
+
+
+def test_low_confidence_strategy_receives_floor_equity() -> None:
+    """A sole strategy with no Sharpe history should receive floor-scaled equity."""
+    entries_disabled_flags: list[bool] = []
+
+    def fake_cycle_runner(*, entries_disabled, **kwargs):
+        entries_disabled_flags.append(entries_disabled)
+        return SimpleNamespace(intents=[])
+
+    settings = _make_settings(
+        CONFIDENCE_FLOOR="0.60",
+        MAX_OPEN_POSITIONS="3",
+    )
+    # No preloaded weights → _update_session_weights computes equal weights,
+    # all sharpes default to 0.0 → all-zero case → all strategies get floor (0.60).
+    # Single breakout strategy → not disabled (0.60 >= floor 0.60 → in score dict).
+    supervisor, _ = _make_supervisor(settings=settings)
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert all(not d for d in entries_disabled_flags), (
+        f"Unexpected entries disabled: {entries_disabled_flags}"
+    )
