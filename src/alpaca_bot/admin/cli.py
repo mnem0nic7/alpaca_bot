@@ -414,7 +414,7 @@ def main(
                 stdout=stdout or sys.stdout,
             )
         elif args.command == "reset-weights":
-            _reset_weights_equal(
+            _run_reset_weights_equal(
                 connection=connection,
                 event_store=audit_store,
                 settings=resolved_settings,
@@ -423,8 +423,8 @@ def main(
                 dry_run=args.dry_run,
                 now=timestamp,
                 stdout=stdout or sys.stdout,
-                weight_store_factory=strategy_weight_store_factory,
-                flag_store_factory=strategy_flag_store_factory,
+                weight_store=strategy_weight_store_factory(connection),
+                flag_store=strategy_flag_store_factory(connection),
             )
         else:
             command_reason = getattr(args, "reason", None)
@@ -635,7 +635,7 @@ def _run_cancel_partial_fills(
         )
 
 
-def _reset_weights_equal(
+def _run_reset_weights_equal(
     *,
     connection: ConnectionProtocol,
     event_store: AuditEventStore,
@@ -645,10 +645,9 @@ def _reset_weights_equal(
     dry_run: bool,
     now: datetime,
     stdout: TextIO,
-    weight_store_factory: Callable[[ConnectionProtocol], StrategyWeightStore] = StrategyWeightStore,
-    flag_store_factory: Callable[[ConnectionProtocol], StrategyFlagStore] = StrategyFlagStore,
+    weight_store: StrategyWeightStore,
+    flag_store: StrategyFlagStore,
 ) -> None:
-    flag_store = flag_store_factory(connection)
     disabled = {
         f.strategy_name
         for f in flag_store.list_all(
@@ -658,9 +657,9 @@ def _reset_weights_equal(
         if not f.enabled
     }
 
-    all_names: list[str] = list(STRATEGY_REGISTRY)
-    if settings.enable_options_trading:
-        all_names += list(OPTION_STRATEGY_FACTORIES)
+    all_names: list[str] = list(dict.fromkeys(
+        list(STRATEGY_REGISTRY) + (list(OPTION_STRATEGY_FACTORIES) if settings.enable_options_trading else [])
+    ))
     active_names = [n for n in all_names if n not in disabled]
 
     if not active_names:
@@ -682,7 +681,6 @@ def _reset_weights_equal(
         print(", ".join(sorted(active_names)), file=stdout)
         return
 
-    weight_store = weight_store_factory(connection)
     weight_store.upsert_many(
         weights=weights,
         sharpes=sharpes,
@@ -695,11 +693,11 @@ def _reset_weights_equal(
         AuditEvent(
             event_type="strategy_weights_reset",
             payload={
-                "mode": trading_mode.value,
-                "version": strategy_version,
+                "trading_mode": trading_mode.value,
+                "strategy_version": strategy_version,
                 "strategy_count": str(n),
                 "equal_weight": str(round(equal_weight, 6)),
-                **{name: str(round(equal_weight, 4)) for name in active_names},
+                **{name: str(round(equal_weight, 6)) for name in active_names},
             },
             created_at=now,
         ),

@@ -206,8 +206,8 @@ def test_reset_weights_appends_audit_event() -> None:
     assert len(audit_store.appended) == 1
     event = audit_store.appended[0]
     assert event.event_type == "strategy_weights_reset"
-    assert event.payload["mode"] == "paper"
-    assert event.payload["version"] == "v1-breakout"
+    assert event.payload["trading_mode"] == "paper"
+    assert event.payload["strategy_version"] == "v1-breakout"
     assert event.payload["strategy_count"] == str(len(STRATEGY_REGISTRY))
     for name in STRATEGY_REGISTRY:
         assert name in event.payload
