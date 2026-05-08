@@ -46,6 +46,7 @@ from alpaca_bot.runtime.trade_update_stream import attach_trade_update_stream
 from alpaca_bot.runtime.trader import TraderStartupReport, start_trader
 from alpaca_bot.storage import (
     AuditEvent,
+    ConfidenceFloor,
     DailySessionState,
     EQUITY_SESSION_STATE_STRATEGY_NAME,
     GLOBAL_SESSION_STATE_STRATEGY_NAME,
@@ -605,6 +606,19 @@ class RuntimeSupervisor:
                 quotes_by_symbol = self.market_data.get_latest_quotes(list(watchlist_symbols))
             except Exception:
                 logger.warning("Failed to fetch quotes; spread filter disabled this cycle", exc_info=True)
+
+        # Evaluate confidence floor auto-raise triggers
+        _regime_bars_for_vol: list = []
+        if self.settings.enable_regime_filter and regime_bars:
+            _regime_bars_for_vol = list(regime_bars)
+        elif daily_bars_by_symbol:
+            # Use first symbol's daily bars as a market proxy for volatility estimate
+            _regime_bars_for_vol = list(next(iter(daily_bars_by_symbol.values()), []))
+        self._check_and_update_floor_triggers(
+            current_equity=account.equity,
+            now=timestamp,
+            daily_bars_for_vol=_regime_bars_for_vol,
+        )
 
         # Resolve registered strategies (breakout, etc.)
         active_strategies = list(self._resolve_active_strategies())
@@ -1391,6 +1405,118 @@ class RuntimeSupervisor:
                 strategy_version=self.settings.strategy_version,
             )
         return rec.floor_value if rec is not None else self.settings.confidence_floor
+
+    def _check_and_update_floor_triggers(
+        self,
+        *,
+        current_equity: float,
+        now: datetime,
+        daily_bars_for_vol: list,
+    ) -> None:
+        """Evaluate drawdown and volatility triggers; raise the confidence floor if needed.
+
+        Also updates the equity high-watermark whenever equity improves.
+        Only writes to DB when a change is needed (reduces spurious audit events).
+        """
+        floor_store = getattr(self.runtime, "confidence_floor_store", None)
+        if floor_store is None:
+            return
+
+        store_lock = getattr(self.runtime, "store_lock", None)
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            rec = floor_store.load(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+            )
+
+        current_floor = rec.floor_value if rec is not None else self.settings.confidence_floor
+        manual_baseline = rec.manual_floor_baseline if rec is not None else self.settings.confidence_floor
+        watermark = rec.equity_high_watermark if rec is not None else current_equity
+        new_floor = current_floor
+        reason_parts: list[str] = []
+
+        # Update high-watermark if equity improved
+        new_watermark = max(watermark, current_equity)
+
+        # Drawdown trigger — raises above drawdown_raise_pct; stays raised until < half that
+        # (hysteresis prevents flapping near the threshold)
+        if watermark > 0:
+            drawdown_pct = (watermark - current_equity) / watermark
+            clear_threshold = self.settings.drawdown_raise_pct / 2
+            already_raised = current_floor > manual_baseline + 1e-9
+            if drawdown_pct > self.settings.drawdown_raise_pct:
+                new_floor = min(current_floor + self.settings.floor_raise_step, 0.80)
+                reason_parts.append(f"drawdown {drawdown_pct:.1%}")
+            elif already_raised and drawdown_pct > clear_threshold:
+                # Still in the hysteresis band — keep the raise alive
+                reason_parts.append(f"drawdown hysteresis {drawdown_pct:.1%}")
+
+        # Volatility trigger — raises above vol_raise_threshold; clears below 80% of that
+        if daily_bars_for_vol and len(daily_bars_for_vol) >= 6:
+            closes = [bar.close for bar in daily_bars_for_vol[-6:]]
+            returns = [
+                abs((closes[i] - closes[i - 1]) / closes[i - 1])
+                for i in range(1, len(closes))
+            ]
+            daily_vol = sum(returns) / len(returns)
+            vol_clear_threshold = self.settings.vol_raise_threshold * 0.8
+            already_raised = current_floor > manual_baseline + 1e-9
+            if daily_vol > self.settings.vol_raise_threshold:
+                new_floor = min(
+                    max(new_floor, current_floor + self.settings.floor_raise_step), 0.80
+                )
+                reason_parts.append(f"vol {daily_vol:.2%}")
+            elif already_raised and daily_vol > vol_clear_threshold:
+                # Still in the hysteresis band — keep the raise alive
+                reason_parts.append(f"vol hysteresis {daily_vol:.2%}")
+
+        # Auto-clear: when no trigger fired and floor was previously auto-raised,
+        # restore it to the last operator-set baseline.
+        reason_parts_for_clear: str | None = None
+        if not reason_parts and new_floor > manual_baseline + 1e-9:
+            new_floor = manual_baseline
+            reason_parts_for_clear = "all triggers cleared"
+
+        floor_changed = abs(new_floor - current_floor) > 1e-9
+        watermark_changed = abs(new_watermark - watermark) > 1e-9
+
+        if not floor_changed and not watermark_changed:
+            return
+
+        reason = (
+            f"auto-raised: {', '.join(reason_parts)}"
+            if reason_parts
+            else (reason_parts_for_clear or "watermark update")
+        )
+        updated = ConfidenceFloor(
+            trading_mode=self.settings.trading_mode,
+            strategy_version=self.settings.strategy_version,
+            floor_value=new_floor,
+            manual_floor_baseline=manual_baseline,  # never changed by system
+            equity_high_watermark=new_watermark,
+            set_by="system",
+            reason=reason,
+            updated_at=now,
+        )
+
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            floor_store.upsert(updated)
+
+        if floor_changed:
+            event_type = (
+                "confidence_floor_auto_cleared"
+                if reason_parts_for_clear
+                else "confidence_floor_auto_raised"
+            )
+            self._append_audit(AuditEvent(
+                event_type=event_type,
+                payload={
+                    "old_floor": current_floor,
+                    "new_floor": new_floor,
+                    "reason": reason,
+                },
+                created_at=now,
+            ))
 
     def _effective_trading_status(
         self,
