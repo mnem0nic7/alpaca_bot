@@ -75,6 +75,11 @@ class Settings:
     flatten_time: time
     max_portfolio_exposure_pct: float = 0.30
     notify_slippage_threshold_pct: float = 0.005
+    confidence_floor: float = 0.25
+    floor_raise_step: float = 0.10
+    drawdown_raise_pct: float = 0.05
+    losing_streak_n: int = 3
+    vol_raise_threshold: float = 0.025
     prior_day_high_lookback_bars: int = 1
     orb_opening_bars: int = 2
     high_watermark_lookback_days: int = 252
@@ -190,6 +195,11 @@ class Settings:
             notify_slippage_threshold_pct=float(
                 values.get("NOTIFY_SLIPPAGE_THRESHOLD_PCT", "0.005")
             ),
+            confidence_floor=float(values.get("CONFIDENCE_FLOOR", "0.25")),
+            floor_raise_step=float(values.get("FLOOR_RAISE_STEP", "0.10")),
+            drawdown_raise_pct=float(values.get("DRAWDOWN_RAISE_PCT", "0.05")),
+            losing_streak_n=int(values.get("LOSING_STREAK_N", "3")),
+            vol_raise_threshold=float(values.get("VOL_RAISE_THRESHOLD", "0.025")),
             prior_day_high_lookback_bars=int(values.get("PRIOR_DAY_HIGH_LOOKBACK_BARS", "1")),
             orb_opening_bars=int(values.get("ORB_OPENING_BARS", "2")),
             high_watermark_lookback_days=int(values.get("HIGH_WATERMARK_LOOKBACK_DAYS", "252")),
@@ -537,6 +547,16 @@ class Settings:
             raise ValueError("INTRADAY_CONSECUTIVE_LOSS_GATE must be >= 0")
         if self.max_loss_per_trade_dollars is not None and self.max_loss_per_trade_dollars <= 0:
             raise ValueError("MAX_LOSS_PER_TRADE_DOLLARS must be > 0")
+        if not 0.0 <= self.confidence_floor <= 1.0:
+            raise ValueError("CONFIDENCE_FLOOR must be between 0.0 and 1.0")
+        if not 0.0 < self.floor_raise_step <= 0.5:
+            raise ValueError("FLOOR_RAISE_STEP must be between 0 (exclusive) and 0.5")
+        if not 0.0 < self.drawdown_raise_pct <= 0.5:
+            raise ValueError("DRAWDOWN_RAISE_PCT must be between 0 (exclusive) and 0.5")
+        if self.losing_streak_n < 1:
+            raise ValueError("LOSING_STREAK_N must be at least 1")
+        if not 0.0 < self.vol_raise_threshold <= 1.0:
+            raise ValueError("VOL_RAISE_THRESHOLD must be between 0 (exclusive) and 1.0")
 
 
 def _validate_positive_fraction(name: str, value: float) -> None:

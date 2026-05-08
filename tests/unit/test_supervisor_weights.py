@@ -448,3 +448,58 @@ def test_update_session_weights_bypasses_cache_when_option_names_added() -> None
     pool = set(captured_names[0])
     for opt_name in OPTION_STRATEGY_NAMES:
         assert opt_name in pool, f"Option strategy {opt_name!r} missing from recomputed weight pool"
+
+
+def test_confidence_settings_defaults() -> None:
+    base = {
+        "TRADING_MODE": "paper",
+        "ENABLE_LIVE_TRADING": "false",
+        "STRATEGY_VERSION": "v1",
+        "DATABASE_URL": "postgresql://x:y@localhost/db",
+        "MARKET_DATA_FEED": "sip",
+        "SYMBOLS": "AAPL",
+        "DAILY_SMA_PERIOD": "20",
+        "BREAKOUT_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_THRESHOLD": "1.5",
+        "ENTRY_TIMEFRAME_MINUTES": "15",
+        "RISK_PER_TRADE_PCT": "0.0025",
+        "MAX_POSITION_PCT": "0.015",
+        "MAX_OPEN_POSITIONS": "20",
+        "DAILY_LOSS_LIMIT_PCT": "0.01",
+        "STOP_LIMIT_BUFFER_PCT": "0.001",
+        "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+        "ENTRY_STOP_PRICE_BUFFER": "0.01",
+        "ENTRY_WINDOW_START": "10:00",
+        "ENTRY_WINDOW_END": "15:30",
+        "FLATTEN_TIME": "15:45",
+        "PER_SYMBOL_LOSS_LIMIT_PCT": "0.0",
+    }
+    from alpaca_bot.config import Settings
+    s = Settings.from_env(base)
+    assert s.confidence_floor == 0.25
+    assert s.floor_raise_step == 0.10
+    assert s.drawdown_raise_pct == 0.05
+    assert s.losing_streak_n == 3
+    assert s.vol_raise_threshold == 0.025
+
+
+def test_confidence_floor_validation_rejects_out_of_range() -> None:
+    from alpaca_bot.config import Settings
+    import pytest
+    base = {
+        "TRADING_MODE": "paper", "ENABLE_LIVE_TRADING": "false",
+        "STRATEGY_VERSION": "v1", "DATABASE_URL": "x",
+        "MARKET_DATA_FEED": "sip", "SYMBOLS": "AAPL",
+        "DAILY_SMA_PERIOD": "20", "BREAKOUT_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_LOOKBACK_BARS": "20", "RELATIVE_VOLUME_THRESHOLD": "1.5",
+        "ENTRY_TIMEFRAME_MINUTES": "15", "RISK_PER_TRADE_PCT": "0.0025",
+        "MAX_POSITION_PCT": "0.015", "MAX_OPEN_POSITIONS": "20",
+        "DAILY_LOSS_LIMIT_PCT": "0.01", "STOP_LIMIT_BUFFER_PCT": "0.001",
+        "BREAKOUT_STOP_BUFFER_PCT": "0.001", "ENTRY_STOP_PRICE_BUFFER": "0.01",
+        "ENTRY_WINDOW_START": "10:00", "ENTRY_WINDOW_END": "15:30",
+        "FLATTEN_TIME": "15:45", "PER_SYMBOL_LOSS_LIMIT_PCT": "0.0",
+        "CONFIDENCE_FLOOR": "1.5",  # invalid — > 1.0
+    }
+    with pytest.raises(ValueError, match="CONFIDENCE_FLOOR"):
+        Settings.from_env(base)
