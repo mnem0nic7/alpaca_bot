@@ -263,3 +263,40 @@ def test_set_confidence_floor_requires_reason_argument() -> None:
         _run(["set-confidence-floor", "--value", "0.20"])
 
     assert exc_info.value.code != 0
+
+
+# ---------------------------------------------------------------------------
+# --value is required
+# ---------------------------------------------------------------------------
+
+def test_set_confidence_floor_requires_value_argument() -> None:
+    """Omitting --value must cause argparse to exit with non-zero code."""
+    with pytest.raises(SystemExit) as exc_info:
+        _run(["set-confidence-floor", "--reason", "some reason"])
+
+    assert exc_info.value.code != 0
+
+
+# ---------------------------------------------------------------------------
+# Success prints confirmation message
+# ---------------------------------------------------------------------------
+
+def test_set_confidence_floor_success_prints_confirmation_message() -> None:
+    """Success should print a confirmation message to stdout."""
+    floor_store = _RecordingConfidenceFloorStore()
+    audit_store = _RecordingAuditEventStore()
+    stdout = io.StringIO()
+
+    exit_code = _run(
+        ["set-confidence-floor", "--value", "0.35", "--reason", "market change"],
+        floor_store=floor_store,
+        audit_store=audit_store,
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+    output = stdout.getvalue()
+    assert len(output) > 0
+    assert "confidence_floor set" in output
+    assert "0.35" in output
+    assert "market change" in output
