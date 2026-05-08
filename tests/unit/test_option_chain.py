@@ -52,6 +52,22 @@ def _make_snapshot(ask: float, delta: float | None = None):
 
 
 class TestAlpacaOptionChainAdapter:
+    def test_warning_logged_on_api_failure(self, caplog):
+        import logging
+
+        class _RaisingClient:
+            def get_option_chain(self, request):
+                raise RuntimeError("403 Forbidden")
+
+        adapter = AlpacaOptionChainAdapter(_RaisingClient())
+        s = _settings()
+        with caplog.at_level(logging.WARNING, logger="alpaca_bot.execution.option_chain"):
+            result = adapter.get_option_chain("AAPL", s)
+
+        assert result == []
+        assert any("AAPL" in rec.message for rec in caplog.records)
+        assert any(rec.levelno == logging.WARNING for rec in caplog.records)
+
     def test_returns_empty_list_when_no_snapshots(self):
         client = _FakeSnapshotClient({})
         adapter = AlpacaOptionChainAdapter(client)

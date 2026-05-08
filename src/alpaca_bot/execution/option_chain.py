@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Sequence
 from datetime import date
@@ -7,6 +8,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from alpaca_bot.config import Settings
 from alpaca_bot.domain.models import OptionContract
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -42,6 +45,7 @@ class AlpacaOptionChainAdapter:
         try:
             snapshots: dict[str, Any] = self._client.get_option_chain(request)
         except Exception:
+            logger.warning("option chain fetch failed for %s", symbol, exc_info=True)
             return []
 
         contracts = []
