@@ -523,7 +523,11 @@ def recover_startup_state(
                     strategy_name=(
                         existing.strategy_name
                         if existing is not None
-                        else _infer_strategy_name_from_client_order_id(broker_order.client_order_id)
+                        else _infer_strategy_name(
+                            client_order_id=broker_order.client_order_id,
+                            symbol=broker_order.symbol,
+                            synced_positions=synced_positions,
+                        )
                     ),
                     created_at=existing.created_at if existing is not None else timestamp,
                     updated_at=timestamp,
@@ -709,6 +713,18 @@ def _infer_strategy_name_from_client_order_id(client_order_id: str) -> str:
         return "breakout"
     first_segment = client_order_id.split(":")[0]
     return first_segment if first_segment in STRATEGY_REGISTRY else "breakout"
+
+
+def _infer_strategy_name(
+    *,
+    client_order_id: str,
+    symbol: str,
+    synced_positions: "list[PositionRecord]",
+) -> str:
+    for pos in synced_positions:
+        if pos.symbol == symbol:
+            return pos.strategy_name
+    return _infer_strategy_name_from_client_order_id(client_order_id)
 
 
 def _infer_intent_type(*, client_order_id: str, side: str) -> str:
