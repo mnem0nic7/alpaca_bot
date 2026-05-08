@@ -366,3 +366,36 @@ def test_deferred_stop_emits_audit_event_after_hours():
     payload = deferred_events[0].payload
     assert payload["session_type"] == str(SessionType.AFTER_HOURS)
     assert payload["stop_price"] == pytest.approx(95.0)
+    assert payload["client_order_id"] == "test:v1:2026-04-28:AAPL:stop:2026-04-28T14:00:00+00:00"
+
+
+def test_deferred_stop_emits_audit_event_pre_market():
+    """
+    When a stop is deferred during PRE_MARKET, dispatch_pending_orders must append a
+    stop_dispatch_deferred_extended_hours AuditEvent with session_type set to PRE_MARKET.
+    """
+    settings = _settings()
+    runtime, saved, audits = _fake_runtime([_pending_stop_order()])
+    broker = _fake_broker()
+    now = datetime(2026, 4, 28, 12, 0, tzinfo=timezone.utc)  # 8am ET = pre-market
+
+    dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        now=now,
+        session_type=SessionType.PRE_MARKET,
+    )
+
+    deferred_events = [
+        a for a in audits if a.event_type == "stop_dispatch_deferred_extended_hours"
+    ]
+    assert len(deferred_events) == 1, (
+        "dispatch_pending_orders must emit stop_dispatch_deferred_extended_hours "
+        "audit event when deferring a stop during PRE_MARKET"
+    )
+    assert deferred_events[0].symbol == "AAPL"
+    payload = deferred_events[0].payload
+    assert payload["session_type"] == str(SessionType.PRE_MARKET)
+    assert payload["stop_price"] == pytest.approx(95.0)
+    assert payload["client_order_id"] == "test:v1:2026-04-28:AAPL:stop:2026-04-28T14:00:00+00:00"
