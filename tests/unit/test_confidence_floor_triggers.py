@@ -191,3 +191,84 @@ def test_vol_trigger_raises_floor() -> None:
     assert len(floor_store.upserted) == 1
     assert floor_store.upserted[0].floor_value == pytest.approx(0.35)
     assert "vol" in floor_store.upserted[0].reason.lower()
+
+
+def test_no_record_first_cycle_writes_nothing() -> None:
+    """On the very first cycle (no DB record), no write should occur."""
+    sup, floor_store = _make_supervisor_with_floor({
+        "DRAWDOWN_RAISE_PCT": "0.05",
+        "FLOOR_RAISE_STEP": "0.10",
+        "CONFIDENCE_FLOOR": "0.25",
+    })
+    # floor_store._rec is None by default
+    sup._check_and_update_floor_triggers(
+        current_equity=10000.0,
+        now=datetime(2026, 5, 8, 14, 30, tzinfo=timezone.utc),
+        daily_bars_for_vol=[],
+    )
+    assert len(floor_store.upserted) == 0  # no write on first cycle with no trigger
+
+
+def test_drawdown_hysteresis_keeps_floor_raised() -> None:
+    """When drawdown is in the hysteresis band (between clear_threshold and raise_threshold),
+    the floor should stay raised (not cleared), but not raised further."""
+    sup, floor_store = _make_supervisor_with_floor({
+        "DRAWDOWN_RAISE_PCT": "0.05",    # 5% raise threshold
+        "FLOOR_RAISE_STEP": "0.10",
+        "CONFIDENCE_FLOOR": "0.25",
+    })
+    # Floor was already raised from 0.25 to 0.35. manual_baseline=0.25.
+    # Equity recovered to 9700 → drawdown = 3% which is above clear_threshold (2.5%)
+    # but below raise_threshold (5%). Should stay at 0.35 (not clear, not raise further).
+    rec = _make_floor(floor_value=0.35, watermark=10000.0, manual_baseline=0.25)
+    floor_store._rec = rec
+
+    sup._check_and_update_floor_triggers(
+        current_equity=9700.0,  # 3% drawdown — in hysteresis band
+        now=datetime(2026, 5, 8, 14, 30, tzinfo=timezone.utc),
+        daily_bars_for_vol=[],
+    )
+
+    # No change to floor (still 0.35), no clear, no raise
+    if floor_store.upserted:
+        # If a write occurred, it should only be for watermark (no equity improvement here)
+        # Actually equity=9700 < watermark=10000 so watermark unchanged too
+        # No write should occur at all
+        assert False, f"Unexpected upsert: {floor_store.upserted}"
+    assert len(floor_store.upserted) == 0
+
+
+def test_both_triggers_active_raises_floor_by_one_step_only() -> None:
+    """When both drawdown and vol triggers fire, floor should advance by exactly one step."""
+    from alpaca_bot.domain import Bar
+
+    sup, floor_store = _make_supervisor_with_floor({
+        "DRAWDOWN_RAISE_PCT": "0.05",
+        "VOL_RAISE_THRESHOLD": "0.02",
+        "FLOOR_RAISE_STEP": "0.10",
+        "CONFIDENCE_FLOOR": "0.25",
+    })
+    rec = _make_floor(floor_value=0.25, watermark=10000.0, manual_baseline=0.25)
+    floor_store._rec = rec
+
+    # Equity drops 10% (triggers drawdown) AND vol is ~3% (triggers vol)
+    closes = [100.0, 103.0, 99.9, 103.1, 99.7, 103.2]
+    bars = [
+        Bar(
+            symbol="SPY",
+            timestamp=datetime(2026, 4, i + 1, tzinfo=timezone.utc),
+            open=c, high=c * 1.01, low=c * 0.99, close=c,
+            volume=1_000_000,
+        )
+        for i, c in enumerate(closes)
+    ]
+
+    sup._check_and_update_floor_triggers(
+        current_equity=9000.0,  # 10% drop — triggers drawdown
+        now=datetime(2026, 5, 8, 14, 30, tzinfo=timezone.utc),
+        daily_bars_for_vol=bars,
+    )
+
+    assert len(floor_store.upserted) == 1
+    # Should advance by ONE step (0.10), not two (0.20)
+    assert floor_store.upserted[0].floor_value == pytest.approx(0.35)  # 0.25 + 0.10

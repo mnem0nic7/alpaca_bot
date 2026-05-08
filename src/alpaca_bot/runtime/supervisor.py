@@ -1514,6 +1514,7 @@ class RuntimeSupervisor:
                     "old_floor": current_floor,
                     "new_floor": new_floor,
                     "reason": reason,
+                    "timestamp": now.isoformat(),
                 },
                 created_at=now,
             ))
