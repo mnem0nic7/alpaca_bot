@@ -616,6 +616,9 @@ class RuntimeSupervisor:
             end=timestamp,
             timeframe_minutes=self.settings.entry_timeframe_minutes,
         )
+        open_positions = self._apply_highest_price_updates(
+            open_positions, intraday_bars_by_symbol
+        )
         daily_bars_end = datetime.combine(session_date, datetime.min.time()).replace(
             tzinfo=self.settings.market_timezone
         )
@@ -1254,6 +1257,47 @@ class RuntimeSupervisor:
             idle_iterations=idle_iterations,
         )
 
+    def _apply_highest_price_updates(
+        self,
+        positions: list[OpenPosition],
+        intraday_bars_by_symbol: dict,
+    ) -> list[OpenPosition]:
+        position_store = getattr(self.runtime, "position_store", None)
+        update_fn = (
+            getattr(position_store, "update_highest_price", None)
+            if position_store is not None
+            else None
+        )
+        store_lock = getattr(self.runtime, "store_lock", None)
+        result = []
+        for position in positions:
+            bars = intraday_bars_by_symbol.get(position.symbol, ())
+            if not bars:
+                result.append(position)
+                continue
+            bar_high = bars[-1].high
+            if bar_high <= position.highest_price:
+                result.append(position)
+                continue
+            if update_fn is not None:
+                try:
+                    with store_lock if store_lock is not None else contextlib.nullcontext():
+                        update_fn(
+                            symbol=position.symbol,
+                            trading_mode=self.settings.trading_mode,
+                            strategy_version=self.settings.strategy_version,
+                            strategy_name=position.strategy_name,
+                            highest_price=bar_high,
+                        )
+                except Exception:
+                    logger.warning(
+                        "Failed to persist highest_price for %s; using in-memory value",
+                        position.symbol,
+                        exc_info=True,
+                    )
+            result.append(replace(position, highest_price=bar_high))
+        return result
+
     def _load_open_positions(self) -> list[OpenPosition]:
         return [
             OpenPosition(
@@ -1265,7 +1309,7 @@ class RuntimeSupervisor:
                 initial_stop_price=position.initial_stop_price,
                 stop_price=position.stop_price,
                 trailing_active=position.stop_price > position.initial_stop_price,
-                highest_price=position.entry_price,
+                highest_price=position.highest_price or position.entry_price,
                 strategy_name=getattr(position, "strategy_name", "breakout"),
             )
             for position in self._load_position_records()
