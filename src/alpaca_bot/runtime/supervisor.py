@@ -652,7 +652,8 @@ class RuntimeSupervisor:
             except Exception:
                 logger.warning("Failed to fetch quotes; spread filter disabled this cycle", exc_info=True)
 
-        # Evaluate confidence floor auto-raise triggers
+        # Evaluate confidence floor auto-raise triggers. Note: confidence_floor was
+        # loaded above; any floor update written here takes effect next cycle.
         _regime_bars_for_vol: list = []
         if self.settings.enable_regime_filter and regime_bars:
             _regime_bars_for_vol = list(regime_bars)
