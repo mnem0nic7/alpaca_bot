@@ -4,7 +4,7 @@ import math
 import pytest
 from datetime import date
 from alpaca_bot.domain.models import OptionContract
-from alpaca_bot.strategy.option_selector import select_call_contract
+from alpaca_bot.strategy.option_selector import select_call_contract, select_put_contract
 from alpaca_bot.risk.option_sizing import calculate_option_position_size
 from tests.unit.helpers import _base_env
 from alpaca_bot.config import Settings
@@ -123,3 +123,41 @@ class TestCalculateOptionPositionSize:
         s = _settings()
         result = calculate_option_position_size(equity=100_000, ask=0.0, settings=s)
         assert result == 0
+
+
+def _put_contract(
+    strike: float, expiry: date, ask: float, delta: float | None = None
+) -> OptionContract:
+    return OptionContract(
+        occ_symbol=f"AAPL{expiry.strftime('%y%m%d')}P{int(strike * 1000):08d}",
+        underlying="AAPL",
+        option_type="put",
+        strike=strike,
+        expiry=expiry,
+        bid=ask - 0.05,
+        ask=ask,
+        delta=delta,
+    )
+
+
+class TestSelectPutContract:
+    def test_selects_atm_by_strike_when_no_delta(self):
+        s = _settings()
+        p140 = _put_contract(140.0, NEAR_EXPIRY, ask=1.5)
+        p150 = _put_contract(150.0, NEAR_EXPIRY, ask=3.0)
+        p160 = _put_contract(160.0, NEAR_EXPIRY, ask=10.0)
+        result = select_put_contract(
+            [p140, p150, p160], current_price=150.0, today=TODAY, settings=s
+        )
+        assert result is p150
+
+    def test_selects_by_delta_when_available(self):
+        # Put deltas are negative; abs(-0.50) == 0.50 matches option_delta_target=0.50
+        s = _settings(OPTION_DELTA_TARGET="0.50")
+        p30 = _put_contract(140.0, NEAR_EXPIRY, ask=1.5, delta=-0.30)
+        p50 = _put_contract(150.0, NEAR_EXPIRY, ask=3.0, delta=-0.50)
+        p70 = _put_contract(160.0, NEAR_EXPIRY, ask=10.0, delta=-0.70)
+        result = select_put_contract(
+            [p30, p50, p70], current_price=150.0, today=TODAY, settings=s
+        )
+        assert result is p50
