@@ -387,7 +387,7 @@
                     {%- else %}—{% endif %}
                   </td>
                   <td style="text-align: right">{% if sw %}{{ "%.0f%%"|format(sw.weight * 100) }}{% else %}—{% endif %}</td>
-                  <td style="text-align: right">{% if cap > 0 %}{{ "%.1f" | format(cap) }}%{% else %}0%{% endif %}</td>
+                  <td style="text-align: right">{% if cap > 0 %}{{ "%.1f" | format(cap) }}%{% elif sw %}0%{% else %}—{% endif %}</td>
                   <td style="text-align: right">{{ open_count }}</td>
                   <td style="text-align: right" class="{% if today_pnl < 0 %}warn{% endif %}">{% if today_count > 0 %}{{ format_price(today_pnl) }}{% else %}—{% endif %}</td>
                   <td style="text-align: right">{% if today_count > 0 %}{{ today_count }}{% else %}—{% endif %}</td>
