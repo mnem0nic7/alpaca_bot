@@ -18,12 +18,13 @@ from alpaca_bot.storage import (
     PositionStore,
     StrategyFlag,
     StrategyFlagStore,
+    StrategyWeightStore,
     TradingStatus,
     TradingStatusStore,
     TradingStatusValue,
 )
 from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres
-from alpaca_bot.strategy import STRATEGY_REGISTRY
+from alpaca_bot.strategy import OPTION_STRATEGY_FACTORIES, STRATEGY_REGISTRY
 
 
 def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
@@ -81,6 +82,15 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     )
     cpf_parser.add_argument("--strategy-version", default=defaults.strategy_version)
     cpf_parser.add_argument("--dry-run", action="store_true")
+
+    rw_parser = subparsers.add_parser("reset-weights")
+    rw_parser.add_argument(
+        "--mode",
+        choices=[mode.value for mode in TradingMode],
+        default=defaults.trading_mode.value,
+    )
+    rw_parser.add_argument("--strategy-version", default=defaults.strategy_version)
+    rw_parser.add_argument("--dry-run", action="store_true")
 
     return parser
 
@@ -320,6 +330,8 @@ def main(
     broker_factory: Callable[["Settings"], object] | None = None,
     position_store_factory: Callable[[ConnectionProtocol], PositionStore] = PositionStore,
     order_store_factory: Callable[[ConnectionProtocol], OrderStore] = OrderStore,
+    strategy_weight_store_factory: Callable[[ConnectionProtocol], StrategyWeightStore] = StrategyWeightStore,
+    strategy_flag_store_factory: Callable[[ConnectionProtocol], StrategyFlagStore] = StrategyFlagStore,
 ) -> int:
     parsed_argv = list(sys.argv[1:] if argv is None else argv)
     if settings is not None:
@@ -400,6 +412,19 @@ def main(
                 strategy_version=strategy_version,
                 now=timestamp,
                 stdout=stdout or sys.stdout,
+            )
+        elif args.command == "reset-weights":
+            _reset_weights_equal(
+                connection=connection,
+                event_store=audit_store,
+                settings=resolved_settings,
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                dry_run=args.dry_run,
+                now=timestamp,
+                stdout=stdout or sys.stdout,
+                weight_store_factory=strategy_weight_store_factory,
+                flag_store_factory=strategy_flag_store_factory,
             )
         else:
             command_reason = getattr(args, "reason", None)
@@ -608,6 +633,84 @@ def _run_cancel_partial_fills(
             ),
             commit=True,
         )
+
+
+def _reset_weights_equal(
+    *,
+    connection: ConnectionProtocol,
+    event_store: AuditEventStore,
+    settings: Settings,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    dry_run: bool,
+    now: datetime,
+    stdout: TextIO,
+    weight_store_factory: Callable[[ConnectionProtocol], StrategyWeightStore] = StrategyWeightStore,
+    flag_store_factory: Callable[[ConnectionProtocol], StrategyFlagStore] = StrategyFlagStore,
+) -> None:
+    flag_store = flag_store_factory(connection)
+    disabled = {
+        f.strategy_name
+        for f in flag_store.list_all(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+        )
+        if not f.enabled
+    }
+
+    all_names: list[str] = list(STRATEGY_REGISTRY)
+    if settings.enable_options_trading:
+        all_names += list(OPTION_STRATEGY_FACTORIES)
+    active_names = [n for n in all_names if n not in disabled]
+
+    if not active_names:
+        raise ValueError(
+            "No active strategies — all strategy flags are disabled. "
+            "Enable at least one strategy before resetting weights."
+        )
+
+    n = len(active_names)
+    equal_weight = 1.0 / n
+    weights = {name: equal_weight for name in active_names}
+    sharpes = {name: 0.0 for name in active_names}
+
+    if dry_run:
+        print(
+            f"[dry-run] would reset {n} strategies to equal_weight={equal_weight * 100:.1f}%",
+            file=stdout,
+        )
+        print(", ".join(sorted(active_names)), file=stdout)
+        return
+
+    weight_store = weight_store_factory(connection)
+    weight_store.upsert_many(
+        weights=weights,
+        sharpes=sharpes,
+        trading_mode=trading_mode,
+        strategy_version=strategy_version,
+        computed_at=now,
+        commit=False,
+    )
+    event_store.append(
+        AuditEvent(
+            event_type="strategy_weights_reset",
+            payload={
+                "mode": trading_mode.value,
+                "version": strategy_version,
+                "strategy_count": str(n),
+                "equal_weight": str(round(equal_weight, 6)),
+                **{name: str(round(equal_weight, 4)) for name in active_names},
+            },
+            created_at=now,
+        ),
+        commit=False,
+    )
+    connection.commit()
+    print(
+        f"reset strategy_count={n} equal_weight={equal_weight * 100:.1f}%"
+        f" mode={trading_mode.value} version={strategy_version}",
+        file=stdout,
+    )
 
 
 def _make_default_broker(settings: Settings) -> object:
