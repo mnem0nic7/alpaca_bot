@@ -399,3 +399,52 @@ def test_update_session_weights_excludes_option_names_when_options_disabled() ->
     pool = set(captured_names[0])
     for opt_name in OPTION_STRATEGY_NAMES:
         assert opt_name not in pool, f"Option strategy {opt_name!r} must not be in weight pool when options disabled"
+
+
+def test_update_session_weights_bypasses_cache_when_option_names_added() -> None:
+    """Stale cache (equity-only) is bypassed when options are enabled — the set-equality check forces recompute."""
+    from alpaca_bot.storage import StrategyWeight
+    from alpaca_bot.strategy import OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY
+
+    # Fresh weights for today, but only for equity strategies (12 option names are missing)
+    equity_weight = 1.0 / len(STRATEGY_REGISTRY)
+    equity_cache = [
+        StrategyWeight(
+            strategy_name=name,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            weight=equity_weight,
+            sharpe=0.0,
+            computed_at=datetime(_SESSION_DATE.year, _SESSION_DATE.month, _SESSION_DATE.day, 9, 30, tzinfo=timezone.utc),
+        )
+        for name in STRATEGY_REGISTRY
+    ]
+
+    captured_names: list[list[str]] = []
+
+    import alpaca_bot.runtime.supervisor as _sup_mod
+    from alpaca_bot.risk.weighting import compute_strategy_weights as _orig
+
+    def capturing_compute(trade_rows, active_names):
+        captured_names.append(list(active_names))
+        return _orig(trade_rows, active_names)
+
+    original = _sup_mod.compute_strategy_weights
+    _sup_mod.compute_strategy_weights = capturing_compute
+    try:
+        settings = _make_settings(ENABLE_OPTIONS_TRADING="true")
+        supervisor, _ = _make_supervisor(
+            settings=settings,
+            weight_store=_FakeWeightStore(preloaded=equity_cache),
+            only_breakout=False,
+        )
+        supervisor._update_session_weights(_SESSION_DATE)
+    finally:
+        _sup_mod.compute_strategy_weights = original
+
+    assert len(captured_names) == 1, (
+        "compute_strategy_weights must be called — equity-only cache must not satisfy the 23-strategy active set"
+    )
+    pool = set(captured_names[0])
+    for opt_name in OPTION_STRATEGY_NAMES:
+        assert opt_name in pool, f"Option strategy {opt_name!r} missing from recomputed weight pool"

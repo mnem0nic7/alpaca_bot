@@ -1281,16 +1281,6 @@ class RuntimeSupervisor:
         store_lock = getattr(self.runtime, "store_lock", None)
         lock_ctx = store_lock if store_lock is not None else contextlib.nullcontext()
 
-        with lock_ctx:
-            existing = weight_store.load_all(
-                trading_mode=self.settings.trading_mode,
-                strategy_version=self.settings.strategy_version,
-            )
-        if existing and all(w.computed_at.date() == session_date for w in existing):
-            return {w.strategy_name: w.weight for w in existing}
-
-        end_date = session_date - timedelta(days=1)
-        start_date = date(2000, 1, 1)
         active_names = [name for name, _ in self._resolve_active_strategies()]
         if self.settings.enable_options_trading:
             _wt_flag_store = getattr(self.runtime, "strategy_flag_store", None)
@@ -1305,6 +1295,22 @@ class RuntimeSupervisor:
                         if _flag is not None and not _flag.enabled:
                             continue
                     active_names.append(opt_name)
+
+        with lock_ctx:
+            existing = weight_store.load_all(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+            )
+        existing_names = {w.strategy_name for w in existing}
+        if (
+            existing
+            and all(w.computed_at.date() == session_date for w in existing)
+            and existing_names == set(active_names)
+        ):
+            return {w.strategy_name: w.weight for w in existing}
+
+        end_date = session_date - timedelta(days=1)
+        start_date = date(2000, 1, 1)
 
         with lock_ctx:
             trade_rows = self.runtime.order_store.list_trade_pnl_by_strategy(
