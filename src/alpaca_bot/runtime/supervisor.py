@@ -375,7 +375,24 @@ class RuntimeSupervisor:
                     start_date=date(2000, 1, 1),
                     end_date=session_date - timedelta(days=1),
                 )
-            _streaks = compute_losing_day_streaks(_streak_rows, list(session_sharpes.keys()))
+                _opt_store = getattr(self.runtime, "option_order_store", None)
+                _opt_streak_rows: list[dict] = []
+                if _opt_store is not None:
+                    try:
+                        _opt_streak_rows = _opt_store.list_trade_pnl_by_strategy(
+                            trading_mode=self.settings.trading_mode,
+                            strategy_version=self.settings.strategy_version,
+                            start_date=date(2000, 1, 1),
+                            end_date=session_date - timedelta(days=1),
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to fetch option PnL rows for streak detection; excluding",
+                            exc_info=True,
+                        )
+            _streaks = compute_losing_day_streaks(
+                _streak_rows + _opt_streak_rows, list(session_sharpes.keys())
+            )
             _losing_streak_excluded: set[str] = {
                 name
                 for name, streak in _streaks.items()
@@ -1417,8 +1434,23 @@ class RuntimeSupervisor:
                 start_date=start_date,
                 end_date=end_date,
             )
+            _opt_store = getattr(self.runtime, "option_order_store", None)
+            option_trade_rows: list[dict] = []
+            if _opt_store is not None:
+                try:
+                    option_trade_rows = _opt_store.list_trade_pnl_by_strategy(
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to fetch option PnL rows; excluding from Sharpe computation",
+                        exc_info=True,
+                    )
 
-        result = compute_strategy_weights(trade_rows, active_names)
+        result = compute_strategy_weights(trade_rows + option_trade_rows, active_names)
         now = datetime.now(timezone.utc)
 
         with lock_ctx:

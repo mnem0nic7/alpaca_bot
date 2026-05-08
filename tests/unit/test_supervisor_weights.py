@@ -69,6 +69,14 @@ class _RecordingOrderStore:
     def list_trade_pnl_by_strategy(self, **kwargs): return self._pnl_rows
 
 
+class _RecordingOptionOrderStore:
+    def __init__(self, *, pnl_rows: list[dict] | None = None):
+        self._pnl_rows = pnl_rows or []
+
+    def list_trade_pnl_by_strategy(self, **kwargs) -> list[dict]:
+        return list(self._pnl_rows)
+
+
 class _FakeWeightStore:
     def __init__(self, *, preloaded: list | None = None):
         self._preloaded = preloaded or []
@@ -94,6 +102,7 @@ def _make_supervisor(
     broker_equity: float = 10_000.0,
     weight_store: _FakeWeightStore | None = None,
     order_store: _RecordingOrderStore | None = None,
+    option_order_store: _RecordingOptionOrderStore | None = None,
     cycle_runner=None,
     only_breakout: bool = True,
     order_dispatcher=None,
@@ -146,12 +155,14 @@ def _make_supervisor(
 
     _order_store = order_store or _RecordingOrderStore()
     _weight_store = weight_store
+    _option_order_store = option_order_store
 
     class _FakeRuntimeContext:
         connection = _FakeConn()
         store_lock = None
         order_store = _order_store
         strategy_weight_store = _weight_store
+        option_order_store = _option_order_store
         trading_status_store = _FakeTradingStatusStore()
         position_store = _FakePositionStore()
         daily_session_state_store = _FakeSessionStateStore()
@@ -847,3 +858,24 @@ def test_option_chains_fetched_payload_shows_zero_when_chains_empty() -> None:
     payload = fetched_events[0].payload
     # _make_settings uses SYMBOLS="AAPL,MSFT"
     assert payload == {"AAPL": 0, "MSFT": 0}
+
+
+def test_option_pnl_feeds_into_sharpe() -> None:
+    """Option strategies with closed profitable trades produce non-zero Sharpe via _update_session_weights."""
+    # 6 profitable trades for breakout_calls on distinct dates (min_trades=5 threshold requires >=5)
+    option_rows = [
+        {"strategy_name": "breakout_calls", "exit_date": date(2026, 1, d), "pnl": 150.0}
+        for d in range(1, 7)
+    ]
+    settings = _make_settings(ENABLE_OPTIONS_TRADING="true")
+    supervisor, _ = _make_supervisor(
+        settings=settings,
+        weight_store=_FakeWeightStore(preloaded=[]),
+        order_store=_RecordingOrderStore(pnl_rows=[]),
+        option_order_store=_RecordingOptionOrderStore(pnl_rows=option_rows),
+        only_breakout=False,
+    )
+    result = supervisor._update_session_weights(_SESSION_DATE)
+    assert result.sharpes.get("breakout_calls", 0.0) > 0.0, (
+        "breakout_calls must earn a positive Sharpe when it has 6 profitable closed option trades"
+    )
