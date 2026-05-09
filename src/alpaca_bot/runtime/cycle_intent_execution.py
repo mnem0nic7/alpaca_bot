@@ -121,15 +121,11 @@ def execute_cycle_intents(
         strategy_name = getattr(intent, "strategy_name", "breakout")
 
         if intent_type is CycleIntentType.UPDATE_STOP:
+            _db_only = False
             if session_type is not None:
                 from alpaca_bot.strategy.session import SessionType as _SessionType
                 if session_type in (_SessionType.AFTER_HOURS, _SessionType.PRE_MARKET):
-                    logger.debug(
-                        "execute_cycle_intents: skipping UPDATE_STOP for %s during %s session",
-                        symbol,
-                        session_type,
-                    )
-                    continue
+                    _db_only = True
             if positions_by_symbol is None:
                 with lock_ctx:
                     positions_by_symbol = _positions_by_symbol(runtime, settings)
@@ -145,6 +141,7 @@ def execute_cycle_intents(
                 strategy_name=strategy_name,
                 lock_ctx=lock_ctx,
                 notifier=notifier,
+                db_only=_db_only,
             )
             if action == "replaced":
                 replaced_stop_count += 1
@@ -206,6 +203,7 @@ def _execute_update_stop(
     strategy_name: str = "breakout",
     lock_ctx: Any = None,
     notifier: Notifier | None = None,
+    db_only: bool = False,
 ) -> str | None:
     if position is None or stop_price is None:
         return None
@@ -223,6 +221,8 @@ def _execute_update_stop(
     _path_c_client_order_id: str | None = None
     try:
         if active_stop is not None and active_stop.broker_order_id:
+            if db_only:
+                return None  # can't replace broker stops after hours; morning cycle handles it
             broker_order = broker.replace_order(
                 order_id=active_stop.broker_order_id,
                 stop_price=stop_price,
@@ -269,6 +269,8 @@ def _execute_update_stop(
             )
             action = "updated_pending"
         else:
+            if db_only:
+                return None  # no pending_submit stop to update; skip silently
             client_order_id = _stop_client_order_id(
                 settings=settings,
                 symbol=symbol,
