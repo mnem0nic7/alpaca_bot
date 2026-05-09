@@ -843,8 +843,35 @@
               <tr><td>Avg hold (min)</td><td>{{ "%.0f" | format(metrics.session_report.avg_hold_minutes) if metrics.session_report.avg_hold_minutes is not none else "&mdash;" }}</td></tr>
               <tr><td>Stop wins / losses</td><td>{{ metrics.session_report.stop_wins }} / {{ metrics.session_report.stop_losses }}</td></tr>
               <tr><td>EOD wins / losses</td><td>{{ metrics.session_report.eod_wins }} / {{ metrics.session_report.eod_losses }}</td></tr>
+              <tr><td>Profit target W / L</td><td>{{ metrics.session_report.profit_target_wins }} / {{ metrics.session_report.profit_target_losses }}</td></tr>
+              <tr><td>Expectancy</td><td>{% if metrics.session_report.expectancy_pct is not none %}{{ "%+.2f%%" | format(metrics.session_report.expectancy_pct * 100) }}{% else %}&mdash;{% endif %}</td></tr>
               <tr><td>Max consecutive wins</td><td>{{ metrics.session_report.max_consecutive_wins }}</td></tr>
               <tr><td>Max consecutive losses</td><td>{{ metrics.session_report.max_consecutive_losses }}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
+
+        {% if settings is defined %}
+        <div class="panel">
+          <h2>Strategy Configuration</h2>
+          <table class="data-table">
+            <thead><tr><th>Setting</th><th>Value</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Profit target</td>
+                <td>{% if settings.enable_profit_target %}Enabled{% else %}Disabled{% endif %}</td>
+              </tr>
+              {% if settings.enable_profit_target %}
+              <tr>
+                <td>Profit target R</td>
+                <td>{{ settings.profit_target_r }}&times;R</td>
+              </tr>
+              {% endif %}
+              <tr>
+                <td>Trend filter exit debounce</td>
+                <td>{{ settings.trend_filter_exit_lookback_days }} day(s)</td>
+              </tr>
             </tbody>
           </table>
         </div>
