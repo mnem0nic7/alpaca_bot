@@ -36,6 +36,35 @@ def daily_trend_filter_passes(daily_bars: Sequence[Bar], settings: Settings) -> 
     return latest_close > sma
 
 
+def daily_trend_filter_exit_passes(daily_bars: Sequence[Bar], settings: Settings) -> bool:
+    """Return False when the last TREND_FILTER_EXIT_LOOKBACK_DAYS closes are all below the
+    daily SMA — meaning an exit is warranted.  Returns True (hold) otherwise.
+
+    The final element of daily_bars is treated as a partial (intraday) bar and excluded.
+    Requires sma_period + lookback_days + 1 bars total (sma window + lookback completed days
+    + 1 partial).
+    """
+    n = settings.trend_filter_exit_lookback_days
+    # Need: sma_period bars for the SMA window + n completed days to check + 1 partial bar.
+    # The partial bar sits at bars[-1]; the n-th completed day sits at bars[-(n+1)].
+    # Accessing bars[-(n + sma_period)] requires len >= n + sma_period.
+    required = settings.daily_sma_period + n
+    if len(daily_bars) < required:
+        return True  # insufficient history → hold
+
+    for offset in range(n):
+        # offset=0: check latest completed bar (index -2, excluding partial at -1)
+        # offset=1: check day before that, etc.
+        window_end = -(1 + offset)          # excludes partial and any already-checked days
+        window_start = window_end - settings.daily_sma_period
+        window = daily_bars[window_start:window_end]
+        sma = sum(b.close for b in window) / len(window)
+        close = daily_bars[window_end - 1].close
+        if close > sma:
+            return True  # at least one day above SMA → hold
+    return False  # all N days below SMA → exit warranted
+
+
 def daily_downtrend_filter_passes(daily_bars: Sequence[Bar], settings: Settings) -> bool:
     """Returns True when the prior close is BELOW the SMA — stock is in a downtrend."""
     if len(daily_bars) < settings.daily_sma_period + 1:
