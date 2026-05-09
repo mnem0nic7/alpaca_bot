@@ -1,4 +1,4 @@
-CREATE TABLE market_context (
+CREATE TABLE IF NOT EXISTS market_context (
     id SERIAL PRIMARY KEY,
     as_of TIMESTAMPTZ NOT NULL,
     trading_mode VARCHAR(10) NOT NULL,
@@ -9,4 +9,4 @@ CREATE TABLE market_context (
     sector_passing_pct FLOAT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX ON market_context (as_of, trading_mode);
+CREATE INDEX IF NOT EXISTS ON market_context (as_of, trading_mode);
