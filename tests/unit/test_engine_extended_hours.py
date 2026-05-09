@@ -66,13 +66,19 @@ def _bar(symbol: str, close: float, high: float | None = None, ts: datetime | No
     )
 
 
-def test_update_stop_suppressed_in_after_hours():
-    """UPDATE_STOP intents must not be emitted during extended hours."""
+def test_update_stop_suppressed_in_after_hours_safety_guard():
+    """Safety guard fires when be_stop >= close — UPDATE_STOP must not be emitted.
+
+    Setup:
+      entry_price=100, highest_price=0 (default), high=106
+      be_stop = round(106 * 0.998, 2) = 105.79
+      close=103 < 105.79 → safety guard fires (stop would trigger at open) → no intent
+    """
     settings = _settings()
-    # 5pm ET = after hours, position has profited enough to trigger a stop update
-    now = datetime(2026, 4, 28, 21, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 4, 28, 21, 0, tzinfo=timezone.utc)  # 5pm ET = after hours
     position = _position(stop_price=95.0)
-    bar = _bar("AAPL", close=106.0, high=106.0)  # high >= entry_price + risk_per_share = 105
+    # high=106 clears the breakeven trigger; close=103 is below be_stop=105.79
+    bar = _bar("AAPL", close=103.0, high=106.0)
 
     result = evaluate_cycle(
         settings=settings,
@@ -87,7 +93,7 @@ def test_update_stop_suppressed_in_after_hours():
         session_type=SessionType.AFTER_HOURS,
     )
     update_stops = [i for i in result.intents if i.intent_type is CycleIntentType.UPDATE_STOP]
-    assert update_stops == [], "UPDATE_STOP must be suppressed in extended hours"
+    assert update_stops == [], "Safety guard must suppress UPDATE_STOP when be_stop >= close"
 
 
 def test_update_stop_allowed_in_regular_session():

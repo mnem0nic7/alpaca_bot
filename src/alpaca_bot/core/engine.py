@@ -288,8 +288,9 @@ def evaluate_cycle(
 
     # Breakeven pass: once a position is up BREAKEVEN_TRIGGER_PCT from entry, raise
     # stop to entry price so the trade cannot become a loss.
-    # Gated on regular hours: stop order mechanics differ in pre/after market.
-    if settings.enable_breakeven_stop and not is_extended:
+    # Runs during extended hours too; a safety guard skips stops that would trigger
+    # immediately at open (be_stop >= close means price must gap up just to survive).
+    if settings.enable_breakeven_stop:
         _be_exit_syms = {i.symbol for i in intents if i.intent_type == CycleIntentType.EXIT}
         _be_emitted: dict[str, float] = {
             i.symbol: (i.stop_price or 0.0)
@@ -311,6 +312,8 @@ def evaluate_cycle(
                 max_price = max(position.highest_price, latest_bar.high)
                 trail_stop = round(max_price * (1 - settings.breakeven_trail_pct), 2)
                 be_stop = max(position.entry_price, trail_stop)
+                if is_extended and be_stop >= latest_bar.close:
+                    continue  # stop above current price would trigger immediately at open
                 if effective_stop < be_stop:
                     intents.append(
                         CycleIntent(
