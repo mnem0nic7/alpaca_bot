@@ -572,3 +572,48 @@ def test_nightly_no_winners_writes_no_candidate_env(monkeypatch, tmp_path):
 
     assert result == 0
     assert not output_env.exists(), "No candidate.env must be written when all strategies fail OOS gate"
+
+
+def test_nightly_cli_writes_audit_event_after_sweep(monkeypatch, tmp_path):
+    """nightly_sweep_completed AuditEvent is written after the strategy sweep, win or lose."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    _patch_common_db(monkeypatch, module)
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", lambda **kw: [cand])
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [0.4])
+
+    appended_events: list = []
+
+    class FakeAuditEventStore:
+        def __init__(self, conn): pass
+        def append(self, event, *, commit=True):
+            appended_events.append(event)
+
+    monkeypatch.setattr(module, "AuditEventStore", FakeAuditEventStore)
+
+    output_env = tmp_path / "candidate.env"
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db",
+        "--output-dir", str(tmp_path),
+        "--output-env", str(output_env),
+        "--strategies", "breakout",
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    sweep_events = [e for e in appended_events if e.event_type == "nightly_sweep_completed"]
+    assert len(sweep_events) == 1, f"expected 1 nightly_sweep_completed event, got {len(sweep_events)}"
+    payload = sweep_events[0].payload
+    assert payload["strategy_count"] == 1
+    assert payload["candidates_accepted"] == 1
+    assert payload["best_strategy"] == "breakout"
+    assert payload["candidate_env_written"] is True
+    assert "best_score" in payload

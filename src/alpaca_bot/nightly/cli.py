@@ -15,8 +15,9 @@ from alpaca_bot.replay.report import BacktestReport, report_from_records
 from alpaca_bot.replay.runner import ReplayRunner
 from alpaca_bot.replay.splitter import split_scenario
 from alpaca_bot.storage.db import connect_postgres
-from alpaca_bot.storage.models import EQUITY_SESSION_STATE_STRATEGY_NAME
+from alpaca_bot.storage.models import EQUITY_SESSION_STATE_STRATEGY_NAME, AuditEvent
 from alpaca_bot.storage.repositories import (
+    AuditEventStore,
     DailySessionStateStore,
     OrderStore,
     TuningResultStore,
@@ -216,6 +217,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             _print_strategy_results(winners, strategy_names, all_scenarios)
 
+            env_written = False
             if winners:
                 composite_params = _build_composite_env(winners)
                 env_block = _format_composite_env_block(composite_params, winners[0][0], now)
@@ -223,8 +225,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.output_env:
                     Path(args.output_env).write_text(env_block + "\n")
                     print(f"Candidate env written to {args.output_env}")
+                    env_written = True
             else:
                 print("\nNo walk-forward held candidates across all strategies — current parameters remain active.")
+
+            best_strat = winners[0][0] if winners else None
+            best_score = winners[0][2] if winners else None
+            try:
+                AuditEventStore(conn).append(
+                    AuditEvent(
+                        event_type="nightly_sweep_completed",
+                        payload={
+                            "strategy_count": len(strategy_names),
+                            "candidates_accepted": len(winners),
+                            "best_strategy": best_strat,
+                            "best_score": best_score,
+                            "candidate_env_written": env_written,
+                        },
+                        created_at=now,
+                    )
+                )
+            except Exception as exc:
+                print(
+                    f"Warning: could not write nightly_sweep_completed audit event: {exc}",
+                    file=sys.stderr,
+                )
 
         # ── Rolling live report ───────────────────────────────────────────────
         print(
