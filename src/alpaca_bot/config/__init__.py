@@ -163,6 +163,16 @@ class Settings:
     intraday_digest_interval_cycles: int = 0
     intraday_consecutive_loss_gate: int = 0
     max_loss_per_trade_dollars: float | None = None
+    enable_vix_filter: bool = False
+    vix_proxy_symbol: str = "VIXY"
+    vix_lookback_bars: int = 20
+    enable_sector_filter: bool = False
+    sector_etf_symbols: tuple[str, ...] = (
+        "XLK", "XLF", "XLE", "XLV", "XLU", "XLI", "XLB", "XLRE", "XLC", "XLY", "XLP"
+    )
+    sector_etf_sma_period: int = 20
+    sector_filter_min_passing_pct: float = 0.5
+    enable_vwap_entry_filter: bool = False
 
     def __post_init__(self) -> None:
         self.validate()
@@ -364,6 +374,29 @@ class Settings:
                 float(values["MAX_LOSS_PER_TRADE_DOLLARS"])
                 if "MAX_LOSS_PER_TRADE_DOLLARS" in values
                 else None
+            ),
+            enable_vix_filter=_parse_bool(
+                "ENABLE_VIX_FILTER", values.get("ENABLE_VIX_FILTER", "false")
+            ),
+            vix_proxy_symbol=values.get("VIX_PROXY_SYMBOL", "VIXY"),
+            vix_lookback_bars=int(values.get("VIX_LOOKBACK_BARS", "20")),
+            enable_sector_filter=_parse_bool(
+                "ENABLE_SECTOR_FILTER", values.get("ENABLE_SECTOR_FILTER", "false")
+            ),
+            sector_etf_symbols=tuple(
+                s.strip()
+                for s in values.get(
+                    "SECTOR_ETF_SYMBOLS",
+                    "XLK,XLF,XLE,XLV,XLU,XLI,XLB,XLRE,XLC,XLY,XLP",
+                ).split(",")
+                if s.strip()
+            ),
+            sector_etf_sma_period=int(values.get("SECTOR_ETF_SMA_PERIOD", "20")),
+            sector_filter_min_passing_pct=float(
+                values.get("SECTOR_FILTER_MIN_PASSING_PCT", "0.5")
+            ),
+            enable_vwap_entry_filter=_parse_bool(
+                "ENABLE_VWAP_ENTRY_FILTER", values.get("ENABLE_VWAP_ENTRY_FILTER", "false")
             ),
         )
         return settings
