@@ -149,6 +149,9 @@ class Settings:
     max_stop_pct: float = 0.05
     enable_profit_trail: bool = False
     profit_trail_pct: float = 0.95
+    enable_profit_target: bool = False
+    profit_target_r: float = 2.0
+    trend_filter_exit_lookback_days: int = 1
     enable_breakeven_stop: bool = True
     breakeven_trigger_pct: float = 0.0025
     breakeven_trail_pct: float = 0.002
@@ -338,6 +341,13 @@ class Settings:
                 "ENABLE_PROFIT_TRAIL", values.get("ENABLE_PROFIT_TRAIL", "false")
             ),
             profit_trail_pct=float(values.get("PROFIT_TRAIL_PCT", "0.95")),
+            enable_profit_target=_parse_bool(
+                "ENABLE_PROFIT_TARGET", values.get("ENABLE_PROFIT_TARGET", "false")
+            ),
+            profit_target_r=float(values.get("PROFIT_TARGET_R", "2.0")),
+            trend_filter_exit_lookback_days=int(
+                values.get("TREND_FILTER_EXIT_LOOKBACK_DAYS", "1")
+            ),
             enable_breakeven_stop=_parse_bool(
                 "ENABLE_BREAKEVEN_STOP", values.get("ENABLE_BREAKEVEN_STOP", "true")
             ),
@@ -547,6 +557,10 @@ class Settings:
             raise ValueError("INTRADAY_CONSECUTIVE_LOSS_GATE must be >= 0")
         if self.max_loss_per_trade_dollars is not None and self.max_loss_per_trade_dollars <= 0:
             raise ValueError("MAX_LOSS_PER_TRADE_DOLLARS must be > 0")
+        if self.profit_target_r <= 0:
+            raise ValueError("PROFIT_TARGET_R must be > 0")
+        if self.trend_filter_exit_lookback_days < 1:
+            raise ValueError("TREND_FILTER_EXIT_LOOKBACK_DAYS must be >= 1")
         if not 0.0 <= self.confidence_floor <= 1.0:
             raise ValueError("CONFIDENCE_FLOOR must be between 0.0 and 1.0")
         if not 0.0 < self.floor_raise_step <= 0.5:
