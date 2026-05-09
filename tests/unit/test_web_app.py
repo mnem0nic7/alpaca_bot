@@ -845,6 +845,101 @@ def test_dashboard_renders_no_session_row_when_state_is_none() -> None:
     assert "no session row" in response.text
 
 
+def test_dashboard_renders_strategy_configuration_panel() -> None:
+    settings = make_settings(
+        ENABLE_PROFIT_TARGET="true",
+        PROFIT_TARGET_R="3.0",
+        TREND_FILTER_EXIT_LOOKBACK_DAYS="2",
+    )
+    app = create_app(
+        settings=settings,
+        connect_postgres_fn=ConnectionFactory([FakeConnection(responses=[])]),
+        trading_status_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=lambda _c: SimpleNamespace(
+            list_by_status=lambda **_: [], list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [],
+        ),
+        audit_event_store_factory=lambda _c: SimpleNamespace(
+            list_recent=lambda **_: [], load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+    )
+    with TestClient(app) as client:
+        response = client.get("/")
+    assert response.status_code == 200
+    assert "Strategy Configuration" in response.text
+    assert "3.0" in response.text        # profit_target_r
+    assert "2 day" in response.text      # trend_filter_exit_lookback_days
+
+
+def _make_closed_trade_row(
+    *,
+    symbol: str = "AAPL",
+    entry_fill: float = 100.0,
+    exit_fill: float = 110.0,
+    qty: int = 10,
+    intent_type: str = "exit",
+) -> dict:
+    now = datetime.now(timezone.utc)
+    return {
+        "symbol": symbol,
+        "entry_fill": entry_fill,
+        "exit_fill": exit_fill,
+        "qty": qty,
+        "entry_time": now - timedelta(hours=1),
+        "exit_time": now,
+        "intent_type": intent_type,
+    }
+
+
+def test_metrics_renders_expectancy_and_profit_target_rows() -> None:
+    # 2 wins (eod) + 1 stop loss → win_rate=2/3, avg_win=+10%, avg_loss=-5%
+    # expectancy = (2/3)*0.10 + (1/3)*(-0.05) = +5.00%
+    win1 = _make_closed_trade_row(entry_fill=100.0, exit_fill=110.0, qty=10)
+    win2 = _make_closed_trade_row(entry_fill=100.0, exit_fill=110.0, qty=10)
+    loss = _make_closed_trade_row(entry_fill=100.0, exit_fill=95.0, qty=10, intent_type="stop")
+
+    def _order_store_factory(_conn):
+        return SimpleNamespace(
+            list_by_status=lambda **_: [],
+            list_recent=lambda **_: [],
+            list_closed_trades=lambda **_: [win1, win2, loss],
+        )
+
+    app = create_app(
+        settings=make_settings(),
+        connect_postgres_fn=lambda _: FakeConnection(responses=[]),
+        trading_status_store_factory=lambda _: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=lambda _: SimpleNamespace(load=lambda **_: None),
+        position_store_factory=lambda _: SimpleNamespace(list_all=lambda **_: []),
+        order_store_factory=_order_store_factory,
+        audit_event_store_factory=lambda _: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+    )
+    with TestClient(app) as client:
+        response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "Profit target W / L" in response.text
+    assert "0 / 0" in response.text          # profit_target exits undetectable from live DB rows
+    assert "Expectancy" in response.text
+    assert "+5.00%" in response.text
+
+
+def test_metrics_renders_mdash_when_expectancy_is_none() -> None:
+    # Zero trades → session_report is None → Session Evaluation panel hidden.
+    # Verify Python string "None" never leaks into the response body.
+    app = _make_metrics_app()
+    with TestClient(app) as client:
+        response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "None" not in response.text
+
+
 # ---------------------------------------------------------------------------
 # Healthz route — null trading status
 # ---------------------------------------------------------------------------
