@@ -1299,7 +1299,8 @@ class TuningResultStore:
         row = fetch_one(
             self._connection,
             """
-            SELECT params, score, total_trades, win_rate, sharpe_ratio, created_at
+            SELECT params, score, total_trades, win_rate,
+                   mean_return_pct, max_drawdown_pct, sharpe_ratio, created_at
             FROM tuning_results
             WHERE trading_mode = %s AND is_best = TRUE
             ORDER BY created_at DESC
@@ -1315,8 +1316,10 @@ class TuningResultStore:
             "score": row[1],
             "total_trades": row[2],
             "win_rate": row[3],
-            "sharpe_ratio": row[4],
-            "created_at": row[5],
+            "mean_return_pct": row[4],
+            "max_drawdown_pct": row[5],
+            "sharpe_ratio": row[6],
+            "created_at": row[7],
         }
 
     def load_all_scored(
