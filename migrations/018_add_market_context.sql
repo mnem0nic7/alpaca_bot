@@ -9,4 +9,4 @@ CREATE TABLE IF NOT EXISTS market_context (
     sector_passing_pct FLOAT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS ON market_context (as_of, trading_mode);
+CREATE INDEX IF NOT EXISTS market_context_as_of_trading_mode_idx ON market_context (as_of, trading_mode);
