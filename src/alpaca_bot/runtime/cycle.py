@@ -16,6 +16,7 @@ from alpaca_bot.strategy import StrategySignalEvaluator
 
 if TYPE_CHECKING:
     from alpaca_bot.domain import NewsItem, Quote
+    from alpaca_bot.domain.models import MarketContext
     from alpaca_bot.strategy.session import SessionType
 
 
@@ -59,6 +60,7 @@ def run_cycle(
     regime_bars: "Sequence[Bar] | None" = None,
     news_by_symbol: "Mapping[str, Sequence[NewsItem]] | None" = None,
     quotes_by_symbol: "Mapping[str, Quote] | None" = None,
+    market_context: "MarketContext | None" = None,
     _evaluate_fn=None,
 ) -> CycleResult:
     result = (_evaluate_fn or evaluate_cycle)(
@@ -81,6 +83,7 @@ def run_cycle(
         regime_bars=regime_bars,
         news_by_symbol=news_by_symbol,
         quotes_by_symbol=quotes_by_symbol,
+        market_context=market_context,
     )
 
     _store_lock = getattr(runtime, "store_lock", None)

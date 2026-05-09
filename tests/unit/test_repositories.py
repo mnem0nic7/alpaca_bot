@@ -471,3 +471,49 @@ def test_watchlist_store_list_all_includes_ignored_field() -> None:
 
     assert len(result) == 1
     assert result[0].ignored is False
+
+
+# ── MarketContextStore ────────────────────────────────────────────────────────
+
+from alpaca_bot.domain.models import MarketContext
+from alpaca_bot.storage.repositories import MarketContextStore
+
+
+def test_market_context_store_save_inserts_row() -> None:
+    conn = _TrackingConnection()
+    store = MarketContextStore(conn)
+    ctx = MarketContext(
+        as_of=datetime(2026, 5, 9, 14, 30, tzinfo=timezone.utc),
+        vix_close=18.5,
+        vix_sma=16.2,
+        vix_above_sma=True,
+        sector_etf_states={"XLK": True, "XLF": False},
+        sector_passing_pct=0.45,
+    )
+    store.save(ctx, trading_mode="paper")
+    assert len(conn.execute_calls) == 1
+    sql, params = conn.execute_calls[0]
+    assert "market_context" in sql.lower()
+    assert params[1] == "paper"
+    assert params[2] == 18.5
+    assert params[4] is True
+    assert params[6] == 0.45
+
+
+def test_market_context_store_save_with_none_fields() -> None:
+    conn = _TrackingConnection()
+    store = MarketContextStore(conn)
+    ctx = MarketContext(
+        as_of=datetime(2026, 5, 9, 14, 30, tzinfo=timezone.utc),
+    )
+    store.save(ctx, trading_mode="paper")
+    assert len(conn.execute_calls) == 1
+    _, params = conn.execute_calls[0]
+    assert params[2] is None
+    assert params[4] is None
+    assert params[5] is None
+
+
+def test_market_context_store_exported_from_storage() -> None:
+    from alpaca_bot.storage import MarketContextStore as MCS
+    assert MCS is MarketContextStore

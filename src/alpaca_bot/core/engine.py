@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Mapping, Sequence
 
 from alpaca_bot.config import Settings
 from alpaca_bot.domain import Bar, DecisionRecord, NewsItem, OpenPosition, Quote
+from alpaca_bot.domain.models import MarketContext
 from alpaca_bot.risk import calculate_position_size
 from alpaca_bot.risk.option_sizing import calculate_option_position_size
 from alpaca_bot.risk.atr import calculate_atr
@@ -60,6 +61,8 @@ class CycleResult:
     as_of: datetime
     intents: list[CycleIntent] = field(default_factory=list)
     regime_blocked: bool = False
+    vix_blocked: bool = False
+    sector_blocked: bool = False
     news_blocked_symbols: tuple[str, ...] = ()
     spread_blocked_symbols: tuple[str, ...] = ()
     decision_records: tuple[DecisionRecord, ...] = ()
@@ -86,6 +89,7 @@ def evaluate_cycle(
     regime_bars: Sequence[Bar] | None = None,
     news_by_symbol: Mapping[str, Sequence[NewsItem]] | None = None,
     quotes_by_symbol: Mapping[str, Quote] | None = None,
+    market_context: MarketContext | None = None,
 ) -> CycleResult:
     if signal_evaluator is None:
         signal_evaluator = evaluate_breakout_signal
@@ -374,6 +378,15 @@ def evaluate_cycle(
                     )
                 )
 
+    # Extract market context fields for stamping onto every decision record.
+    _ctx_vix_close: float | None = None
+    _ctx_vix_above_sma: bool | None = None
+    _ctx_sector_passing_pct: float | None = None
+    if market_context is not None:
+        _ctx_vix_close = market_context.vix_close
+        _ctx_vix_above_sma = market_context.vix_above_sma
+        _ctx_sector_passing_pct = market_context.sector_passing_pct
+
     # Regime filter: block all entries when broad market is in a downtrend.
     # Mirrors daily_trend_filter_passes(): window[-1] is the most recent completed
     # bar (second-to-last), excluding today's potentially partial bar.
@@ -408,12 +421,92 @@ def evaluate_cycle(
                             risk_per_share=None,
                             equity=None,
                             filter_results={"regime": False},
+                            vix_close=_ctx_vix_close,
+                            vix_above_sma=_ctx_vix_above_sma,
+                            sector_passing_pct=_ctx_sector_passing_pct,
                         ))
+
+    # VIX regime gate: block all entries when VIX proxy is above its N-day SMA.
+    # Fail-open: None vix_above_sma (insufficient history) never blocks.
+    _vix_entries_blocked = False
+    if (
+        settings.enable_vix_filter
+        and market_context is not None
+        and market_context.vix_above_sma is True
+    ):
+        _vix_entries_blocked = True
+        if not entries_disabled:
+            for _vsym in (symbols or settings.symbols):
+                if _vsym in open_position_symbols or _vsym in working_order_symbols:
+                    continue
+                _decision_records.append(DecisionRecord(
+                    cycle_at=now,
+                    symbol=_vsym,
+                    strategy_name=strategy_name,
+                    trading_mode=_tm,
+                    strategy_version=_sv,
+                    decision="rejected",
+                    reject_stage="pre_filter",
+                    reject_reason="vix_blocked",
+                    entry_level=None,
+                    signal_bar_close=None,
+                    relative_volume=None,
+                    atr=None,
+                    stop_price=None,
+                    limit_price=None,
+                    initial_stop_price=None,
+                    quantity=None,
+                    risk_per_share=None,
+                    equity=None,
+                    filter_results={"vix": False},
+                    vix_close=_ctx_vix_close,
+                    vix_above_sma=_ctx_vix_above_sma,
+                    sector_passing_pct=_ctx_sector_passing_pct,
+                ))
+
+    # Sector breadth gate: block all entries when fewer than N% of sector ETFs
+    # are above their SMA. Fail-open: None passing_pct never blocks.
+    _sector_entries_blocked = False
+    if (
+        settings.enable_sector_filter
+        and market_context is not None
+        and market_context.sector_passing_pct is not None
+        and market_context.sector_passing_pct < settings.sector_filter_min_passing_pct
+    ):
+        _sector_entries_blocked = True
+        if not entries_disabled:
+            for _ssym in (symbols or settings.symbols):
+                if _ssym in open_position_symbols or _ssym in working_order_symbols:
+                    continue
+                _decision_records.append(DecisionRecord(
+                    cycle_at=now,
+                    symbol=_ssym,
+                    strategy_name=strategy_name,
+                    trading_mode=_tm,
+                    strategy_version=_sv,
+                    decision="rejected",
+                    reject_stage="pre_filter",
+                    reject_reason="sector_blocked",
+                    entry_level=None,
+                    signal_bar_close=None,
+                    relative_volume=None,
+                    atr=None,
+                    stop_price=None,
+                    limit_price=None,
+                    initial_stop_price=None,
+                    quantity=None,
+                    risk_per_share=None,
+                    equity=None,
+                    filter_results={"sector": False},
+                    vix_close=_ctx_vix_close,
+                    vix_above_sma=_ctx_vix_above_sma,
+                    sector_passing_pct=_ctx_sector_passing_pct,
+                ))
 
     _news_blocked: list[str] = []
     _spread_blocked: list[str] = []
 
-    if not entries_disabled and not _regime_entries_blocked:
+    if not entries_disabled and not _regime_entries_blocked and not _vix_entries_blocked and not _sector_entries_blocked:
         if global_open_count is not None:
             # Caller has pre-computed the total occupied slots across ALL strategies.
             available_slots = max(settings.max_open_positions - global_open_count, 0)
@@ -445,6 +538,9 @@ def evaluate_cycle(
                     risk_per_share=None,
                     equity=None,
                     filter_results={},
+                    vix_close=_ctx_vix_close,
+                    vix_above_sma=_ctx_vix_above_sma,
+                    sector_passing_pct=_ctx_sector_passing_pct,
                 ))
         if available_slots > 0:
             current_exposure = (
@@ -454,6 +550,7 @@ def evaluate_cycle(
             )
             entry_candidates: list[tuple[float, float, CycleIntent]] = []
             _candidate_signals: dict[str, tuple] = {}
+            _candidate_vwap: dict[str, tuple[float | None, bool | None]] = {}
             for symbol in (symbols or settings.symbols):
                 if symbol in open_position_symbols or symbol in working_order_symbols:
                     _decision_records.append(DecisionRecord(
@@ -476,6 +573,9 @@ def evaluate_cycle(
                         risk_per_share=None,
                         equity=None,
                         filter_results={},
+                        vix_close=_ctx_vix_close,
+                        vix_above_sma=_ctx_vix_above_sma,
+                        sector_passing_pct=_ctx_sector_passing_pct,
                     ))
                     continue
                 bars = intraday_bars_by_symbol.get(symbol, ())
@@ -504,6 +604,9 @@ def evaluate_cycle(
                         risk_per_share=None,
                         equity=None,
                         filter_results={},
+                        vix_close=_ctx_vix_close,
+                        vix_above_sma=_ctx_vix_above_sma,
+                        sector_passing_pct=_ctx_sector_passing_pct,
                     ))
                     continue
 
@@ -581,8 +684,45 @@ def evaluate_cycle(
                         risk_per_share=None,
                         equity=None,
                         filter_results={},
+                        vix_close=_ctx_vix_close,
+                        vix_above_sma=_ctx_vix_above_sma,
+                        sector_passing_pct=_ctx_sector_passing_pct,
                     ))
                     continue
+
+                # VWAP entry filter: reject when signal bar close < session VWAP.
+                # Fail-open: None VWAP (empty bars) never blocks.
+                if settings.enable_vwap_entry_filter:
+                    _vwap = calculate_vwap(bars)
+                    if _vwap is not None and signal.signal_bar.close < _vwap:
+                        _decision_records.append(DecisionRecord(
+                            cycle_at=now,
+                            symbol=symbol,
+                            strategy_name=strategy_name,
+                            trading_mode=_tm,
+                            strategy_version=_sv,
+                            decision="rejected",
+                            reject_stage="vwap_filter",
+                            reject_reason="below_vwap",
+                            entry_level=None,
+                            signal_bar_close=signal.signal_bar.close,
+                            relative_volume=signal.relative_volume,
+                            atr=None,
+                            stop_price=None,
+                            limit_price=None,
+                            initial_stop_price=None,
+                            quantity=None,
+                            risk_per_share=None,
+                            equity=equity,
+                            filter_results={"vwap": False},
+                            vix_close=_ctx_vix_close,
+                            vix_above_sma=_ctx_vix_above_sma,
+                            sector_passing_pct=_ctx_sector_passing_pct,
+                            vwap_at_signal=_vwap,
+                            signal_bar_above_vwap=False,
+                        ))
+                        continue
+                    _candidate_vwap[symbol] = (_vwap, True if _vwap is not None else None)
 
                 if signal.option_contract is not None:
                     # Option entry: defined risk = premium; no stop needed
@@ -705,6 +845,7 @@ def evaluate_cycle(
                     if candidate.limit_price is not None and candidate.initial_stop_price is not None
                     else None
                 )
+                _vwap_info = _candidate_vwap.get(candidate.symbol, (None, None))
                 _decision_records.append(DecisionRecord(
                     cycle_at=now,
                     symbol=candidate.symbol,
@@ -725,6 +866,11 @@ def evaluate_cycle(
                     risk_per_share=_rps,
                     equity=equity,
                     filter_results={},
+                    vix_close=_ctx_vix_close,
+                    vix_above_sma=_ctx_vix_above_sma,
+                    sector_passing_pct=_ctx_sector_passing_pct,
+                    vwap_at_signal=_vwap_info[0],
+                    signal_bar_above_vwap=_vwap_info[1],
                 ))
             intents.extend(selected)
 
@@ -733,6 +879,8 @@ def evaluate_cycle(
         as_of=now,
         intents=intents,
         regime_blocked=_regime_entries_blocked,
+        vix_blocked=_vix_entries_blocked,
+        sector_blocked=_sector_entries_blocked,
         news_blocked_symbols=tuple(sorted(_news_blocked)),
         spread_blocked_symbols=tuple(sorted(_spread_blocked)),
         decision_records=tuple(_decision_records),

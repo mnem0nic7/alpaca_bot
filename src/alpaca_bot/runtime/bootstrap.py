@@ -10,6 +10,7 @@ from alpaca_bot.storage import (
     ConfidenceFloorStore,
     DailySessionStateStore,
     DecisionLogStore,
+    MarketContextStore,
     MigrationRunner,
     OptionOrderRepository,
     OrderStore,
@@ -44,6 +45,7 @@ class RuntimeContext:
     strategy_weight_store: StrategyWeightStore | None = None
     confidence_floor_store: ConfidenceFloorStore | None = None
     decision_log_store: DecisionLogStore | None = None
+    market_context_store: MarketContextStore | None = None
     # Protects all store operations against concurrent access from the trade update stream thread
     store_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -92,6 +94,7 @@ def bootstrap_runtime(
         strategy_weight_store=StrategyWeightStore(runtime_connection),
         confidence_floor_store=ConfidenceFloorStore(runtime_connection),
         decision_log_store=DecisionLogStore(runtime_connection),
+        market_context_store=MarketContextStore(runtime_connection),
     )
 
 
@@ -127,6 +130,7 @@ def reconnect_runtime_connection(
         "strategy_weight_store",
         "confidence_floor_store",
         "decision_log_store",
+        "market_context_store",
     ):
         store = getattr(context, attr, None)
         if store is not None and hasattr(store, "_connection"):

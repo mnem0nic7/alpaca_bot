@@ -55,8 +55,10 @@ from alpaca_bot.storage import (
 )
 from alpaca_bot.strategy import OPTION_STRATEGY_FACTORIES, OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY, StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import evaluate_breakout_signal as _default_evaluator, is_past_flatten_time
+from alpaca_bot.strategy.market_context import compute_market_context
 from alpaca_bot.strategy.session import SessionType, detect_session_type
 from alpaca_bot.execution.option_chain import AlpacaOptionChainAdapter
+from alpaca_bot.domain.models import MarketContext
 from alpaca_bot.runtime.option_dispatch import dispatch_pending_option_orders
 from alpaca_bot.storage.models import OptionOrderRecord
 
@@ -652,6 +654,61 @@ class RuntimeSupervisor:
                         exc_info=True,
                     )
 
+        # Market context: VIX regime gate + sector breadth gate.
+        # Reuses the existing daily_bars fetch when proxy/ETF symbols are on the watchlist;
+        # otherwise fetches separately. Fail-open on any exception.
+        market_context: MarketContext | None = None
+        if self.settings.enable_vix_filter or self.settings.enable_sector_filter:
+            try:
+                _vix_bars: list = []
+                _sector_bars: dict[str, list] = {}
+                _ctx_symbols: list[str] = []
+                if self.settings.enable_vix_filter:
+                    _ctx_symbols.append(self.settings.vix_proxy_symbol)
+                if self.settings.enable_sector_filter:
+                    _ctx_symbols.extend(self.settings.sector_etf_symbols)
+                _ctx_lookback = max(
+                    self.settings.vix_lookback_bars * 2,
+                    self.settings.sector_etf_sma_period * 2,
+                    60,
+                )
+                # Reuse already-fetched bars where possible; fetch the rest in one call.
+                _ctx_missing = [s for s in _ctx_symbols if s not in daily_bars_by_symbol]
+                _ctx_fetched: dict[str, list] = {}
+                if _ctx_missing:
+                    _ctx_fetched = self.market_data.get_daily_bars(
+                        symbols=_ctx_missing,
+                        start=timestamp - timedelta(days=_ctx_lookback),
+                        end=daily_bars_end,
+                    )
+                _ctx_all = dict(daily_bars_by_symbol)
+                _ctx_all.update(_ctx_fetched)
+                if self.settings.enable_vix_filter:
+                    _vix_bars = list(_ctx_all.get(self.settings.vix_proxy_symbol) or [])
+                if self.settings.enable_sector_filter:
+                    _sector_bars = {
+                        s: list(_ctx_all.get(s) or [])
+                        for s in self.settings.sector_etf_symbols
+                    }
+                market_context = compute_market_context(
+                    as_of=timestamp,
+                    vix_bars=_vix_bars,
+                    sector_bars_by_etf=_sector_bars,
+                    settings=self.settings,
+                )
+                if self.runtime.market_context_store is not None:
+                    self.runtime.market_context_store.save(
+                        market_context,
+                        trading_mode=self.settings.trading_mode.value,
+                    )
+                    self.runtime.connection.commit()
+            except Exception:
+                logger.warning(
+                    "Failed to compute/save market context; VIX/sector filters disabled this cycle",
+                    exc_info=True,
+                )
+                market_context = None
+
         # News filter data — fetched once per cycle, shared across all strategies.
         news_by_symbol: dict[str, list] | None = None
         if self.settings.enable_news_filter:
@@ -826,6 +883,7 @@ class RuntimeSupervisor:
                     regime_bars=regime_bars,
                     news_by_symbol=news_by_symbol,
                     quotes_by_symbol=quotes_by_symbol,
+                    market_context=market_context,
                 )
                 all_cycle_results.append((strategy_name, cycle_result))
                 # Consume slots and symbols taken by entries this strategy emitted so

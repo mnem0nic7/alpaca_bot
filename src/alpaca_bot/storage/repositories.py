@@ -10,6 +10,7 @@ from datetime import date, datetime
 from typing import Any
 
 from alpaca_bot.config import TradingMode
+from alpaca_bot.domain.models import MarketContext
 from alpaca_bot.storage.db import ConnectionProtocol, execute, fetch_all, fetch_one
 from alpaca_bot.storage.models import (
     AuditEvent,
@@ -1922,13 +1923,17 @@ class DecisionLogStore:
                 decision, reject_stage, reject_reason,
                 entry_level, signal_bar_close, relative_volume, atr,
                 stop_price, limit_price, initial_stop_price,
-                quantity, risk_per_share, equity, filter_results
+                quantity, risk_per_share, equity, filter_results,
+                vix_close, vix_above_sma, sector_passing_pct,
+                vwap_at_signal, signal_bar_above_vwap
             ) VALUES (
                 %s, %s, %s, %s, %s,
                 %s, %s, %s,
                 %s, %s, %s, %s,
                 %s, %s, %s,
-                %s, %s, %s, %s
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s
             )
         """
         params = [
@@ -1952,8 +1957,38 @@ class DecisionLogStore:
                 r.risk_per_share,
                 r.equity,
                 json.dumps(r.filter_results),
+                r.vix_close,
+                r.vix_above_sma,
+                r.sector_passing_pct,
+                r.vwap_at_signal,
+                r.signal_bar_above_vwap,
             )
             for r in records
         ]
         cur = conn.cursor()
         cur.executemany(sql, params)
+
+
+class MarketContextStore:
+    def __init__(self, connection: ConnectionProtocol) -> None:
+        self._connection = connection
+
+    def save(self, ctx: MarketContext, *, trading_mode: str) -> None:
+        execute(
+            self._connection,
+            """
+            INSERT INTO market_context (
+                as_of, trading_mode, vix_close, vix_sma, vix_above_sma,
+                sector_etf_states, sector_passing_pct
+            ) VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s)
+            """,
+            (
+                ctx.as_of,
+                trading_mode,
+                ctx.vix_close,
+                ctx.vix_sma,
+                ctx.vix_above_sma,
+                json.dumps(ctx.sector_etf_states) if ctx.sector_etf_states else None,
+                ctx.sector_passing_pct,
+            ),
+        )
