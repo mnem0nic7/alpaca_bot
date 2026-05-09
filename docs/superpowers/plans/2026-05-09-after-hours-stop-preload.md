@@ -69,6 +69,9 @@ def _settings(**overrides) -> Settings:
         "ENTRY_WINDOW_START": "10:00",
         "ENTRY_WINDOW_END": "15:30",
         "FLATTEN_TIME": "15:45",
+        # REQUIRED: without this, is_flatten_time() returns True for AFTER_HOURS
+        # sessions (session.py:53-54), causing the engine to emit EXIT intents
+        # instead of breakeven UPDATE_STOP intents.
         "EXTENDED_HOURS_ENABLED": "true",
         # BREAKEVEN_TRIGGER_PCT=0.0025, BREAKEVEN_TRAIL_PCT=0.002
     }
@@ -647,13 +650,19 @@ def test_pre_market_pending_stop_also_updated_db_only():
     assert saved_orders[0].stop_price == pytest.approx(104.79)
 ```
 
-- [ ] **Step 2: Run to confirm tests fail**
+- [ ] **Step 2: Run — tests 1 and 4 must fail; tests 2 and 3 are regression guards**
 
 ```bash
 pytest tests/unit/test_executor_after_hours_stop.py -v
 ```
 
-Expected: all four tests FAIL. The first test currently `continue`s (no update) so `updated_pending_stop_count == 0`. The second/third tests likely pass by coincidence (no write) — verify they actually exercise the right code paths after the change.
+Expected outcome by test:
+- `test_after_hours_pending_stop_updated_db_only_no_broker_call` → **FAIL** (asserts `updated_pending_stop_count == 1`; current `continue` gives 0)
+- `test_pre_market_pending_stop_also_updated_db_only` → **FAIL** (same reason)
+- `test_after_hours_submitted_stop_skipped_no_db_write` → PASS by coincidence (current `continue` already produces `saved_orders == []`, which is what the test asserts)
+- `test_after_hours_no_stop_order_skipped` → PASS by coincidence (same reason)
+
+Tests 2 and 3 are regression guards, not TDD tests. They verify via `_BrokerThatMustNotBeCalled` that the implementation never calls the broker during extended hours. They pass before and after the change — but would fail immediately if the `db_only=True` guards were accidentally removed.
 
 - [ ] **Step 3: Implement the executor change**
 
