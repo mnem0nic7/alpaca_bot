@@ -77,6 +77,13 @@ class ReplayRunner:
             if self._process_stop_hit(bar=bar, state=state, events=events):
                 continue
 
+            # --- Simulation mechanics: profit-target hit ---
+            # Stop check runs before profit-target: if both trigger in the same bar,
+            # stop takes priority (conservative).
+            if self.settings.enable_profit_target:
+                if self._process_profit_target_hit(bar=bar, state=state, events=events):
+                    continue
+
             # --- Strategy decisions via evaluate_cycle() ---
             # Pass bars up to and including the current bar so that
             # signal_index == len(bars_slice) - 1 matches the engine contract.
@@ -260,6 +267,43 @@ class ReplayRunner:
             return True
 
         return False
+
+    def _process_profit_target_hit(
+        self,
+        *,
+        bar: Bar,
+        state: ReplayState,
+        events: list[ReplayEvent],
+    ) -> bool:
+        """Check if the current bar's high reaches the profit target price.
+
+        Returns True if target was hit (caller should skip remaining processing
+        for this bar), False otherwise.  Fill simulated at exact target_price.
+        """
+        position = state.position
+        if position is None:
+            return False
+
+        target_price = round(
+            position.entry_price + self.settings.profit_target_r * position.risk_per_share, 2
+        )
+        if bar.high < target_price:
+            return False
+
+        events.append(
+            ReplayEvent(
+                event_type=IntentType.PROFIT_TARGET_HIT,
+                symbol=position.symbol,
+                timestamp=bar.timestamp,
+                details={"exit_price": round(target_price, 2)},
+            )
+        )
+        state.equity += (target_price - position.entry_price) * position.quantity
+        state.traded_symbols.add(
+            (position.symbol, session_day(bar.timestamp, self.settings))
+        )
+        state.position = None
+        return True
 
     def _handle_eod_exit(
         self,
