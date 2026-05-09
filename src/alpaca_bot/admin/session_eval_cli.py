@@ -125,10 +125,17 @@ def _print_session_report(
     print(f" Mean:   {mean_str:>9s}  Max DD: {dd_str:>5s}  Avg hold: {hold_str}")
     print(f" MaxCL:  {report.max_consecutive_losses:2d}        MaxCW: {report.max_consecutive_wins:2d}")
 
+    expectancy_str = (
+        (f"+{report.expectancy_pct:.2%}" if report.expectancy_pct >= 0 else f"{report.expectancy_pct:.2%}")
+        if report.expectancy_pct is not None else "—"
+    )
+    print(f" Expectancy: {expectancy_str}  (positive = edge exists)")
+
     print()
     print(" Exit breakdown:")
-    print(f"   Stop wins: {report.stop_wins:3d}   Stop losses: {report.stop_losses:3d}")
-    print(f"   EOD wins:  {report.eod_wins:3d}   EOD losses:  {report.eod_losses:3d}")
+    print(f"   Stop wins:   {report.stop_wins:3d}   Stop losses:   {report.stop_losses:3d}")
+    print(f"   EOD wins:    {report.eod_wins:3d}   EOD losses:    {report.eod_losses:3d}")
+    print(f"   Target wins: {report.profit_target_wins:3d}   Target losses: {report.profit_target_losses:3d}")
 
     if report.trades:
         print()
