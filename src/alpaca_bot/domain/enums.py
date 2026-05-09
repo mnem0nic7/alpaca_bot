@@ -8,3 +8,4 @@ class IntentType(StrEnum):
     STOP_UPDATED = "stop_updated"
     STOP_HIT = "stop_hit"
     EOD_EXIT = "eod_exit"
+    PROFIT_TARGET_HIT = "profit_target_hit"
