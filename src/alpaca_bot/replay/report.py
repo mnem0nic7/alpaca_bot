@@ -41,6 +41,9 @@ class BacktestReport:
     max_consecutive_losses: int = 0
     max_consecutive_wins: int = 0
     strategy_name: str = "breakout"
+    profit_target_wins: int = 0
+    profit_target_losses: int = 0
+    expectancy_pct: float | None = None
 
 
 def build_backtest_report(result: ReplayResult, strategy_name: str = "breakout") -> BacktestReport:
@@ -84,10 +87,19 @@ def report_from_records(
     stop_losses = sum(1 for t in trades if t.exit_reason == "stop" and t.pnl <= 0)
     eod_wins = sum(1 for t in trades if t.exit_reason == "eod" and t.pnl > 0)
     eod_losses = sum(1 for t in trades if t.exit_reason == "eod" and t.pnl <= 0)
+    profit_target_wins = sum(1 for t in trades if t.exit_reason == "profit_target" and t.pnl > 0)
+    profit_target_losses = sum(1 for t in trades if t.exit_reason == "profit_target" and t.pnl <= 0)
     hold_minutes = [(t.exit_time - t.entry_time).total_seconds() / 60 for t in trades]
     avg_hold_minutes = sum(hold_minutes) / len(hold_minutes) if hold_minutes else None
     avg_win_return_pct, avg_loss_return_pct = _compute_avg_win_loss_return(trades)
     max_consecutive_losses, max_consecutive_wins = _compute_streak_stats(trades)
+
+    if (avg_win_return_pct is not None and avg_loss_return_pct is not None):
+        expectancy_pct = (
+            win_rate * avg_win_return_pct + (1 - win_rate) * avg_loss_return_pct
+        )
+    else:
+        expectancy_pct = None
 
     return BacktestReport(
         trades=tuple(trades),
@@ -109,6 +121,9 @@ def report_from_records(
         max_consecutive_losses=max_consecutive_losses,
         max_consecutive_wins=max_consecutive_wins,
         strategy_name=strategy_name,
+        profit_target_wins=profit_target_wins,
+        profit_target_losses=profit_target_losses,
+        expectancy_pct=expectancy_pct,
     )
 
 
@@ -120,7 +135,7 @@ def _extract_trades(events: list[ReplayEvent]) -> list[ReplayTradeRecord]:
     for event in events:
         if event.event_type == IntentType.ENTRY_FILLED:
             open_fills[event.symbol] = event
-        elif event.event_type in (IntentType.STOP_HIT, IntentType.EOD_EXIT):
+        elif event.event_type in (IntentType.STOP_HIT, IntentType.EOD_EXIT, IntentType.PROFIT_TARGET_HIT):
             fill = open_fills.pop(event.symbol, None)
             if fill is None:
                 continue  # exit without matching fill — skip
@@ -129,7 +144,12 @@ def _extract_trades(events: list[ReplayEvent]) -> list[ReplayTradeRecord]:
             quantity = int(fill.details["quantity"])
             pnl = (exit_price - entry_price) * quantity
             return_pct = (exit_price - entry_price) / entry_price
-            exit_reason = "stop" if event.event_type == IntentType.STOP_HIT else "eod"
+            if event.event_type == IntentType.STOP_HIT:
+                exit_reason = "stop"
+            elif event.event_type == IntentType.PROFIT_TARGET_HIT:
+                exit_reason = "profit_target"
+            else:
+                exit_reason = "eod"
             trades.append(
                 ReplayTradeRecord(
                     symbol=event.symbol,
