@@ -25,3 +25,8 @@ class DecisionRecord:
     risk_per_share: float | None
     equity: float | None
     filter_results: dict
+    vix_close: float | None = None
+    vix_above_sma: bool | None = None
+    sector_passing_pct: float | None = None
+    vwap_at_signal: float | None = None
+    signal_bar_above_vwap: bool | None = None

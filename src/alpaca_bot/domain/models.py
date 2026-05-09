@@ -125,6 +125,16 @@ class Quote:
 
 
 @dataclass(frozen=True)
+class MarketContext:
+    as_of: datetime
+    vix_close: float | None = None
+    vix_sma: float | None = None
+    vix_above_sma: bool | None = None
+    sector_etf_states: dict[str, bool] = field(default_factory=dict)
+    sector_passing_pct: float | None = None
+
+
+@dataclass(frozen=True)
 class OptionContract:
     occ_symbol: str
     underlying: str
