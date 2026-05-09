@@ -31,7 +31,7 @@ Compute breakeven trail stop updates during extended-hours cycles and persist th
 
 ### Architecture
 
-Two targeted changes, no new files:
+Two targeted changes to existing source files, two new test files:
 
 | File | Change |
 |------|--------|

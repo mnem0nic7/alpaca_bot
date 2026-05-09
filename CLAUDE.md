@@ -53,6 +53,8 @@ The app reads config exclusively from environment variables — there is no `.en
 
 **Credential name mismatch:** The project-root `.env` uses `ALPACA_PAPER_KEY` / `ALPACA_PAPER_SECRET`, but the system env file and `Settings` expect `ALPACA_PAPER_API_KEY` / `ALPACA_PAPER_SECRET_KEY`. When syncing, map the names explicitly.
 
+**Alpaca API reference:** Repo-local notes from the current Alpaca docs live in `docs/ALPACA_API.md`. Read that before changing `execution/`, `runtime/order_dispatch.py`, `runtime/cycle_intent_execution.py`, option-chain logic, or market data feed behavior.
+
 **Reverse proxy:** `campaign_tracker-caddy-1` handles TLS and routing. `alpaca.ai-al.site` → `web:8080`. Caddy config lives inside that container (`/etc/caddy/Caddyfile`).
 
 **GitHub Actions deploy** (`deploy.yml`) requires `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` secrets — without them it fails at the SSH step. Since this is the prod server, prefer running `./scripts/deploy.sh` directly.
