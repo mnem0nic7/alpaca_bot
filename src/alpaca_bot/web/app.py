@@ -175,6 +175,7 @@ def create_app(
                 "strategy_weights": strategy_weights,
                 "option_strategy_names": OPTION_STRATEGY_NAMES,
                 "confidence_floor": confidence_floor,
+                "settings": app_settings,
             },
         )
 
