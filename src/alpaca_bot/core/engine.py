@@ -12,7 +12,7 @@ from alpaca_bot.risk.option_sizing import calculate_option_position_size
 from alpaca_bot.risk.atr import calculate_atr
 from alpaca_bot.strategy import StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import (
-    daily_trend_filter_passes,
+    daily_trend_filter_exit_passes,
     evaluate_breakout_signal,
     is_past_flatten_time,
     session_day,
@@ -170,6 +170,23 @@ def evaluate_cycle(
                 )
             continue
 
+        if settings.enable_profit_target:
+            target_price = round(
+                position.entry_price + settings.profit_target_r * position.risk_per_share, 2
+            )
+            if latest_bar.high >= target_price:
+                intents.append(
+                    CycleIntent(
+                        intent_type=CycleIntentType.EXIT,
+                        symbol=position.symbol,
+                        timestamp=latest_bar.timestamp,
+                        reason="profit_target",
+                        strategy_name=strategy_name,
+                    )
+                )
+                emitted_exit_symbols.add(position.symbol)
+                continue
+
         position_age_s = (
             now - position.entry_timestamp.astimezone(timezone.utc)
         ).total_seconds()
@@ -177,12 +194,12 @@ def evaluate_cycle(
 
         if settings.enable_trend_filter_exit and not is_too_young:
             daily_bars_pos = daily_bars_by_symbol.get(position.symbol, ())
-            if len(daily_bars_pos) >= settings.daily_sma_period + 1:
+            if len(daily_bars_pos) >= settings.daily_sma_period + settings.trend_filter_exit_lookback_days:
                 daily_bar_age_days = (
                     now - daily_bars_pos[-1].timestamp.astimezone(timezone.utc)
                 ).days
                 if daily_bar_age_days <= settings.viability_daily_bar_max_age_days:
-                    if not daily_trend_filter_passes(daily_bars_pos, settings):
+                    if not daily_trend_filter_exit_passes(daily_bars_pos, settings):
                         intents.append(
                             CycleIntent(
                                 intent_type=CycleIntentType.EXIT,
