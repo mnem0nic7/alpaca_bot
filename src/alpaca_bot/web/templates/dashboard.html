@@ -880,15 +880,28 @@
         <div class="panel">
           <h2>Last Backtest</h2>
           {% if metrics.last_backtest %}
+            <p class="muted" style="margin-bottom: 0.75rem;">
+              Run: {{ format_timestamp(metrics.last_backtest.created_at) }}
+            </p>
             <table class="data-table">
               <thead><tr><th>Metric</th><th>Value</th></tr></thead>
               <tbody>
+                <tr><td>Score</td><td>{{ "%.3f" | format(metrics.last_backtest.score) if metrics.last_backtest.score is not none else "—" }}</td></tr>
                 <tr><td>Total trades</td><td>{{ metrics.last_backtest.total_trades }}</td></tr>
                 <tr><td>Win rate</td><td>{{ "%.0f" | format(metrics.last_backtest.win_rate * 100) if metrics.last_backtest.win_rate is not none else "—" }}%</td></tr>
                 <tr><td>Mean return</td><td>{{ "%.2f" | format(metrics.last_backtest.mean_return_pct * 100) if metrics.last_backtest.mean_return_pct is not none else "—" }}%</td></tr>
                 <tr><td>Max drawdown</td><td>{{ "%.2f" | format(metrics.last_backtest.max_drawdown_pct * 100) if metrics.last_backtest.max_drawdown_pct is not none else "—" }}%</td></tr>
+                <tr><td>Sharpe</td><td>{{ "%.2f" | format(metrics.last_backtest.sharpe_ratio) if metrics.last_backtest.sharpe_ratio is not none else "—" }}</td></tr>
               </tbody>
             </table>
+            {% if metrics.last_backtest.params %}
+              <p class="muted" style="margin-top: 0.75rem; font-size: 0.85em;">
+                <strong>Winning params:</strong><br>
+                {% for k, v in metrics.last_backtest.params.items() %}
+                  <span class="mono">{{ k }}={{ v }}</span>{% if not loop.last %}, {% endif %}
+                {% endfor %}
+              </p>
+            {% endif %}
           {% else %}
             <p class="muted">No backtest data.</p>
           {% endif %}
