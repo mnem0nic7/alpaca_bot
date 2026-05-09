@@ -392,9 +392,10 @@ def test_compare_json_output_shape(monkeypatch) -> None:
     assert set(row.keys()) == {
         "strategy", "total_trades", "win_rate",
         "mean_return_pct", "max_drawdown_pct", "sharpe_ratio", "profit_factor",
-        "stop_wins", "stop_losses", "eod_wins", "eod_losses", "avg_hold_minutes",
-        "avg_win_return_pct", "avg_loss_return_pct",
-        "max_consecutive_losses", "max_consecutive_wins",
+        "stop_wins", "stop_losses", "eod_wins", "eod_losses",
+        "profit_target_wins", "profit_target_losses",
+        "avg_hold_minutes", "avg_win_return_pct", "avg_loss_return_pct",
+        "expectancy_pct", "max_consecutive_losses", "max_consecutive_wins",
     }
     assert "trades" not in row
 
@@ -427,9 +428,10 @@ def test_compare_csv_output_has_header_and_rows(monkeypatch) -> None:
     assert set(reader.fieldnames) == {
         "strategy", "total_trades", "win_rate",
         "mean_return_pct", "max_drawdown_pct", "sharpe_ratio", "profit_factor",
-        "stop_wins", "stop_losses", "eod_wins", "eod_losses", "avg_hold_minutes",
-        "avg_win_return_pct", "avg_loss_return_pct",
-        "max_consecutive_losses", "max_consecutive_wins",
+        "stop_wins", "stop_losses", "eod_wins", "eod_losses",
+        "profit_target_wins", "profit_target_losses",
+        "avg_hold_minutes", "avg_win_return_pct", "avg_loss_return_pct",
+        "expectancy_pct", "max_consecutive_losses", "max_consecutive_wins",
     }
 
 

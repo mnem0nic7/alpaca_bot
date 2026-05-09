@@ -81,6 +81,9 @@ def _row_to_trade_record(row: dict) -> ReplayTradeRecord:
     qty = row["qty"]
     pnl = (exit_ - entry) * qty
     return_pct = (exit_ - entry) / entry
+    # The orders table stores intent_type="exit" for both EOD and profit-target exits.
+    # Distinguishing them requires a schema change (adding a reason column to orders).
+    # Until then, profit_target_wins/losses will always be 0 in live session reports.
     exit_reason = "stop" if row.get("intent_type") == "stop" else "eod"
     return ReplayTradeRecord(
         symbol=row["symbol"],
