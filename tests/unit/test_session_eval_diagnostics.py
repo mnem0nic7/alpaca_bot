@@ -281,3 +281,94 @@ def test_build_session_diagnostics_open_positions(monkeypatch):
     assert diag.has_issues
     assert len(diag.open_positions) == 1
     assert diag.open_positions[0].symbol == "TSLA"
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — _print_session_diagnostics
+# ---------------------------------------------------------------------------
+
+
+def test_print_no_issues(capsys):
+    """Clean diagnostics prints 'No operational issues found'."""
+    from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
+    diag = SessionDiagnostics()
+    _print_session_diagnostics(diag)
+    out = capsys.readouterr().out
+    assert "No operational issues found" in out
+
+
+def test_print_with_cycle_errors(capsys):
+    """Cycle errors print a ⚠ line."""
+    from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
+    e = AuditEvent(
+        event_type="supervisor_cycle_error",
+        payload={"error": "ZeroDivisionError"},
+        created_at=datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc),
+    )
+    diag = SessionDiagnostics(cycle_errors=[e])
+    _print_session_diagnostics(diag)
+    out = capsys.readouterr().out
+    assert "Cycle errors: 1" in out
+    assert "ZeroDivisionError" in out
+
+
+def test_print_with_dispatch_failures(capsys):
+    """Dispatch failures print a ⚠ line with symbol."""
+    from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
+    e = AuditEvent(
+        event_type="order_dispatch_failed",
+        payload={"error": "timeout"},
+        symbol="NVDA",
+        created_at=datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc),
+    )
+    diag = SessionDiagnostics(dispatch_failures=[e])
+    _print_session_diagnostics(diag)
+    out = capsys.readouterr().out
+    assert "Dispatch failures: 1" in out
+    assert "NVDA" in out
+
+
+def test_print_with_unfilled_entries(capsys):
+    """Unfilled (canceled) entry orders print a ⚠ line."""
+    from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
+    t = datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc)
+    order = OrderRecord(
+        client_order_id="id1",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="canceled",
+        quantity=10.0,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        created_at=t,
+        updated_at=t,
+    )
+    diag = SessionDiagnostics(failed_entries=[order])
+    _print_session_diagnostics(diag)
+    out = capsys.readouterr().out
+    assert "Unfilled entries" in out
+    assert "AAPL" in out
+    assert "canceled" in out
+
+
+def test_print_with_open_positions(capsys):
+    """Open positions at EOD print a ⚠ line with symbol."""
+    from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
+    from alpaca_bot.storage.models import PositionRecord
+    t = datetime(2026, 5, 11, 10, 0, tzinfo=timezone.utc)
+    pos = PositionRecord(
+        symbol="TSLA",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        quantity=5.0,
+        entry_price=200.0,
+        stop_price=195.0,
+        initial_stop_price=195.0,
+        opened_at=t,
+    )
+    diag = SessionDiagnostics(open_positions=[pos])
+    _print_session_diagnostics(diag)
+    out = capsys.readouterr().out
+    assert "Open positions at EOD" in out
+    assert "TSLA" in out

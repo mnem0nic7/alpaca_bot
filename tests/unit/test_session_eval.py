@@ -207,7 +207,11 @@ def _patch_cli_deps(monkeypatch, rows, *, equity_baseline: float | None = 100_00
     import alpaca_bot.admin.session_eval_cli as cli_module
     from types import SimpleNamespace
 
-    fake_settings = SimpleNamespace(database_url="postgresql://fake/db", strategy_version="v1")
+    fake_settings = SimpleNamespace(
+        database_url="postgresql://fake/db",
+        strategy_version="v1",
+        market_timezone=SimpleNamespace(key="America/New_York"),
+    )
     fake_settings_cls = SimpleNamespace(from_env=lambda: fake_settings)
     monkeypatch.setattr(cli_module, "Settings", fake_settings_cls)
 
@@ -216,10 +220,17 @@ def _patch_cli_deps(monkeypatch, rows, *, equity_baseline: float | None = 100_00
 
     state = SimpleNamespace(equity_baseline=equity_baseline) if equity_baseline is not None else None
     fake_session_store = SimpleNamespace(load=lambda **kwargs: state)
-    fake_order_store = SimpleNamespace(list_closed_trades=lambda **kwargs: rows)
+    fake_order_store = SimpleNamespace(
+        list_closed_trades=lambda **kwargs: rows,
+        list_failed_entries=lambda **kwargs: [],
+    )
+    fake_audit_store = SimpleNamespace(list_by_event_types=lambda **kwargs: [])
+    fake_position_store = SimpleNamespace(list_all=lambda **kwargs: [])
 
     monkeypatch.setattr(cli_module, "DailySessionStateStore", lambda conn: fake_session_store)
     monkeypatch.setattr(cli_module, "OrderStore", lambda conn: fake_order_store)
+    monkeypatch.setattr(cli_module, "AuditEventStore", lambda conn: fake_audit_store)
+    monkeypatch.setattr(cli_module, "PositionStore", lambda conn: fake_position_store)
 
 
 def test_session_eval_cli_no_trades_exits_zero(monkeypatch, capsys):

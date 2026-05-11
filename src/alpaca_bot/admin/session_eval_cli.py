@@ -42,6 +42,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = Settings.from_env()
     strategy_version = args.strategy_version or settings.strategy_version
     trading_mode = TradingMode(args.mode)
+    market_timezone = settings.market_timezone.key
 
     conn = connect_postgres(settings.database_url)
     try:
@@ -66,6 +67,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             session_date=eval_date,
             strategy_name=args.strategy,
         )
+        diagnostics = _build_session_diagnostics(
+            conn,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            eval_date=eval_date,
+            market_timezone=market_timezone,
+        )
     finally:
         close = getattr(conn, "close", None)
         if callable(close):
@@ -74,6 +82,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not raw_trades:
         strategy_label = f" (strategy={args.strategy})" if args.strategy else ""
         print(f"No closed trades for {eval_date}{strategy_label}.")
+        _print_session_diagnostics(diagnostics)
         return 0
 
     trade_records = [_row_to_trade_record(row) for row in raw_trades]
@@ -84,6 +93,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     _print_session_report(report, eval_date=eval_date, trading_mode=args.mode,
                           strategy_version=strategy_version)
+    _print_session_diagnostics(diagnostics)
     return 0
 
 
@@ -183,6 +193,52 @@ def _build_session_diagnostics(
             limit=100,
         ),
     )
+
+
+def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
+    print()
+    print(" Diagnostics")
+    print(" " + "─" * 60)
+
+    if not diagnostics.has_issues:
+        print(" ✓ No operational issues found")
+        print()
+        return
+
+    if diagnostics.cycle_errors:
+        print(f" ⚠ Cycle errors: {len(diagnostics.cycle_errors)}")
+        for e in diagnostics.cycle_errors[:3]:
+            ts = e.created_at.strftime("%H:%M:%SZ")
+            msg = str(e.payload.get("error", ""))[:60]
+            print(f"     {ts} — {msg}")
+
+    if diagnostics.dispatch_failures:
+        print(f" ⚠ Dispatch failures: {len(diagnostics.dispatch_failures)}")
+        for e in diagnostics.dispatch_failures[:3]:
+            sym = e.symbol or str(e.payload.get("symbol", "?"))
+            msg = str(e.payload.get("error", ""))[:40]
+            print(f"     {sym}: {msg}")
+
+    if diagnostics.failed_entries:
+        parts = []
+        for o in diagnostics.failed_entries:
+            if o.filled_quantity is not None and o.filled_quantity > 0:
+                parts.append(f"{o.symbol} (partial {o.status})")
+            else:
+                parts.append(f"{o.symbol} ({o.status})")
+        print(f" ⚠ Unfilled entries: {', '.join(parts)}")
+
+    if diagnostics.stream_issues:
+        print(f" ⚠ Stream interruptions: {len(diagnostics.stream_issues)}")
+
+    if diagnostics.open_positions:
+        syms = [p.symbol for p in diagnostics.open_positions]
+        print(f" ⚠ Open positions at EOD: {', '.join(syms)}")
+
+    if diagnostics.reconciliation_issues:
+        print(f" ⚠ Reconciliation issues: {len(diagnostics.reconciliation_issues)}")
+
+    print()
 
 
 def _print_session_report(
