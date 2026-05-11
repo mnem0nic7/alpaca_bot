@@ -161,21 +161,29 @@ class AuditEventStore:
         event_types: list[str],
         limit: int = 20,
         offset: int = 0,
+        since: datetime | None = None,
+        until: datetime | None = None,
     ) -> list[AuditEvent]:
         if not event_types:
             return []
         placeholders = ", ".join(["%s"] * len(event_types))
+        since_clause = "AND created_at >= %s" if since is not None else ""
+        until_clause = "AND created_at < %s" if until is not None else ""
+        since_params = (since,) if since is not None else ()
+        until_params = (until,) if until is not None else ()
         rows = fetch_all(
             self._connection,
             f"""
             SELECT event_type, symbol, payload, created_at
             FROM audit_events
             WHERE event_type IN ({placeholders})
+              {since_clause}
+              {until_clause}
             ORDER BY created_at DESC, event_id DESC
             LIMIT %s
             OFFSET %s
             """,
-            (*event_types, limit, offset),
+            (*event_types, *since_params, *until_params, limit, offset),
         )
         return [
             AuditEvent(
