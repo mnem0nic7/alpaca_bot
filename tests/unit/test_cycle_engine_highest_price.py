@@ -56,29 +56,31 @@ def test_breakeven_trail_uses_highest_price_not_current_bar():
     where highest_price is the persisted historical maximum — NOT just the current bar.
 
     Setup:
-      entry_price = 3.00
-      highest_price = 3.20  (persisted from a prior cycle)
-      current bar.high = 3.09  (retrace — below the historical max)
+      entry_price = 40.00
+      highest_price = 50.04  (persisted from a prior cycle)
+      current bar.high = 50.00  (retrace — below the historical max)
 
     Breakeven trail (0.2%):
-      Correct:  3.20 * (1 - 0.002) = 3.1936  → rounded = 3.19
-      Buggy:    3.09 * (1 - 0.002) = 3.0842  → rounded = 3.08
+      Correct:  50.04 * (1 - 0.002) = 49.9399  → rounded = 49.94
+      Buggy:    50.00 * (1 - 0.002) = 49.9000  → rounded = 49.90
 
-    The stop intent's stop_price must be >= 3.19.
+    The stop intent's stop_price must be >= 49.94.
+    Prices must be above ~$25 so that 0.2% of highest_price exceeds the
+    _make_bar close-to-high spread of $0.05, keeping be_stop < close.
     """
     settings = _make_settings()
-    entry_price = 3.00
-    highest_price = 3.20  # from a prior cycle — retraced
-    bar_high = 3.09       # trigger met (3.09 >= 3.00 * 1.0025 = 3.0075)
+    entry_price = 40.00
+    highest_price = 50.04  # from a prior cycle — retraced
+    bar_high = 50.00       # trigger met (50.00 >= 40.00 * 1.0025 = 40.10)
 
     position = OpenPosition(
         symbol="AAPL",
         entry_timestamp=datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc),
         entry_price=entry_price,
         quantity=100.0,
-        entry_level=2.94,
-        initial_stop_price=2.94,
-        stop_price=2.94,
+        entry_level=39.00,
+        initial_stop_price=39.00,
+        stop_price=39.00,
         trailing_active=False,
         highest_price=highest_price,
         strategy_name="breakout",
@@ -87,13 +89,13 @@ def test_breakeven_trail_uses_highest_price_not_current_bar():
     current_bar = _make_bar("AAPL", high=bar_high)
     historical_bar = _make_bar(
         "AAPL",
-        high=2.98,
+        high=39.50,
         ts=datetime(2026, 5, 1, 9, 30, tzinfo=timezone.utc),
     )
     daily_bar = Bar(
         symbol="AAPL",
         timestamp=datetime(2026, 4, 30, tzinfo=timezone.utc),
-        open=2.90, high=3.05, low=2.85, close=3.00,
+        open=38.50, high=42.00, low=38.00, close=40.00,
         volume=1_000_000,
     )
 
