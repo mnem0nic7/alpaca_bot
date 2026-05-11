@@ -597,6 +597,7 @@ def _build_session_diagnostics(
             trading_mode=trading_mode,
             strategy_version=strategy_version,
             session_date=eval_date,
+            market_timezone=market_timezone,
         ),
         stream_issues=audit_store.list_by_event_types(
             event_types=["stream_heartbeat_stale", "stream_restart_failed", "trade_update_stream_failed"],
