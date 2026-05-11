@@ -396,6 +396,31 @@ class OrderStore:
         )
         return [_row_to_order_record(row) for row in rows]
 
+    def list_failed_entries(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        session_date: date,
+        market_timezone: str = "America/New_York",
+    ) -> list[OrderRecord]:
+        """Return entry orders that were canceled or rejected on the given session date."""
+        rows = fetch_all(
+            self._connection,
+            f"""
+            SELECT {_ORDER_SELECT_COLUMNS}
+            FROM orders
+            WHERE trading_mode = %s
+              AND strategy_version = %s
+              AND intent_type = 'entry'
+              AND status IN ('canceled', 'rejected')
+              AND DATE(updated_at AT TIME ZONE %s) = %s
+            ORDER BY updated_at
+            """,
+            (trading_mode.value, strategy_version, market_timezone, session_date),
+        )
+        return [_row_to_order_record(row) for row in rows]
+
     def daily_realized_pnl(
         self,
         *,
