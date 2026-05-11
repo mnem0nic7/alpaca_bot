@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import contextlib
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 import logging
@@ -762,18 +762,21 @@ class RuntimeSupervisor:
             def _fetch_one(sym: str) -> tuple[str, list]:
                 return sym, self._option_chain_adapter.get_option_chain(sym, self.settings)
 
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                future_to_sym = {
-                    executor.submit(_fetch_one, sym): sym
-                    for sym in intraday_bars_by_symbol
-                }
-                for future, symbol in future_to_sym.items():
+            executor = ThreadPoolExecutor(max_workers=5)
+            futures = {executor.submit(_fetch_one, sym): sym for sym in intraday_bars_by_symbol}
+            try:
+                for future in as_completed(futures, timeout=45):
+                    sym = futures[future]
                     try:
-                        _, chains = future.result(timeout=30)
+                        _, chains = future.result()
                         if chains:
-                            option_chains_by_symbol[symbol] = chains
+                            option_chains_by_symbol[sym] = chains
                     except Exception:
-                        logger.exception("option chain fetch failed for %s", symbol)
+                        logger.exception("option chain fetch failed for %s", sym)
+            except TimeoutError:
+                logger.warning("option chain fetch timed out after 45s, using partial results")
+            finally:
+                executor.shutdown(wait=False, cancel_futures=True)
             _flag_store = getattr(self.runtime, "strategy_flag_store", None)
             _store_lock = getattr(self.runtime, "store_lock", None)
             with _store_lock if _store_lock is not None else contextlib.nullcontext():
