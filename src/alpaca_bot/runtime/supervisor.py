@@ -763,7 +763,12 @@ class RuntimeSupervisor:
                 return sym, self._option_chain_adapter.get_option_chain(sym, self.settings)
 
             executor = ThreadPoolExecutor(max_workers=5)
-            futures = {executor.submit(_fetch_one, sym): sym for sym in intraday_bars_by_symbol}
+            min_vol = self.settings.option_chain_min_total_volume
+            symbols_to_fetch = [
+                sym for sym, bars in intraday_bars_by_symbol.items()
+                if min_vol == 0 or sum(b.volume for b in bars) >= min_vol
+            ]
+            futures = {executor.submit(_fetch_one, sym): sym for sym in symbols_to_fetch}
             try:
                 for future in as_completed(futures, timeout=45):
                     sym = futures[future]
