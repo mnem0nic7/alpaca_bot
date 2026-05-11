@@ -53,24 +53,22 @@ def _make_audit_event(event_type: str, created_at: datetime, symbol: str | None 
     )
 
 
-class _FakeAuditConn:
-    """In-memory connection that returns rows pre-loaded into self.rows."""
+class _RecordingAuditConn:
+    """Connection that records the params tuple passed to cursor.execute()."""
 
     def __init__(self, rows: list[tuple]) -> None:
         self._rows = rows
+        self.last_params: tuple | None = None
 
     def cursor(self):
-        rows = self._rows
+        conn_ref = self
 
         class _Cur:
             def execute(self, sql, params=None):
-                pass
+                conn_ref.last_params = params
 
             def fetchall(self):
-                return rows
-
-            def close(self):
-                pass
+                return conn_ref._rows
 
         return _Cur()
 
@@ -79,27 +77,21 @@ class _FakeAuditConn:
 # Task 1 — list_by_event_types since/until
 # ---------------------------------------------------------------------------
 
-_T_EARLY = datetime(2026, 5, 11, 10, 0, tzinfo=timezone.utc)
-_T_MID   = datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc)
-_T_LATE  = datetime(2026, 5, 11, 18, 0, tzinfo=timezone.utc)
+_T_MID = datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc)
 
 
-def test_list_by_event_types_since_filters_out_earlier_row():
-    """Events before `since` are excluded from results."""
-    rows = [
-        ("supervisor_cycle_error", None, '{"msg": "test"}', _T_MID),
-    ]
-    conn = _FakeAuditConn(rows)
+def test_list_by_event_types_since_passes_param_to_sql():
+    """since datetime is forwarded as a SQL bind param, not applied in Python."""
+    conn = _RecordingAuditConn([])
     store = AuditEventStore(conn)
-    result = store.list_by_event_types(
+    since_dt = datetime(2026, 5, 11, 4, 0, tzinfo=timezone.utc)
+    store.list_by_event_types(
         event_types=["supervisor_cycle_error"],
-        since=_T_LATE,   # later than _T_MID → should exclude the row
+        since=since_dt,
         limit=100,
     )
-    # The fake connection returns whatever rows we gave it regardless of SQL —
-    # so the test checks that `since` is passed as a SQL parameter (not filtered
-    # in Python). We verify the method accepts the param without raising.
-    assert isinstance(result, list)
+    assert conn.last_params is not None
+    assert since_dt in conn.last_params
 
 
 def test_list_by_event_types_accepts_none_since_until():
@@ -107,7 +99,7 @@ def test_list_by_event_types_accepts_none_since_until():
     rows = [
         ("supervisor_cycle_error", None, '{"msg": "test"}', _T_MID),
     ]
-    conn = _FakeAuditConn(rows)
+    conn = _RecordingAuditConn(rows)
     store = AuditEventStore(conn)
     result = store.list_by_event_types(
         event_types=["supervisor_cycle_error"],
@@ -120,12 +112,10 @@ def test_list_by_event_types_accepts_none_since_until():
 - [ ] **Step 1.2: Run the test to confirm it fails for the right reason**
 
 ```bash
-pytest tests/unit/test_session_eval_diagnostics.py::test_list_by_event_types_since_filters_out_earlier_row tests/unit/test_session_eval_diagnostics.py::test_list_by_event_types_accepts_none_since_until -v
+pytest tests/unit/test_session_eval_diagnostics.py::test_list_by_event_types_since_passes_param_to_sql tests/unit/test_session_eval_diagnostics.py::test_list_by_event_types_accepts_none_since_until -v
 ```
 
-Expected: the first test PASSES (the fake conn accepts any SQL), the second test PASSES — both should pass because the fake conn doesn't validate SQL. If either fails with a `TypeError`, the `since`/`until` params don't exist yet — that is the failure to fix.
-
-> **Note:** Because the fake connection doesn't parse SQL, the unit test confirms the method signature exists and returns the right type. The SQL correctness is confirmed by the query structure in the implementation step.
+Expected: FAIL with `TypeError` (unexpected keyword argument `since`) — this confirms the param doesn't exist yet. If both tests PASS unexpectedly, the method already accepts `since`; proceed to verify the SQL includes it.
 
 - [ ] **Step 1.3: Modify `AuditEventStore.list_by_event_types` in `repositories.py`**
 
@@ -398,51 +388,6 @@ Append to `tests/unit/test_session_eval_diagnostics.py`:
 # Task 3 — SessionDiagnostics and _build_session_diagnostics
 # ---------------------------------------------------------------------------
 
-from alpaca_bot.admin.session_eval_cli import SessionDiagnostics, _build_session_diagnostics
-from alpaca_bot.storage.models import PositionRecord
-
-
-class _FakeDiagConn:
-    """Connection that dispatches to per-store fake row lists."""
-
-    def __init__(
-        self,
-        *,
-        audit_rows: list[tuple] | None = None,
-        order_rows: list[tuple] | None = None,
-        position_rows: list[tuple] | None = None,
-    ) -> None:
-        self._audit_rows = audit_rows or []
-        self._order_rows = order_rows or []
-        self._position_rows = position_rows or []
-        self._call_count = 0
-
-    def cursor(self):
-        # Each call to cursor() corresponds to one fetch_all / execute call.
-        # We cycle through: first calls go to audit queries, then orders, then positions.
-        # The simplest approach: each store gets its own fake, so we monkeypatch below.
-        rows = []
-
-        class _Cur:
-            def execute(self, sql, params=None):
-                pass
-
-            def fetchall(self):
-                return rows
-
-            def close(self):
-                pass
-
-        return _Cur()
-
-
-def _make_position_row(symbol: str = "TSLA") -> tuple:
-    t = datetime(2026, 5, 11, 10, 0, tzinfo=timezone.utc)
-    return (
-        symbol, "paper", "v1", "breakout",
-        10.0, 100.0, 95.0, 95.0, t, t, None,
-    )
-
 
 def test_build_session_diagnostics_no_issues(monkeypatch):
     """_build_session_diagnostics returns empty SessionDiagnostics when no issues exist."""
@@ -524,6 +469,7 @@ def test_build_session_diagnostics_open_positions(monkeypatch):
     """Open positions from PositionStore appear in SessionDiagnostics."""
     import alpaca_bot.admin.session_eval_cli as cli_module
     from types import SimpleNamespace
+    from alpaca_bot.storage.models import PositionRecord
 
     t = datetime(2026, 5, 11, 10, 0, tzinfo=timezone.utc)
     pos = PositionRecord(
@@ -559,7 +505,7 @@ def test_build_session_diagnostics_open_positions(monkeypatch):
 pytest tests/unit/test_session_eval_diagnostics.py::test_build_session_diagnostics_no_issues tests/unit/test_session_eval_diagnostics.py::test_build_session_diagnostics_cycle_errors tests/unit/test_session_eval_diagnostics.py::test_build_session_diagnostics_open_positions -v
 ```
 
-Expected: FAIL with `ImportError: cannot import name 'SessionDiagnostics'`.
+Expected: FAIL with `AttributeError: module 'alpaca_bot.admin.session_eval_cli' has no attribute '_build_session_diagnostics'`.
 
 - [ ] **Step 3.3: Update imports in `session_eval_cli.py`**
 
@@ -572,7 +518,7 @@ import argparse
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Sequence
+from typing import Sequence
 from zoneinfo import ZoneInfo
 
 from alpaca_bot.config import Settings, TradingMode
@@ -619,7 +565,7 @@ class SessionDiagnostics:
 
 
 def _build_session_diagnostics(
-    conn: Any,
+    conn: ConnectionProtocol,
     *,
     trading_mode: TradingMode,
     strategy_version: str,
@@ -712,11 +658,10 @@ Append to `tests/unit/test_session_eval_diagnostics.py`:
 # Task 4 — _print_session_diagnostics
 # ---------------------------------------------------------------------------
 
-from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics
-
 
 def test_print_no_issues(capsys):
     """Clean diagnostics prints 'No operational issues found'."""
+    from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
     diag = SessionDiagnostics()
     _print_session_diagnostics(diag)
     out = capsys.readouterr().out
@@ -725,6 +670,7 @@ def test_print_no_issues(capsys):
 
 def test_print_with_cycle_errors(capsys):
     """Cycle errors print a ⚠ line."""
+    from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
     e = AuditEvent(
         event_type="supervisor_cycle_error",
         payload={"error": "ZeroDivisionError"},
@@ -739,6 +685,7 @@ def test_print_with_cycle_errors(capsys):
 
 def test_print_with_dispatch_failures(capsys):
     """Dispatch failures print a ⚠ line with symbol."""
+    from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
     e = AuditEvent(
         event_type="order_dispatch_failed",
         payload={"error": "timeout"},
@@ -754,6 +701,7 @@ def test_print_with_dispatch_failures(capsys):
 
 def test_print_with_unfilled_entries(capsys):
     """Unfilled (canceled) entry orders print a ⚠ line."""
+    from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
     t = datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc)
     order = OrderRecord(
         client_order_id="id1",
@@ -777,6 +725,8 @@ def test_print_with_unfilled_entries(capsys):
 
 def test_print_with_open_positions(capsys):
     """Open positions at EOD print a ⚠ line with symbol."""
+    from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
+    from alpaca_bot.storage.models import PositionRecord
     t = datetime(2026, 5, 11, 10, 0, tzinfo=timezone.utc)
     pos = PositionRecord(
         symbol="TSLA",
@@ -801,7 +751,7 @@ def test_print_with_open_positions(capsys):
 pytest tests/unit/test_session_eval_diagnostics.py::test_print_no_issues tests/unit/test_session_eval_diagnostics.py::test_print_with_cycle_errors -v
 ```
 
-Expected: FAIL with `ImportError: cannot import name '_print_session_diagnostics'`.
+Expected: FAIL with `ImportError: cannot import name '_print_session_diagnostics' from 'alpaca_bot.admin.session_eval_cli'`.
 
 - [ ] **Step 4.3: Add `_print_session_diagnostics` to `session_eval_cli.py`**
 
