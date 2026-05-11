@@ -33,7 +33,7 @@ from alpaca_bot.risk.weighting import WeightResult, compute_strategy_weights, co
 from alpaca_bot.risk.confidence import compute_confidence_scores
 from alpaca_bot.storage.db import check_connection
 from alpaca_bot.runtime.cli import _list_open_orders, _list_open_positions
-from alpaca_bot.core.engine import CycleIntentType
+from alpaca_bot.core.engine import CycleIntent, CycleIntentType, CycleResult
 from alpaca_bot.runtime.cycle import run_cycle
 from alpaca_bot.runtime.cycle_intent_execution import ACTIVE_STOP_STATUSES, execute_cycle_intents
 from alpaca_bot.runtime.order_dispatch import dispatch_pending_orders
@@ -149,6 +149,8 @@ class RuntimeSupervisor:
         self._session_cycle_count: dict[date, int] = {}
         self._digest_sent_count: dict[date, int] = {}
         self._consecutive_loss_gate_fired: set[date] = set()
+        # Session dates for which a stale-carryover notification has been sent.
+        self._stale_cleanup_notified: set[date] = set()
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
@@ -1355,6 +1357,77 @@ class RuntimeSupervisor:
                     )
             result.append(replace(position, highest_price=bar_high))
         return result
+
+    def _close_stale_carryover_positions(
+        self,
+        *,
+        session_date: date,
+        open_positions: list[OpenPosition],
+        timestamp: datetime,
+    ) -> None:
+        stale = [
+            p for p in open_positions
+            if p.entry_timestamp.astimezone(self.settings.market_timezone).date() < session_date
+        ]
+        if not stale:
+            return
+
+        self._append_audit(
+            AuditEvent(
+                event_type="stale_positions_detected",
+                payload={
+                    "symbols": [p.symbol for p in stale],
+                    "session_date": session_date.isoformat(),
+                    "opened_at_dates": {
+                        p.symbol: p.entry_timestamp.astimezone(
+                            self.settings.market_timezone
+                        ).date().isoformat()
+                        for p in stale
+                    },
+                    "timestamp": timestamp.isoformat(),
+                },
+                created_at=timestamp,
+            )
+        )
+
+        intents = [
+            CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol=p.symbol,
+                timestamp=timestamp,
+                reason="stale_position_carryover",
+                strategy_name=p.strategy_name,
+            )
+            for p in stale
+        ]
+        try:
+            self._cycle_intent_executor(
+                settings=self.settings,
+                runtime=self.runtime,
+                broker=self.broker,
+                cycle_result=CycleResult(as_of=timestamp, intents=intents),
+                now=timestamp,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to execute stale carryover exits for %s; will retry next cycle",
+                [p.symbol for p in stale],
+            )
+
+        if session_date not in self._stale_cleanup_notified and self._notifier is not None:
+            self._stale_cleanup_notified.add(session_date)
+            try:
+                stale_lines = "\n".join(
+                    f"  {p.symbol} (opened "
+                    f"{p.entry_timestamp.astimezone(self.settings.market_timezone).date()})"
+                    for p in stale
+                )
+                self._notifier.send(
+                    subject="Stale carryover positions found",
+                    body=f"Carryover positions detected from a prior session:\n{stale_lines}",
+                )
+            except Exception:
+                logger.exception("Notifier failed to send stale carryover positions alert")
 
     def _load_open_positions(self) -> list[OpenPosition]:
         return [
