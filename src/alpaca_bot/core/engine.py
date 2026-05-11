@@ -333,8 +333,8 @@ def evaluate_cycle(
                 max_price = max(position.highest_price, latest_bar.high)
                 trail_stop = round(max_price * (1 - settings.breakeven_trail_pct), 2)
                 be_stop = max(position.entry_price, trail_stop)
-                if is_extended and be_stop >= latest_bar.close:
-                    continue  # stop above current price would trigger immediately at open
+                if be_stop >= latest_bar.close:
+                    continue
                 if effective_stop < be_stop:
                     intents.append(
                         CycleIntent(

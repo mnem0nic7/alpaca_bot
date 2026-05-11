@@ -2245,3 +2245,57 @@ def test_profit_trail_candidate_above_close_not_emitted() -> None:
     update_stops = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
     assert update_stops == [], f"Expected no UPDATE_STOP, got {update_stops!r}"
 
+
+def test_breakeven_stop_above_close_regular_session_not_emitted() -> None:
+    """Gap-down during regular session: breakeven stop >= close -> no UPDATE_STOP.
+
+    Before the fix the guard was gated on is_extended; with is_extended=False
+    (regular session) the guard never fired and an above-market UPDATE_STOP was
+    emitted every cycle.
+    """
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    # entry=100, initial_stop=95, stop=95 -> risk=5; profit_trigger=105
+    # bar.high=102 < 105 -> ATR pass does NOT activate
+    # breakeven_trigger_pct=0.0025 -> trigger=100.25; high=102 >= 100.25 -> breakeven activates
+    # highest_price=102 -> max_price=102; trail_stop=round(102*0.998,2)=101.8
+    # be_stop = max(100.0, 101.8) = 101.8
+    # close=76 -> be_stop=101.8 >= 76 -> guard must fire -> no UPDATE_STOP
+    # stop_price=95 == cap_stop=95 -> effective_stop < cap_stop is False -> cap-up does not emit
+    position = OpenPosition(
+        symbol="SYRE",
+        entry_timestamp=datetime(2026, 4, 20, 14, 0, tzinfo=timezone.utc),
+        entry_price=100.0,
+        quantity=10,
+        entry_level=100.0,
+        initial_stop_price=95.0,
+        stop_price=95.0,
+        highest_price=102.0,
+    )
+    bar = Bar(
+        symbol="SYRE",
+        timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        open=78.0,
+        high=102.0,
+        low=75.5,
+        close=76.0,
+        volume=100_000,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            TRAILING_STOP_PROFIT_TRIGGER_R="1000",  # disable ATR trailing
+            ENABLE_BREAKEVEN_STOP="true",
+        ),
+        now=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"SYRE": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+        session_type=None,  # regular session -> is_extended=False
+    )
+    update_stops = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    assert update_stops == [], f"Expected no UPDATE_STOP, got {update_stops!r}"
+
