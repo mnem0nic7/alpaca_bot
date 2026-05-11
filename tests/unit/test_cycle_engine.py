@@ -2198,3 +2198,50 @@ def test_atr_trailing_stop_above_close_not_emitted() -> None:
     )
     update_stops = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
     assert update_stops == [], f"Expected no UPDATE_STOP, got {update_stops!r}"
+
+
+def test_profit_trail_candidate_above_close_not_emitted() -> None:
+    """Gap-down: profit trail candidate >= close -> no UPDATE_STOP emitted."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    # profit_trail_pct=0.95, today_high=90 -> trail_candidate = round(90*0.95, 2) = 85.5
+    # stop_price=77.0 -> 85.5 > 77.0 -> would emit without guard
+    # close=76.0 -> 85.5 >= 76.0 -> guard must fire -> no UPDATE_STOP
+    # Bar timestamped at 10:00 ET (14:00 UTC) so it is a "today" bar
+    position = OpenPosition(
+        symbol="SYRE",
+        entry_timestamp=datetime(2026, 4, 20, 14, 0, tzinfo=timezone.utc),
+        entry_price=80.0,
+        quantity=10,
+        entry_level=80.0,
+        initial_stop_price=75.0,
+        stop_price=77.0,
+    )
+    bar = Bar(
+        symbol="SYRE",
+        timestamp=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),  # 10:00 ET = today
+        open=89.0,
+        high=90.0,
+        low=75.5,
+        close=76.0,
+        volume=100_000,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_PROFIT_TRAIL="true",
+            PROFIT_TRAIL_PCT="0.95",
+            TRAILING_STOP_PROFIT_TRIGGER_R="1000",  # disable ATR trailing
+            ENABLE_BREAKEVEN_STOP="false",
+        ),
+        now=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"SYRE": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    update_stops = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    assert update_stops == [], f"Expected no UPDATE_STOP, got {update_stops!r}"
+

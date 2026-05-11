@@ -295,7 +295,7 @@ def evaluate_cycle(
             today_high = max(b.high for b in today_bars)
             trail_candidate = round(today_high * settings.profit_trail_pct, 2)
             prior_stop = _pt_prior_stops.get(position.symbol, position.stop_price)
-            if trail_candidate > prior_stop:
+            if trail_candidate > prior_stop and trail_candidate < bars[-1].close:
                 intents.append(
                     CycleIntent(
                         intent_type=CycleIntentType.UPDATE_STOP,
