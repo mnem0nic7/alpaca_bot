@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 from tests.unit.helpers import _base_env
 from alpaca_bot.config import Settings
+from alpaca_bot.domain import Bar
 
 _NOW = datetime(2026, 5, 1, 14, 30, tzinfo=timezone.utc)
 # Symbols on the watchlist but NOT in settings.symbols ("AAPL,MSFT" from _base_env)
@@ -38,11 +39,13 @@ class RecordingAuditStore:
     def list_by_event_types(self, **_): return []
 
 
-def _make_supervisor(*, adapter, audit_store=None):
+def _make_supervisor(*, adapter, audit_store=None, get_stock_bars=None, extra_env=None):
     """Build a RuntimeSupervisor wired with a watchlist returning _WATCHLIST_SYMBOLS."""
     RuntimeSupervisor = import_module("alpaca_bot.runtime.supervisor").RuntimeSupervisor
-    env = {**_base_env(), "ENABLE_OPTIONS_TRADING": "true"}
+    env = {**_base_env(), "ENABLE_OPTIONS_TRADING": "true", **(extra_env or {})}
     settings = Settings.from_env(env)
+    if get_stock_bars is None:
+        get_stock_bars = lambda **_: {sym: [] for sym in _WATCHLIST_SYMBOLS}
 
     class _FakeConn:
         def commit(self): pass
@@ -95,9 +98,7 @@ def _make_supervisor(*, adapter, audit_store=None):
             get_clock=lambda: SimpleNamespace(is_open=False),
         ),
         market_data=SimpleNamespace(
-            # Dict keyed by watchlist symbols so intraday_bars_by_symbol has the right
-            # keys for the option chain loop to iterate.
-            get_stock_bars=lambda **_: {sym: [] for sym in _WATCHLIST_SYMBOLS},
+            get_stock_bars=get_stock_bars,
             get_daily_bars=lambda **_: {},
         ),
         stream=None,
@@ -150,4 +151,50 @@ def test_option_chains_fetched_audit_event_keys_match_watchlist():
     assert set(chain_events[0].payload) == set(_WATCHLIST_SYMBOLS), (
         f"Audit payload keys {set(chain_events[0].payload)!r} must equal "
         f"watchlist {set(_WATCHLIST_SYMBOLS)!r}"
+    )
+
+
+def test_volume_filter_excludes_low_volume_symbols() -> None:
+    """Symbols below OPTION_CHAIN_MIN_TOTAL_VOLUME must not reach the adapter."""
+    # ACHR and METC each have 100,000 volume (>= threshold=50,000) → fetched.
+    # SLS has 10,000 volume (< threshold) → must NOT be fetched.
+    bars_by_symbol = {
+        "ACHR": [Bar(symbol="ACHR", timestamp=_NOW, open=10.0, high=11.0, low=9.0, close=10.5, volume=100_000)],
+        "METC": [Bar(symbol="METC", timestamp=_NOW, open=20.0, high=21.0, low=19.0, close=20.5, volume=100_000)],
+        "SLS":  [Bar(symbol="SLS",  timestamp=_NOW, open=5.0,  high=6.0,  low=4.5,  close=5.5,  volume=10_000)],
+    }
+    adapter = RecordingOptionChainAdapter()
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        get_stock_bars=lambda **_: bars_by_symbol,
+        extra_env={"OPTION_CHAIN_MIN_TOTAL_VOLUME": "50000"},
+    )
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert "ACHR" in adapter.fetched, "ACHR (volume=100k) must be fetched"
+    assert "METC" in adapter.fetched, "METC (volume=100k) must be fetched"
+    assert "SLS" not in adapter.fetched, (
+        f"SLS (volume=10k < threshold=50k) must not be fetched; got {adapter.fetched!r}"
+    )
+
+
+def test_volume_filter_zero_disables_filter() -> None:
+    """OPTION_CHAIN_MIN_TOTAL_VOLUME=0 must fetch all symbols regardless of volume."""
+    # SLS has only 1 share of volume — far below any practical threshold.
+    # With min_vol=0, the filter is disabled and SLS must still be fetched.
+    bars_by_symbol = {
+        "ACHR": [Bar(symbol="ACHR", timestamp=_NOW, open=10.0, high=11.0, low=9.0, close=10.5, volume=100_000)],
+        "METC": [Bar(symbol="METC", timestamp=_NOW, open=20.0, high=21.0, low=19.0, close=20.5, volume=100_000)],
+        "SLS":  [Bar(symbol="SLS",  timestamp=_NOW, open=5.0,  high=6.0,  low=4.5,  close=5.5,  volume=1)],
+    }
+    adapter = RecordingOptionChainAdapter()
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        get_stock_bars=lambda **_: bars_by_symbol,
+        # extra_env omitted → OPTION_CHAIN_MIN_TOTAL_VOLUME defaults to "0"
+    )
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert set(adapter.fetched) == {"ACHR", "METC", "SLS"}, (
+        f"All symbols must be fetched when min_vol=0; got {adapter.fetched!r}"
     )
