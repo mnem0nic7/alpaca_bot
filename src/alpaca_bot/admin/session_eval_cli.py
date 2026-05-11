@@ -2,14 +2,26 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import date, datetime, timezone
+from dataclasses import dataclass, field
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Sequence
+from zoneinfo import ZoneInfo
 
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord, report_from_records
-from alpaca_bot.storage.db import connect_postgres
-from alpaca_bot.storage.models import EQUITY_SESSION_STATE_STRATEGY_NAME
-from alpaca_bot.storage.repositories import DailySessionStateStore, OrderStore
+from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres
+from alpaca_bot.storage.models import (
+    EQUITY_SESSION_STATE_STRATEGY_NAME,
+    AuditEvent,
+    OrderRecord,
+    PositionRecord,
+)
+from alpaca_bot.storage.repositories import (
+    AuditEventStore,
+    DailySessionStateStore,
+    OrderStore,
+    PositionStore,
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -95,6 +107,81 @@ def _row_to_trade_record(row: dict) -> ReplayTradeRecord:
         exit_reason=exit_reason,
         pnl=pnl,
         return_pct=return_pct,
+    )
+
+
+@dataclass
+class SessionDiagnostics:
+    cycle_errors: list[AuditEvent] = field(default_factory=list)
+    dispatch_failures: list[AuditEvent] = field(default_factory=list)
+    failed_entries: list[OrderRecord] = field(default_factory=list)
+    stream_issues: list[AuditEvent] = field(default_factory=list)
+    open_positions: list[PositionRecord] = field(default_factory=list)
+    reconciliation_issues: list[AuditEvent] = field(default_factory=list)
+
+    @property
+    def has_issues(self) -> bool:
+        return any([
+            self.cycle_errors,
+            self.dispatch_failures,
+            self.failed_entries,
+            self.stream_issues,
+            self.open_positions,
+            self.reconciliation_issues,
+        ])
+
+
+def _build_session_diagnostics(
+    conn: ConnectionProtocol,
+    *,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    eval_date: date,
+    market_timezone: str,
+) -> SessionDiagnostics:
+    tz = ZoneInfo(market_timezone)
+    session_start = datetime.combine(eval_date, time(0, 0), tzinfo=tz).astimezone(timezone.utc)
+    session_end = datetime.combine(eval_date + timedelta(days=1), time(0, 0), tzinfo=tz).astimezone(timezone.utc)
+
+    audit_store = AuditEventStore(conn)
+    order_store = OrderStore(conn)
+    position_store = PositionStore(conn)
+
+    return SessionDiagnostics(
+        cycle_errors=audit_store.list_by_event_types(
+            event_types=["supervisor_cycle_error", "strategy_cycle_error"],
+            since=session_start,
+            until=session_end,
+            limit=100,
+        ),
+        dispatch_failures=audit_store.list_by_event_types(
+            event_types=["order_dispatch_failed"],
+            since=session_start,
+            until=session_end,
+            limit=100,
+        ),
+        failed_entries=order_store.list_failed_entries(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            session_date=eval_date,
+            market_timezone=market_timezone,
+        ),
+        stream_issues=audit_store.list_by_event_types(
+            event_types=["stream_heartbeat_stale", "stream_restart_failed", "trade_update_stream_failed"],
+            since=session_start,
+            until=session_end,
+            limit=100,
+        ),
+        open_positions=position_store.list_all(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+        ),
+        reconciliation_issues=audit_store.list_by_event_types(
+            event_types=["reconciliation_miss_count_incremented", "runtime_reconciliation_detected"],
+            since=session_start,
+            until=session_end,
+            limit=100,
+        ),
     )
 
 

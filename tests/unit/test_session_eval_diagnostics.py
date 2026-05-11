@@ -166,3 +166,118 @@ def test_list_failed_entries_empty_when_no_rows():
         session_date=date(2026, 5, 11),
     )
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — SessionDiagnostics and _build_session_diagnostics
+# ---------------------------------------------------------------------------
+
+
+def test_build_session_diagnostics_no_issues(monkeypatch):
+    """_build_session_diagnostics returns empty SessionDiagnostics when no issues exist."""
+    import alpaca_bot.admin.session_eval_cli as cli_module
+    from types import SimpleNamespace
+
+    fake_audit_store = SimpleNamespace(
+        list_by_event_types=lambda **kw: [],
+    )
+    fake_order_store = SimpleNamespace(
+        list_failed_entries=lambda **kw: [],
+    )
+    fake_position_store = SimpleNamespace(
+        list_all=lambda **kw: [],
+    )
+
+    monkeypatch.setattr(cli_module, "AuditEventStore", lambda conn: fake_audit_store)
+    monkeypatch.setattr(cli_module, "OrderStore", lambda conn: fake_order_store)
+    monkeypatch.setattr(cli_module, "PositionStore", lambda conn: fake_position_store)
+
+    diag = cli_module._build_session_diagnostics(
+        object(),  # conn — not used because stores are patched
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        eval_date=date(2026, 5, 11),
+        market_timezone="America/New_York",
+    )
+    assert not diag.has_issues
+    assert diag.cycle_errors == []
+    assert diag.dispatch_failures == []
+    assert diag.failed_entries == []
+    assert diag.stream_issues == []
+    assert diag.open_positions == []
+    assert diag.reconciliation_issues == []
+
+
+def test_build_session_diagnostics_cycle_errors(monkeypatch):
+    """Cycle errors returned by AuditEventStore appear in SessionDiagnostics."""
+    import alpaca_bot.admin.session_eval_cli as cli_module
+    from types import SimpleNamespace
+
+    cycle_event = AuditEvent(
+        event_type="supervisor_cycle_error",
+        payload={"error": "ZeroDivisionError"},
+        created_at=datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc),
+    )
+
+    call_log: list[dict] = []
+
+    def fake_list_by_event_types(**kw):
+        call_log.append(kw)
+        if "supervisor_cycle_error" in kw.get("event_types", []):
+            return [cycle_event]
+        return []
+
+    fake_audit_store = SimpleNamespace(list_by_event_types=fake_list_by_event_types)
+    fake_order_store = SimpleNamespace(list_failed_entries=lambda **kw: [])
+    fake_position_store = SimpleNamespace(list_all=lambda **kw: [])
+
+    monkeypatch.setattr(cli_module, "AuditEventStore", lambda conn: fake_audit_store)
+    monkeypatch.setattr(cli_module, "OrderStore", lambda conn: fake_order_store)
+    monkeypatch.setattr(cli_module, "PositionStore", lambda conn: fake_position_store)
+
+    diag = cli_module._build_session_diagnostics(
+        object(),
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        eval_date=date(2026, 5, 11),
+        market_timezone="America/New_York",
+    )
+    assert diag.has_issues
+    assert len(diag.cycle_errors) == 1
+    assert diag.cycle_errors[0].event_type == "supervisor_cycle_error"
+    # since/until must be passed to the audit store
+    assert any("since" in call for call in call_log)
+
+
+def test_build_session_diagnostics_open_positions(monkeypatch):
+    """Open positions from PositionStore appear in SessionDiagnostics."""
+    import alpaca_bot.admin.session_eval_cli as cli_module
+    from types import SimpleNamespace
+    from alpaca_bot.storage.models import PositionRecord
+
+    t = datetime(2026, 5, 11, 10, 0, tzinfo=timezone.utc)
+    pos = PositionRecord(
+        symbol="TSLA",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        quantity=10.0,
+        entry_price=100.0,
+        stop_price=95.0,
+        initial_stop_price=95.0,
+        opened_at=t,
+    )
+
+    monkeypatch.setattr(cli_module, "AuditEventStore", lambda conn: SimpleNamespace(list_by_event_types=lambda **kw: []))
+    monkeypatch.setattr(cli_module, "OrderStore", lambda conn: SimpleNamespace(list_failed_entries=lambda **kw: []))
+    monkeypatch.setattr(cli_module, "PositionStore", lambda conn: SimpleNamespace(list_all=lambda **kw: [pos]))
+
+    diag = cli_module._build_session_diagnostics(
+        object(),
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        eval_date=date(2026, 5, 11),
+        market_timezone="America/New_York",
+    )
+    assert diag.has_issues
+    assert len(diag.open_positions) == 1
+    assert diag.open_positions[0].symbol == "TSLA"
