@@ -37,6 +37,30 @@ alpaca-bot-web-hash-password
 
 # Docker deploy (uses deploy/compose.yaml)
 ./scripts/deploy.sh /etc/alpaca_bot/alpaca-bot.env
+
+# Fetch historical bar data (writes ReplayScenario JSON to data/backfill/)
+alpaca-bot-backfill --symbols AAPL MSFT SPY --days 252
+
+# Run a single backtest against one scenario file
+alpaca-bot-backtest run --scenario data/backfill/AAPL_252d.json
+alpaca-bot-backtest compare --scenario data/backfill/AAPL_252d.json   # all strategies
+alpaca-bot-backtest sweep --scenario-dir data/backfill --strategy breakout  # grid sweep
+
+# Parameter grid sweep across all scenario files in data/backfill/
+alpaca-bot-sweep --scenario-dir data/backfill --strategy breakout
+
+# Evaluate a live trading session against real Postgres trade data
+alpaca-bot-session-eval                       # today
+alpaca-bot-session-eval --date 2026-05-03     # specific date
+
+# Nightly pipeline: backfill → sweep → OOS validation → write candidate.env + AuditEvent
+alpaca-bot-nightly --output-env /tmp/candidate.env
+
+# Ops health check (validates /healthz from inside the Docker network)
+alpaca-bot-ops-check
+
+# Sync Alpaca credentials from CI env into the server env file
+alpaca-bot-sync-credentials
 ```
 
 The app reads config exclusively from environment variables — there is no `.env` autoload. See `DEPLOYMENT.md` for a complete env file template.
@@ -79,6 +103,7 @@ Use a single message with multiple `Agent` tool calls. Sequential execution is o
 config/          → Settings (frozen dataclass, parsed from env at startup)
 domain/          → Pure data types: Bar, OpenPosition, BreakoutSignal, CycleIntent
 strategy/        → Stateless signal logic: breakout detection, trend filter, session time guards
+                   STRATEGY_REGISTRY maps string names → signal evaluator callables; all CLIs accept --strategy from it
 risk/            → Position sizing math
 core/engine.py   → evaluate_cycle(): pure function, no I/O, produces CycleResult (list of intents)
 execution/       → Alpaca API adapters (broker, market data, trade stream)
@@ -86,8 +111,16 @@ storage/         → Postgres repositories, advisory lock, migrations, audit eve
 runtime/         → Orchestration: supervisor loop, order dispatch, startup recovery, trade update stream
 admin/           → CLI tools for operator control (halt, resume, ops check, credential sync)
 web/             → FastAPI read-only dashboard (/healthz, HTML overview)
-replay/          → Offline scenario runner for strategy testing
+replay/          → Offline scenario runner for strategy testing (ReplayRunner, ReplayScenario JSON format)
+tuning/          → Parameter sweep (sweep.py), surrogate model, evolutionary optimizer (alpaca-bot-sweep, alpaca-bot-evolve)
+nightly/         → Nightly orchestration: backfill → sweep → OOS gate → candidate.env + nightly_sweep_completed AuditEvent
+backfill/        → Alpaca bar data fetcher; writes ReplayScenario JSON files to data/backfill/ (default scenario store)
+notifications/   → Email and Slack digest delivery (email.py, slack.py, factory.py)
 ```
+
+**`STRATEGY.md`** documents the full trading logic (entry filters, stop management, exit rules, parameter reference). Read it before modifying `strategy/`, `core/engine.py`, or any signal evaluator.
+
+**Nightly auto-tune cron:** `/etc/cron.d/alpaca-bot` runs `alpaca-bot-nightly` at 22:30 UTC Mon–Fri. It sweeps all strategies, applies an OOS gate, writes a `candidate.env` file, and records a `nightly_sweep_completed` AuditEvent so the dashboard shows the last run time and outcome.
 
 ### Key design patterns
 
