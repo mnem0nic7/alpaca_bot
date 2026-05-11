@@ -755,7 +755,7 @@ def _make_supervisor_with_option_adapter(adapter):
         def list_open_orders(self): return []
 
     class _FakeMarketData:
-        def get_stock_bars(self, **kwargs): return {}
+        def get_stock_bars(self, *, symbols, **kwargs): return {sym: [] for sym in symbols}
         def get_daily_bars(self, **kwargs): return {}
 
     class _FakeConn2:

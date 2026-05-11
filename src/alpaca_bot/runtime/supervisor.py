@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 import logging
@@ -758,13 +759,21 @@ class RuntimeSupervisor:
         option_chains_by_symbol: dict = {}
         option_order_store = getattr(self.runtime, "option_order_store", None)
         if self._option_chain_adapter is not None:
-            for symbol in self.settings.symbols:
-                try:
-                    chains = self._option_chain_adapter.get_option_chain(symbol, self.settings)
-                    if chains:
-                        option_chains_by_symbol[symbol] = chains
-                except Exception:
-                    logger.exception("option chain fetch failed for %s", symbol)
+            def _fetch_one(sym: str) -> tuple[str, list]:
+                return sym, self._option_chain_adapter.get_option_chain(sym, self.settings)
+
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                future_to_sym = {
+                    executor.submit(_fetch_one, sym): sym
+                    for sym in intraday_bars_by_symbol
+                }
+                for future, symbol in future_to_sym.items():
+                    try:
+                        _, chains = future.result()
+                        if chains:
+                            option_chains_by_symbol[symbol] = chains
+                    except Exception:
+                        logger.exception("option chain fetch failed for %s", symbol)
             _flag_store = getattr(self.runtime, "strategy_flag_store", None)
             _store_lock = getattr(self.runtime, "store_lock", None)
             with _store_lock if _store_lock is not None else contextlib.nullcontext():
@@ -784,7 +793,7 @@ class RuntimeSupervisor:
             option_chain_counts = {
                 sym: len(chains) for sym, chains in option_chains_by_symbol.items()
             }
-            for sym in self.settings.symbols:
+            for sym in intraday_bars_by_symbol:
                 option_chain_counts.setdefault(sym, 0)
             self._append_audit(
                 AuditEvent(
