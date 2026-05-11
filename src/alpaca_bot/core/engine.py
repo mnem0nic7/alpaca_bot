@@ -259,7 +259,7 @@ def evaluate_cycle(
                 new_stop = round(
                     max(position.stop_price, position.entry_price, latest_bar.low), 2
                 )
-            if new_stop > position.stop_price:
+            if new_stop > position.stop_price and new_stop < latest_bar.close:
                 intents.append(
                     CycleIntent(
                         intent_type=CycleIntentType.UPDATE_STOP,

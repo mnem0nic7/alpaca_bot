@@ -1982,7 +1982,7 @@ def test_breakeven_stop_defers_when_trailing_already_emitted_above_be_stop() -> 
         open=105.0,
         high=110.0,
         low=110.0,  # bar.low == bar.high: trailing gives max(99, 100, 110) = 110 >= be_stop 109.78
-        close=110.0,
+        close=110.1,
         volume=5000,
     )
     position = OpenPosition(
@@ -2151,3 +2151,50 @@ def test_min_notional_gate_drops_tiny_non_fractionable_position() -> None:
         f"Expected no ENTRY intent — tiny position ($3.00 notional) below "
         f"min_position_notional=$100 should be dropped; got: {entry_intents}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Stop-above-market guards (all four UPDATE_STOP passes)
+# ---------------------------------------------------------------------------
+
+
+def test_atr_trailing_stop_above_close_not_emitted() -> None:
+    """Gap-down: computed ATR trailing stop >= close -> no UPDATE_STOP emitted."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+
+    # entry=80, initial_stop=75 -> risk_per_share=5.0
+    # profit_trigger = 80 + 1.0 * 5.0 = 85.0
+    # high=90 >= 85 -> ATR pass activates; atr_multiplier=0 -> new_stop = max(75,80,low=87) = 87
+    # close=76 -> new_stop=87 >= 76 -> guard must fire -> no UPDATE_STOP
+    # Breakeven disabled; stop_price=77 > cap_stop=76 -> cap-up does not emit
+    position = OpenPosition(
+        symbol="SYRE",
+        entry_timestamp=datetime(2026, 4, 20, 14, 0, tzinfo=timezone.utc),
+        entry_price=80.0,
+        quantity=10,
+        entry_level=80.0,
+        initial_stop_price=75.0,
+        stop_price=77.0,
+    )
+    bar = Bar(
+        symbol="SYRE",
+        timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        open=89.0,
+        high=90.0,
+        low=87.0,
+        close=76.0,
+        volume=100_000,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(ENABLE_BREAKEVEN_STOP="false"),
+        now=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"SYRE": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    update_stops = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    assert update_stops == [], f"Expected no UPDATE_STOP, got {update_stops!r}"
