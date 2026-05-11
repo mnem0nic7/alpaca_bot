@@ -762,14 +762,14 @@ class RuntimeSupervisor:
             def _fetch_one(sym: str) -> tuple[str, list]:
                 return sym, self._option_chain_adapter.get_option_chain(sym, self.settings)
 
-            with ThreadPoolExecutor(max_workers=20) as executor:
+            with ThreadPoolExecutor(max_workers=5) as executor:
                 future_to_sym = {
                     executor.submit(_fetch_one, sym): sym
                     for sym in intraday_bars_by_symbol
                 }
                 for future, symbol in future_to_sym.items():
                     try:
-                        _, chains = future.result()
+                        _, chains = future.result(timeout=30)
                         if chains:
                             option_chains_by_symbol[symbol] = chains
                     except Exception:
