@@ -364,9 +364,12 @@ def evaluate_cycle(
                 continue
             if position.stop_price <= 0 or position.entry_price <= 0:
                 continue
+            bars = intraday_bars_by_symbol.get(position.symbol, ())
+            if not bars:
+                continue
             cap_stop = round(position.entry_price * (1 - settings.max_stop_pct), 2)
             effective_stop = emitted_update_stops.get(position.symbol, position.stop_price)
-            if effective_stop < cap_stop:
+            if effective_stop < cap_stop and cap_stop < bars[-1].close:
                 intents.append(
                     CycleIntent(
                         intent_type=CycleIntentType.UPDATE_STOP,
