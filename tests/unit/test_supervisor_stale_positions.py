@@ -321,3 +321,108 @@ def test_executor_exception_does_not_propagate():
     supervisor._close_stale_carryover_positions(
         session_date=session_date, open_positions=positions, timestamp=now
     )
+
+
+def test_stale_cleanup_called_during_run_cycle_once(monkeypatch) -> None:
+    """run_cycle_once must call _close_stale_carryover_positions so stale exits
+    fire automatically each cycle without operator intervention."""
+    from importlib import import_module as _imp
+    module = _imp("alpaca_bot.runtime.supervisor")
+    settings = _make_settings()
+    executor = _RecordingExecutor()
+
+    from alpaca_bot.storage.models import PositionRecord
+    from alpaca_bot.config import TradingMode
+
+    # A position opened on a prior session date (2026-05-09 ET)
+    stale_opened_at = datetime(2026, 5, 9, 20, 0, tzinfo=timezone.utc)
+    stale_record = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        quantity=10.0,
+        entry_price=100.0,
+        stop_price=98.0,
+        initial_stop_price=98.0,
+        opened_at=stale_opened_at,
+    )
+
+    class _FakeConn:
+        def commit(self): pass
+        def rollback(self): pass
+
+    audit_store = _RecordingAuditStore()
+
+    class _FakeRuntime:
+        connection = _FakeConn()
+        store_lock = None
+        audit_event_store = audit_store
+        position_store = type("PS", (), {
+            "list_all": lambda self, **kw: [stale_record],
+        })()
+        order_store = type("OS", (), {
+            "list_by_status": lambda self, **kw: [],
+            "list_pending_submit": lambda self, **kw: [],
+            "daily_realized_pnl": lambda self, **kw: 0.0,
+            "daily_realized_pnl_by_symbol": lambda self, **kw: {},
+            "list_trade_pnl_by_strategy": lambda self, **kw: [],
+        })()
+        trading_status_store = SimpleNamespace(load=lambda **kw: None)
+        daily_session_state_store = SimpleNamespace(
+            load=lambda **kw: None,
+            save=lambda *a, **kw: None,
+            list_by_session=lambda **kw: [],
+        )
+        strategy_flag_store = SimpleNamespace(list_all=lambda **kw: [], load=lambda **kw: None)
+        watchlist_store = SimpleNamespace(
+            list_enabled=lambda *a: ["AAPL"], list_ignored=lambda *a: []
+        )
+
+    supervisor = module.RuntimeSupervisor(
+        settings=settings,
+        runtime=_FakeRuntime(),
+        broker=SimpleNamespace(
+            get_account=lambda: SimpleNamespace(
+                equity=100_000.0, buying_power=200_000.0, trading_blocked=False
+            ),
+            list_open_orders=lambda: [],
+            list_open_positions=lambda: [],
+        ),
+        market_data=SimpleNamespace(get_stock_bars=lambda **kw: {}, get_daily_bars=lambda **kw: {}),
+        stream=None,
+        close_runtime_fn=lambda _: None,
+        connection_checker=lambda _: True,
+        cycle_runner=lambda **kw: SimpleNamespace(intents=[]),
+        cycle_intent_executor=executor,
+        order_dispatcher=lambda **kw: {"submitted_count": 0},
+    )
+    monkeypatch.setattr(module, "recover_startup_state", lambda **kw: module.StartupRecoveryReport(
+        mismatches=(), synced_position_count=0, synced_order_count=0,
+        cleared_position_count=0, cleared_order_count=0,
+    ))
+
+    # Cycle timestamp: 2026-05-11 14:00 UTC = 2026-05-11 ET — next session after stale position
+    now = datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc)
+    supervisor.run_cycle_once(now=lambda: now)
+
+    exit_calls = [
+        call for call in executor.calls
+        if any(
+            getattr(i, "reason", None) == "stale_position_carryover"
+            for i in getattr(call.get("cycle_result"), "intents", [])
+        )
+    ]
+    assert len(exit_calls) >= 1, "Expected at least one stale-carryover exit submitted"
+    aapl_exits = [
+        i for call in exit_calls
+        for i in call["cycle_result"].intents
+        if i.symbol == "AAPL" and i.reason == "stale_position_carryover"
+    ]
+    assert len(aapl_exits) == 1
+
+    stale_events = [
+        e for e in audit_store.appended
+        if getattr(e, "event_type", None) == "stale_positions_detected"
+    ]
+    assert len(stale_events) == 1
+    assert "AAPL" in stale_events[0].payload["symbols"]

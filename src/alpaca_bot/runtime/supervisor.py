@@ -529,6 +529,11 @@ class RuntimeSupervisor:
             or session_date in self._consecutive_loss_gate_fired
         )
         open_positions = self._load_open_positions()
+        self._close_stale_carryover_positions(
+            session_date=session_date,
+            open_positions=open_positions,
+            timestamp=timestamp,
+        )
         working_order_symbols = {order.symbol for order in broker_open_orders}
         working_order_symbols.update(order.symbol for order in self._list_pending_submit_orders())
         # Include symbols with active local stop-sell orders so evaluate_cycle()
