@@ -138,9 +138,14 @@ def recover_startup_state(
 
         if not local_for_symbol:
             mismatches.append(f"broker position missing locally: {broker_position.symbol}")
+            is_option = _is_option_symbol(broker_position.symbol)
+            resolved_strategy_name = "option" if is_option else default_strategy_name
+            buffer_pct = settings.option_stop_buffer_pct if is_option else settings.breakout_stop_buffer_pct
             resolved_entry_price = broker_position.entry_price
             if resolved_entry_price is not None and resolved_entry_price != 0.0:
-                stop_price = round(resolved_entry_price * (1 - settings.breakout_stop_buffer_pct), 2)
+                stop_price = round(resolved_entry_price * (1 - buffer_pct), 2)
+                if stop_price >= resolved_entry_price:
+                    stop_price = 0.0
                 initial_stop_price = stop_price
             else:
                 stop_price = 0.0
@@ -152,7 +157,7 @@ def recover_startup_state(
                     symbol=broker_position.symbol,
                     trading_mode=settings.trading_mode,
                     strategy_version=settings.strategy_version,
-                    strategy_name=default_strategy_name,
+                    strategy_name=resolved_strategy_name,
                     quantity=broker_position.quantity,
                     entry_price=broker_position.entry_price if broker_position.entry_price is not None else 0.0,
                     stop_price=stop_price,
@@ -163,7 +168,7 @@ def recover_startup_state(
             )
             if stop_price > 0.0:
                 new_positions_needing_stop.append(
-                    (broker_position.symbol, broker_position.quantity, stop_price, default_strategy_name)
+                    (broker_position.symbol, broker_position.quantity, stop_price, resolved_strategy_name)
                 )
         elif len(local_for_symbol) == 1:
             existing = local_for_symbol[0]

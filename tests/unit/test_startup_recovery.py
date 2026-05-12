@@ -1810,6 +1810,123 @@ def test_uuid_stop_inherits_strategy_name_from_position() -> None:
     )
 
 
+def test_option_stop_uses_option_buffer_for_occ_symbol() -> None:
+    """Broker-missing OCC position must use option_stop_buffer_pct, not breakout_stop_buffer_pct."""
+    settings = Settings.from_env(
+        {
+            "TRADING_MODE": "paper",
+            "ENABLE_LIVE_TRADING": "false",
+            "STRATEGY_VERSION": "v1-breakout",
+            "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+            "MARKET_DATA_FEED": "sip",
+            "SYMBOLS": "ALHC260618P00017500",
+            "DAILY_SMA_PERIOD": "20",
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "ENTRY_TIMEFRAME_MINUTES": "15",
+            "RISK_PER_TRADE_PCT": "0.0025",
+            "MAX_POSITION_PCT": "0.05",
+            "MAX_OPEN_POSITIONS": "3",
+            "DAILY_LOSS_LIMIT_PCT": "0.01",
+            "STOP_LIMIT_BUFFER_PCT": "0.001",
+            "BREAKOUT_STOP_BUFFER_PCT": "0.001",  # 0.1% — rounds to entry on cheap options
+            "OPTION_STOP_BUFFER_PCT": "0.10",     # 10%
+            "ENTRY_STOP_PRICE_BUFFER": "0.01",
+            "ENTRY_WINDOW_START": "10:00",
+            "ENTRY_WINDOW_END": "15:30",
+            "FLATTEN_TIME": "15:45",
+        }
+    )
+    now = datetime(2026, 5, 12, 15, 0, tzinfo=timezone.utc)
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(settings, position_store=position_store, order_store=order_store)
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[
+            BrokerPosition(symbol="ALHC260618P00017500", quantity=10, entry_price=1.20, market_value=12.0)
+        ],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    assert len(position_store.replace_all_calls) == 1
+    saved_positions = [
+        p for p in position_store.replace_all_calls[0]["positions"]
+        if p.symbol == "ALHC260618P00017500"
+    ]
+    assert len(saved_positions) == 1
+    pos = saved_positions[0]
+    # 10% buffer: 1.20 * 0.90 = 1.08 — strictly below entry
+    assert pos.stop_price == pytest.approx(1.08, abs=0.005)
+    assert pos.stop_price < 1.20, "stop must be strictly below entry price"
+
+    queued_stops = [o for o in order_store.saved if o.intent_type == "stop"]
+    assert len(queued_stops) == 1
+    assert queued_stops[0].stop_price == pytest.approx(1.08, abs=0.005)
+
+
+def test_option_strategy_name_set_to_option_for_occ_symbol() -> None:
+    """Broker-missing OCC position must get strategy_name='option', not 'breakout'."""
+    settings = make_settings()
+    now = datetime(2026, 5, 12, 15, 0, tzinfo=timezone.utc)
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(settings, position_store=position_store, order_store=order_store)
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[
+            BrokerPosition(symbol="ALHC260618P00017500", quantity=10, entry_price=1.20, market_value=12.0)
+        ],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    assert len(position_store.replace_all_calls) == 1
+    saved_positions = [
+        p for p in position_store.replace_all_calls[0]["positions"]
+        if p.symbol == "ALHC260618P00017500"
+    ]
+    assert len(saved_positions) == 1
+    assert saved_positions[0].strategy_name == "option"
+
+    queued_stops = [o for o in order_store.saved if o.intent_type == "stop"]
+    assert len(queued_stops) == 1
+    assert queued_stops[0].strategy_name == "option"
+
+
+def test_equity_strategy_name_still_breakout_for_equity_symbol() -> None:
+    """Broker-missing equity position still gets strategy_name='breakout' (unchanged)."""
+    settings = make_settings()
+    now = datetime(2026, 5, 12, 15, 0, tzinfo=timezone.utc)
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(settings, position_store=position_store, order_store=order_store)
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[
+            BrokerPosition(symbol="AAPL", quantity=10, entry_price=189.0, market_value=1890.0)
+        ],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    assert len(position_store.replace_all_calls) == 1
+    saved_positions = [
+        p for p in position_store.replace_all_calls[0]["positions"]
+        if p.symbol == "AAPL"
+    ]
+    assert len(saved_positions) == 1
+    assert saved_positions[0].strategy_name == "breakout"
+
+
 def test_is_option_symbol_identifies_occ_symbols() -> None:
     from alpaca_bot.runtime.startup_recovery import _is_option_symbol
 
