@@ -1810,6 +1810,15 @@ def test_uuid_stop_inherits_strategy_name_from_position() -> None:
     )
 
 
+def test_infer_strategy_name_option_prefix_returns_option() -> None:
+    """OCC client_order_id with 'option' prefix must return 'option', not 'breakout'."""
+    from alpaca_bot.runtime.startup_recovery import _infer_strategy_name_from_client_order_id
+
+    assert _infer_strategy_name_from_client_order_id("option:v1-breakout:2026-05-12:ALHC260618P00017500:buy") == "option"
+    assert _infer_strategy_name_from_client_order_id("breakout:v1:2026-05-12:AAPL:buy") == "breakout"
+    assert _infer_strategy_name_from_client_order_id("") == "breakout"
+
+
 def test_option_stop_skipped_when_no_current_price() -> None:
     """Active OCC position with market_value=None must not queue a stop and must emit option_stop_skipped_no_price."""
     settings = make_settings()

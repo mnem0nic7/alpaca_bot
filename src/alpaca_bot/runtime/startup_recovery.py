@@ -747,7 +747,11 @@ def _infer_strategy_name_from_client_order_id(client_order_id: str) -> str:
     if not client_order_id:
         return "breakout"
     first_segment = client_order_id.split(":")[0]
-    return first_segment if first_segment in STRATEGY_REGISTRY else "breakout"
+    if first_segment in STRATEGY_REGISTRY:
+        return first_segment
+    if first_segment == "option":
+        return "option"
+    return "breakout"
 
 
 def _infer_strategy_name(
