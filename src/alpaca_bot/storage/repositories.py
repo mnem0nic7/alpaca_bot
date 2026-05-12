@@ -805,7 +805,7 @@ class OrderStore:
             {
                 "strategy_name": row[0],
                 "exit_date": row[1],
-                "pnl": (float(row[3]) - float(row[4])) * float(row[2]),
+                "pnl": (float(row[3]) - float(row[4])) * float(row[2]) * _contract_multiplier(row[0]),
             }
             for row in rows
             if row[4] is not None

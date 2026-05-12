@@ -684,6 +684,21 @@ class TestListTradePnlByStrategy:
         assert len(result) == 1
         assert result[0]["pnl"] < 0.0  # losing trade
 
+    def test_option_trade_pnl_applies_100x_multiplier(self) -> None:
+        """Option trade: (0.80 - 1.20) × 2 × 100 = -80.0."""
+        # row: (strategy_name, exit_date, qty, exit_fill, entry_fill)
+        rows = [("option", date(2026, 1, 2), 2, 0.80, 1.20)]
+        store = self._make_store(rows)
+        result = store.list_trade_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 28),
+        )
+        assert len(result) == 1
+        assert result[0]["strategy_name"] == "option"
+        assert result[0]["pnl"] == pytest.approx(-80.0)
+
 
 # ── test_win_loss_counts_by_strategy ─────────────────────────────────────────
 
