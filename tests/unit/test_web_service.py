@@ -609,6 +609,40 @@ def test_trade_record_exit_reason_and_hold_minutes() -> None:
     assert trade_eod.exit_reason == "eod"
 
 
+def test_to_trade_record_option_pnl_multiplied_by_100() -> None:
+    row = {
+        "symbol": "AAPL240701P00150000",
+        "strategy_name": "option",
+        "entry_fill": 1.20,
+        "entry_limit": None,
+        "entry_time": None,
+        "exit_time": None,
+        "exit_fill": 0.80,
+        "qty": 2,
+        "intent_type": "stop",
+    }
+    trade = _to_trade_record(row)
+    # (0.80 - 1.20) * 2 * 100 = -80.0
+    assert abs(trade.pnl - (-80.0)) < 1e-9
+
+
+def test_to_trade_record_equity_pnl_not_multiplied() -> None:
+    row = {
+        "symbol": "AAPL",
+        "strategy_name": "breakout",
+        "entry_fill": 150.0,
+        "entry_limit": None,
+        "entry_time": None,
+        "exit_time": None,
+        "exit_fill": 155.0,
+        "qty": 5,
+        "intent_type": "eod",
+    }
+    trade = _to_trade_record(row)
+    # (155.0 - 150.0) * 5 * 1 = 25.0
+    assert abs(trade.pnl - 25.0) < 1e-9
+
+
 def test_session_report_none_when_no_trades() -> None:
     now = datetime(2026, 5, 5, 15, 0, tzinfo=timezone.utc)
     metrics = load_metrics_snapshot(

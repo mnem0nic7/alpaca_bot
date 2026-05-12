@@ -509,7 +509,8 @@ def _to_trade_record(row: dict) -> TradeRecord:
     entry_fill = row["entry_fill"]
     exit_fill = row["exit_fill"]
     qty = row["qty"]
-    pnl = (exit_fill - entry_fill) * qty
+    multiplier = 100 if row.get("strategy_name") == "option" else 1
+    pnl = (exit_fill - entry_fill) * qty * multiplier
     slippage = (
         row["entry_limit"] - entry_fill
         if row.get("entry_limit") is not None
