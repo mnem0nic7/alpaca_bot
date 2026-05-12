@@ -183,9 +183,11 @@ def test_run_cycle_saves_all_entry_intents_with_single_commit() -> None:
 class RecordingOptionOrderStore:
     def __init__(self) -> None:
         self.saved: list = []
+        self.commit_args: list[bool] = []
 
     def save(self, record, *, commit: bool = True) -> None:
         self.saved.append(record)
+        self.commit_args.append(commit)
 
 
 def _make_option_entry_intent(occ_symbol: str, now: datetime) -> CycleIntent:
@@ -250,6 +252,9 @@ def test_run_cycle_emits_option_entry_intent_created_event() -> None:
     finally:
         cycle_module.evaluate_cycle = original
 
+    assert all(not c for c in option_store.commit_args), (
+        "option_order_store.save() calls must use commit=False"
+    )
     entry_events = [
         e for e in audit_store.appended
         if e.event_type == "option_entry_intent_created"
@@ -264,6 +269,8 @@ def test_run_cycle_emits_option_entry_intent_created_event() -> None:
     assert payload["strike"] == 17.5
     assert payload["ask_price"] == 1.20
     assert payload["quantity"] == 1
+    assert payload["expiry"] == "2026-06-18"
+    assert payload["signal_timestamp"] == now.isoformat()
 
 
 def test_run_cycle_equity_entry_does_not_emit_option_event() -> None:
@@ -366,3 +373,63 @@ def test_run_cycle_rollback_on_db_failure() -> None:
         f"run_cycle must call rollback() once when order_store.save() raises; "
         f"got rollback_count={connection.rollback_count}"
     )
+
+
+def test_run_cycle_option_entry_event_signal_timestamp_none() -> None:
+    """When signal_timestamp is None, the payload field must be None (not crash)."""
+    from alpaca_bot.runtime.cycle import run_cycle
+    import alpaca_bot.runtime.cycle as cycle_module
+    from datetime import date as _date
+
+    settings = _make_settings()
+    now = datetime(2026, 5, 12, 14, 30, tzinfo=timezone.utc)
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(),
+        audit_event_store=audit_store,
+        connection=CountingConnection(),
+        option_order_store=RecordingOptionOrderStore(),
+    )
+
+    no_ts_intent = CycleIntent(
+        intent_type=CycleIntentType.ENTRY,
+        symbol="ALHC260618P00017500",
+        timestamp=now,
+        client_order_id="option:ALHC260618P00017500:entry",
+        quantity=1,
+        stop_price=None,
+        limit_price=1.20,
+        initial_stop_price=None,
+        signal_timestamp=None,
+        strategy_name="breakout",
+        underlying_symbol="ALHC",
+        is_option=True,
+        option_strike=17.5,
+        option_expiry=_date(2026, 6, 18),
+        option_type_str="put",
+    )
+    result = CycleResult(as_of=now, intents=[no_ts_intent])
+    original = cycle_module.evaluate_cycle
+    cycle_module.evaluate_cycle = lambda **_: result
+    try:
+        run_cycle(
+            settings=settings,
+            runtime=runtime,
+            now=now,
+            equity=100_000.0,
+            intraday_bars_by_symbol={},
+            daily_bars_by_symbol={},
+            open_positions=[],
+            working_order_symbols=set(),
+            traded_symbols_today=set(),
+            entries_disabled=False,
+        )
+    finally:
+        cycle_module.evaluate_cycle = original
+
+    entry_events = [
+        e for e in audit_store.appended
+        if e.event_type == "option_entry_intent_created"
+    ]
+    assert len(entry_events) == 1
+    assert entry_events[0].payload["signal_timestamp"] is None
