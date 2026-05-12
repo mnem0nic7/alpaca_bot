@@ -146,6 +146,17 @@ class RecordingBroker:
             quantity=kwargs["quantity"],
         )
 
+    def submit_limit_exit(self, **kwargs):
+        self.exit_calls.append(dict(kwargs))
+        return SimpleNamespace(
+            client_order_id=kwargs["client_order_id"],
+            broker_order_id="broker-exit-1",
+            symbol=kwargs["symbol"],
+            side="sell",
+            status="ACCEPTED",
+            quantity=kwargs["quantity"],
+        )
+
 
 def load_cycle_intent_execution_api():
     from alpaca_bot.runtime.cycle_intent_execution import execute_cycle_intents
@@ -3510,3 +3521,461 @@ def test_path_c_get_open_orders_for_symbol_raises_falls_back_to_stop_update_fail
     assert "stop_update_failed" in event_types, (
         "stop_update_failed must be emitted when get_open_orders_for_symbol raises during resync"
     )
+
+
+# ── Stale exit detection tests ────────────────────────────────────────────────
+
+def test_stale_exit_detected_canceled_and_resubmitted() -> None:
+    """A 'new' exit order from the prior trading session must be canceled at the
+    broker, marked canceled in DB, and a fresh market exit submitted."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)  # April 24, 10:00 ET
+
+    stale_exit = OrderRecord(
+        client_order_id="v1-breakout:2026-04-23:AAPL:exit:stale",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="new",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        initial_stop_price=109.89,
+        broker_order_id="broker-stale-exit-1",
+        signal_timestamp=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+    )
+    active_stop = OrderRecord(
+        client_order_id="v1-breakout:2026-04-23:AAPL:stop:stale",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-1",
+        signal_timestamp=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+    )
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[stale_exit, active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    assert report.submitted_exit_count == 1, "Fresh exit must be submitted after stale is cleared"
+    assert "broker-stale-exit-1" in broker.cancel_calls, "Stale exit must be canceled at broker"
+    assert "broker-stop-1" in broker.cancel_calls, "Active stop must also be canceled"
+    assert broker.exit_calls, "Market exit must be submitted"
+
+    stale_exit_saved = [
+        o for o in runtime.order_store.saved
+        if o.client_order_id == stale_exit.client_order_id
+    ]
+    assert stale_exit_saved, "Stale exit must be saved to DB"
+    assert stale_exit_saved[0].status == "canceled"
+
+    stale_cancel_events = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "stale_exit_canceled_for_resubmission"
+    ]
+    assert len(stale_cancel_events) == 1
+    assert stale_cancel_events[0].payload["client_order_id"] == stale_exit.client_order_id
+    assert stale_cancel_events[0].payload["broker_order_id"] == "broker-stale-exit-1"
+    assert stale_cancel_events[0].payload["original_status"] == "new"
+
+    skipped = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "cycle_intent_skipped"
+    ]
+    assert not skipped, "Must NOT emit cycle_intent_skipped when stale exit is cleared"
+
+
+def test_fresh_exit_same_day_still_blocks() -> None:
+    """A 'new' exit order created today (same ET session date) must still block
+    resubmission — it is actively being processed, not stale."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 50, tzinfo=timezone.utc)  # April 24, 15:50 ET
+
+    fresh_exit = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:exit:fresh",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="new",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),  # same day in ET
+        updated_at=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
+        initial_stop_price=109.89,
+        broker_order_id="broker-fresh-exit-1",
+        signal_timestamp=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[fresh_exit]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    assert report.submitted_exit_count == 0, "Same-day 'new' exit must still block"
+    assert not broker.cancel_calls, "Must NOT cancel a fresh exit"
+    skipped = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "cycle_intent_skipped"
+    ]
+    assert len(skipped) == 1
+    assert skipped[0].payload["reason"] == "active_exit_order_exists"
+
+
+def test_pending_submit_exit_blocks_resubmission() -> None:
+    """A 'pending_submit' exit order (not yet dispatched to broker) must be treated
+    as fresh and block resubmission — the dispatcher will handle it shortly."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+
+    pending_exit = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:exit:pending",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="pending_submit",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        # created_at is yesterday — but it's pending_submit with no broker_order_id,
+        # so it must NOT be classified as stale
+        created_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        initial_stop_price=109.89,
+        broker_order_id=None,  # not yet submitted
+        signal_timestamp=None,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[pending_exit]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    assert report.submitted_exit_count == 0, "pending_submit exit must block (it will be dispatched)"
+    assert not broker.cancel_calls
+    skipped = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "cycle_intent_skipped"
+    ]
+    assert len(skipped) == 1
+    assert skipped[0].payload["reason"] == "active_exit_order_exists"
+
+
+def test_stale_and_fresh_exit_coexist_fresh_wins() -> None:
+    """When both a stale exit and a fresh exit exist, the fresh exit takes priority
+    and must block — do not attempt to cancel the stale one."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+
+    stale_exit = OrderRecord(
+        client_order_id="v1-breakout:2026-04-23:AAPL:exit:stale",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="new",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        initial_stop_price=109.89,
+        broker_order_id="broker-stale-exit-1",
+        signal_timestamp=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+    )
+    fresh_exit = OrderRecord(
+        client_order_id="v1-breakout:2026-04-24:AAPL:exit:pending",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="pending_submit",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=datetime(2026, 4, 24, 13, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 24, 13, 0, tzinfo=timezone.utc),
+        initial_stop_price=109.89,
+        broker_order_id=None,
+        signal_timestamp=None,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[stale_exit, fresh_exit]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    assert report.submitted_exit_count == 0, "Fresh exit must block even when stale also exists"
+    assert not broker.cancel_calls, "Must NOT cancel the stale exit when fresh exit is present"
+    skipped = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "cycle_intent_skipped"
+    ]
+    assert len(skipped) == 1
+    assert skipped[0].payload["reason"] == "active_exit_order_exists"
+
+
+def test_stale_exit_cancel_fails_unrecognized_error_blocks() -> None:
+    """If canceling the stale exit at the broker raises an unrecognized error,
+    resubmission must be blocked (the stale order may still be live at the broker)."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+
+    stale_exit = OrderRecord(
+        client_order_id="v1-breakout:2026-04-23:AAPL:exit:stale",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="new",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        initial_stop_price=109.89,
+        broker_order_id="broker-stale-exit-1",
+        signal_timestamp=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[stale_exit]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker(cancel_raises=RuntimeError("connection refused"))
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    assert report.submitted_exit_count == 0, "Must block when stale exit cancel raised unrecognized error"
+    assert broker.cancel_calls == ["broker-stale-exit-1"], "One cancel attempt must be made"
+    assert not broker.exit_calls, "No exit must be submitted"
+    skipped = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "cycle_intent_skipped"
+    ]
+    assert len(skipped) == 1
+    assert skipped[0].payload["reason"] == "stale_exit_cancel_failed"
+    assert skipped[0].payload["client_order_id"] == stale_exit.client_order_id
+
+
+def test_stale_exit_cancel_fails_already_canceled_proceeds() -> None:
+    """If the stale exit cancel raises 'already canceled', the broker has already
+    removed it. Mark it canceled in DB and proceed with fresh exit submission."""
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+
+    stale_exit = OrderRecord(
+        client_order_id="v1-breakout:2026-04-23:AAPL:exit:stale",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="new",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+        initial_stop_price=109.89,
+        broker_order_id="broker-stale-exit-1",
+        signal_timestamp=datetime(2026, 4, 23, 23, 0, tzinfo=timezone.utc),
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+    )
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[stale_exit]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker(cancel_raises=Exception("already canceled"))
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol="AAPL",
+                timestamp=now,
+                reason="eod_flatten",
+            )],
+        ),
+        now=now,
+    )
+
+    assert report.submitted_exit_count == 1, "Exit must proceed when stale cancel returns 'already canceled'"
+    stale_saved = [
+        o for o in runtime.order_store.saved
+        if o.client_order_id == stale_exit.client_order_id
+    ]
+    assert stale_saved and stale_saved[0].status == "canceled", (
+        "Stale exit must be saved as canceled even when broker returns already-canceled"
+    )
+    assert broker.exit_calls, "Market exit must be submitted"

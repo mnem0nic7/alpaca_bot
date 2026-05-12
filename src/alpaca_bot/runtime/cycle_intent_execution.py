@@ -452,7 +452,28 @@ def _execute_exit(
             statuses=list(ACTIVE_STOP_STATUSES),
             strategy_name=strategy_name,
         )
-        if any(o.symbol == symbol and o.intent_type == "exit" for o in active_exit_orders):
+        symbol_exit_orders = [
+            o for o in active_exit_orders if o.symbol == symbol and o.intent_type == "exit"
+        ]
+
+    # Classify into stale (prior-session, submitted-but-unfilled) vs fresh (current session).
+    stale_exits: list[OrderRecord] = []
+    fresh_exits: list[OrderRecord] = []
+    if symbol_exit_orders:
+        session_date_et = now.astimezone(settings.market_timezone).date()
+        for order in symbol_exit_orders:
+            if order.status in ("new", "held") and order.broker_order_id is not None:
+                ref_ts = order.signal_timestamp if order.signal_timestamp is not None else order.created_at
+                if ref_ts.tzinfo is None:
+                    ref_ts = ref_ts.replace(tzinfo=timezone.utc)
+                if ref_ts.astimezone(settings.market_timezone).date() < session_date_et:
+                    stale_exits.append(order)
+                    continue
+            fresh_exits.append(order)
+
+    if fresh_exits:
+        # A current-session exit is live — block to avoid double-sell.
+        with lock_ctx:
             try:
                 runtime.audit_event_store.append(
                     AuditEvent(
@@ -470,9 +491,105 @@ def _execute_exit(
                 except Exception:
                     pass
                 raise
-            return 0, 0, 0
+        return 0, 0, 0
 
-        stop_orders = _active_stop_orders(runtime, settings, symbol, strategy_name=strategy_name)
+    # Cancel stale exits at broker outside the lock — they are from a prior session
+    # and were never filled (e.g. paper-trading DAY limit orders placed after-hours).
+    stale_canceled: list[tuple[OrderRecord, str]] = []
+    for stale in stale_exits:
+        if stale.broker_order_id:
+            try:
+                broker.cancel_order(stale.broker_order_id)
+            except Exception as exc:
+                exc_msg = str(exc).lower()
+                if any(
+                    phrase in exc_msg
+                    for phrase in ("not found", "already canceled", "already filled", "does not exist")
+                ):
+                    logger.warning(
+                        "cycle_intent_execution: stale exit %s already gone at broker: %s",
+                        stale.client_order_id,
+                        exc,
+                    )
+                else:
+                    logger.exception(
+                        "cycle_intent_execution: cancel_order failed with unrecognized error "
+                        "for stale exit %s on %s; blocking resubmission to prevent double-sell",
+                        stale.client_order_id,
+                        symbol,
+                    )
+                    with lock_ctx:
+                        try:
+                            runtime.audit_event_store.append(
+                                AuditEvent(
+                                    event_type="cycle_intent_skipped",
+                                    symbol=symbol,
+                                    payload={
+                                        "intent_type": "exit",
+                                        "reason": "stale_exit_cancel_failed",
+                                        "client_order_id": stale.client_order_id,
+                                    },
+                                    created_at=now,
+                                ),
+                                commit=False,
+                            )
+                            runtime.connection.commit()
+                        except Exception:
+                            try:
+                                runtime.connection.rollback()
+                            except Exception:
+                                pass
+                            raise
+                    return 0, 0, 0
+        stale_canceled.append((
+            OrderRecord(
+                client_order_id=stale.client_order_id,
+                symbol=stale.symbol,
+                side=stale.side,
+                intent_type=stale.intent_type,
+                status="canceled",
+                quantity=stale.quantity,
+                trading_mode=stale.trading_mode,
+                strategy_version=stale.strategy_version,
+                created_at=stale.created_at,
+                updated_at=now,
+                stop_price=stale.stop_price,
+                limit_price=stale.limit_price,
+                initial_stop_price=stale.initial_stop_price,
+                broker_order_id=stale.broker_order_id,
+                signal_timestamp=stale.signal_timestamp,
+                strategy_name=stale.strategy_name,
+            ),
+            stale.status,
+        ))
+
+    # Persist stale exit cancellations and read active stop orders — all under one lock.
+    with lock_ctx:
+        try:
+            for canceled_record, original_status in stale_canceled:
+                runtime.order_store.save(canceled_record, commit=False)
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="stale_exit_canceled_for_resubmission",
+                        symbol=symbol,
+                        payload={
+                            "client_order_id": canceled_record.client_order_id,
+                            "broker_order_id": canceled_record.broker_order_id,
+                            "original_status": original_status,
+                        },
+                        created_at=now,
+                    ),
+                    commit=False,
+                )
+            stop_orders = _active_stop_orders(runtime, settings, symbol, strategy_name=strategy_name)
+            if stale_canceled:
+                runtime.connection.commit()
+        except Exception:
+            try:
+                runtime.connection.rollback()
+            except Exception:
+                pass
+            raise
 
     # Cancel broker stops outside the lock; collect which ones succeeded.
     canceled_order_records: list[OrderRecord] = []
