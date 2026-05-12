@@ -16,16 +16,21 @@ def _settings(**overrides) -> Settings:
     return Settings.from_env(env)
 
 
-def _contract(strike: float, expiry: date, ask: float, delta: float | None = None, option_type: str = "call") -> OptionContract:
+def _contract(
+    strike: float, expiry: date, ask: float,
+    delta: float | None = None, option_type: str = "call",
+    bid: float | None = None, open_interest: int | None = None,
+) -> OptionContract:
     return OptionContract(
         occ_symbol=f"AAPL{expiry.strftime('%y%m%d')}C{int(strike * 1000):08d}",
         underlying="AAPL",
         option_type=option_type,
         strike=strike,
         expiry=expiry,
-        bid=ask - 0.05,
+        bid=bid if bid is not None else ask - 0.05,
         ask=ask,
         delta=delta,
+        open_interest=open_interest,
     )
 
 
@@ -126,7 +131,9 @@ class TestCalculateOptionPositionSize:
 
 
 def _put_contract(
-    strike: float, expiry: date, ask: float, delta: float | None = None
+    strike: float, expiry: date, ask: float,
+    delta: float | None = None,
+    bid: float | None = None, open_interest: int | None = None,
 ) -> OptionContract:
     return OptionContract(
         occ_symbol=f"AAPL{expiry.strftime('%y%m%d')}P{int(strike * 1000):08d}",
@@ -134,9 +141,10 @@ def _put_contract(
         option_type="put",
         strike=strike,
         expiry=expiry,
-        bid=ask - 0.05,
+        bid=bid if bid is not None else ask - 0.05,
         ask=ask,
         delta=delta,
+        open_interest=open_interest,
     )
 
 
@@ -161,3 +169,72 @@ class TestSelectPutContract:
             [p30, p50, p70], current_price=150.0, today=TODAY, settings=s
         )
         assert result is p50
+
+
+class TestSpreadFilter:
+    def test_call_wide_spread_rejected(self):
+        # ask=2.00, bid=0.00 → spread_pct=1.0 > OPTION_MAX_SPREAD_PCT=0.50
+        s = _settings(OPTION_MAX_SPREAD_PCT="0.50")
+        c = _contract(150.0, NEAR_EXPIRY, ask=2.00, bid=0.00, delta=0.50)
+        result = select_call_contract([c], current_price=150.0, today=TODAY, settings=s)
+        assert result is None
+
+    def test_call_tight_spread_passes(self):
+        # ask=2.00, bid=1.80 → spread_pct=0.10 <= 0.50
+        s = _settings(OPTION_MAX_SPREAD_PCT="0.50")
+        c = _contract(150.0, NEAR_EXPIRY, ask=2.00, bid=1.80, delta=0.50)
+        result = select_call_contract([c], current_price=150.0, today=TODAY, settings=s)
+        assert result is c
+
+    def test_put_wide_spread_rejected(self):
+        s = _settings(OPTION_MAX_SPREAD_PCT="0.30")
+        p = _put_contract(150.0, NEAR_EXPIRY, ask=2.00, bid=0.00, delta=-0.50)
+        result = select_put_contract([p], current_price=150.0, today=TODAY, settings=s)
+        assert result is None
+
+    def test_put_tight_spread_passes(self):
+        s = _settings(OPTION_MAX_SPREAD_PCT="0.30")
+        p = _put_contract(150.0, NEAR_EXPIRY, ask=2.00, bid=1.50, delta=-0.50)
+        # spread_pct = (2.00 - 1.50) / 2.00 = 0.25 <= 0.30
+        result = select_put_contract([p], current_price=150.0, today=TODAY, settings=s)
+        assert result is p
+
+
+class TestOpenInterestFilter:
+    def test_call_low_oi_rejected(self):
+        s = _settings(OPTION_MIN_OPEN_INTEREST="100")
+        c = _contract(150.0, NEAR_EXPIRY, ask=2.00, delta=0.50, open_interest=50)
+        result = select_call_contract([c], current_price=150.0, today=TODAY, settings=s)
+        assert result is None
+
+    def test_call_sufficient_oi_passes(self):
+        s = _settings(OPTION_MIN_OPEN_INTEREST="100")
+        c = _contract(150.0, NEAR_EXPIRY, ask=2.00, delta=0.50, open_interest=200)
+        result = select_call_contract([c], current_price=150.0, today=TODAY, settings=s)
+        assert result is c
+
+    def test_call_oi_none_passes_when_min_set(self):
+        # Fail-open: OI not reported doesn't mean no liquidity
+        s = _settings(OPTION_MIN_OPEN_INTEREST="100")
+        c = _contract(150.0, NEAR_EXPIRY, ask=2.00, delta=0.50, open_interest=None)
+        result = select_call_contract([c], current_price=150.0, today=TODAY, settings=s)
+        assert result is c
+
+    def test_call_oi_filter_disabled_when_zero(self):
+        # option_min_open_interest=0 means disabled; even OI=1 passes
+        s = _settings(OPTION_MIN_OPEN_INTEREST="0")
+        c = _contract(150.0, NEAR_EXPIRY, ask=2.00, delta=0.50, open_interest=1)
+        result = select_call_contract([c], current_price=150.0, today=TODAY, settings=s)
+        assert result is c
+
+    def test_put_low_oi_rejected(self):
+        s = _settings(OPTION_MIN_OPEN_INTEREST="100")
+        p = _put_contract(150.0, NEAR_EXPIRY, ask=2.00, delta=-0.50, open_interest=10)
+        result = select_put_contract([p], current_price=150.0, today=TODAY, settings=s)
+        assert result is None
+
+    def test_put_oi_none_passes_when_min_set(self):
+        s = _settings(OPTION_MIN_OPEN_INTEREST="100")
+        p = _put_contract(150.0, NEAR_EXPIRY, ask=2.00, delta=-0.50, open_interest=None)
+        result = select_put_contract([p], current_price=150.0, today=TODAY, settings=s)
+        assert result is p

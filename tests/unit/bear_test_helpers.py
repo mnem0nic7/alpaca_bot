@@ -32,6 +32,8 @@ def _settings(**overrides) -> object:
         option_dte_min=21,
         option_dte_max=60,
         option_delta_target=0.5,
+        option_max_spread_pct=0.50,
+        option_min_open_interest=0,
         market_timezone=ZoneInfo("America/New_York"),
     )
     base.update(overrides)

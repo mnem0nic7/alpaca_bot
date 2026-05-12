@@ -19,6 +19,12 @@ def select_call_contract(
         if c.option_type == "call"
         and c.ask > 0
         and settings.option_dte_min <= (c.expiry - today).days <= settings.option_dte_max
+        and c.spread_pct <= settings.option_max_spread_pct
+        and (
+            settings.option_min_open_interest == 0
+            or c.open_interest is None
+            or c.open_interest >= settings.option_min_open_interest
+        )
     ]
     if not eligible:
         return None
@@ -40,6 +46,12 @@ def select_put_contract(
         if c.option_type == "put"
         and c.ask > 0
         and settings.option_dte_min <= (c.expiry - today).days <= settings.option_dte_max
+        and c.spread_pct <= settings.option_max_spread_pct
+        and (
+            settings.option_min_open_interest == 0
+            or c.open_interest is None
+            or c.open_interest >= settings.option_min_open_interest
+        )
     ]
     if not eligible:
         return None
