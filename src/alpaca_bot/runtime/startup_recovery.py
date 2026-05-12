@@ -450,18 +450,40 @@ def recover_startup_state(
                 )
                 active_exit_symbols.add(pos.symbol)
             else:
+                # For option symbols with no current price: skip stop queueing.
+                # Queuing a stop without a known market price guarantees a 42210000 rejection
+                # (stop >= market) and loops forever. Options' defined risk is the premium paid,
+                # so a missing stop is less dangerous than for equities.
+                if _is_option_symbol(pos.symbol) and current_price is None:
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="option_stop_skipped_no_price",
+                            symbol=pos.symbol,
+                            payload={"symbol": pos.symbol, "stop_price": pos.stop_price},
+                            created_at=timestamp,
+                        ),
+                        commit=False,
+                    )
+                    continue
                 recovery_stop_id = (
                     f"startup_recovery:{settings.strategy_version}:"
                     f"{timestamp.date().isoformat()}:{pos.symbol}:stop"
                 )
-                # Belt-and-suspenders: don't re-queue if a non-terminal stop already exists
-                # for this exact recovery ID (prevents duplicate write on repeated cycles
-                # before dispatch, and prevents duplicating the new_positions_needing_stop pass).
+                # Don't re-queue if a stop already exists at the same price (prevents
+                # 42210000-loop: terminal error/canceled + same price → would loop forever).
+                # Terminal stop with a different price is allowed to re-queue (corrected price).
                 existing_recovery_stop = runtime.order_store.load(recovery_stop_id)
-                if existing_recovery_stop is not None and existing_recovery_stop.status not in {
-                    "expired", "cancelled", "canceled", "error"
-                }:
-                    continue
+                if existing_recovery_stop is not None:
+                    is_terminal = existing_recovery_stop.status in {
+                        "expired", "cancelled", "canceled", "error"
+                    }
+                    same_price = (
+                        existing_recovery_stop.stop_price is not None
+                        and pos.stop_price is not None
+                        and abs(existing_recovery_stop.stop_price - pos.stop_price) < 0.001
+                    )
+                    if not is_terminal or same_price:
+                        continue
                 _log.warning(
                     "startup_recovery: position %s has no active stop — "
                     "queuing recovery stop at %.4f (qty=%d)",

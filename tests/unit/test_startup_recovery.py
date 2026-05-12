@@ -1810,6 +1810,197 @@ def test_uuid_stop_inherits_strategy_name_from_position() -> None:
     )
 
 
+def test_option_stop_skipped_when_no_current_price() -> None:
+    """Active OCC position with market_value=None must not queue a stop and must emit option_stop_skipped_no_price."""
+    settings = make_settings()
+    now = datetime(2026, 5, 12, 15, 0, tzinfo=timezone.utc)
+    occ_symbol = "ALHC260618P00017500"
+    existing_pos = PositionRecord(
+        symbol=occ_symbol,
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="option",
+        quantity=10,
+        entry_price=1.20,
+        stop_price=1.08,
+        initial_stop_price=1.08,
+        opened_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+    )
+    position_store = RecordingPositionStore(existing_positions=[existing_pos])
+    order_store = RecordingOrderStore()
+    audit_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+        audit_event_store=audit_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[
+            BrokerPosition(symbol=occ_symbol, quantity=10, entry_price=1.20, market_value=None)
+        ],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    queued_stops = [o for o in order_store.saved if o.intent_type == "stop"]
+    assert queued_stops == [], "OCC position with no price must not queue a stop"
+
+    skip_events = [
+        e for e in audit_store.appended if e.event_type == "option_stop_skipped_no_price"
+    ]
+    assert len(skip_events) == 1
+    assert skip_events[0].symbol == occ_symbol
+
+
+def test_equity_stop_queued_when_no_current_price() -> None:
+    """Equity position with market_value=None still queues a recovery stop (unchanged behavior)."""
+    settings = make_settings()
+    now = datetime(2026, 5, 12, 15, 0, tzinfo=timezone.utc)
+    existing_pos = PositionRecord(
+        symbol="AAPL",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="breakout",
+        quantity=10,
+        entry_price=189.0,
+        stop_price=185.0,
+        initial_stop_price=185.0,
+        opened_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+    )
+    position_store = RecordingPositionStore(existing_positions=[existing_pos])
+    order_store = RecordingOrderStore()
+    audit_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+        audit_event_store=audit_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[
+            BrokerPosition(symbol="AAPL", quantity=10, entry_price=189.0, market_value=None)
+        ],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    queued_stops = [o for o in order_store.saved if o.intent_type == "stop"]
+    assert len(queued_stops) == 1, "Equity position with no price must still queue a recovery stop"
+
+
+def test_recovery_stop_not_requeued_when_same_price_terminal() -> None:
+    """Existing terminal stop with the same stop_price must NOT be re-queued (prevents 42210000 loop)."""
+    settings = make_settings()
+    now = datetime(2026, 5, 12, 15, 0, tzinfo=timezone.utc)
+    recovery_stop_id = f"startup_recovery:{settings.strategy_version}:2026-05-12:AAPL:stop"
+    existing_pos = PositionRecord(
+        symbol="AAPL",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="breakout",
+        quantity=10,
+        entry_price=189.0,
+        stop_price=185.0,  # stop < current_price, so stop-queueing branch is taken
+        initial_stop_price=185.0,
+        opened_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+    )
+    terminal_stop = OrderRecord(
+        client_order_id=recovery_stop_id,
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="error",  # terminal
+        quantity=10,
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="breakout",
+        stop_price=185.0,  # same price as pos.stop_price
+        initial_stop_price=185.0,
+        created_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+        signal_timestamp=None,
+    )
+    position_store = RecordingPositionStore(existing_positions=[existing_pos])
+    order_store = RecordingOrderStore(existing_orders=[terminal_stop])
+    runtime = make_runtime_context(settings, position_store=position_store, order_store=order_store)
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[
+            # current_price = 1900.0 / 10 = 190.0 > stop_price=185.0 → stop branch
+            BrokerPosition(symbol="AAPL", quantity=10, entry_price=189.0, market_value=1900.0)
+        ],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    new_stops = [o for o in order_store.saved if o.intent_type == "stop"]
+    assert new_stops == [], "Terminal stop at same price must not trigger re-queue"
+
+
+def test_recovery_stop_requeued_when_price_changed_after_terminal() -> None:
+    """Terminal stop with a DIFFERENT stop_price allows re-queue (corrected price is valid)."""
+    settings = make_settings()
+    now = datetime(2026, 5, 12, 15, 0, tzinfo=timezone.utc)
+    recovery_stop_id = f"startup_recovery:{settings.strategy_version}:2026-05-12:AAPL:stop"
+    existing_pos = PositionRecord(
+        symbol="AAPL",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="breakout",
+        quantity=10,
+        entry_price=189.0,
+        stop_price=182.0,  # NEW price: different from the previously rejected stop
+        initial_stop_price=180.0,
+        opened_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+    )
+    terminal_stop = OrderRecord(
+        client_order_id=recovery_stop_id,
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="error",  # terminal
+        quantity=10,
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="breakout",
+        stop_price=185.0,  # OLD price — different from pos.stop_price (182.0)
+        initial_stop_price=185.0,
+        created_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+        signal_timestamp=None,
+    )
+    position_store = RecordingPositionStore(existing_positions=[existing_pos])
+    order_store = RecordingOrderStore(existing_orders=[terminal_stop])
+    runtime = make_runtime_context(settings, position_store=position_store, order_store=order_store)
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[
+            BrokerPosition(symbol="AAPL", quantity=10, entry_price=189.0, market_value=1900.0)
+        ],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    new_stops = [o for o in order_store.saved if o.intent_type == "stop"]
+    assert len(new_stops) == 1, "Terminal stop at different price must allow re-queue with new price"
+    assert new_stops[0].stop_price == 182.0
+
+
 def test_option_stop_uses_option_buffer_for_occ_symbol() -> None:
     """Broker-missing OCC position must use option_stop_buffer_pct, not breakout_stop_buffer_pct."""
     settings = Settings.from_env(
