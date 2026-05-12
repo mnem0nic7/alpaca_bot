@@ -448,12 +448,13 @@
                     upnl_denom=0.0
                 ) %}
                 {% for position in snapshot.positions %}
+                  {% set multiplier = 100 if position.strategy_name == "option" else 1 %}
                   {% set stop_dist_pct = ((position.entry_price - position.stop_price) / position.entry_price * 100) if (position.entry_price and position.stop_price) else none %}
                   {% set is_trailing = (position.stop_price and position.initial_stop_price and position.stop_price > position.initial_stop_price) %}
                   {% set stop_moved = (position.stop_price - position.initial_stop_price) if (position.stop_price and position.initial_stop_price) else none %}
-                  {% set risk_dollars = (position.quantity * (position.entry_price - position.initial_stop_price)) if (position.quantity and position.entry_price and position.initial_stop_price) else none %}
+                  {% set risk_dollars = (position.quantity * (position.entry_price - position.initial_stop_price) * multiplier) if (position.quantity and position.entry_price and position.initial_stop_price) else none %}
                   {% set last_price = snapshot.latest_prices.get(position.symbol) %}
-                  {% set init_val = (position.entry_price * position.quantity) if position.entry_price else 0.0 %}
+                  {% set init_val = (position.entry_price * position.quantity * multiplier) if position.entry_price else 0.0 %}
                   <tr>
                     <td class="mono">{{ position.symbol }}</td>
                     <td>{{ position.strategy_name }}</td>
@@ -478,13 +479,13 @@
                     <td class="muted">{{ format_timestamp(position.updated_at) }}</td>
                     <td>{{ format_price(last_price) if last_price is not none else "—" }}</td>
                     <td>
-                      {% if position.entry_price %}{{ "$%.0f" | format(position.entry_price * position.quantity) }}{% else %}n/a{% endif %}
+                      {% if position.entry_price %}{{ "$%.0f" | format(position.entry_price * position.quantity * multiplier) }}{% else %}n/a{% endif %}
                     </td>
                     <td>
-                      {% if last_price is not none %}{{ "$%.0f" | format(last_price * position.quantity) }}{% else %}—{% endif %}
+                      {% if last_price is not none %}{{ "$%.0f" | format(last_price * position.quantity * multiplier) }}{% else %}—{% endif %}
                     </td>
                     {% if last_price is not none and position.entry_price %}
-                      {% set upnl = (last_price - position.entry_price) * position.quantity %}
+                      {% set upnl = (last_price - position.entry_price) * position.quantity * multiplier %}
                       {% set upnl_pct = (last_price - position.entry_price) / position.entry_price * 100 %}
                       <td style="color: {{ 'var(--accent)' if upnl >= 0 else '#c0392b' }}">
                         {% if upnl >= 0 %}+{{ format_price(upnl) }}{% else %}-{{ format_price(0 - upnl) }}{% endif %}
@@ -500,9 +501,9 @@
                   {%- set ns.total_qty = ns.total_qty + (position.quantity or 0) %}
                   {%- if risk_dollars is not none %}{% set ns.total_risk = ns.total_risk + risk_dollars %}{% endif %}
                   {%- set ns.total_init_val = ns.total_init_val + init_val %}
-                  {%- if last_price is not none %}{% set ns.total_curr_val = ns.total_curr_val + last_price * position.quantity %}{% endif %}
+                  {%- if last_price is not none %}{% set ns.total_curr_val = ns.total_curr_val + last_price * position.quantity * multiplier %}{% endif %}
                   {%- if last_price is not none and position.entry_price %}
-                    {%- set upnl_acc = (last_price - position.entry_price) * position.quantity %}
+                    {%- set upnl_acc = (last_price - position.entry_price) * position.quantity * multiplier %}
                     {%- set upnl_pct_acc = (last_price - position.entry_price) / position.entry_price * 100 %}
                     {%- set ns.total_upnl = ns.total_upnl + upnl_acc %}
                     {%- set ns.weighted_upnl_num = ns.weighted_upnl_num + upnl_pct_acc * init_val %}
