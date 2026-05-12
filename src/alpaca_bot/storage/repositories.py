@@ -1946,6 +1946,17 @@ def _load_json_payload(raw_payload: Any) -> dict[str, Any]:
     return dict(raw_payload or {})
 
 
+_DECISION_LOG_COLS = (
+    "cycle_at", "symbol", "strategy_name", "trading_mode", "strategy_version",
+    "decision", "reject_stage", "reject_reason",
+    "entry_level", "signal_bar_close", "relative_volume", "atr",
+    "stop_price", "limit_price", "initial_stop_price",
+    "quantity", "risk_per_share", "equity", "filter_results",
+    "vix_close", "vix_above_sma", "sector_passing_pct",
+    "vwap_at_signal", "signal_bar_above_vwap",
+)
+
+
 class DecisionLogStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
         self._connection = connection
@@ -2003,6 +2014,42 @@ class DecisionLogStore:
         ]
         cur = conn.cursor()
         cur.executemany(sql, params)
+
+    def list_recent(
+        self,
+        *,
+        session_date: date,
+        symbol: str | None = None,
+        limit: int = 200,
+        market_timezone: str = "America/New_York",
+    ) -> list[dict]:
+        cols = ", ".join(_DECISION_LOG_COLS)
+        if symbol:
+            rows = fetch_all(
+                self._connection,
+                f"""
+                SELECT {cols}
+                FROM decision_log
+                WHERE DATE(cycle_at AT TIME ZONE %s) = %s
+                  AND symbol = %s
+                ORDER BY cycle_at DESC
+                LIMIT %s
+                """,
+                (market_timezone, session_date, symbol, limit),
+            )
+        else:
+            rows = fetch_all(
+                self._connection,
+                f"""
+                SELECT {cols}
+                FROM decision_log
+                WHERE DATE(cycle_at AT TIME ZONE %s) = %s
+                ORDER BY cycle_at DESC
+                LIMIT %s
+                """,
+                (market_timezone, session_date, limit),
+            )
+        return [dict(zip(_DECISION_LOG_COLS, row)) for row in rows]
 
 
 class MarketContextStore:

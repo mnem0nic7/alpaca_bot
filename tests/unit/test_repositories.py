@@ -517,3 +517,95 @@ def test_market_context_store_save_with_none_fields() -> None:
 def test_market_context_store_exported_from_storage() -> None:
     from alpaca_bot.storage import MarketContextStore as MCS
     assert MCS is MarketContextStore
+
+
+# ── DecisionLogStore.list_recent ─────────────────────────────────────────────
+
+from datetime import date
+from alpaca_bot.storage.repositories import DecisionLogStore
+
+
+class _FetchingDecisionLogConnection(_TrackingConnection):
+    """Returns canned rows from fetchall() for decision_log queries."""
+
+    def __init__(self, rows: list[tuple]) -> None:
+        super().__init__()
+        self._rows = rows
+
+    def cursor(self):
+        rows = self._rows
+        conn = self
+
+        class _FetchCursor:
+            def execute(self, sql: str, params=None) -> None:
+                conn.execute_calls.append((sql, params))
+
+            def fetchall(self):
+                return list(rows)
+
+        return _FetchCursor()
+
+
+def _make_decision_row(
+    symbol: str = "ALHC260618P00017500",
+    session_date: date = date(2026, 5, 12),
+    decision: str = "ENTRY",
+) -> tuple:
+    """Return a 24-element tuple matching decision_log column order."""
+    from datetime import datetime, timezone
+    return (
+        datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),  # cycle_at
+        symbol,                   # symbol
+        "breakout",               # strategy_name
+        "paper",                  # trading_mode
+        "v1-breakout",            # strategy_version
+        decision,                 # decision
+        None,                     # reject_stage
+        None,                     # reject_reason
+        17.5,                     # entry_level
+        17.3,                     # signal_bar_close
+        2.1,                      # relative_volume
+        None,                     # atr
+        None,                     # stop_price
+        1.20,                     # limit_price
+        None,                     # initial_stop_price
+        1,                        # quantity
+        None,                     # risk_per_share
+        50_000.0,                 # equity
+        {},                       # filter_results (psycopg2 returns dict for JSONB)
+        None,                     # vix_close
+        None,                     # vix_above_sma
+        None,                     # sector_passing_pct
+        None,                     # vwap_at_signal
+        None,                     # signal_bar_above_vwap
+    )
+
+
+def test_decision_log_list_recent_returns_dicts_for_session_date() -> None:
+    row = _make_decision_row()
+    conn = _FetchingDecisionLogConnection([row])
+    store = DecisionLogStore(conn)
+    results = store.list_recent(session_date=date(2026, 5, 12))
+    assert len(results) == 1
+    assert results[0]["symbol"] == "ALHC260618P00017500"
+    assert results[0]["decision"] == "ENTRY"
+    assert results[0]["entry_level"] == 17.5
+
+
+def test_decision_log_list_recent_symbol_filter_passes_param() -> None:
+    conn = _FetchingDecisionLogConnection([])
+    store = DecisionLogStore(conn)
+    store.list_recent(session_date=date(2026, 5, 12), symbol="AAPL")
+    sqls = [call[0] for call in conn.execute_calls]
+    assert any("symbol" in sql.lower() for sql in sqls), (
+        "Expected symbol filter in SQL when symbol param provided"
+    )
+    params = conn.execute_calls[0][1]
+    assert "AAPL" in params
+
+
+def test_decision_log_list_recent_empty_returns_empty_list() -> None:
+    conn = _FetchingDecisionLogConnection([])
+    store = DecisionLogStore(conn)
+    results = store.list_recent(session_date=date(2026, 5, 12))
+    assert results == []
