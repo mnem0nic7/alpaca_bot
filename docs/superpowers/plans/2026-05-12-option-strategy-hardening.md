@@ -190,7 +190,7 @@ In `validate()`, after the `option_delta_target` check (~line 554), add:
 pytest tests/unit/test_option_domain_settings.py -v
 ```
 
-Expected: All 16 tests PASS (existing 5 + 11 new)
+Expected: All 20 tests PASS (existing 9 + 11 new)
 
 - [ ] **Step 6: Run full suite to confirm no regressions**
 
@@ -580,24 +580,9 @@ git commit -m "feat: add spread and open-interest eligibility filters to option 
 Find the `_compute_capital_pct` test block in `tests/unit/test_web_service.py` (around line 1316). Add after the existing tests:
 
 ```python
-def _option_position(symbol: str, strategy_version: str = "v1") -> PositionRecord:
-    """A PositionRecord that looks like an option position (strategy_name='option')."""
-    return PositionRecord(
-        symbol=symbol,
-        trading_mode=TradingMode.PAPER,
-        strategy_version=strategy_version,
-        strategy_name="option",   # ← key marker
-        quantity=2,
-        entry_price=1.20,
-        stop_price=1.08,
-        initial_stop_price=1.08,
-        opened_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
-    )
-
-
 def test_compute_capital_pct_option_position_uses_100x_multiplier():
     """Option positions (strategy_name='option') count 100 shares per contract."""
-    opt = _option_position("AAPL240701P00150000")
+    opt = SimpleNamespace(symbol="AAPL240701P00150000", quantity=2, entry_price=1.20, strategy_name="option")
     # price=1.20, qty=2 → notional = 1.20 * 2 * 100 = 240
     result = _compute_capital_pct([opt], {"AAPL240701P00150000": 1.20})
     # Only one strategy, so 100%
@@ -606,13 +591,8 @@ def test_compute_capital_pct_option_position_uses_100x_multiplier():
 
 def test_compute_capital_pct_mixed_equity_and_option():
     """Equity and option positions sum correctly with respective multipliers."""
-    eq_pos = PositionRecord(
-        symbol="AAPL", trading_mode=TradingMode.PAPER, strategy_version="v1",
-        strategy_name="breakout", quantity=10, entry_price=150.0,
-        stop_price=140.0, initial_stop_price=140.0,
-        opened_at=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
-    )
-    opt = _option_position("AAPL240701P00150000")
+    eq_pos = SimpleNamespace(symbol="AAPL", quantity=10, entry_price=150.0, strategy_name="breakout")
+    opt = SimpleNamespace(symbol="AAPL240701P00150000", quantity=2, entry_price=1.20, strategy_name="option")
     # eq: 150 * 10 = 1500; opt: 1.20 * 2 * 100 = 240; total = 1740
     result = _compute_capital_pct([eq_pos, opt], {})
     assert abs(result["breakout"] - round(1500 / 1740 * 100, 1)) < 0.05
@@ -621,33 +601,19 @@ def test_compute_capital_pct_mixed_equity_and_option():
 
 def test_load_dashboard_snapshot_option_position_uses_100x_in_total_deployed():
     """total_deployed_notional multiplies option positions by 100."""
-    opt = _option_position("AAPL240701P00150000")
     # qty=2, entry_price=1.20, multiplier=100 → 240.0
-    # Use the existing fake-store pattern from test_load_dashboard_snapshot_populates_total_deployed_notional
-    # Build a minimal fake position_store
-    class _FakePositionStore:
-        def list_all(self, **_kw):
-            return [opt]
+    opt = SimpleNamespace(symbol="AAPL240701P00150000", quantity=2, entry_price=1.20, strategy_name="option")
 
-    from alpaca_bot.web.service import load_dashboard_snapshot
-    from tests.unit.helpers import _base_env
-    from alpaca_bot.config import Settings
-
-    class _FakeConn:
-        pass
+    stores = make_snapshot_stores()
+    stores["position_store"] = SimpleNamespace(list_all=lambda **_: [opt])
 
     snapshot = load_dashboard_snapshot(
-        settings=Settings.from_env(_base_env()),
-        connection=_FakeConn(),
-        position_store=_FakePositionStore(),
-        order_store=_minimal_order_store(),
-        audit_event_store=_minimal_audit_event_store(),
-        strategy_flag_store=_minimal_flag_store(),
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        **stores,
     )
     assert abs(snapshot.total_deployed_notional - 240.0) < 1e-6
 ```
-
-Note: `_minimal_order_store`, `_minimal_audit_event_store`, `_minimal_flag_store` are existing helpers already in the test file (used by `test_load_dashboard_snapshot_populates_total_deployed_notional`). Reuse them.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -659,7 +625,7 @@ Expected: `FAILED` — capital_pct and total_deployed_notional do not apply ×10
 
 - [ ] **Step 3: Add `_option_multiplier` helper and fix service.py**
 
-In `src/alpaca_bot/web/service.py`, add after the `_compute_capital_pct` definition (around line 200):
+In `src/alpaca_bot/web/service.py`, add BEFORE the `_compute_capital_pct` function (around line 188):
 
 ```python
 def _option_multiplier(pos: object) -> int:
@@ -734,21 +700,17 @@ The fix is at lines ~450–516. Find this block:
 
 - [ ] **Step 2: Add multiplier variable and update all affected calculations**
 
-Replace from the `{% for position in snapshot.positions %}` block through the end of the row. The key lines to update:
+The key lines to update inside the `{% for position in snapshot.positions %}` block:
 
-After `{% set last_price = snapshot.latest_prices.get(position.symbol) %}`, add:
+**First**, add `multiplier` as the VERY FIRST `{% set %}` inside the loop — before `stop_dist_pct`, `risk_dollars`, or any other computed variable. This is required because `risk_dollars` (line 454) uses `multiplier` and comes before `last_price` (line 455) in the template.
+
+Immediately after `{% for position in snapshot.positions %}`, insert:
 
 ```jinja
 {% set multiplier = 100 if position.strategy_name == "option" else 1 %}
 ```
 
-Then update `init_val`:
-
-```jinja
-{% set init_val = (position.entry_price * position.quantity * multiplier) if position.entry_price else 0.0 %}
-```
-
-Update `risk_dollars` (line ~454):
+Update `init_val`:
 
 ```jinja
 {% set risk_dollars = (position.quantity * (position.entry_price - position.initial_stop_price) * multiplier) if (position.quantity and position.entry_price and position.initial_stop_price) else none %}
