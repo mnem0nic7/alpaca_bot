@@ -2872,7 +2872,7 @@ def test_decisions_route_renders_symbol_in_table() -> None:
     assert "ALHC260618P00017500" in response.text
 
 
-def test_decisions_route_returns_503_when_store_raises() -> None:
+def test_decisions_route_degrades_gracefully_when_store_raises() -> None:
     app = _make_decisions_app(raises=True)
     with TestClient(app) as client:
         response = client.get("/decisions")
