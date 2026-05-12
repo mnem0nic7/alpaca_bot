@@ -349,6 +349,58 @@ class TestDailyRealizedPnl:
         assert pnl == pytest.approx(-240.0)
 
 
+class TestDailyRealizedPnlBySymbol:
+    SESSION_DATE = date(2026, 4, 25)
+    MODE = TradingMode.PAPER
+    STRATEGY = "v1-breakout"
+
+    def _store(self, rows: list[tuple]) -> OrderStore:
+        return OrderStore(_make_fake_connection(rows))
+
+    def test_returns_empty_dict_when_no_rows(self):
+        store = self._store([])
+        result = store.daily_realized_pnl_by_symbol(
+            trading_mode=self.MODE,
+            strategy_version=self.STRATEGY,
+            session_date=self.SESSION_DATE,
+        )
+        assert result == {}
+
+    def test_equity_trade_not_multiplied(self):
+        """Equity trade: (155 - 150) × 10 × 1 = 50.0."""
+        # symbol, entry_fill, exit_fill, qty, strategy_name
+        rows = [("MSFT", 150.0, 155.0, 10, "breakout")]
+        store = self._store(rows)
+        result = store.daily_realized_pnl_by_symbol(
+            trading_mode=self.MODE,
+            strategy_version=self.STRATEGY,
+            session_date=self.SESSION_DATE,
+        )
+        assert result == {"MSFT": pytest.approx(50.0)}
+
+    def test_option_trade_applies_100x_multiplier(self):
+        """Option trade: (0.80 - 1.20) × 2 × 100 = -80.0."""
+        rows = [("AAPL", 1.20, 0.80, 2, "option")]
+        store = self._store(rows)
+        result = store.daily_realized_pnl_by_symbol(
+            trading_mode=self.MODE,
+            strategy_version=self.STRATEGY,
+            session_date=self.SESSION_DATE,
+        )
+        assert result == {"AAPL": pytest.approx(-80.0)}
+
+    def test_option_null_entry_fill_fail_safe_multiplied(self):
+        """Fail-safe for options: -(1.20 × 2 × 100) = -240.0."""
+        rows = [("AAPL", None, 1.20, 2, "option")]
+        store = self._store(rows)
+        result = store.daily_realized_pnl_by_symbol(
+            trading_mode=self.MODE,
+            strategy_version=self.STRATEGY,
+            session_date=self.SESSION_DATE,
+        )
+        assert result == {"AAPL": pytest.approx(-240.0)}
+
+
 # ---------------------------------------------------------------------------
 # Phase 2 — OrderStore.list_closed_trades()
 # ---------------------------------------------------------------------------

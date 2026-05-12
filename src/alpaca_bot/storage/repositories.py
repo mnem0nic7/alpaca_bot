@@ -546,7 +546,8 @@ class OrderStore:
                     LIMIT 1
                 ) AS entry_fill,
                 x.fill_price AS exit_fill,
-                COALESCE(x.filled_quantity, x.quantity) AS qty
+                COALESCE(x.filled_quantity, x.quantity) AS qty,
+                x.strategy_name
             FROM orders x
             WHERE x.trading_mode = %s
               AND x.strategy_version = %s
@@ -580,10 +581,11 @@ class OrderStore:
             entry_fill = row[1]
             exit_fill = float(row[2])
             qty = float(row[3])
+            multiplier = _contract_multiplier(row[4])
             pnl = (
-                (exit_fill - float(entry_fill)) * qty
+                (exit_fill - float(entry_fill)) * qty * multiplier
                 if entry_fill is not None
-                else -(exit_fill * qty)
+                else -(exit_fill * qty) * multiplier
             )
             result[symbol] = result.get(symbol, 0.0) + pnl
         return result
