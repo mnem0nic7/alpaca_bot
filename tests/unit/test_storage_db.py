@@ -228,8 +228,8 @@ class TestDailyRealizedPnl:
 
     def test_single_profitable_trade_returns_correct_pnl(self):
         """(exit_fill - entry_fill) × qty for a single winner."""
-        # symbol, entry_fill, exit_fill, qty
-        rows = [("AAPL", 150.00, 155.00, 10)]
+        # symbol, entry_fill, exit_fill, qty, strategy_name
+        rows = [("AAPL", 150.00, 155.00, 10, "breakout")]
         store = self._store(rows)
         pnl = store.daily_realized_pnl(
             trading_mode=self.MODE,
@@ -240,7 +240,7 @@ class TestDailyRealizedPnl:
 
     def test_single_losing_trade_returns_negative_pnl(self):
         """Negative PnL when exit is below entry."""
-        rows = [("AAPL", 155.00, 150.00, 10)]
+        rows = [("AAPL", 155.00, 150.00, 10, "breakout")]
         store = self._store(rows)
         pnl = store.daily_realized_pnl(
             trading_mode=self.MODE,
@@ -252,8 +252,8 @@ class TestDailyRealizedPnl:
     def test_two_symbols_sums_both_trades(self):
         """PnL from two different symbols is summed."""
         rows = [
-            ("AAPL", 150.00, 155.00, 10),   # +50
-            ("MSFT", 400.00, 395.00, 5),     # -25
+            ("AAPL", 150.00, 155.00, 10, "breakout"),   # +50
+            ("MSFT", 400.00, 395.00, 5,  "breakout"),   # -25
         ]
         store = self._store(rows)
         pnl = store.daily_realized_pnl(
@@ -264,8 +264,8 @@ class TestDailyRealizedPnl:
         assert pnl == pytest.approx(25.00)
 
     def test_partial_fill_uses_filled_quantity_not_order_quantity(self):
-        """qty column is COALESCE(filled_quantity, quantity) — here the DB row provides it directly."""
-        rows = [("AAPL", 150.00, 156.00, 7)]  # partial fill of 7 shares
+        """qty column is COALESCE(filled_quantity, quantity)."""
+        rows = [("AAPL", 150.00, 156.00, 7, "breakout")]  # partial fill of 7 shares
         store = self._store(rows)
         pnl = store.daily_realized_pnl(
             trading_mode=self.MODE,
@@ -285,11 +285,10 @@ class TestDailyRealizedPnl:
         assert pnl == 0.0
 
     def test_exit_with_null_entry_fill_treated_as_full_loss(self):
-        """Rows where entry_fill (row[1]) is None must be counted as -(exit_fill × qty)
-        to fail safe on the loss-limit check rather than silently understate losses."""
+        """Rows where entry_fill is None must be counted as -(exit_fill × qty × multiplier)."""
         rows = [
-            ("AAPL", None, 155.00, 10),   # no entry fill → -(155 × 10) = -1550
-            ("MSFT", 400.00, 405.00, 5),  # +25
+            ("AAPL", None,   155.00, 10, "breakout"),   # no entry fill → -(155 × 10) = -1550
+            ("MSFT", 400.00, 405.00,  5, "breakout"),   # +25
         ]
         store = self._store(rows)
         pnl = store.daily_realized_pnl(
@@ -302,8 +301,8 @@ class TestDailyRealizedPnl:
     def test_all_exits_null_entry_fill_returns_total_full_loss(self):
         """When every row lacks an entry fill the entire session P&L is negative."""
         rows = [
-            ("AAPL", None, 100.00, 5),   # -(100 × 5) = -500
-            ("MSFT", None, 200.00, 3),   # -(200 × 3) = -600
+            ("AAPL", None, 100.00, 5, "breakout"),   # -(100 × 5) = -500
+            ("MSFT", None, 200.00, 3, "breakout"),   # -(200 × 3) = -600
         ]
         store = self._store(rows)
         pnl = store.daily_realized_pnl(
@@ -312,6 +311,42 @@ class TestDailyRealizedPnl:
             session_date=self.SESSION_DATE,
         )
         assert pnl == pytest.approx(-1100.00)
+
+    def test_option_trade_applies_100x_multiplier(self):
+        """Option exit applies ×100: (0.80 - 1.20) × 2 × 100 = -80.0."""
+        rows = [("AAPL", 1.20, 0.80, 2, "option")]
+        store = self._store(rows)
+        pnl = store.daily_realized_pnl(
+            trading_mode=self.MODE,
+            strategy_version=self.STRATEGY,
+            session_date=self.SESSION_DATE,
+        )
+        assert pnl == pytest.approx(-80.0)
+
+    def test_mixed_equity_and_option_sums_correctly(self):
+        """Equity and option rows are each multiplied by their own factor."""
+        rows = [
+            ("MSFT", 150.0, 155.0, 10, "breakout"),   # (5) × 10 × 1  = +50
+            ("AAPL", 1.20,  0.80,   2, "option"),     # (-0.4) × 2 × 100 = -80
+        ]
+        store = self._store(rows)
+        pnl = store.daily_realized_pnl(
+            trading_mode=self.MODE,
+            strategy_version=self.STRATEGY,
+            session_date=self.SESSION_DATE,
+        )
+        assert pnl == pytest.approx(-30.0)
+
+    def test_option_null_entry_fill_fail_safe_also_multiplied(self):
+        """Fail-safe path for options also applies ×100: -(1.20 × 2 × 100) = -240.0."""
+        rows = [("AAPL", None, 1.20, 2, "option")]
+        store = self._store(rows)
+        pnl = store.daily_realized_pnl(
+            trading_mode=self.MODE,
+            strategy_version=self.STRATEGY,
+            session_date=self.SESSION_DATE,
+        )
+        assert pnl == pytest.approx(-240.0)
 
 
 # ---------------------------------------------------------------------------

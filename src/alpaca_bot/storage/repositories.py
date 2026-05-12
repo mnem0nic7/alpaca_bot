@@ -243,6 +243,10 @@ def _row_to_order_record(row: Any) -> OrderRecord:
     )
 
 
+def _contract_multiplier(strategy_name: str | None) -> int:
+    return 100 if strategy_name == "option" else 1
+
+
 class OrderStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
         self._connection = connection
@@ -464,7 +468,8 @@ class OrderStore:
                     LIMIT 1
                 ) AS entry_fill,
                 x.fill_price AS exit_fill,
-                COALESCE(x.filled_quantity, x.quantity) AS qty
+                COALESCE(x.filled_quantity, x.quantity) AS qty,
+                x.strategy_name
             FROM orders x
             WHERE x.trading_mode = %s
               AND x.strategy_version = %s
@@ -491,9 +496,11 @@ class OrderStore:
                 [row[0] for row in missing_entry],
             )
         return sum(
-            (float(row[2]) - float(row[1])) * float(row[3])
-            if row[1] is not None
-            else -(float(row[2]) * float(row[3]))
+            _contract_multiplier(row[4]) * (
+                (float(row[2]) - float(row[1])) * float(row[3])
+                if row[1] is not None
+                else -(float(row[2]) * float(row[3]))
+            )
             for row in rows
             if row[2] is not None
         )
