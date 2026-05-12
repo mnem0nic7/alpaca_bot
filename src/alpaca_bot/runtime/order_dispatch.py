@@ -13,6 +13,13 @@ from alpaca_bot.storage import AuditEvent, OrderRecord
 
 logger = logging.getLogger(__name__)
 
+_UNRECOVERABLE_STOP_CODES = frozenset({"42210000"})
+
+
+def _is_unrecoverable_stop_error(exc: Exception) -> bool:
+    msg = str(exc)
+    return any(code in msg for code in _UNRECOVERABLE_STOP_CODES)
+
 
 class OrderStoreProtocol(Protocol):
     def list_by_status(
@@ -324,16 +331,27 @@ def dispatch_pending_orders(
                 order.intent_type,
                 exc,
             )
+            is_unrecoverable_stop = (
+                order.intent_type == "stop" and _is_unrecoverable_stop_error(exc)
+            )
+            final_status = "canceled" if is_unrecoverable_stop else "error"
+            audit_event_type = (
+                "order_dispatch_stop_price_rejected"
+                if is_unrecoverable_stop
+                else "order_dispatch_failed"
+            )
             with lock_ctx:
                 try:
                     runtime.audit_event_store.append(
                         AuditEvent(
-                            event_type="order_dispatch_failed",
+                            event_type=audit_event_type,
                             symbol=order.symbol,
                             payload={
                                 "error": str(exc),
                                 "symbol": order.symbol,
                                 "intent_type": order.intent_type,
+                                "client_order_id": order.client_order_id,
+                                "stop_price": order.stop_price,
                                 "timestamp": timestamp.isoformat(),
                             },
                             created_at=timestamp,
@@ -346,7 +364,7 @@ def dispatch_pending_orders(
                             symbol=order.symbol,
                             side=order.side,
                             intent_type=order.intent_type,
-                            status="error",
+                            status=final_status,
                             quantity=order.quantity,
                             trading_mode=order.trading_mode,
                             strategy_version=order.strategy_version,

@@ -1396,3 +1396,101 @@ def test_dispatch_exit_order_calls_submit_market_exit() -> None:
     assert "submitting" in saved_statuses
     assert "accepted" in saved_statuses
 
+
+class StopFailingBrokerWith42210000:
+    """Broker that rejects stop orders with Alpaca error 42210000."""
+
+    def submit_stop_order(self, **kwargs: object) -> object:
+        raise Exception("422: {'code': 42210000, 'message': 'stop price must be less than current price'}")
+
+    def submit_stop_limit_entry(self, **kwargs: object) -> object:
+        raise RuntimeError("broker unavailable")
+
+
+class GenericStopFailingBroker:
+    """Broker that rejects stop orders with a generic (non-42210000) error."""
+
+    def submit_stop_order(self, **kwargs: object) -> object:
+        raise Exception("500: internal server error")
+
+    def submit_stop_limit_entry(self, **kwargs: object) -> object:
+        raise RuntimeError("broker unavailable")
+
+
+def test_circuit_breaker_42210000_marks_canceled_and_emits_audit() -> None:
+    """Alpaca 42210000 on a stop order must mark status='canceled' and emit order_dispatch_stop_price_rejected."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 12, 15, 0, tzinfo=timezone.utc)
+    stop_order = OrderRecord(
+        client_order_id="startup_recovery:v1-breakout:2026-05-12:AAPL:stop",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=185.0,
+        initial_stop_price=185.0,
+        signal_timestamp=None,
+    )
+    order_store = RecordingOrderStore([stop_order])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=order_store, audit_event_store=audit_store, connection=FakeConnection()
+    )
+
+    dispatch_pending_orders(
+        settings=settings, runtime=runtime, broker=StopFailingBrokerWith42210000(), now=now
+    )
+
+    final_statuses = [o.status for o in order_store.saved]
+    assert "canceled" in final_statuses, f"42210000 stop must be marked canceled, got {final_statuses}"
+    assert "error" not in final_statuses, "42210000 stop must not be marked error"
+
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "order_dispatch_stop_price_rejected" in event_types
+    assert "order_dispatch_failed" not in event_types
+
+
+def test_non_42210000_stop_error_still_marks_error() -> None:
+    """Generic broker errors on stop orders must still mark status='error' (unchanged behavior)."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 12, 15, 0, tzinfo=timezone.utc)
+    stop_order = OrderRecord(
+        client_order_id="startup_recovery:v1-breakout:2026-05-12:AAPL:stop",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=185.0,
+        initial_stop_price=185.0,
+        signal_timestamp=None,
+    )
+    order_store = RecordingOrderStore([stop_order])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=order_store, audit_event_store=audit_store, connection=FakeConnection()
+    )
+
+    dispatch_pending_orders(
+        settings=settings, runtime=runtime, broker=GenericStopFailingBroker(), now=now
+    )
+
+    final_statuses = [o.status for o in order_store.saved]
+    assert "error" in final_statuses, "Non-42210000 stop failure must still mark error"
+    assert "canceled" not in final_statuses
+
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "order_dispatch_failed" in event_types
+    assert "order_dispatch_stop_price_rejected" not in event_types
+
