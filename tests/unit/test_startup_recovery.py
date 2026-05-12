@@ -1810,6 +1810,16 @@ def test_uuid_stop_inherits_strategy_name_from_position() -> None:
     )
 
 
+def test_is_option_symbol_identifies_occ_symbols() -> None:
+    from alpaca_bot.runtime.startup_recovery import _is_option_symbol
+
+    assert _is_option_symbol("ALHC260618P00017500") is True
+    assert _is_option_symbol("SPY260620C00600000") is True
+    assert _is_option_symbol("AAPL") is False
+    assert _is_option_symbol("AAPL260618") is False   # no P/C + strike
+    assert _is_option_symbol("") is False
+
+
 def test_option_stop_buffer_pct_parses_from_env() -> None:
     settings = Settings.from_env(
         {

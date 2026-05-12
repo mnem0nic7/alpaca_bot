@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Protocol, Sequence
@@ -11,6 +12,13 @@ from alpaca_bot.config import Settings
 from alpaca_bot.execution import BrokerOrder, BrokerPosition
 from alpaca_bot.notifications import Notifier
 from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord
+
+
+_OCC_PATTERN = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
+
+
+def _is_option_symbol(symbol: str) -> bool:
+    return bool(_OCC_PATTERN.match(symbol))
 
 
 ACTIVE_ORDER_STATUSES = [
