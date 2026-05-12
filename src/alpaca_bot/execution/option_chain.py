@@ -90,6 +90,14 @@ def _snapshot_to_contract(occ_symbol: str, underlying: str, snapshot: Any) -> Op
         except (TypeError, AttributeError):
             delta = None
 
+    open_interest: int | None = None
+    try:
+        raw_oi = getattr(snapshot, "open_interest", None)
+        if raw_oi is not None:
+            open_interest = int(raw_oi)
+    except (TypeError, ValueError):
+        open_interest = None
+
     return OptionContract(
         occ_symbol=occ_symbol,
         underlying=underlying,
@@ -99,4 +107,5 @@ def _snapshot_to_contract(occ_symbol: str, underlying: str, snapshot: Any) -> Op
         bid=bid,
         ask=ask,
         delta=delta,
+        open_interest=open_interest,
     )

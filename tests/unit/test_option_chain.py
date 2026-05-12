@@ -27,7 +27,7 @@ class _FakeSnapshotClient:
         return self._snapshots
 
 
-def _make_snapshot(ask: float, delta: float | None = None):
+def _make_snapshot(ask: float, delta: float | None = None, open_interest: int | None = None):
     """Build a minimal fake Alpaca OptionSnapshot-like object.
 
     Note: strike, expiry, and option_type are parsed from the OCC symbol key
@@ -44,11 +44,12 @@ def _make_snapshot(ask: float, delta: float | None = None):
             self.bid_price = ask - 0.10
 
     class FakeSnapshot:
-        def __init__(self, ask, delta):
+        def __init__(self, ask, delta, oi):
             self.greeks = FakeGreeks(delta) if delta is not None else None
             self.latest_quote = FakeQuote(ask)
+            self.open_interest = oi
 
-    return FakeSnapshot(ask, delta)
+    return FakeSnapshot(ask, delta, open_interest)
 
 
 class TestAlpacaOptionChainAdapter:
@@ -106,6 +107,33 @@ class TestAlpacaOptionChainAdapter:
         client = _FakeSnapshotClient({})
         adapter = AlpacaOptionChainAdapter(client)
         assert isinstance(adapter, OptionChainAdapterProtocol)
+
+    def test_open_interest_extracted_when_present(self):
+        client = _FakeSnapshotClient({
+            "AAPL240701C00150000": _make_snapshot(ask=2.00, open_interest=500),
+        })
+        adapter = AlpacaOptionChainAdapter(client)
+        contracts = adapter.get_option_chain("AAPL", _settings())
+        assert len(contracts) == 1
+        assert contracts[0].open_interest == 500
+
+    def test_open_interest_none_when_absent(self):
+        client = _FakeSnapshotClient({
+            "AAPL240701C00150000": _make_snapshot(ask=2.00, open_interest=None),
+        })
+        adapter = AlpacaOptionChainAdapter(client)
+        contracts = adapter.get_option_chain("AAPL", _settings())
+        assert len(contracts) == 1
+        assert contracts[0].open_interest is None
+
+    def test_open_interest_none_when_malformed(self):
+        snapshot = _make_snapshot(ask=2.00, open_interest=None)
+        snapshot.open_interest = "not-a-number"
+        client = _FakeSnapshotClient({"AAPL240701C00150000": snapshot})
+        adapter = AlpacaOptionChainAdapter(client)
+        contracts = adapter.get_option_chain("AAPL", _settings())
+        assert len(contracts) == 1
+        assert contracts[0].open_interest is None
 
 
 class TestAlpacaExecutionAdapterOptionMethods:
