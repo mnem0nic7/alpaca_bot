@@ -222,7 +222,6 @@ Add to `tests/unit/test_startup_recovery.py`:
 ```python
 def test_option_stop_uses_option_buffer_for_broker_missing_position() -> None:
     """OCC broker-missing position must use option_stop_buffer_pct, not breakout_stop_buffer_pct."""
-    from alpaca_bot.runtime.startup_recovery import recover_startup_state
     settings = Settings.from_env(
         {
             "TRADING_MODE": "paper",
@@ -251,78 +250,66 @@ def test_option_stop_uses_option_buffer_for_broker_missing_position() -> None:
     )
     occ_symbol = "ALHC260618P00017500"
     entry_price = 1.20
-    runtime = make_runtime_context(positions=[], orders=[])
-    report = recover_startup_state(
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(settings, position_store=position_store, order_store=order_store)
+    recover_startup_state(
         settings=settings,
         runtime=runtime,
         broker_open_positions=[
-            BrokerPosition(
-                symbol=occ_symbol,
-                quantity=5,
-                entry_price=entry_price,
-                market_value=None,
-            )
+            BrokerPosition(symbol=occ_symbol, quantity=5, entry_price=entry_price, market_value=None)
         ],
         broker_open_orders=[],
         now=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
         audit_event_type=None,
     )
-    synced = runtime.position_store.replace_all_calls[0]["positions"]
+    synced = position_store.replace_all_calls[0]["positions"]
     assert len(synced) == 1
     expected_stop = round(entry_price * (1 - 0.10), 2)  # = 1.08
     assert synced[0].stop_price == expected_stop, (
         f"Expected option stop={expected_stop}, got {synced[0].stop_price}"
     )
-    # Stop must be strictly below entry after rounding
     assert synced[0].stop_price < entry_price
 
 
 def test_option_strategy_name_is_option_for_broker_missing_occ_position() -> None:
     """Broker-missing OCC position must get strategy_name='option', not 'breakout'."""
-    from alpaca_bot.runtime.startup_recovery import recover_startup_state
     settings = make_settings()
     occ_symbol = "ALHC260618P00017500"
-    runtime = make_runtime_context(positions=[], orders=[])
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(settings, position_store=position_store, order_store=order_store)
     recover_startup_state(
         settings=settings,
         runtime=runtime,
         broker_open_positions=[
-            BrokerPosition(
-                symbol=occ_symbol,
-                quantity=5,
-                entry_price=1.20,
-                market_value=None,
-            )
+            BrokerPosition(symbol=occ_symbol, quantity=5, entry_price=1.20, market_value=None)
         ],
         broker_open_orders=[],
         now=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
         audit_event_type=None,
     )
-    synced = runtime.position_store.replace_all_calls[0]["positions"]
+    synced = position_store.replace_all_calls[0]["positions"]
     assert synced[0].strategy_name == "option"
 
 
 def test_equity_strategy_name_unchanged_for_broker_missing_equity_position() -> None:
     """Broker-missing equity position must still get strategy_name='breakout' (default)."""
-    from alpaca_bot.runtime.startup_recovery import recover_startup_state
     settings = make_settings()
-    runtime = make_runtime_context(positions=[], orders=[])
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(settings, position_store=position_store, order_store=order_store)
     recover_startup_state(
         settings=settings,
         runtime=runtime,
         broker_open_positions=[
-            BrokerPosition(
-                symbol="AAPL",
-                quantity=10,
-                entry_price=189.25,
-                market_value=None,
-            )
+            BrokerPosition(symbol="AAPL", quantity=10, entry_price=189.25, market_value=None)
         ],
         broker_open_orders=[],
         now=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
         audit_event_type=None,
     )
-    synced = runtime.position_store.replace_all_calls[0]["positions"]
+    synced = position_store.replace_all_calls[0]["positions"]
     assert synced[0].strategy_name == "breakout"
 ```
 
@@ -454,7 +441,6 @@ Add to `tests/unit/test_startup_recovery.py`:
 def test_option_stop_skipped_when_no_current_price() -> None:
     """Active OCC position with current_price=None must not re-queue a stop.
     Should emit option_stop_skipped_no_price audit event instead."""
-    from alpaca_bot.runtime.startup_recovery import recover_startup_state
     settings = make_settings()
     occ_symbol = "ALHC260618P00017500"
     existing_pos = PositionRecord(
@@ -469,7 +455,15 @@ def test_option_stop_skipped_when_no_current_price() -> None:
         opened_at=datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
         updated_at=datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
     )
-    runtime = make_runtime_context(positions=[existing_pos], orders=[])
+    position_store = RecordingPositionStore(existing_positions=[existing_pos])
+    order_store = RecordingOrderStore()
+    audit_event_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+        audit_event_store=audit_event_store,
+    )
     recover_startup_state(
         settings=settings,
         runtime=runtime,
@@ -481,12 +475,10 @@ def test_option_stop_skipped_when_no_current_price() -> None:
         now=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
         audit_event_type=None,
     )
-    # No stop order should have been queued
-    stop_orders = [o for o in runtime.order_store.saved if o.intent_type == "stop"]
+    stop_orders = [o for o in order_store.saved if o.intent_type == "stop"]
     assert stop_orders == [], f"Expected no stop orders queued, got: {stop_orders}"
-    # Audit event must be emitted
     skip_events = [
-        e for e in runtime.audit_event_store.appended
+        e for e in audit_event_store.appended
         if e.event_type == "option_stop_skipped_no_price"
     ]
     assert len(skip_events) == 1
@@ -495,7 +487,6 @@ def test_option_stop_skipped_when_no_current_price() -> None:
 
 def test_equity_stop_still_queued_when_no_current_price() -> None:
     """Equity position with current_price=None must still queue a recovery stop (existing behavior)."""
-    from alpaca_bot.runtime.startup_recovery import recover_startup_state
     settings = make_settings()
     existing_pos = PositionRecord(
         symbol="AAPL",
@@ -509,7 +500,9 @@ def test_equity_stop_still_queued_when_no_current_price() -> None:
         opened_at=datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
         updated_at=datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
     )
-    runtime = make_runtime_context(positions=[existing_pos], orders=[])
+    position_store = RecordingPositionStore(existing_positions=[existing_pos])
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(settings, position_store=position_store, order_store=order_store)
     recover_startup_state(
         settings=settings,
         runtime=runtime,
@@ -520,67 +513,16 @@ def test_equity_stop_still_queued_when_no_current_price() -> None:
         now=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
         audit_event_type=None,
     )
-    stop_orders = [o for o in runtime.order_store.saved if o.intent_type == "stop"]
+    stop_orders = [o for o in order_store.saved if o.intent_type == "stop"]
     assert len(stop_orders) == 1, "Equity position must have a recovery stop queued"
     assert stop_orders[0].symbol == "AAPL"
 
 
 def test_recovery_stop_not_requeued_when_same_price_terminal() -> None:
-    """A terminal stop (error/canceled) with the same stop_price must not be re-queued.
-    This prevents the infinite loop when Alpaca rejects 42210000."""
-    from alpaca_bot.runtime.startup_recovery import recover_startup_state
+    """A terminal stop (error) with the same stop_price must not be re-queued.
+    Uses equity (AAPL) to reach the stop path: stop(185) < market(190) → not the exit path.
+    This is the key guard that breaks the 42210000 infinite loop."""
     settings = make_settings()
-    occ_symbol = "ALHC260618P00017500"
-    existing_pos = PositionRecord(
-        symbol=occ_symbol,
-        trading_mode=TradingMode.PAPER,
-        strategy_version="v1-breakout",
-        strategy_name="option",
-        quantity=5,
-        entry_price=1.20,
-        stop_price=1.20,  # stop = entry (the bug condition)
-        initial_stop_price=1.20,
-        opened_at=datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
-        updated_at=datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
-    )
-    # Simulate an existing error-status stop with the same price
-    failed_stop = OrderRecord(
-        client_order_id="startup_recovery:v1-breakout:2026-05-12:ALHC260618P00017500:stop",
-        symbol=occ_symbol,
-        side="sell",
-        intent_type="stop",
-        status="error",
-        quantity=5,
-        trading_mode=TradingMode.PAPER,
-        strategy_version="v1-breakout",
-        created_at=datetime(2026, 5, 12, 13, 0, tzinfo=timezone.utc),
-        updated_at=datetime(2026, 5, 12, 13, 30, tzinfo=timezone.utc),
-        stop_price=1.20,  # same as pos.stop_price
-        initial_stop_price=1.20,
-    )
-    runtime = make_runtime_context(positions=[existing_pos], orders=[failed_stop])
-    recover_startup_state(
-        settings=settings,
-        runtime=runtime,
-        broker_open_positions=[
-            BrokerPosition(symbol=occ_symbol, quantity=5, entry_price=1.20, market_value=5.50)
-        ],
-        broker_open_orders=[],
-        now=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
-        audit_event_type=None,
-    )
-    new_stops = [
-        o for o in runtime.order_store.saved
-        if o.intent_type == "stop" and o.status == "pending_submit"
-    ]
-    assert new_stops == [], f"Must not re-queue stop with same price. Got: {new_stops}"
-
-
-def test_recovery_stop_requeued_when_price_changed_after_terminal() -> None:
-    """A terminal stop with a DIFFERENT stop_price must be re-queued (price was updated)."""
-    from alpaca_bot.runtime.startup_recovery import recover_startup_state
-    settings = make_settings()
-    # Use an equity symbol to sidestep the option-no-price skip guard
     existing_pos = PositionRecord(
         symbol="AAPL",
         trading_mode=TradingMode.PAPER,
@@ -588,8 +530,59 @@ def test_recovery_stop_requeued_when_price_changed_after_terminal() -> None:
         strategy_name="breakout",
         quantity=10,
         entry_price=189.25,
-        stop_price=190.00,  # updated stop (higher than the old failed stop)
-        initial_stop_price=188.00,
+        stop_price=185.00,  # stop < market(190) → stop path, not exit path
+        initial_stop_price=185.00,
+        opened_at=datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
+    )
+    failed_stop = OrderRecord(
+        client_order_id="startup_recovery:v1-breakout:2026-05-12:AAPL:stop",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="error",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=datetime(2026, 5, 12, 13, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 12, 13, 30, tzinfo=timezone.utc),
+        stop_price=185.00,  # same as pos.stop_price → same_price guard fires
+        initial_stop_price=185.00,
+    )
+    position_store = RecordingPositionStore(existing_positions=[existing_pos])
+    order_store = RecordingOrderStore(existing_orders=[failed_stop])
+    runtime = make_runtime_context(settings, position_store=position_store, order_store=order_store)
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        # current_price = 1900.0/10 = 190.0 > stop=185.0 → stop path (not exit path)
+        broker_open_positions=[
+            BrokerPosition(symbol="AAPL", quantity=10, entry_price=189.25, market_value=1900.0)
+        ],
+        broker_open_orders=[],
+        now=datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc),
+        audit_event_type=None,
+    )
+    new_stops = [
+        o for o in order_store.saved
+        if o.intent_type == "stop" and o.status == "pending_submit"
+    ]
+    assert new_stops == [], f"Must not re-queue stop with same price. Got: {new_stops}"
+
+
+def test_recovery_stop_requeued_when_price_changed_after_terminal() -> None:
+    """A terminal stop with a DIFFERENT stop_price must be re-queued (stop was trailed up).
+    Uses equity AAPL: stop(185) < market(190) → stop path, old failed stop was at 180."""
+    settings = make_settings()
+    existing_pos = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        quantity=10,
+        entry_price=189.25,
+        stop_price=185.00,  # current stop (different from failed stop's 180.00)
+        initial_stop_price=180.00,
         opened_at=datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
         updated_at=datetime(2026, 5, 12, 13, 0, tzinfo=timezone.utc),
     )
@@ -604,13 +597,16 @@ def test_recovery_stop_requeued_when_price_changed_after_terminal() -> None:
         strategy_version="v1-breakout",
         created_at=datetime(2026, 5, 12, 10, 0, tzinfo=timezone.utc),
         updated_at=datetime(2026, 5, 12, 12, 0, tzinfo=timezone.utc),
-        stop_price=185.00,  # old price — different from 190.00
-        initial_stop_price=185.00,
+        stop_price=180.00,  # old price — different from pos.stop_price(185.00)
+        initial_stop_price=180.00,
     )
-    runtime = make_runtime_context(positions=[existing_pos], orders=[failed_stop])
+    position_store = RecordingPositionStore(existing_positions=[existing_pos])
+    order_store = RecordingOrderStore(existing_orders=[failed_stop])
+    runtime = make_runtime_context(settings, position_store=position_store, order_store=order_store)
     recover_startup_state(
         settings=settings,
         runtime=runtime,
+        # current_price = 1900.0/10 = 190.0 > stop=185.0 → stop path
         broker_open_positions=[
             BrokerPosition(symbol="AAPL", quantity=10, entry_price=189.25, market_value=1900.0)
         ],
@@ -619,11 +615,11 @@ def test_recovery_stop_requeued_when_price_changed_after_terminal() -> None:
         audit_event_type=None,
     )
     new_stops = [
-        o for o in runtime.order_store.saved
+        o for o in order_store.saved
         if o.intent_type == "stop" and o.status == "pending_submit"
     ]
     assert len(new_stops) == 1, f"Must re-queue stop when price changed. Got: {new_stops}"
-    assert new_stops[0].stop_price == 190.00
+    assert new_stops[0].stop_price == 185.00
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
