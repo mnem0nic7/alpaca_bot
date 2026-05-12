@@ -186,6 +186,13 @@ class TestSpreadFilter:
         result = select_call_contract([c], current_price=150.0, today=TODAY, settings=s)
         assert result is c
 
+    def test_call_spread_at_exact_boundary_passes(self):
+        # ask=2.00, bid=1.00 → spread_pct=0.50 == OPTION_MAX_SPREAD_PCT (<=, so passes)
+        s = _settings(OPTION_MAX_SPREAD_PCT="0.50")
+        c = _contract(150.0, NEAR_EXPIRY, ask=2.00, bid=1.00, delta=0.50)
+        result = select_call_contract([c], current_price=150.0, today=TODAY, settings=s)
+        assert result is c
+
     def test_put_wide_spread_rejected(self):
         s = _settings(OPTION_MAX_SPREAD_PCT="0.30")
         p = _put_contract(150.0, NEAR_EXPIRY, ask=2.00, bid=0.00, delta=-0.50)
