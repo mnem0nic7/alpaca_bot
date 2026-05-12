@@ -185,6 +185,10 @@ class DashboardSnapshot:
     total_deployed_notional: float = 0.0
 
 
+def _option_multiplier(pos) -> int:
+    return 100 if getattr(pos, "strategy_name", None) == "option" else 1
+
+
 def _compute_capital_pct(
     positions: list,
     latest_prices: dict[str, float],
@@ -192,12 +196,16 @@ def _compute_capital_pct(
     strategy_value: dict[str, float] = {}
     for pos in positions:
         price = latest_prices.get(pos.symbol, pos.entry_price)
-        val = price * pos.quantity
+        val = price * pos.quantity * _option_multiplier(pos)
         strategy_value[pos.strategy_name] = strategy_value.get(pos.strategy_name, 0.0) + val
     total = sum(strategy_value.values())
     if total <= 0:
         return {}
     return {name: round(val / total * 100, 1) for name, val in strategy_value.items()}
+
+
+def total_deployed_notional(positions: list) -> float:
+    return sum(pos.quantity * pos.entry_price * _option_multiplier(pos) for pos in positions)
 
 
 def load_dashboard_snapshot(
@@ -295,9 +303,7 @@ def load_dashboard_snapshot(
         if latest_cycle_event is not None
         else None
     )
-    total_deployed_notional: float = sum(
-        pos.quantity * pos.entry_price for pos in positions
-    )
+    total_deployed_notional_value: float = total_deployed_notional(positions)
 
     return DashboardSnapshot(
         generated_at=generated_at,
@@ -332,7 +338,7 @@ def load_dashboard_snapshot(
         strategy_capital_pct=strategy_capital_pct,
         strategy_lifetime_pnl=strategy_lifetime_pnl,
         account_equity=account_equity,
-        total_deployed_notional=total_deployed_notional,
+        total_deployed_notional=total_deployed_notional_value,
     )
 
 

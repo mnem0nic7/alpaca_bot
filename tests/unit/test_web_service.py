@@ -25,6 +25,7 @@ from alpaca_bot.web.service import (
     load_equity_chart_data,
     load_health_snapshot,
     load_metrics_snapshot,
+    total_deployed_notional,
 )
 
 
@@ -1727,3 +1728,58 @@ def test_all_audit_event_types_includes_option_events() -> None:
         assert expected in ALL_AUDIT_EVENT_TYPES, (
             f"ALL_AUDIT_EVENT_TYPES missing '{expected}'"
         )
+
+
+# ---------------------------------------------------------------------------
+# Option ×100 multiplier tests (Task 4)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_capital_pct_option_multiplies_by_100() -> None:
+    """Option positions contribute 100× their price*quantity to capital pct."""
+    opt_pos = SimpleNamespace(
+        symbol="AAPL240701C00150000",
+        quantity=2,
+        entry_price=1.20,
+        strategy_name="option",
+    )
+    equity_pos = SimpleNamespace(
+        symbol="AAPL",
+        quantity=10,
+        entry_price=150.0,
+        strategy_name="breakout",
+    )
+    # option notional = 1.20 * 2 * 100 = 240
+    # equity notional = 150.0 * 10 * 1 = 1500
+    # total = 1740; option pct = 240/1740*100 ≈ 13.79
+    result = _compute_capital_pct([opt_pos, equity_pos], {})
+    option_pct = result.get("option", 0.0)
+    equity_pct = result.get("breakout", 0.0)
+    assert abs(option_pct + equity_pct - 100.0) < 0.1
+    assert abs(option_pct - 240.0 / 1740.0 * 100) < 0.1
+
+
+def test_compute_capital_pct_equity_not_multiplied() -> None:
+    """Non-option (equity) positions are NOT multiplied by 100."""
+    pos = SimpleNamespace(
+        symbol="AAPL",
+        quantity=5,
+        entry_price=150.0,
+        strategy_name="breakout",
+    )
+    # Only one strategy → 100% of capital; value should be 5*150=750 (not 75000)
+    result = _compute_capital_pct([pos], {})
+    assert result == {"breakout": pytest.approx(100.0)}
+
+
+def test_total_deployed_notional_option_multiplied() -> None:
+    """total_deployed_notional applies ×100 to option positions, ×1 to equity."""
+    equity_pos = SimpleNamespace(
+        symbol="AAPL", quantity=5, entry_price=150.0, strategy_name="breakout"
+    )
+    option_pos = SimpleNamespace(
+        symbol="AAPL240701C00150000", quantity=2, entry_price=1.20, strategy_name="option"
+    )
+    result = total_deployed_notional([equity_pos, option_pos])
+    # 5 * 150.0 * 1 + 2 * 1.20 * 100 = 750.0 + 240.0 = 990.0
+    assert abs(result - 990.0) < 1e-9
