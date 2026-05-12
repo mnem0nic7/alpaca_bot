@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>alpaca_bot — Decision Log</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f3f0e8;
+        --panel: #fffdf8;
+        --line: #d8d2c5;
+        --ink: #1d2b2a;
+        --muted: #6a736e;
+        --accent: #1f6f78;
+        --warn: #8f3b2e;
+        --green: #1a6b3c;
+        --red: #8f3b2e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Iowan Old Style", "Palatino Linotype", serif;
+        background:
+          radial-gradient(circle at top right, rgba(31, 111, 120, 0.12), transparent 28rem),
+          linear-gradient(180deg, #f9f6ef 0%, var(--bg) 100%);
+        color: var(--ink);
+      }
+      main { max-width: 1300px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+      h1, h2 { margin: 0; font-weight: 700; letter-spacing: 0.01em; }
+      p { margin: 0; }
+      .panel {
+        background: rgba(255, 253, 248, 0.92);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 1.1rem 1.2rem;
+        box-shadow: 0 10px 30px rgba(29, 43, 42, 0.06);
+        margin-bottom: 1rem;
+      }
+      .eyebrow {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        color: var(--muted);
+        letter-spacing: 0.08em;
+      }
+      .table-wrap { overflow-x: auto; }
+      table { width: 100%; border-collapse: collapse; margin-top: 0.9rem; }
+      th, td {
+        text-align: left;
+        padding: 0.45rem 0.3rem;
+        border-bottom: 1px solid rgba(216, 210, 197, 0.8);
+        font-size: 0.88rem;
+        vertical-align: top;
+      }
+      th { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em; }
+      .muted { color: var(--muted); }
+      .mono { font-family: "SFMono-Regular", "Menlo", monospace; font-size: 0.83rem; }
+      .nav-links { display: flex; gap: 1rem; margin-bottom: 1rem; font-size: 0.9rem; }
+      .nav-links a { color: var(--accent); text-decoration: none; }
+      .nav-links a:hover { text-decoration: underline; }
+      .badge-entry { color: var(--green); font-weight: 700; }
+      .badge-rejected { color: var(--red); }
+      select, input[type="text"], input[type="date"], input[type="submit"] {
+        border: 1px solid var(--line); border-radius: 999px;
+        background: #f7f2e7; color: var(--ink);
+        padding: 0.3rem 0.8rem; font: inherit; cursor: pointer;
+      }
+      select:hover, input[type="submit"]:hover { background: #edf7f8; }
+      details summary { cursor: pointer; color: var(--muted); font-size: 0.8rem; }
+      details pre { margin: 0.3rem 0 0; font-size: 0.78rem; background: #f0ece0; padding: 0.4rem; border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <nav class="nav-links">
+        <a href="/">Dashboard</a>
+        <a href="/metrics">Metrics</a>
+        <a href="/audit">Audit Log</a>
+        <a href="/decisions">Decisions</a>
+        <a href="/watchlist">Watchlist</a>
+      </nav>
+
+      {% if trading_mode == "live" %}
+        <div style="background: #c0392b; color: #fff; text-align: center; padding: 0.6rem 1rem; font-weight: 700; letter-spacing: 0.05em; margin-bottom: 1rem;">
+          &#9888; LIVE TRADING ACTIVE &mdash; real capital at risk
+        </div>
+      {% endif %}
+
+      <div class="panel">
+        <p class="eyebrow">alpaca_bot</p>
+        <h1>Decision Log</h1>
+        <p class="muted" style="margin-top: 0.4rem;">
+          <span class="mono">{{ trading_mode }}</span> / <span class="mono">{{ strategy_version }}</span>
+          &mdash; every signal evaluated this session, entries and rejects
+        </p>
+      </div>
+
+      <div class="panel">
+        <form method="get" action="/decisions" style="display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap;">
+          <label for="date_input" class="eyebrow">Session date:</label>
+          <input type="date" id="date_input" name="date" value="{{ session_date }}">
+          <label for="symbol_input" class="eyebrow">Symbol:</label>
+          <input type="text" id="symbol_input" name="symbol" value="{{ symbol_filter }}" placeholder="e.g. AAPL or ALHC260618P00017500" style="min-width: 22ch;">
+          <input type="submit" value="Apply">
+          {% if symbol_filter %}
+            <a href="/decisions?date={{ session_date }}" style="color: var(--muted); font-size: 0.88rem;">Clear symbol</a>
+          {% endif %}
+        </form>
+      </div>
+
+      <div class="panel">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time (ET)</th>
+                <th>Symbol</th>
+                <th>Strategy</th>
+                <th>Decision</th>
+                <th>Reject reason</th>
+                <th>Entry level</th>
+                <th>Bar close</th>
+                <th>Rel. vol</th>
+                <th>Ask</th>
+                <th>Qty</th>
+                <th>Filters</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in rows %}
+                <tr>
+                  <td class="mono muted" style="white-space: nowrap;">{{ format_timestamp(row.cycle_at) }}</td>
+                  <td class="mono">{{ row.symbol }}</td>
+                  <td class="muted">{{ row.strategy_name }}</td>
+                  <td>
+                    {% if row.decision == "ENTRY" %}
+                      <span class="badge-entry">ENTRY</span>
+                    {% else %}
+                      <span class="badge-rejected">{{ row.decision or "—" }}</span>
+                    {% endif %}
+                  </td>
+                  <td class="muted" style="font-size: 0.82rem;">
+                    {% if row.reject_stage %}{{ row.reject_stage }}: {% endif %}
+                    {{ row.reject_reason or "" }}
+                  </td>
+                  <td class="mono">{{ format_price(row.entry_level) }}</td>
+                  <td class="mono">{{ format_price(row.signal_bar_close) }}</td>
+                  <td class="mono">{{ "%.2f"|format(row.relative_volume) if row.relative_volume is not none else "—" }}</td>
+                  <td class="mono">{{ format_price(row.limit_price) }}</td>
+                  <td class="mono">{{ row.quantity or "—" }}</td>
+                  <td>
+                    {% if row.filter_results %}
+                      <details>
+                        <summary>{{ row.filter_results | length }} filters</summary>
+                        <pre>{{ row.filter_results | tojson(indent=2) }}</pre>
+                      </details>
+                    {% else %}
+                      <span class="muted">—</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="11" class="muted">No decisions recorded for this session.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

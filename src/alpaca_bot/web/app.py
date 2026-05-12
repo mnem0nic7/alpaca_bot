@@ -21,6 +21,7 @@ from alpaca_bot.storage import (
     ConfidenceFloorStore,
     DailySessionState,
     DailySessionStateStore,
+    DecisionLogStore,
     OrderStore,
     PositionStore,
     StrategyFlag,
@@ -49,6 +50,7 @@ from alpaca_bot.web.service import (
     load_audit_page,
     load_confidence_floor_info,
     load_dashboard_snapshot,
+    load_decisions_page,
     load_equity_chart_data,
     load_health_snapshot,
     load_metrics_snapshot,
@@ -80,6 +82,7 @@ def create_app(
     watchlist_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     strategy_weight_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     confidence_floor_store_factory: Callable[[ConnectionProtocol], object] | None = None,
+    decision_log_store_factory: Callable[[ConnectionProtocol], object] | None = None,
     notifier: Notifier | None = None,
     market_data_adapter: object | None = None,
     portfolio_reader: object | None = None,
@@ -125,6 +128,7 @@ def create_app(
     app.state.watchlist_store_factory = watchlist_store_factory or WatchlistStore
     app.state.strategy_weight_store_factory = strategy_weight_store_factory or StrategyWeightStore
     app.state.confidence_floor_store_factory = confidence_floor_store_factory or ConfidenceFloorStore
+    app.state.decision_log_store_factory = decision_log_store_factory or DecisionLogStore
     app.state.notifier = notifier or build_notifier(app_settings)
     if market_data_adapter is None:
         try:
@@ -381,6 +385,48 @@ def create_app(
                 "operator_email": operator,
                 "page": page,
                 "all_event_types": ALL_AUDIT_EVENT_TYPES,
+            },
+        )
+
+    @app.get("/decisions", response_class=HTMLResponse)
+    def decisions_log(
+        request: Request,
+        date: str = "",
+        symbol: str = "",
+    ) -> HTMLResponse:
+        operator = current_operator(request, settings=app_settings)
+        if auth_enabled(app_settings) and operator is None:
+            return _render_login_page(app, request, next_path=request.url.path)
+        today = datetime.now(app_settings.market_timezone).date()
+        session_date, _date_warning = _parse_date_param(date, today=today)
+        clean_symbol = symbol.strip().upper() or None
+        try:
+            connection = app.state.connect_postgres(app_settings.database_url)
+            try:
+                rows = load_decisions_page(
+                    session_date=session_date,
+                    symbol=clean_symbol,
+                    decision_log_store=_build_store(
+                        app.state.decision_log_store_factory, connection
+                    ),
+                )
+            finally:
+                close = getattr(connection, "close", None)
+                if callable(close):
+                    close()
+        except Exception:
+            rows = []
+        return templates.TemplateResponse(
+            request=request,
+            name="decisions.html",
+            context={
+                "request": request,
+                "trading_mode": app_settings.trading_mode.value,
+                "strategy_version": app_settings.strategy_version,
+                "operator_email": operator,
+                "rows": rows,
+                "session_date": session_date.isoformat(),
+                "symbol_filter": symbol.strip(),
             },
         )
 

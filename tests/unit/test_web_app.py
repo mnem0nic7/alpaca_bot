@@ -2793,3 +2793,88 @@ def test_dashboard_strategy_alloc_pct_rendered() -> None:
     assert response.status_code == 200
     assert "Alloc %" in response.text   # column header present
     assert "60%" in response.text       # 0.6 * 100 = 60%
+
+
+# ---------------------------------------------------------------------------
+# /decisions route
+# ---------------------------------------------------------------------------
+
+
+def _make_decisions_app(*, rows=None, raises=False):
+    """Create a test app with a fake decision log store."""
+    settings = make_settings()
+
+    class _FakeDecisionLogStore:
+        def list_recent(self, *, session_date, symbol=None, limit=200, market_timezone="America/New_York"):
+            if raises:
+                raise RuntimeError("db down")
+            return rows if rows is not None else []
+
+    return create_app(
+        settings=settings,
+        connect_postgres_fn=lambda _: FakeConnection(),
+        decision_log_store_factory=lambda _: _FakeDecisionLogStore(),
+        audit_event_store_factory=lambda _: SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=lambda **_: [],
+        ),
+    )
+
+
+def test_decisions_route_returns_200() -> None:
+    app = _make_decisions_app()
+    with TestClient(app) as client:
+        response = client.get("/decisions")
+    assert response.status_code == 200
+
+
+def test_decisions_route_renders_empty_state_when_no_rows() -> None:
+    app = _make_decisions_app(rows=[])
+    with TestClient(app) as client:
+        response = client.get("/decisions")
+    assert response.status_code == 200
+    assert "No decisions" in response.text
+
+
+def test_decisions_route_renders_symbol_in_table() -> None:
+    from datetime import datetime, timezone as _tz
+    row = {
+        "cycle_at": datetime(2026, 5, 12, 14, 0, tzinfo=_tz.utc),
+        "symbol": "ALHC260618P00017500",
+        "strategy_name": "breakout",
+        "trading_mode": "paper",
+        "strategy_version": "v1-breakout",
+        "decision": "ENTRY",
+        "reject_stage": None,
+        "reject_reason": None,
+        "entry_level": 17.5,
+        "signal_bar_close": 17.3,
+        "relative_volume": 2.1,
+        "atr": None,
+        "stop_price": None,
+        "limit_price": 1.20,
+        "initial_stop_price": None,
+        "quantity": 1,
+        "risk_per_share": None,
+        "equity": 50000.0,
+        "filter_results": {},
+        "vix_close": None,
+        "vix_above_sma": None,
+        "sector_passing_pct": None,
+        "vwap_at_signal": None,
+        "signal_bar_above_vwap": None,
+    }
+    app = _make_decisions_app(rows=[row])
+    with TestClient(app) as client:
+        response = client.get("/decisions?symbol=ALHC260618P00017500")
+    assert response.status_code == 200
+    assert "ALHC260618P00017500" in response.text
+
+
+def test_decisions_route_returns_503_when_store_raises() -> None:
+    app = _make_decisions_app(raises=True)
+    with TestClient(app) as client:
+        response = client.get("/decisions")
+    assert response.status_code == 200
+    assert "No decisions" in response.text
