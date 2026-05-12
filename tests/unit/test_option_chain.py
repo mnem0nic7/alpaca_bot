@@ -118,13 +118,19 @@ class TestAlpacaOptionChainAdapter:
         assert contracts[0].open_interest == 500
 
     def test_open_interest_none_when_absent(self):
+        # attribute present with value None
         client = _FakeSnapshotClient({
             "AAPL240701C00150000": _make_snapshot(ask=2.00, open_interest=None),
         })
-        adapter = AlpacaOptionChainAdapter(client)
-        contracts = adapter.get_option_chain("AAPL", _settings())
-        assert len(contracts) == 1
+        contracts = AlpacaOptionChainAdapter(client).get_option_chain("AAPL", _settings())
         assert contracts[0].open_interest is None
+
+        # attribute truly absent (no open_interest attribute at all)
+        snapshot = _make_snapshot(ask=2.00, open_interest=None)
+        del snapshot.open_interest
+        client2 = _FakeSnapshotClient({"AAPL240701C00150000": snapshot})
+        contracts2 = AlpacaOptionChainAdapter(client2).get_option_chain("AAPL", _settings())
+        assert contracts2[0].open_interest is None
 
     def test_open_interest_none_when_malformed(self):
         snapshot = _make_snapshot(ask=2.00, open_interest=None)
