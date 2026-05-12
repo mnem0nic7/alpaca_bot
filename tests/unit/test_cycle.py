@@ -180,6 +180,137 @@ def test_run_cycle_saves_all_entry_intents_with_single_commit() -> None:
     )
 
 
+class RecordingOptionOrderStore:
+    def __init__(self) -> None:
+        self.saved: list = []
+
+    def save(self, record, *, commit: bool = True) -> None:
+        self.saved.append(record)
+
+
+def _make_option_entry_intent(occ_symbol: str, now: datetime) -> CycleIntent:
+    from datetime import date as _date
+    return CycleIntent(
+        intent_type=CycleIntentType.ENTRY,
+        symbol=occ_symbol,
+        timestamp=now,
+        client_order_id=f"option:{occ_symbol}:entry",
+        quantity=1,
+        stop_price=None,
+        limit_price=1.20,
+        initial_stop_price=None,
+        signal_timestamp=now,
+        strategy_name="breakout",
+        underlying_symbol="ALHC",
+        is_option=True,
+        option_strike=17.5,
+        option_expiry=_date(2026, 6, 18),
+        option_type_str="put",
+    )
+
+
+def test_run_cycle_emits_option_entry_intent_created_event() -> None:
+    """Each option ENTRY intent must produce exactly one option_entry_intent_created
+    audit event with the correct payload fields."""
+    from alpaca_bot.runtime.cycle import run_cycle
+    import alpaca_bot.runtime.cycle as cycle_module
+
+    settings = _make_settings()
+    now = datetime(2026, 5, 12, 14, 0, tzinfo=timezone.utc)
+    audit_store = RecordingAuditEventStore()
+    connection = CountingConnection()
+    option_store = RecordingOptionOrderStore()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(),
+        audit_event_store=audit_store,
+        connection=connection,
+        option_order_store=option_store,
+    )
+
+    occ = "ALHC260618P00017500"
+    option_result = CycleResult(
+        as_of=now,
+        intents=[_make_option_entry_intent(occ, now)],
+    )
+    original = cycle_module.evaluate_cycle
+    cycle_module.evaluate_cycle = lambda **_: option_result
+    try:
+        run_cycle(
+            settings=settings,
+            runtime=runtime,
+            now=now,
+            equity=100_000.0,
+            intraday_bars_by_symbol={},
+            daily_bars_by_symbol={},
+            open_positions=[],
+            working_order_symbols=set(),
+            traded_symbols_today=set(),
+            entries_disabled=False,
+        )
+    finally:
+        cycle_module.evaluate_cycle = original
+
+    entry_events = [
+        e for e in audit_store.appended
+        if e.event_type == "option_entry_intent_created"
+    ]
+    assert len(entry_events) == 1, (
+        f"Expected 1 option_entry_intent_created event, got {len(entry_events)}"
+    )
+    payload = entry_events[0].payload
+    assert payload["occ_symbol"] == occ
+    assert payload["underlying_symbol"] == "ALHC"
+    assert payload["option_type"] == "put"
+    assert payload["strike"] == 17.5
+    assert payload["ask_price"] == 1.20
+    assert payload["quantity"] == 1
+
+
+def test_run_cycle_equity_entry_does_not_emit_option_event() -> None:
+    """Equity ENTRY intents must NOT emit option_entry_intent_created."""
+    from alpaca_bot.runtime.cycle import run_cycle
+    import alpaca_bot.runtime.cycle as cycle_module
+
+    settings = _make_settings()
+    now = datetime(2026, 5, 12, 14, 15, tzinfo=timezone.utc)
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(),
+        audit_event_store=audit_store,
+        connection=CountingConnection(),
+    )
+
+    equity_result = CycleResult(
+        as_of=now,
+        intents=[_make_entry_intent("AAPL", now)],
+    )
+    original = cycle_module.evaluate_cycle
+    cycle_module.evaluate_cycle = lambda **_: equity_result
+    try:
+        run_cycle(
+            settings=settings,
+            runtime=runtime,
+            now=now,
+            equity=100_000.0,
+            intraday_bars_by_symbol={},
+            daily_bars_by_symbol={},
+            open_positions=[],
+            working_order_symbols=set(),
+            traded_symbols_today=set(),
+            entries_disabled=False,
+        )
+    finally:
+        cycle_module.evaluate_cycle = original
+
+    option_events = [
+        e for e in audit_store.appended
+        if e.event_type == "option_entry_intent_created"
+    ]
+    assert len(option_events) == 0, (
+        "Equity ENTRY intent must not produce option_entry_intent_created"
+    )
+
+
 def test_run_cycle_rollback_on_db_failure() -> None:
     """If order_store.save() raises during the atomic write block, run_cycle must
     call connection.rollback() and re-raise the exception."""

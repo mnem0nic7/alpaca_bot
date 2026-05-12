@@ -115,6 +115,26 @@ def run_cycle(
                             ),
                             commit=False,
                         )
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="option_entry_intent_created",
+                            payload={
+                                "occ_symbol": intent.symbol,
+                                "underlying_symbol": intent.underlying_symbol,
+                                "option_type": intent.option_type_str,
+                                "strike": intent.option_strike,
+                                "expiry": intent.option_expiry.isoformat() if intent.option_expiry else None,
+                                "ask_price": intent.limit_price,
+                                "quantity": intent.quantity,
+                                "signal_timestamp": (
+                                    intent.signal_timestamp.isoformat()
+                                    if intent.signal_timestamp else None
+                                ),
+                            },
+                            created_at=now,
+                        ),
+                        commit=False,
+                    )
                 else:
                     runtime.order_store.save(
                         OrderRecord(
