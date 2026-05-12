@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from dataclasses import dataclass, field as dc_field
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger(__name__)
 
 from alpaca_bot.config import Settings
 from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord, report_from_records
@@ -33,30 +36,45 @@ from alpaca_bot.strategy import ALL_STRATEGY_NAMES, OPTION_STRATEGY_FACTORIES, S
 ADMIN_EVENT_TYPES = ["trading_status_changed", "strategy_flag_changed"]
 
 ALL_AUDIT_EVENT_TYPES = [
-    "trading_status_changed",
-    "strategy_flag_changed",
-    "strategy_entries_changed",
-    "supervisor_cycle",
-    "supervisor_idle",
-    "supervisor_cycle_error",
-    "strategy_cycle_error",
-    "trader_startup_completed",
     "daily_loss_limit_breached",
+    "daily_summary_sent",
+    "decision_cycle_completed",
+    "extended_hours_cycle",
+    "nightly_sweep_completed",
+    "option_chains_fetched",
+    "option_entry_intent_created",
+    "option_order_submitted",
+    "option_stop_skipped_no_price",
+    "order_dispatch_failed",
+    "order_dispatch_stop_price_rejected",
     "postgres_reconnected",
     "runtime_reconciliation_detected",
-    "trade_update_stream_started",
-    "trade_update_stream_stopped",
+    "stale_exit_cancel_failed",
+    "stale_exit_canceled_for_resubmission",
+    "startup_recovery_completed",
+    "startup_recovery_skipped",
+    "stop_update_skipped_extended_hours",
+    "stream_heartbeat_stale",
+    "stream_restart_failed",
+    "stream_started",
+    "stream_stopped",
+    "strategy_cycle_error",
+    "strategy_entries_changed",
+    "strategy_flag_changed",
+    "strategy_weights_updated",
+    "supervisor_cycle",
+    "supervisor_cycle_error",
+    "supervisor_idle",
     "trade_update_stream_failed",
     "trade_update_stream_restarted",
-    "stream_restart_failed",
-    "daily_summary_sent",
+    "trade_update_stream_started",
+    "trade_update_stream_stopped",
+    "trader_startup_completed",
+    "trading_status_changed",
     "WATCHLIST_ADD",
-    "WATCHLIST_REMOVE",
     "WATCHLIST_IGNORE",
+    "WATCHLIST_REMOVE",
     "WATCHLIST_UNIGNORE",
-    "extended_hours_cycle",
-    "stop_update_skipped_extended_hours",
-    "strategy_weights_updated",
 ]
 
 WORKING_ORDER_STATUSES = [
@@ -463,6 +481,22 @@ def load_audit_page(
         has_more=has_more,
         event_type_filter=event_type_filter,
     )
+
+
+def load_decisions_page(
+    *,
+    session_date: date,
+    symbol: str | None,
+    decision_log_store: object,
+) -> list[dict]:
+    try:
+        return decision_log_store.list_recent(  # type: ignore[union-attr]
+            session_date=session_date,
+            symbol=symbol or None,
+        )
+    except Exception:
+        logger.exception("decision log query failed for date=%s symbol=%s", session_date, symbol)
+        return []
 
 
 def _to_trade_record(row: dict) -> TradeRecord:

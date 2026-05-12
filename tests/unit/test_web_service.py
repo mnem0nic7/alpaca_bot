@@ -8,6 +8,7 @@ import pytest
 from alpaca_bot.config import Settings
 from alpaca_bot.storage import GLOBAL_SESSION_STATE_STRATEGY_NAME
 from alpaca_bot.web.service import (
+    ALL_AUDIT_EVENT_TYPES,
     WORKER_ACTIVITY_EVENT_TYPES,
     WORKER_STALE_AFTER_SECONDS,
     WORKING_ORDER_STATUSES,
@@ -20,6 +21,7 @@ from alpaca_bot.web.service import (
     load_audit_page,
     load_confidence_floor_info,
     load_dashboard_snapshot,
+    load_decisions_page,
     load_equity_chart_data,
     load_health_snapshot,
     load_metrics_snapshot,
@@ -1668,3 +1670,60 @@ def test_load_confidence_floor_info_store_called_with_trading_mode_and_strategy_
     assert len(captured) == 1
     assert captured[0]["trading_mode"] == settings.trading_mode
     assert captured[0]["strategy_version"] == settings.strategy_version
+
+
+# ---------------------------------------------------------------------------
+# load_decisions_page and ALL_AUDIT_EVENT_TYPES (Task 3)
+# ---------------------------------------------------------------------------
+
+
+def make_decision_log_store(rows=None, raises=False):
+    class _Store:
+        def list_recent(self, *, session_date, symbol=None, limit=200, market_timezone="America/New_York"):
+            if raises:
+                raise RuntimeError("db down")
+            return rows if rows is not None else []
+    return _Store()
+
+
+def test_load_decisions_page_calls_list_recent_with_correct_args() -> None:
+    calls = []
+
+    class _TrackingStore:
+        def list_recent(self, *, session_date, symbol=None, limit=200, market_timezone="America/New_York"):
+            calls.append({"session_date": session_date, "symbol": symbol})
+            return []
+
+    load_decisions_page(
+        session_date=date(2026, 5, 12),
+        symbol="ALHC",
+        decision_log_store=_TrackingStore(),
+    )
+    assert len(calls) == 1
+    assert calls[0]["session_date"] == date(2026, 5, 12)
+    assert calls[0]["symbol"] == "ALHC"
+
+
+def test_load_decisions_page_returns_empty_list_when_store_raises() -> None:
+    store = make_decision_log_store(raises=True)
+    result = load_decisions_page(
+        session_date=date(2026, 5, 12),
+        symbol=None,
+        decision_log_store=store,
+    )
+    assert result == []
+
+
+def test_all_audit_event_types_includes_option_events() -> None:
+    for expected in (
+        "option_entry_intent_created",
+        "option_order_submitted",
+        "option_chains_fetched",
+        "decision_cycle_completed",
+        "nightly_sweep_completed",
+        "stale_exit_canceled_for_resubmission",
+        "stale_exit_cancel_failed",
+    ):
+        assert expected in ALL_AUDIT_EVENT_TYPES, (
+            f"ALL_AUDIT_EVENT_TYPES missing '{expected}'"
+        )
