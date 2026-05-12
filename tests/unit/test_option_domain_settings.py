@@ -100,3 +100,106 @@ def test_enable_options_trading_parsed_true():
     env["ENABLE_OPTIONS_TRADING"] = "true"
     s = Settings.from_env(env)
     assert s.enable_options_trading is True
+
+
+# --- spread_pct ---
+
+def test_option_contract_spread_pct_normal():
+    from alpaca_bot.domain.models import OptionContract
+    c = OptionContract(
+        occ_symbol="AAPL240701C00150000", underlying="AAPL",
+        option_type="call", strike=150.0, expiry=date(2024, 7, 1),
+        bid=1.90, ask=2.00,
+    )
+    # (2.00 - 1.90) / 2.00 = 0.05
+    assert abs(c.spread_pct - 0.05) < 1e-9
+
+
+def test_option_contract_spread_pct_zero_ask():
+    from alpaca_bot.domain.models import OptionContract
+    c = OptionContract(
+        occ_symbol="AAPL240701C00150000", underlying="AAPL",
+        option_type="call", strike=150.0, expiry=date(2024, 7, 1),
+        bid=0.0, ask=0.0,
+    )
+    assert c.spread_pct == 0.0
+
+
+# --- open_interest ---
+
+def test_option_contract_open_interest_default_none():
+    from alpaca_bot.domain.models import OptionContract
+    c = OptionContract(
+        occ_symbol="AAPL240701C00150000", underlying="AAPL",
+        option_type="call", strike=150.0, expiry=date(2024, 7, 1),
+        bid=1.90, ask=2.00,
+    )
+    assert c.open_interest is None
+
+
+def test_option_contract_open_interest_set():
+    from alpaca_bot.domain.models import OptionContract
+    c = OptionContract(
+        occ_symbol="AAPL240701C00150000", underlying="AAPL",
+        option_type="call", strike=150.0, expiry=date(2024, 7, 1),
+        bid=1.90, ask=2.00,
+        open_interest=500,
+    )
+    assert c.open_interest == 500
+
+
+# --- new settings ---
+
+def test_settings_option_max_spread_pct_default():
+    from alpaca_bot.config import Settings
+    s = Settings.from_env(_base_env())
+    assert s.option_max_spread_pct == 0.50
+
+
+def test_settings_option_max_spread_pct_from_env():
+    from alpaca_bot.config import Settings
+    env = _base_env()
+    env["OPTION_MAX_SPREAD_PCT"] = "0.30"
+    s = Settings.from_env(env)
+    assert s.option_max_spread_pct == 0.30
+
+
+def test_settings_option_max_spread_pct_validation_zero_rejected():
+    from alpaca_bot.config import Settings
+    import pytest
+    env = _base_env()
+    env["OPTION_MAX_SPREAD_PCT"] = "0.0"
+    with pytest.raises(ValueError, match="OPTION_MAX_SPREAD_PCT"):
+        Settings.from_env(env)
+
+
+def test_settings_option_max_spread_pct_validation_above_one_rejected():
+    from alpaca_bot.config import Settings
+    import pytest
+    env = _base_env()
+    env["OPTION_MAX_SPREAD_PCT"] = "1.1"
+    with pytest.raises(ValueError, match="OPTION_MAX_SPREAD_PCT"):
+        Settings.from_env(env)
+
+
+def test_settings_option_min_open_interest_default():
+    from alpaca_bot.config import Settings
+    s = Settings.from_env(_base_env())
+    assert s.option_min_open_interest == 0
+
+
+def test_settings_option_min_open_interest_from_env():
+    from alpaca_bot.config import Settings
+    env = _base_env()
+    env["OPTION_MIN_OPEN_INTEREST"] = "100"
+    s = Settings.from_env(env)
+    assert s.option_min_open_interest == 100
+
+
+def test_settings_option_min_open_interest_negative_rejected():
+    from alpaca_bot.config import Settings
+    import pytest
+    env = _base_env()
+    env["OPTION_MIN_OPEN_INTEREST"] = "-1"
+    with pytest.raises(ValueError, match="OPTION_MIN_OPEN_INTEREST"):
+        Settings.from_env(env)

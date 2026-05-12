@@ -144,3 +144,10 @@ class OptionContract:
     bid: float
     ask: float
     delta: float | None = None
+    open_interest: int | None = None
+
+    @property
+    def spread_pct(self) -> float:
+        if self.ask <= 0:
+            return 0.0
+        return (self.ask - self.bid) / self.ask

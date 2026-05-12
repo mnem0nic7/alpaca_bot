@@ -148,6 +148,8 @@ class Settings:
     enable_options_trading: bool = False
     option_chain_min_total_volume: int = 0
     option_stop_buffer_pct: float = 0.10
+    option_max_spread_pct: float = 0.50
+    option_min_open_interest: int = 0
     max_stop_pct: float = 0.05
     enable_profit_trail: bool = False
     profit_trail_pct: float = 0.95
@@ -352,6 +354,8 @@ class Settings:
                 values.get("OPTION_CHAIN_MIN_TOTAL_VOLUME", "0")
             ),
             option_stop_buffer_pct=float(values.get("OPTION_STOP_BUFFER_PCT", "0.10")),
+            option_max_spread_pct=float(values.get("OPTION_MAX_SPREAD_PCT", "0.50")),
+            option_min_open_interest=int(values.get("OPTION_MIN_OPEN_INTEREST", "0")),
             max_stop_pct=float(values.get("MAX_STOP_PCT", "0.05")),
             enable_profit_trail=_parse_bool(
                 "ENABLE_PROFIT_TRAIL", values.get("ENABLE_PROFIT_TRAIL", "false")
@@ -552,6 +556,12 @@ class Settings:
             raise ValueError("OPTION_DTE_MAX must be greater than OPTION_DTE_MIN")
         if not 0.0 < self.option_delta_target <= 1.0:
             raise ValueError("OPTION_DELTA_TARGET must be between 0 (exclusive) and 1.0 (inclusive)")
+        if not 0.0 < self.option_max_spread_pct <= 1.0:
+            raise ValueError(
+                "OPTION_MAX_SPREAD_PCT must be between 0 (exclusive) and 1.0 (inclusive)"
+            )
+        if self.option_min_open_interest < 0:
+            raise ValueError("OPTION_MIN_OPEN_INTEREST must be >= 0")
         if not 0 < self.max_stop_pct <= 0.50:
             raise ValueError(
                 "MAX_STOP_PCT must be between 0 (exclusive) and 0.50 (inclusive)"
