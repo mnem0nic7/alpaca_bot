@@ -898,3 +898,16 @@ class TestLifetimePnlByStrategy:
         )
         assert None not in result
         assert result == {"breakout": pytest.approx(300.0)}
+
+    def test_option_strategy_pnl_row_is_returned_as_float(self) -> None:
+        # The ×100 multiplier is applied inside the SQL CTE (CASE WHEN strategy_name =
+        # 'option' THEN 100 ELSE 1 END), so the DB returns an already-multiplied total.
+        # This test verifies the Python layer passes the value through correctly.
+        rows = [("option", -80.0)]
+        store = self._make_store(rows)
+        result = store.lifetime_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+        )
+        assert result == {"option": pytest.approx(-80.0)}
+        assert isinstance(result["option"], float)

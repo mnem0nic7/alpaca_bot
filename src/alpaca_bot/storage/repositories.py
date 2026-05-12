@@ -867,7 +867,8 @@ class OrderStore:
             WITH trade_pnl AS (
                 SELECT x.strategy_name,
                        (x.fill_price - e.fill_price)
-                           * COALESCE(x.filled_quantity, x.quantity) AS pnl
+                           * COALESCE(x.filled_quantity, x.quantity)
+                           * CASE WHEN x.strategy_name = 'option' THEN 100 ELSE 1 END AS pnl
                   FROM orders x
                   JOIN LATERAL (
                       SELECT fill_price
