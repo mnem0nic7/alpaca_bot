@@ -1808,3 +1808,38 @@ def test_uuid_stop_inherits_strategy_name_from_position() -> None:
     assert synced_stops[0].strategy_name == "bull_flag", (
         "UUID stop must inherit strategy_name from the synced position, not default to 'breakout'"
     )
+
+
+def test_option_stop_buffer_pct_parses_from_env() -> None:
+    settings = Settings.from_env(
+        {
+            "TRADING_MODE": "paper",
+            "ENABLE_LIVE_TRADING": "false",
+            "STRATEGY_VERSION": "v1-breakout",
+            "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+            "MARKET_DATA_FEED": "sip",
+            "SYMBOLS": "AAPL",
+            "DAILY_SMA_PERIOD": "20",
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "ENTRY_TIMEFRAME_MINUTES": "15",
+            "RISK_PER_TRADE_PCT": "0.0025",
+            "MAX_POSITION_PCT": "0.05",
+            "MAX_OPEN_POSITIONS": "3",
+            "DAILY_LOSS_LIMIT_PCT": "0.01",
+            "STOP_LIMIT_BUFFER_PCT": "0.001",
+            "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+            "ENTRY_STOP_PRICE_BUFFER": "0.01",
+            "ENTRY_WINDOW_START": "10:00",
+            "ENTRY_WINDOW_END": "15:30",
+            "FLATTEN_TIME": "15:45",
+            "OPTION_STOP_BUFFER_PCT": "0.12",
+        }
+    )
+    assert settings.option_stop_buffer_pct == 0.12
+
+
+def test_option_stop_buffer_pct_defaults_to_ten_percent() -> None:
+    settings = make_settings()  # does not set OPTION_STOP_BUFFER_PCT
+    assert settings.option_stop_buffer_pct == 0.10

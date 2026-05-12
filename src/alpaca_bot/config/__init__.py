@@ -147,6 +147,7 @@ class Settings:
     option_delta_target: float = 0.50
     enable_options_trading: bool = False
     option_chain_min_total_volume: int = 0
+    option_stop_buffer_pct: float = 0.10
     max_stop_pct: float = 0.05
     enable_profit_trail: bool = False
     profit_trail_pct: float = 0.95
@@ -350,6 +351,7 @@ class Settings:
             option_chain_min_total_volume=int(
                 values.get("OPTION_CHAIN_MIN_TOTAL_VOLUME", "0")
             ),
+            option_stop_buffer_pct=float(values.get("OPTION_STOP_BUFFER_PCT", "0.10")),
             max_stop_pct=float(values.get("MAX_STOP_PCT", "0.05")),
             enable_profit_trail=_parse_bool(
                 "ENABLE_PROFIT_TRAIL", values.get("ENABLE_PROFIT_TRAIL", "false")
