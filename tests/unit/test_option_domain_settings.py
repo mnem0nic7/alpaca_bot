@@ -166,7 +166,6 @@ def test_settings_option_max_spread_pct_from_env():
 
 def test_settings_option_max_spread_pct_validation_zero_rejected():
     from alpaca_bot.config import Settings
-    import pytest
     env = _base_env()
     env["OPTION_MAX_SPREAD_PCT"] = "0.0"
     with pytest.raises(ValueError, match="OPTION_MAX_SPREAD_PCT"):
@@ -175,7 +174,6 @@ def test_settings_option_max_spread_pct_validation_zero_rejected():
 
 def test_settings_option_max_spread_pct_validation_above_one_rejected():
     from alpaca_bot.config import Settings
-    import pytest
     env = _base_env()
     env["OPTION_MAX_SPREAD_PCT"] = "1.1"
     with pytest.raises(ValueError, match="OPTION_MAX_SPREAD_PCT"):
@@ -198,7 +196,6 @@ def test_settings_option_min_open_interest_from_env():
 
 def test_settings_option_min_open_interest_negative_rejected():
     from alpaca_bot.config import Settings
-    import pytest
     env = _base_env()
     env["OPTION_MIN_OPEN_INTEREST"] = "-1"
     with pytest.raises(ValueError, match="OPTION_MIN_OPEN_INTEREST"):
