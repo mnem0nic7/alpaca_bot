@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 from alpaca_bot.domain.models import Bar
+
+logger = logging.getLogger(__name__)
 
 _MIN_BUFFER = 0.01
 
@@ -14,6 +17,12 @@ def calculate_atr(bars: Sequence[Bar], period: int) -> float | None:
     prev_close for the first TR).
     """
     if len(bars) < period + 1:
+        logger.debug(
+            "ATR unavailable for %s: %d bars available, %d required",
+            bars[0].symbol if bars else "unknown",
+            len(bars),
+            period + 1,
+        )
         return None
 
     def _tr(i: int) -> float:
