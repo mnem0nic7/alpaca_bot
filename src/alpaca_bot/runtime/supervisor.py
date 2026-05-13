@@ -629,6 +629,9 @@ class RuntimeSupervisor:
         open_positions = self._apply_highest_price_updates(
             open_positions, intraday_bars_by_symbol
         )
+        open_positions = self._apply_lowest_price_updates(
+            open_positions, intraday_bars_by_symbol
+        )
         daily_bars_end = datetime.combine(session_date, datetime.min.time()).replace(
             tzinfo=self.settings.market_timezone
         )
@@ -1380,6 +1383,50 @@ class RuntimeSupervisor:
             result.append(replace(position, highest_price=bar_high))
         return result
 
+    def _apply_lowest_price_updates(
+        self,
+        positions: list[OpenPosition],
+        intraday_bars_by_symbol: dict,
+    ) -> list[OpenPosition]:
+        position_store = getattr(self.runtime, "position_store", None)
+        update_fn = (
+            getattr(position_store, "update_lowest_price", None)
+            if position_store is not None
+            else None
+        )
+        store_lock = getattr(self.runtime, "store_lock", None)
+        result = []
+        for position in positions:
+            if position.quantity >= 0:
+                result.append(position)
+                continue
+            bars = intraday_bars_by_symbol.get(position.symbol, ())
+            if not bars:
+                result.append(position)
+                continue
+            bar_low = bars[-1].low
+            if bar_low >= position.lowest_price:
+                result.append(position)
+                continue
+            if update_fn is not None:
+                try:
+                    with store_lock if store_lock is not None else contextlib.nullcontext():
+                        update_fn(
+                            symbol=position.symbol,
+                            trading_mode=self.settings.trading_mode,
+                            strategy_version=self.settings.strategy_version,
+                            strategy_name=position.strategy_name,
+                            lowest_price=bar_low,
+                        )
+                except Exception:
+                    logger.warning(
+                        "Failed to persist lowest_price for %s; using in-memory value",
+                        position.symbol,
+                        exc_info=True,
+                    )
+            result.append(replace(position, lowest_price=bar_low))
+        return result
+
     def _close_stale_carryover_positions(
         self,
         *,
@@ -1463,6 +1510,7 @@ class RuntimeSupervisor:
                 stop_price=position.stop_price,
                 trailing_active=position.stop_price > position.initial_stop_price,
                 highest_price=position.highest_price or position.entry_price,
+                lowest_price=getattr(position, "lowest_price", None) or position.entry_price,
                 strategy_name=getattr(position, "strategy_name", "breakout"),
             )
             for position in self._load_position_records()
