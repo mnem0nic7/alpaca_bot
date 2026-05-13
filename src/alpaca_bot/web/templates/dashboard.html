@@ -448,7 +448,7 @@
                     upnl_denom=0.0
                 ) %}
                 {% for position in snapshot.positions %}
-                  {% set multiplier = 100 if position.strategy_name == "option" else 1 %}
+                  {% set multiplier = 100 if position.strategy_name in ("option", "short_option") else 1 %}
                   {% set stop_dist_pct = ((position.entry_price - position.stop_price) / position.entry_price * 100) if (position.entry_price and position.stop_price) else none %}
                   {% set is_trailing = (position.stop_price and position.initial_stop_price and position.stop_price > position.initial_stop_price) %}
                   {% set stop_moved = (position.stop_price - position.initial_stop_price) if (position.stop_price and position.initial_stop_price) else none %}
