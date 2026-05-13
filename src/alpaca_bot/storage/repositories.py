@@ -918,9 +918,10 @@ class DailySessionStateStore:
                 last_reconciled_at,
                 notes,
                 equity_baseline,
-                updated_at
+                updated_at,
+                external_upnl_baseline
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (session_date, trading_mode, strategy_version, strategy_name)
             DO UPDATE SET
                 entries_disabled = EXCLUDED.entries_disabled,
@@ -928,7 +929,8 @@ class DailySessionStateStore:
                 last_reconciled_at = EXCLUDED.last_reconciled_at,
                 notes = EXCLUDED.notes,
                 equity_baseline = COALESCE(EXCLUDED.equity_baseline, daily_session_state.equity_baseline),
-                updated_at = EXCLUDED.updated_at
+                updated_at = EXCLUDED.updated_at,
+                external_upnl_baseline = COALESCE(EXCLUDED.external_upnl_baseline, daily_session_state.external_upnl_baseline)
             """,
             (
                 state.session_date,
@@ -941,6 +943,7 @@ class DailySessionStateStore:
                 state.notes,
                 state.equity_baseline,
                 state.updated_at,
+                state.external_upnl_baseline,
             ),
             commit=commit,
         )
@@ -966,7 +969,8 @@ class DailySessionStateStore:
                 last_reconciled_at,
                 notes,
                 equity_baseline,
-                updated_at
+                updated_at,
+                external_upnl_baseline
             FROM daily_session_state
             WHERE session_date = %s AND trading_mode = %s AND strategy_version = %s
               AND strategy_name IS NOT DISTINCT FROM %s
@@ -986,6 +990,7 @@ class DailySessionStateStore:
             notes=row[7],
             equity_baseline=float(row[8]) if row[8] is not None else None,
             updated_at=row[9],
+            external_upnl_baseline=float(row[10]) if row[10] is not None else None,
         )
 
 
@@ -1002,7 +1007,7 @@ class DailySessionStateStore:
             SELECT
                 session_date, trading_mode, strategy_version, strategy_name,
                 entries_disabled, flatten_complete, last_reconciled_at,
-                notes, equity_baseline, updated_at
+                notes, equity_baseline, updated_at, external_upnl_baseline
             FROM daily_session_state
             WHERE session_date = %s
               AND trading_mode = %s
@@ -1022,6 +1027,7 @@ class DailySessionStateStore:
                 notes=row[7],
                 equity_baseline=float(row[8]) if row[8] is not None else None,
                 updated_at=row[9],
+                external_upnl_baseline=float(row[10]) if row[10] is not None else None,
             )
             for row in rows
         ]

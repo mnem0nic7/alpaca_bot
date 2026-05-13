@@ -387,6 +387,7 @@ def test_daily_session_state_store_round_trip() -> None:
                 "reconciliation pending",
                 None,  # equity_baseline
                 now,
+                None,  # external_upnl_baseline
             )
         ]
     )
