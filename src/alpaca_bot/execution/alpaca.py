@@ -96,6 +96,7 @@ class BrokerPosition:
     quantity: float
     entry_price: float | None = None
     market_value: float | None = None
+    unrealized_pl: float | None = None
 
 
 @dataclass(frozen=True)
@@ -275,6 +276,9 @@ class AlpacaExecutionAdapter:
                 else None,
                 market_value=float(position.market_value)
                 if getattr(position, "market_value", None) is not None
+                else None,
+                unrealized_pl=float(position.unrealized_pl)
+                if getattr(position, "unrealized_pl", None) is not None
                 else None,
             )
             for position in raw_positions

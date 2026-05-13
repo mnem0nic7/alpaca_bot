@@ -3439,3 +3439,36 @@ def test_heartbeat_file_written_each_cycle(monkeypatch, tmp_path) -> None:
     assert all("2026-04-30" in w for w in write_calls), (
         f"Heartbeat should contain cycle timestamp; got {write_calls}"
     )
+
+
+def test_broker_position_has_unrealized_pl_field() -> None:
+    """BrokerPosition must accept unrealized_pl as a keyword argument."""
+    pos = BrokerPosition(
+        symbol="QBTS", quantity=-500.0, entry_price=2.50,
+        market_value=-650.0, unrealized_pl=-300.0,
+    )
+    assert pos.unrealized_pl == pytest.approx(-300.0)
+    pos_no_upnl = BrokerPosition(symbol="AAPL", quantity=10.0)
+    assert pos_no_upnl.unrealized_pl is None
+
+
+def test_daily_session_state_has_external_upnl_baseline_field() -> None:
+    """DailySessionState must accept external_upnl_baseline and default to None."""
+    state = DailySessionState(
+        session_date=date(2026, 5, 13),
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        entries_disabled=False,
+        flatten_complete=False,
+        equity_baseline=100_000.0,
+        external_upnl_baseline=-500.0,
+    )
+    assert state.external_upnl_baseline == pytest.approx(-500.0)
+    state_default = DailySessionState(
+        session_date=date(2026, 5, 13),
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        entries_disabled=False,
+        flatten_complete=False,
+    )
+    assert state_default.external_upnl_baseline is None
