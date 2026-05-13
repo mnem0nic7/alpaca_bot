@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 import math
 from typing import NamedTuple
+
+logger = logging.getLogger(__name__)
 
 
 class WeightResult(NamedTuple):
@@ -43,6 +46,10 @@ def compute_strategy_weights(
     sharpes: dict[str, float] = {}
     for name in active_strategies:
         if trade_count[name] < min_trades:
+            logger.debug(
+                "strategy %s has %d trade(s) (< min %d): assigning sharpe=0.0",
+                name, trade_count[name], min_trades,
+            )
             sharpes[name] = 0.0
             continue
         daily_values = list(daily_pnl[name].values())
