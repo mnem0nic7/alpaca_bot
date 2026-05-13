@@ -609,3 +609,133 @@ def test_decision_log_list_recent_empty_returns_empty_list() -> None:
     store = DecisionLogStore(conn)
     results = store.list_recent(session_date=date(2026, 5, 12))
     assert results == []
+
+
+# ── PositionStore lowest_price column ────────────────────────────────────────
+
+class _CapturingCursor:
+    def __init__(self, rows=None):
+        self._rows = rows or []
+        self.executed: list[tuple] = []
+
+    def execute(self, sql, params=None):
+        self.executed.append((sql, params))
+
+    def fetchall(self):
+        return list(self._rows)
+
+
+class _CapturingConn:
+    def __init__(self, rows=None):
+        self._cursor = _CapturingCursor(rows)
+        self.committed = False
+
+    def cursor(self): return self._cursor
+    def commit(self): self.committed = True
+    def rollback(self): pass
+
+
+def _make_short_position_rec(
+    lowest_price: float | None = None,
+    highest_price: float | None = None,
+) -> PositionRecord:
+    return PositionRecord(
+        symbol="QBTS",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="short_equity",
+        quantity=-100,
+        entry_price=5.50,
+        stop_price=6.00,
+        initial_stop_price=6.00,
+        opened_at=datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        highest_price=highest_price,
+        lowest_price=lowest_price,
+    )
+
+
+def test_save_includes_lowest_price_in_insert():
+    conn = _CapturingConn()
+    store = PositionStore(conn)
+    store.save(_make_short_position_rec(lowest_price=4.80))
+    sql, params = conn._cursor.executed[0]
+    assert "lowest_price" in sql
+    assert 4.80 in params
+
+
+def test_save_with_none_lowest_price_passes_none():
+    conn = _CapturingConn()
+    store = PositionStore(conn)
+    store.save(_make_short_position_rec(lowest_price=None))
+    _, params = conn._cursor.executed[0]
+    assert params[-1] is None  # lowest_price is last param
+
+
+def test_save_coalesce_preserves_existing_lowest_price():
+    conn = _CapturingConn()
+    store = PositionStore(conn)
+    store.save(_make_short_position_rec(lowest_price=None))
+    sql, _ = conn._cursor.executed[0]
+    assert "COALESCE" in sql
+
+
+def test_replace_all_includes_lowest_price_in_insert():
+    conn = _CapturingConn()
+    store = PositionStore(conn)
+    store.replace_all(
+        positions=[_make_short_position_rec(lowest_price=4.70)],
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+    )
+    insert_sqls = [s for s, _ in conn._cursor.executed if "INSERT" in s]
+    assert insert_sqls, "replace_all must issue an INSERT"
+    assert "lowest_price" in insert_sqls[0]
+
+
+def test_list_all_populates_lowest_price():
+    row = (
+        "QBTS", "paper", "v1-breakout", "short_equity",
+        -100.0, 5.50, 6.00, 6.00,
+        datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        None,   # highest_price
+        4.80,   # lowest_price at index 11
+    )
+    conn = _CapturingConn(rows=[row])
+    store = PositionStore(conn)
+    records = store.list_all(trading_mode=TradingMode.PAPER, strategy_version="v1-breakout")
+    assert len(records) == 1
+    assert records[0].lowest_price == 4.80
+
+
+def test_list_all_handles_null_lowest_price():
+    row = (
+        "QBTS", "paper", "v1-breakout", "short_equity",
+        -100.0, 5.50, 6.00, 6.00,
+        datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        None,   # highest_price
+        None,   # lowest_price is NULL
+    )
+    conn = _CapturingConn(rows=[row])
+    store = PositionStore(conn)
+    records = store.list_all(trading_mode=TradingMode.PAPER, strategy_version="v1-breakout")
+    assert records[0].lowest_price is None
+
+
+def test_update_lowest_price_issues_targeted_update():
+    conn = _CapturingConn()
+    store = PositionStore(conn)
+    store.update_lowest_price(
+        symbol="QBTS",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="short_equity",
+        lowest_price=4.50,
+    )
+    assert conn.committed
+    sql, params = conn._cursor.executed[0]
+    assert "UPDATE positions" in sql
+    assert "lowest_price" in sql
+    assert 4.50 in params
+    assert "QBTS" in params

@@ -420,6 +420,7 @@ def test_position_store_save_list_and_delete() -> None:
                     now,
                     now,
                     None,  # highest_price
+                    None,  # lowest_price
                 )
             ]
         ]

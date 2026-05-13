@@ -112,6 +112,7 @@ def test_list_all_populates_highest_price():
         datetime(2026, 5, 1, tzinfo=timezone.utc),
         datetime(2026, 5, 1, tzinfo=timezone.utc),
         3.20,  # highest_price
+        None,  # lowest_price
     )
     conn = _FakeConn(rows=[row])
     store = PositionStore(conn)
@@ -127,6 +128,7 @@ def test_list_all_handles_null_highest_price():
         datetime(2026, 5, 1, tzinfo=timezone.utc),
         datetime(2026, 5, 1, tzinfo=timezone.utc),
         None,  # highest_price is NULL in DB
+        None,  # lowest_price
     )
     conn = _FakeConn(rows=[row])
     store = PositionStore(conn)
