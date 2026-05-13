@@ -543,7 +543,7 @@ In `src/alpaca_bot/runtime/supervisor.py`, find the block starting `self._stale_
 Just before the `class RuntimeSupervisor` definition (search for it in the file), add:
 
 ```python
-def _external_short_upnl(broker_positions: list) -> float:
+def _external_short_upnl(broker_positions: list[BrokerPosition]) -> float:
     """Sum unrealized_pl for all short (quantity < 0) broker positions.
 
     Alpaca's unrealized_pl already incorporates the ×100 option contract multiplier,
@@ -551,9 +551,8 @@ def _external_short_upnl(broker_positions: list) -> float:
     Returns 0.0 when no short positions exist or none have unrealized_pl set.
     """
     return sum(
-        bp.unrealized_pl
-        for bp in broker_positions
-        if bp.quantity < 0 and bp.unrealized_pl is not None
+        (bp.unrealized_pl for bp in broker_positions if bp.quantity < 0 and bp.unrealized_pl is not None),
+        0.0,
     )
 ```
 
