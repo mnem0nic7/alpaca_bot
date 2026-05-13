@@ -3633,3 +3633,105 @@ def test_external_short_upnl_baseline_restored_from_db_on_restart(monkeypatch) -
     assert supervisor._session_external_upnl_baseline.get(session_date) == pytest.approx(-300.0), (
         "external_upnl_baseline must be loaded from persisted DB row after restart"
     )
+
+
+def test_loss_limit_re_fire_flag_true_when_breach_loaded_from_db(monkeypatch) -> None:
+    """When the loss-limit-fired state is recovered from Postgres on restart
+    (entries_disabled=True in the persisted equity row) and the limit remains
+    breached, the daily_loss_limit_breached audit payload must include re_fire=True."""
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    settings = make_settings()  # DAILY_LOSS_LIMIT_PCT=0.01
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    session_date = date(2026, 4, 25)
+
+    class PersistedBreachedStore(RecordingDailySessionStateStore):
+        def load(
+            self, *, session_date, trading_mode, strategy_version, strategy_name="breakout"
+        ):
+            if strategy_name == "_equity":
+                return DailySessionState(
+                    session_date=session_date,
+                    trading_mode=trading_mode,
+                    strategy_version=strategy_version,
+                    strategy_name="_equity",
+                    entries_disabled=True,  # loss limit had previously fired
+                    flatten_complete=False,
+                    equity_baseline=100_000.0,
+                    external_upnl_baseline=0.0,
+                )
+            return None
+
+    # equity=98_800 → adjusted_pnl=-1_200; limit=1% × 100_000=1_000 → still breached
+    broker = FakeBroker(
+        account=BrokerAccount(equity=98_800.0, buying_power=197_600.0, trading_blocked=False)
+    )
+    order_store = RecordingOrderStore(daily_pnl=0.0)
+    runtime = make_runtime_context(
+        settings,
+        order_store=order_store,
+        daily_session_state_store=PersistedBreachedStore(),
+    )
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        cycle_intent_executor=lambda **kwargs: None,
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    breach_events = [
+        e for e in runtime.audit_event_store.appended
+        if getattr(e, "event_type", None) == "daily_loss_limit_breached"
+    ]
+    assert len(breach_events) == 1
+    assert breach_events[0].payload["re_fire"] is True, (
+        "re_fire must be True when the breach was recovered from DB, not freshly triggered"
+    )
+
+
+def test_loss_limit_re_fire_flag_false_on_genuine_breach(monkeypatch) -> None:
+    """When the loss limit is breached for the first time in the current process
+    lifetime (not recovered from DB), the audit payload must include re_fire=False."""
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    settings = make_settings()  # DAILY_LOSS_LIMIT_PCT=0.01
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+
+    # equity=98_800 → adjusted_pnl=-1_200; limit=1% × 100_000=1_000 → breached
+    broker = FakeBroker(
+        account=BrokerAccount(equity=98_800.0, buying_power=197_600.0, trading_blocked=False)
+    )
+    order_store = RecordingOrderStore(daily_pnl=0.0)
+    supervisor, runtime = _make_minimal_supervisor(
+        module, RuntimeSupervisor,
+        settings=settings, order_store=order_store, broker=broker,
+        now=now, equity_baseline=100_000.0,
+    )
+    # Seed external baseline to 0 so adjusted_pnl == total_pnl (no external shorts)
+    from alpaca_bot.strategy.breakout import session_day as _session_day
+    supervisor._session_external_upnl_baseline[_session_day(now, settings)] = 0.0
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    breach_events = [
+        e for e in runtime.audit_event_store.appended
+        if getattr(e, "event_type", None) == "daily_loss_limit_breached"
+    ]
+    assert len(breach_events) == 1
+    assert breach_events[0].payload["re_fire"] is False, (
+        "re_fire must be False when the breach was detected live, not loaded from DB"
+    )
