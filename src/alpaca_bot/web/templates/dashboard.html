@@ -360,6 +360,7 @@
             </thead>
             <tbody>
               {% for name, flag in snapshot.strategy_flags %}
+                {%- set is_managed = name in ("short_option", "short_equity") %}
                 {%- set wl = snapshot.strategy_win_loss.get(name) %}
                 {%- set cap = snapshot.strategy_capital_pct.get(name, 0.0) %}
                 {%- set entries_off = snapshot.strategy_entries_disabled.get(name, false) %}
@@ -373,23 +374,29 @@
                 <tr>
                   <td class="mono">
                     {{ name }}
-                    {% if option_strategy_names is defined and name in option_strategy_names %}
+                    {% if is_managed %}
+                      <span style="font-size: 0.7em; color: var(--muted); margin-left: 0.3em">MGD</span>
+                    {% elif option_strategy_names is defined and name in option_strategy_names %}
                       <span style="font-size: 0.7em; color: var(--muted); margin-left: 0.3em">OPT</span>
                     {% endif %}
                   </td>
-                  <td class="{{ '' if is_enabled else 'warn' }}">{{ "Enabled" if is_enabled else "Disabled" }}</td>
+                  <td class="muted">{{ "Managed" if is_managed else ("Enabled" if is_enabled else "Disabled") }}</td>
                   <td style="white-space: nowrap">
+                    {% if not is_managed %}
                     <form method="post" action="/strategies/{{ name }}/toggle">
                       <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'toggle') }}">
                       <button type="submit" class="btn-neutral">{{ "Disable" if is_enabled else "Enable" }}</button>
                     </form>
+                    {% endif %}
                   </td>
-                  <td class="{{ 'warn' if entries_off else 'muted' }}">{{ "off" if entries_off else "on" }}</td>
+                  <td class="{{ 'warn' if (not is_managed and entries_off) else 'muted' }}">{{ "—" if is_managed else ("off" if entries_off else "on") }}</td>
                   <td style="white-space: nowrap">
+                    {% if not is_managed %}
                     <form method="post" action="/strategies/{{ name }}/toggle-entries">
                       <input type="hidden" name="_csrf_token" value="{{ csrf_token_for(request, 'toggle') }}">
                       <button type="submit" class="btn-neutral">{{ "Enable Entries" if entries_off else "Disable Entries" }}</button>
                     </form>
+                    {% endif %}
                   </td>
                   <td>{% if wl %}{{ wl[0] }}W / {{ wl[1] }}L{% else %}—{% endif %}</td>
                   <td style="text-align: right">{% if wl and (wl[0] + wl[1]) > 0 %}{{ "%.0f%%" | format(wl[0] / (wl[0] + wl[1]) * 100) }}{% else %}—{% endif %}</td>
@@ -399,7 +406,7 @@
                     {%- else %}—{% endif %}
                   </td>
                   <td style="text-align: right">{% if sw %}{{ "%.0f%%"|format(sw.weight * 100) }}{% else %}—{% endif %}</td>
-                  <td style="text-align: right">{% if cap > 0 %}{{ "%.1f" | format(cap) }}%{% elif sw %}0%{% else %}—{% endif %}</td>
+                  <td style="text-align: right">{% if cap != 0.0 %}{{ "%.1f" | format(cap) }}%{% elif sw %}0%{% else %}—{% endif %}</td>
                   <td style="text-align: right">{{ open_count }}</td>
                   <td style="text-align: right" class="{% if today_pnl < 0 %}warn{% endif %}">{% if today_count > 0 %}{{ format_price(today_pnl) }}{% else %}—{% endif %}</td>
                   <td style="text-align: right">{% if today_count > 0 %}{{ today_count }}{% else %}—{% endif %}</td>

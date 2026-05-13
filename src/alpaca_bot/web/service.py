@@ -276,6 +276,14 @@ def load_dashboard_snapshot(
         trading_mode=settings.trading_mode,
         strategy_version=settings.strategy_version,
     )
+    _managed = {
+        pos.strategy_name
+        for pos in positions
+        if pos.strategy_name in ("short_option", "short_equity")
+    }
+    if _managed:
+        strategy_flags = strategy_flags + [(name, None) for name in sorted(_managed)]
+
     if hasattr(order_store, "win_loss_counts_by_strategy"):
         strategy_win_loss: dict[str, tuple[int, int]] = order_store.win_loss_counts_by_strategy(
             trading_mode=settings.trading_mode,
