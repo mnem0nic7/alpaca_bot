@@ -486,7 +486,7 @@
                     </td>
                     {% if last_price is not none and position.entry_price %}
                       {% set upnl = (last_price - position.entry_price) * position.quantity * multiplier %}
-                      {% set upnl_pct = (last_price - position.entry_price) / position.entry_price * 100 %}
+                      {% set upnl_pct = (upnl / (init_val | abs) * 100) if init_val != 0 else 0 %}
                       <td style="color: {{ 'var(--accent)' if upnl >= 0 else '#c0392b' }}">
                         {% if upnl >= 0 %}+{{ format_price(upnl) }}{% else %}-{{ format_price(0 - upnl) }}{% endif %}
                       </td>
@@ -504,10 +504,10 @@
                   {%- if last_price is not none %}{% set ns.total_curr_val = ns.total_curr_val + last_price * position.quantity * multiplier %}{% endif %}
                   {%- if last_price is not none and position.entry_price %}
                     {%- set upnl_acc = (last_price - position.entry_price) * position.quantity * multiplier %}
-                    {%- set upnl_pct_acc = (last_price - position.entry_price) / position.entry_price * 100 %}
+                    {%- set upnl_pct_acc = (upnl_acc / (init_val | abs) * 100) if init_val != 0 else 0 %}
                     {%- set ns.total_upnl = ns.total_upnl + upnl_acc %}
-                    {%- set ns.weighted_upnl_num = ns.weighted_upnl_num + upnl_pct_acc * init_val %}
-                    {%- set ns.upnl_denom = ns.upnl_denom + init_val %}
+                    {%- set ns.weighted_upnl_num = ns.weighted_upnl_num + upnl_pct_acc * (init_val | abs) %}
+                    {%- set ns.upnl_denom = ns.upnl_denom + (init_val | abs) %}
                   {%- endif %}
                   {%- if stop_dist_pct is not none and init_val > 0 %}
                     {%- set ns.weighted_stop_num = ns.weighted_stop_num + stop_dist_pct * init_val %}
