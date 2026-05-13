@@ -4,7 +4,7 @@
 
 **Goal:** Fix four issues: skip shorts in `_apply_highest_price_updates`, add two missing engine tests, add observability logging for floor-gated strategies, add ATR fallback debug logging.
 
-**Architecture:** All changes are isolated to existing files. No new files, no schema changes, no audit events. Fixes #1 and #2 are correctness improvements; #3 and #4 are observability additions (debug-level logging only).
+**Architecture:** All changes are isolated to existing files. No new files, no schema changes, no audit events. Fixes #1 and #2 are correctness improvements; #3 and #4 are observability additions (debug-level logging only). ATR logging lives in `atr.py`, not `engine.py`, because `evaluate_cycle()` must remain a pure function (CLAUDE.md constraint).
 
 **Tech Stack:** Python 3.12, pytest, logging stdlib
 
@@ -14,9 +14,9 @@
 
 | File | What changes |
 |---|---|
-| `src/alpaca_bot/runtime/supervisor.py` | Add short-skip guard to `_apply_highest_price_updates`; add confidence floor debug log |
+| `src/alpaca_bot/runtime/supervisor.py` | Add short-skip guard to `_apply_highest_price_updates` |
 | `src/alpaca_bot/risk/weighting.py` | Add `import logging` + debug log when strategy gets `sharpe=0.0` due to `min_trades` |
-| `src/alpaca_bot/core/engine.py` | Add `import logging` + debug log in both ATR-fallback branches |
+| `src/alpaca_bot/risk/atr.py` | Add `import logging` + debug log when ATR returns None (insufficient bars) |
 | `tests/unit/test_supervisor_highest_price.py` | Add `test_apply_highest_price_updates_skips_short_positions` |
 | `tests/unit/test_cycle_engine.py` | Add `test_short_breakeven_uses_tracked_lowest_price` and `test_short_trailing_stop_atr_unavailable_falls_back_to_bar_high` |
 
@@ -39,9 +39,8 @@ def test_apply_highest_price_updates_skips_short_positions():
     pstore = _RecordingPositionStore()
     supervisor = _make_supervisor(settings, pstore)
 
-    # Short: qty=-100, stock dropped to 4.70 (bar.high=4.70 > current highest_price=5.00 is false
-    # for a short that rallied from 5.00 — actually simulating a short where bar.high=5.20 > 5.00
-    # so without the guard this WOULD trigger an update)
+    # Short: qty=-100, bar.high=5.20 > highest_price=5.00 — without the guard this WOULD
+    # trigger an update, writing a new highest_price to the DB for a short position.
     position = OpenPosition(
         symbol="AAPL",
         entry_timestamp=datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc),
@@ -219,43 +218,29 @@ Append to `tests/unit/test_cycle_engine.py`, after the test from Task 2:
 def test_short_trailing_stop_atr_unavailable_falls_back_to_bar_high():
     """Short trailing stop: when ATR is unavailable (< period+1 daily bars), falls back to bar.high.
 
-    Mirrors test_trailing_stop_atr_unavailable_falls_back_to_bar_low for longs (line 1041).
+    Mirrors test_trailing_stop_atr_unavailable_falls_back_to_bar_low for longs (line ~1041).
 
-    Setup: short entry=10.00, stop=10.50, risk_per_share=0.30.
-    profit_trigger = 10.00 + 1.0 * (-0.30) = 9.70.  (is_short: trigger = entry + R*risk)
+    Setup:
+      entry_price=10.00, initial_stop_price=10.50, stop_price=10.50, quantity=-50
+      risk_per_share = entry_price - initial_stop_price = 10.00 - 10.50 = -0.50  (computed property)
+      TRAILING_STOP_PROFIT_TRIGGER_R=0.001
+      profit_trigger = 10.00 + 0.001 * (-0.50) = 9.9995
+      bar.low=9.80 <= 9.9995 → profit trigger fires
 
-    Wait — for shorts, profit_trigger is computed the same way:
-      profit_trigger = entry_price + trailing_stop_profit_trigger_r * risk_per_share
-    risk_per_share for a short is stored as negative (stop is above entry).
-    But _make_short_position doesn't set risk_per_share. Check engine default...
-
-    Actually looking at engine.py:264-266:
-      profit_trigger = position.entry_price + settings.trailing_stop_profit_trigger_r * position.risk_per_share
-
-    For short: entry=10.00, risk_per_share defaults to 0.0 in OpenPosition.
-    trigger = 10.00 + R * 0.0 = 10.00, and bar.low <= 10.00 always when stock is below entry.
-    So we need risk_per_share != 0 to control the trigger reliably.
-
-    Use TRAILING_STOP_PROFIT_TRIGGER_R very small (0.001) and risk_per_share=0.30 so
-    trigger = 10.00 + 0.001 * 0.30 ≈ 10.0003, and bar.low=9.80 easily beats it.
-
-    ATR: provide only 3 daily bars (< 14+1=15 required) → calculate_atr returns None.
-    Fallback (engine.py:290-291): new_stop = round(min(10.50, 10.00, bar.high=9.85), 2) = 9.85.
-    accept: 9.85 < 10.50 AND 9.85 > close=9.82 → emit UPDATE_STOP at 9.85.
+    ATR: only 3 daily bars provided; calculate_atr(period=14) requires 15 → returns None.
+    Short fallback (engine.py:289-291):
+      new_stop = round(min(stop_price=10.50, entry_price=10.00, bar.high=9.85), 2) = 9.85
+    Accept conditions: 9.85 < 10.50 (tightening) AND 9.85 > close=9.82 → emit UPDATE_STOP at 9.85.
     """
     CycleIntentType, evaluate_cycle = load_engine_api()
-    from alpaca_bot.domain import OpenPosition as _OP
-    from datetime import datetime, timezone as _tz
-
-    position = _OP(
+    position = OpenPosition(
         symbol="TSLA",
-        entry_timestamp=datetime(2026, 5, 1, 10, 0, tzinfo=_tz.utc),
+        entry_timestamp=datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc),
         entry_price=10.00,
         quantity=-50,
         entry_level=10.50,
-        initial_stop_price=10.50,
+        initial_stop_price=10.50,  # risk_per_share = 10.00 - 10.50 = -0.50
         stop_price=10.50,
-        risk_per_share=0.30,
         strategy_name="bear_breakdown",
     )
     bar = Bar(
@@ -305,7 +290,7 @@ Again a coverage test over existing engine code:
 cd /workspace/alpaca_bot && pytest tests/unit/test_cycle_engine.py::test_short_trailing_stop_atr_unavailable_falls_back_to_bar_high -v
 ```
 
-Expected: **PASS**. If it fails, trace the trigger calculation — `risk_per_share` may need adjustment.
+Expected: **PASS**. If it fails, check the profit trigger calculation — `risk_per_share` is `entry_price - initial_stop_price = -0.50`, which is negative (as expected for shorts), making `profit_trigger = 9.9995`, well above `bar.low = 9.80`.
 
 ### Step 3.3: Commit
 
@@ -325,7 +310,6 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `src/alpaca_bot/risk/weighting.py:1-4` (add import) and `:45-46` (add debug log)
-- Modify: `src/alpaca_bot/runtime/supervisor.py:369` (add post-scoring debug log)
 
 ### Step 4.1: Add logger to `weighting.py`
 
@@ -372,26 +356,7 @@ logger = logging.getLogger(__name__)
             continue
 ```
 
-### Step 4.3: Add debug log in `supervisor.py` after confidence scores are computed
-
-In `supervisor.py`, after line 369 (`session_confidence_scores = compute_confidence_scores(...)`), add:
-
-**Old** (line 369):
-```python
-        session_confidence_scores = compute_confidence_scores(session_sharpes, confidence_floor)
-        # Per-strategy losing streak exclusion.
-```
-
-**New:**
-```python
-        session_confidence_scores = compute_confidence_scores(session_sharpes, confidence_floor)
-        for _sn, _sc in session_confidence_scores.items():
-            if _sc <= confidence_floor:
-                logger.debug("strategy %s confidence at floor %.2f", _sn, _sc)
-        # Per-strategy losing streak exclusion.
-```
-
-### Step 4.4: Run all supervisor and weighting tests
+### Step 4.3: Run all weighting tests
 
 ```bash
 cd /workspace/alpaca_bot && pytest tests/unit/test_supervisor_weights.py tests/unit/test_weighting.py tests/unit/test_confidence_scoring.py -v
@@ -399,38 +364,39 @@ cd /workspace/alpaca_bot && pytest tests/unit/test_supervisor_weights.py tests/u
 
 Expected: **all PASS** — no logic changed, only logging added.
 
-### Step 4.5: Commit
+### Step 4.4: Commit
 
 ```bash
-cd /workspace/alpaca_bot && git add src/alpaca_bot/risk/weighting.py src/alpaca_bot/runtime/supervisor.py
-git commit -m "feat: add debug logging for floor-gated strategies
+cd /workspace/alpaca_bot && git add src/alpaca_bot/risk/weighting.py
+git commit -m "feat: log when a strategy is floor-gated by min_trades in weighting.py
 
-weighting.py logs when a strategy gets sharpe=0.0 due to insufficient trades.
-supervisor.py logs each strategy whose confidence score equals the floor.
-Helps operators identify warming-up strategies without querying the DB.
+Strategies with fewer than min_trades (default 5) receive sharpe=0.0, which
+maps to floor_score in the confidence scorer. Previously silent; now emits a
+debug log once per session day (weights are cached after first computation).
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ```
 
 ---
 
-## Task 5: Add ATR fallback debug logging in `engine.py`
+## Task 5: Add ATR fallback debug logging in `atr.py`
+
+`evaluate_cycle()` must remain a pure function (CLAUDE.md: "no I/O, no side effects"). Logging therefore cannot live in `engine.py`. Instead, add it to `calculate_atr` in `atr.py`: when the function determines it cannot compute ATR (insufficient bars), it logs before returning `None`. This fires at the same moment the engine would fall back, and `bars[0].symbol` carries the symbol identifier.
 
 **Files:**
-- Modify: `src/alpaca_bot/core/engine.py:1-7` (add import) and `:289-292`, `:302-305` (add logs)
+- Modify: `src/alpaca_bot/risk/atr.py`
 
-### Step 5.1: Add logger to `engine.py`
+### Step 5.1: Add logger to `atr.py`
 
-`engine.py` has no `logging` import. Add it at the top:
+`atr.py` currently has no `logging` import. Add it:
 
-**Old** (lines 1-7):
+**Old** (lines 1-5):
 ```python
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from enum import StrEnum
-from typing import TYPE_CHECKING, Mapping, Sequence
+from collections.abc import Sequence
+
+from alpaca_bot.domain.models import Bar
 ```
 
 **New:**
@@ -438,75 +404,52 @@ from typing import TYPE_CHECKING, Mapping, Sequence
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from enum import StrEnum
-from typing import TYPE_CHECKING, Mapping, Sequence
+from collections.abc import Sequence
+
+from alpaca_bot.domain.models import Bar
 
 logger = logging.getLogger(__name__)
 ```
 
-### Step 5.2: Add debug log in short ATR-fallback branch
+### Step 5.2: Add debug log before the early `return None` in `calculate_atr`
 
-**Old** (engine.py lines ~289-292):
+**Old** (lines 16-17):
 ```python
-                    else:
-                        new_stop = round(
-                            min(position.stop_price, position.entry_price, latest_bar.high), 2
-                        )
+    if len(bars) < period + 1:
+        return None
 ```
 
 **New:**
 ```python
-                    else:
-                        logger.debug(
-                            "trailing stop ATR unavailable for %s (short): using bar.high fallback",
-                            position.symbol,
-                        )
-                        new_stop = round(
-                            min(position.stop_price, position.entry_price, latest_bar.high), 2
-                        )
+    if len(bars) < period + 1:
+        logger.debug(
+            "ATR unavailable for %s: %d bars available, %d required",
+            bars[0].symbol if bars else "unknown",
+            len(bars),
+            period + 1,
+        )
+        return None
 ```
 
-### Step 5.3: Add debug log in long ATR-fallback branch
-
-**Old** (engine.py lines ~302-305):
-```python
-                    else:
-                        new_stop = round(
-                            max(position.stop_price, position.entry_price, latest_bar.low), 2
-                        )
-```
-
-**New:**
-```python
-                    else:
-                        logger.debug(
-                            "trailing stop ATR unavailable for %s (long): using bar.low fallback",
-                            position.symbol,
-                        )
-                        new_stop = round(
-                            max(position.stop_price, position.entry_price, latest_bar.low), 2
-                        )
-```
-
-### Step 5.4: Run all engine tests
+### Step 5.3: Run all engine and ATR tests
 
 ```bash
-cd /workspace/alpaca_bot && pytest tests/unit/test_cycle_engine.py -v
+cd /workspace/alpaca_bot && pytest tests/unit/test_cycle_engine.py tests/unit/test_atr.py -v
 ```
 
-Expected: **all PASS** — no logic changed, only logging added.
+Expected: **all PASS** — no logic changed, only logging added. The new Task 3 test (`test_short_trailing_stop_atr_unavailable_falls_back_to_bar_high`) should also pass here since it uses 3 daily bars → ATR unavailable → new log fires, fallback applied.
 
-### Step 5.5: Commit
+### Step 5.4: Commit
 
 ```bash
-cd /workspace/alpaca_bot && git add src/alpaca_bot/core/engine.py
-git commit -m "feat: log ATR fallback in trailing stop pass (both directions)
+cd /workspace/alpaca_bot && git add src/alpaca_bot/risk/atr.py
+git commit -m "feat: log ATR unavailable in calculate_atr (both trailing stop directions)
 
-When calculate_atr returns None (insufficient daily bars), the trailing
-stop silently used bar.high (short) or bar.low (long). Now emits a debug
-log so operators can see which symbols trigger the fallback.
+When daily bars < period+1, calculate_atr returns None and the trailing stop
+falls back to bar.high (short) or bar.low (long). Previously silent; now emits
+a debug log so operators can see which symbols trigger the fallback.
+
+Logging lives in atr.py (not engine.py) to preserve evaluate_cycle() purity.
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ```
@@ -535,11 +478,11 @@ Read the failure output. All changes in this plan are additive (guards and loggi
 - ✅ Fix 1: Task 1 adds short guard + test
 - ✅ Fix 2a: Task 2 adds `test_short_breakeven_uses_tracked_lowest_price`
 - ✅ Fix 2b: Task 3 adds `test_short_trailing_stop_atr_unavailable_falls_back_to_bar_high`
-- ✅ Fix 3: Task 4 adds logging in weighting.py and supervisor.py
-- ✅ Fix 4: Task 5 adds ATR fallback debug logs in engine.py
+- ✅ Fix 3: Task 4 adds logging in weighting.py only (supervisor.py per-cycle loop dropped — fires every 60s, too noisy; the weighting.py log fires once per session day due to weight caching)
+- ✅ Fix 4: Task 5 adds ATR-unavailable debug log in atr.py (not engine.py — engine must stay pure)
 
 **Placeholder scan:** No TBDs, no "similar to Task N" references, all code blocks complete.
 
-**Type consistency:** `_make_short_position`, `load_engine_api`, `make_settings`, `Bar`, `CycleIntentType`, `evaluate_cycle` all match existing definitions in test_cycle_engine.py. `_make_bar`, `_make_supervisor`, `_RecordingPositionStore` in test_supervisor_highest_price.py match existing definitions.
+**Type consistency:** `_make_short_position`, `load_engine_api`, `make_settings`, `Bar`, `CycleIntentType`, `evaluate_cycle`, `OpenPosition`, `datetime`, `timezone`, `pytest` all at module scope in test_cycle_engine.py — Task 3 uses them directly with no internal imports. `_make_bar`, `_make_supervisor`, `_RecordingPositionStore`, `OpenPosition`, `datetime`, `timezone` in test_supervisor_highest_price.py match existing module-scope definitions.
 
-**Note on Task 3:** The test imports `OpenPosition` directly instead of using `_make_short_position` because it needs `risk_per_share=0.30` which the helper doesn't expose. This is intentional.
+**Note on Task 3:** `OpenPosition.risk_per_share` is a computed `@property` (`entry_price - initial_stop_price`), not a stored dataclass field. The test uses `initial_stop_price=10.50` so that `risk_per_share = 10.00 - 10.50 = -0.50`. Passing `risk_per_share=0.30` to the constructor would raise `TypeError`.
