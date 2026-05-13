@@ -14,6 +14,7 @@ from alpaca_bot.risk.atr import calculate_atr
 from alpaca_bot.strategy import StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import (
     daily_trend_filter_exit_passes,
+    daily_trend_filter_short_exit_passes,
     evaluate_breakout_signal,
     is_past_flatten_time,
     session_day,
@@ -158,8 +159,19 @@ def evaluate_cycle(
             if bar_age_seconds > 2 * settings.entry_timeframe_minutes * 60:
                 continue
 
+        is_short = position.quantity < 0
+        is_short_option = (
+            is_short
+            and position.stop_price == 0.0
+            and position.strategy_name == "short_option"
+        )
+
         if is_extended:
-            if position.stop_price > 0 and latest_bar.close <= position.stop_price:
+            stop_breached = position.stop_price > 0 and (
+                (not is_short and latest_bar.close <= position.stop_price)
+                or (is_short and latest_bar.close >= position.stop_price)
+            )
+            if stop_breached:
                 intents.append(
                     CycleIntent(
                         intent_type=CycleIntentType.EXIT,
@@ -174,11 +186,15 @@ def evaluate_cycle(
                 )
             continue
 
-        if settings.enable_profit_target:
+        if settings.enable_profit_target and not is_short_option:
             target_price = round(
                 position.entry_price + settings.profit_target_r * position.risk_per_share, 2
             )
-            if latest_bar.high >= target_price:
+            target_hit = (
+                (not is_short and latest_bar.high >= target_price)
+                or (is_short and latest_bar.low <= target_price)
+            )
+            if target_hit:
                 intents.append(
                     CycleIntent(
                         intent_type=CycleIntentType.EXIT,
@@ -196,14 +212,19 @@ def evaluate_cycle(
         ).total_seconds()
         is_too_young = position_age_s < settings.viability_min_hold_minutes * 60
 
-        if settings.enable_trend_filter_exit and not is_too_young:
+        if settings.enable_trend_filter_exit and not is_too_young and not is_short_option:
             daily_bars_pos = daily_bars_by_symbol.get(position.symbol, ())
             if len(daily_bars_pos) >= settings.daily_sma_period + settings.trend_filter_exit_lookback_days:
                 daily_bar_age_days = (
                     now - daily_bars_pos[-1].timestamp.astimezone(timezone.utc)
                 ).days
                 if daily_bar_age_days <= settings.viability_daily_bar_max_age_days:
-                    if not daily_trend_filter_exit_passes(daily_bars_pos, settings):
+                    passes = (
+                        daily_trend_filter_short_exit_passes(daily_bars_pos, settings)
+                        if is_short
+                        else daily_trend_filter_exit_passes(daily_bars_pos, settings)
+                    )
+                    if not passes:
                         intents.append(
                             CycleIntent(
                                 intent_type=CycleIntentType.EXIT,
@@ -215,7 +236,7 @@ def evaluate_cycle(
                         )
                         continue
 
-        if settings.enable_vwap_breakdown_exit and not is_too_young:
+        if settings.enable_vwap_breakdown_exit and not is_too_young and not is_short_option:
             session_date = now.astimezone(settings.market_timezone).date()
             today_bars = [
                 b for b in bars
@@ -223,7 +244,11 @@ def evaluate_cycle(
             ]
             if len(today_bars) >= settings.vwap_breakdown_min_bars:
                 vwap = calculate_vwap(today_bars)
-                if vwap is not None and latest_bar.close < vwap:
+                vwap_exit = vwap is not None and (
+                    (not is_short and latest_bar.close < vwap)
+                    or (is_short and latest_bar.close > vwap)
+                )
+                if vwap_exit:
                     intents.append(
                         CycleIntent(
                             intent_type=CycleIntentType.EXIT,
@@ -235,40 +260,60 @@ def evaluate_cycle(
                     )
                     continue
 
-        profit_trigger = (
-            position.entry_price
-            + settings.trailing_stop_profit_trigger_r * position.risk_per_share
-        )
-        if latest_bar.high >= profit_trigger:
-            atr = (
-                calculate_atr(
-                    daily_bars_by_symbol.get(position.symbol, ()),
-                    settings.atr_period,
-                )
-                if settings.trailing_stop_atr_multiplier > 0
-                else None
+        if not is_short_option:
+            profit_trigger = (
+                position.entry_price
+                + settings.trailing_stop_profit_trigger_r * position.risk_per_share
             )
-            if atr is not None:
-                trailing_candidate = (
-                    latest_bar.high - settings.trailing_stop_atr_multiplier * atr
-                )
-                new_stop = round(
-                    max(position.stop_price, position.entry_price, trailing_candidate), 2
-                )
-            else:
-                new_stop = round(
-                    max(position.stop_price, position.entry_price, latest_bar.low), 2
-                )
-            if new_stop > position.stop_price and new_stop < latest_bar.close:
-                intents.append(
-                    CycleIntent(
-                        intent_type=CycleIntentType.UPDATE_STOP,
-                        symbol=position.symbol,
-                        timestamp=latest_bar.timestamp,
-                        stop_price=new_stop,
-                        strategy_name=strategy_name,
+            trigger_hit = (
+                (not is_short and latest_bar.high >= profit_trigger)
+                or (is_short and latest_bar.low <= profit_trigger)
+            )
+            if trigger_hit:
+                atr = (
+                    calculate_atr(
+                        daily_bars_by_symbol.get(position.symbol, ()),
+                        settings.atr_period,
                     )
+                    if settings.trailing_stop_atr_multiplier > 0
+                    else None
                 )
+                if is_short:
+                    if atr is not None:
+                        trailing_candidate = (
+                            latest_bar.low + settings.trailing_stop_atr_multiplier * atr
+                        )
+                        new_stop = round(
+                            min(position.stop_price, position.entry_price, trailing_candidate), 2
+                        )
+                    else:
+                        new_stop = round(
+                            min(position.stop_price, position.entry_price, latest_bar.high), 2
+                        )
+                    accept = new_stop < position.stop_price and new_stop > latest_bar.close
+                else:
+                    if atr is not None:
+                        trailing_candidate = (
+                            latest_bar.high - settings.trailing_stop_atr_multiplier * atr
+                        )
+                        new_stop = round(
+                            max(position.stop_price, position.entry_price, trailing_candidate), 2
+                        )
+                    else:
+                        new_stop = round(
+                            max(position.stop_price, position.entry_price, latest_bar.low), 2
+                        )
+                    accept = new_stop > position.stop_price and new_stop < latest_bar.close
+                if accept:
+                    intents.append(
+                        CycleIntent(
+                            intent_type=CycleIntentType.UPDATE_STOP,
+                            symbol=position.symbol,
+                            timestamp=latest_bar.timestamp,
+                            stop_price=new_stop,
+                            strategy_name=strategy_name,
+                        )
+                    )
 
     if settings.enable_profit_trail and not is_extended:
         _profit_trail_exited = {
@@ -282,6 +327,9 @@ def evaluate_cycle(
         for position in open_positions:
             if position.symbol in _profit_trail_exited:
                 continue
+            is_short_pt = position.quantity < 0
+            if is_short_pt and position.stop_price == 0.0 and position.strategy_name == "short_option":
+                continue
             bars = intraday_bars_by_symbol.get(position.symbol, ())
             if not bars:
                 continue
@@ -292,10 +340,16 @@ def evaluate_cycle(
             ]
             if not today_bars:
                 continue
-            today_high = max(b.high for b in today_bars)
-            trail_candidate = round(today_high * settings.profit_trail_pct, 2)
             prior_stop = _pt_prior_stops.get(position.symbol, position.stop_price)
-            if trail_candidate > prior_stop and trail_candidate < bars[-1].close:
+            if is_short_pt:
+                today_low = min(b.low for b in today_bars)
+                trail_candidate = round(today_low / settings.profit_trail_pct, 2)
+                accept = trail_candidate < prior_stop and trail_candidate > bars[-1].close
+            else:
+                today_high = max(b.high for b in today_bars)
+                trail_candidate = round(today_high * settings.profit_trail_pct, 2)
+                accept = trail_candidate > prior_stop and trail_candidate < bars[-1].close
+            if accept:
                 intents.append(
                     CycleIntent(
                         intent_type=CycleIntentType.UPDATE_STOP,
@@ -323,29 +377,52 @@ def evaluate_cycle(
                 continue
             if position.entry_price <= 0:
                 continue
+            is_short_be = position.quantity < 0
+            if is_short_be and position.stop_price == 0.0 and position.strategy_name == "short_option":
+                continue
             bars = intraday_bars_by_symbol.get(position.symbol, ())
             if not bars:
                 continue
             latest_bar = bars[-1]
-            trigger = position.entry_price * (1 + settings.breakeven_trigger_pct)
             effective_stop = _be_emitted.get(position.symbol, position.stop_price)
-            if latest_bar.high >= trigger:
-                max_price = max(position.highest_price, latest_bar.high)
-                trail_stop = round(max_price * (1 - settings.breakeven_trail_pct), 2)
-                be_stop = max(position.entry_price, trail_stop)
-                if be_stop >= latest_bar.close:
-                    continue
-                if effective_stop < be_stop:
-                    intents.append(
-                        CycleIntent(
-                            intent_type=CycleIntentType.UPDATE_STOP,
-                            symbol=position.symbol,
-                            timestamp=now,
-                            stop_price=be_stop,
-                            strategy_name=strategy_name,
-                            reason="breakeven",
+            if is_short_be:
+                trigger = position.entry_price * (1 - settings.breakeven_trigger_pct)
+                if latest_bar.low <= trigger:
+                    min_price = min(position.lowest_price, latest_bar.low) if position.lowest_price > 0 else latest_bar.low
+                    trail_stop = round(min_price * (1 + settings.breakeven_trail_pct), 2)
+                    be_stop = min(position.entry_price, trail_stop)
+                    if be_stop <= latest_bar.close:
+                        continue
+                    if effective_stop > be_stop:
+                        intents.append(
+                            CycleIntent(
+                                intent_type=CycleIntentType.UPDATE_STOP,
+                                symbol=position.symbol,
+                                timestamp=now,
+                                stop_price=be_stop,
+                                strategy_name=strategy_name,
+                                reason="breakeven",
+                            )
                         )
-                    )
+            else:
+                trigger = position.entry_price * (1 + settings.breakeven_trigger_pct)
+                if latest_bar.high >= trigger:
+                    max_price = max(position.highest_price, latest_bar.high)
+                    trail_stop = round(max_price * (1 - settings.breakeven_trail_pct), 2)
+                    be_stop = max(position.entry_price, trail_stop)
+                    if be_stop >= latest_bar.close:
+                        continue
+                    if effective_stop < be_stop:
+                        intents.append(
+                            CycleIntent(
+                                intent_type=CycleIntentType.UPDATE_STOP,
+                                symbol=position.symbol,
+                                timestamp=now,
+                                stop_price=be_stop,
+                                strategy_name=strategy_name,
+                                reason="breakeven",
+                            )
+                        )
 
     # Cap-up pass: raise stop to MAX_STOP_PCT cap for any existing position whose stop
     # is more than max_stop_pct below entry. Trailing logic ran first; use emitted
@@ -364,22 +441,39 @@ def evaluate_cycle(
                 continue
             if position.stop_price <= 0 or position.entry_price <= 0:
                 continue
+            is_short_cap = position.quantity < 0
+            if is_short_cap and position.stop_price == 0.0 and position.strategy_name == "short_option":
+                continue
             bars = intraday_bars_by_symbol.get(position.symbol, ())
             if not bars:
                 continue
-            cap_stop = round(position.entry_price * (1 - settings.max_stop_pct), 2)
             effective_stop = emitted_update_stops.get(position.symbol, position.stop_price)
-            if effective_stop < cap_stop and cap_stop < bars[-1].close:
-                intents.append(
-                    CycleIntent(
-                        intent_type=CycleIntentType.UPDATE_STOP,
-                        symbol=position.symbol,
-                        timestamp=now,
-                        stop_price=cap_stop,
-                        strategy_name=strategy_name,
-                        reason="stop_cap_applied",
+            if is_short_cap:
+                cap_stop = round(position.entry_price * (1 + settings.max_stop_pct), 2)
+                if effective_stop > cap_stop and cap_stop > bars[-1].close:
+                    intents.append(
+                        CycleIntent(
+                            intent_type=CycleIntentType.UPDATE_STOP,
+                            symbol=position.symbol,
+                            timestamp=now,
+                            stop_price=cap_stop,
+                            strategy_name=strategy_name,
+                            reason="stop_cap_applied",
+                        )
                     )
-                )
+            else:
+                cap_stop = round(position.entry_price * (1 - settings.max_stop_pct), 2)
+                if effective_stop < cap_stop and cap_stop < bars[-1].close:
+                    intents.append(
+                        CycleIntent(
+                            intent_type=CycleIntentType.UPDATE_STOP,
+                            symbol=position.symbol,
+                            timestamp=now,
+                            stop_price=cap_stop,
+                            strategy_name=strategy_name,
+                            reason="stop_cap_applied",
+                        )
+                    )
 
     # Extract market context fields for stamping onto every decision record.
     _ctx_vix_close: float | None = None

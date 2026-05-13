@@ -65,6 +65,24 @@ def daily_trend_filter_exit_passes(daily_bars: Sequence[Bar], settings: Settings
     return False  # all N days below SMA → exit warranted
 
 
+def daily_trend_filter_short_exit_passes(daily_bars: Sequence[Bar], settings: Settings) -> bool:
+    """Return False when the last TREND_FILTER_EXIT_LOOKBACK_DAYS closes are all ABOVE the
+    daily SMA — uptrend confirmed, warranting an exit of the short. Returns True (hold) otherwise."""
+    n = settings.trend_filter_exit_lookback_days
+    required = settings.daily_sma_period + n
+    if len(daily_bars) < required:
+        return True  # insufficient history → hold
+    for offset in range(n):
+        window_end = -(1 + offset)
+        window_start = window_end - settings.daily_sma_period
+        window = daily_bars[window_start:window_end]
+        sma = sum(b.close for b in window) / len(window)
+        close = daily_bars[window_end - 1].close
+        if close <= sma:
+            return True  # at least one day at or below SMA → hold
+    return False  # all N days above SMA → uptrend confirmed → exit short
+
+
 def daily_downtrend_filter_passes(daily_bars: Sequence[Bar], settings: Settings) -> bool:
     """Returns True when the prior close is BELOW the SMA — stock is in a downtrend."""
     if len(daily_bars) < settings.daily_sma_period + 1:

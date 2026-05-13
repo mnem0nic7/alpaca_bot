@@ -2344,3 +2344,311 @@ def test_cap_up_stop_above_close_not_emitted() -> None:
     )
     update_stops = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
     assert update_stops == [], f"Expected no UPDATE_STOP, got {update_stops!r}"
+
+
+# ---------------------------------------------------------------------------
+# Task 6: short-position direction-awareness
+# ---------------------------------------------------------------------------
+
+def _make_short_position(
+    symbol: str = "QBTS",
+    entry_price: float = 6.00,
+    stop_price: float = 6.25,
+    initial_stop_price: float = 6.25,
+    quantity: float = -50,
+    highest_price: float = 0.0,
+    lowest_price: float = 0.0,
+    strategy_name: str = "short_equity",
+) -> OpenPosition:
+    return OpenPosition(
+        symbol=symbol,
+        entry_timestamp=datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        entry_price=entry_price,
+        quantity=quantity,
+        entry_level=initial_stop_price,
+        initial_stop_price=initial_stop_price,
+        stop_price=stop_price,
+        highest_price=highest_price,
+        lowest_price=lowest_price,
+        strategy_name=strategy_name,
+    )
+
+
+def _make_bar(
+    symbol: str,
+    close: float,
+    high: float = 0.0,
+    low: float = 0.0,
+    ts: datetime | None = None,
+) -> Bar:
+    ts = ts or datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc)
+    return Bar(
+        symbol=symbol,
+        timestamp=ts,
+        open=close,
+        high=high or close * 1.005,
+        low=low or close * 0.995,
+        close=close,
+        volume=100_000,
+    )
+
+
+def test_short_extended_hours_stop_breach_emits_exit_when_close_above_stop():
+    """During extended hours: short position breaches stop when close >= stop_price."""
+    from alpaca_bot.strategy.session import SessionType
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    position = _make_short_position(stop_price=6.25)
+    bar = _make_bar("QBTS", close=6.30, high=6.35, low=6.25,
+                    ts=datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
+    result = evaluate_cycle(
+        settings=make_settings(ENABLE_BREAKEVEN_STOP="false"),
+        now=datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"QBTS": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+        session_type=SessionType.PRE_MARKET,
+    )
+    exits = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert any(i.symbol == "QBTS" for i in exits), (
+        "Short position with close >= stop during extended hours must emit EXIT"
+    )
+
+
+def test_long_extended_hours_stop_not_breached_when_close_above_stop():
+    """Regression: long position must NOT emit EXIT when close > stop (price is safe)."""
+    from alpaca_bot.strategy.session import SessionType
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        entry_price=150.0,
+        quantity=10,
+        entry_level=140.0,
+        initial_stop_price=140.0,
+        stop_price=145.0,
+    )
+    bar = _make_bar("AAPL", close=155.0, high=156.0, low=154.0,
+                    ts=datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc))
+    result = evaluate_cycle(
+        settings=make_settings(ENABLE_BREAKEVEN_STOP="false"),
+        now=datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+        session_type=SessionType.PRE_MARKET,
+    )
+    exits = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT and i.symbol == "AAPL"]
+    assert exits == [], "Long position with price above stop must NOT emit EXIT"
+
+
+def test_short_profit_target_emits_exit_when_low_hits_target():
+    """Short profit target: entry=6.0, risk=-0.25, target = 6.0 + 2*(-0.25) = 5.50.
+    bar.low=5.45 <= 5.50 → EXIT."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    position = _make_short_position(entry_price=6.0, stop_price=6.25, initial_stop_price=6.25)
+    bar = Bar(
+        symbol="QBTS",
+        timestamp=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        open=5.80, high=5.85, low=5.45, close=5.55, volume=100_000,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_PROFIT_TARGET="true",
+            PROFIT_TARGET_R="2.0",
+            ENABLE_BREAKEVEN_STOP="false",
+        ),
+        now=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"QBTS": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    exits = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert any(i.symbol == "QBTS" and i.reason == "profit_target" for i in exits), (
+        "Short profit target must fire when low <= target"
+    )
+
+
+def test_short_atr_trailing_stop_moves_down_when_profitable():
+    """Short ATR trail: entry=6.0, risk=-0.25, trigger=5.75. bar.low=5.70 → pass activates.
+    atr_multiplier=0 → new_stop = min(6.25, 6.0, bar.high=5.78) = 5.78.
+    5.78 < 6.25 and 5.78 > close=5.75 → emit."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    position = _make_short_position(entry_price=6.0, stop_price=6.25, initial_stop_price=6.25)
+    bar = Bar(
+        symbol="QBTS",
+        timestamp=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        open=5.80, high=5.78, low=5.70, close=5.75, volume=100_000,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            TRAILING_STOP_PROFIT_TRIGGER_R="1.0",
+            TRAILING_STOP_ATR_MULTIPLIER="0",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_BREAKEVEN_STOP="false",
+            ENABLE_PROFIT_TRAIL="false",
+        ),
+        now=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"QBTS": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    updates = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    assert any(i.symbol == "QBTS" for i in updates), (
+        "Short ATR trail must emit UPDATE_STOP when low <= profit_trigger"
+    )
+    upd = next(i for i in updates if i.symbol == "QBTS")
+    assert upd.stop_price < 6.25, "Updated stop must be below original stop for short"
+    assert upd.stop_price > 5.75, "Updated stop must remain above close for short"
+
+
+def test_short_profit_trail_emits_when_candidate_below_stop():
+    """Short profit trail: today_low=5.70, trail_pct=0.95 → candidate=5.70/0.95≈6.00.
+    prior_stop=6.25 → 6.00 < 6.25 and 6.00 > close=5.75 → emit."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    position = _make_short_position(entry_price=6.0, stop_price=6.25, initial_stop_price=6.25)
+    bar = Bar(
+        symbol="QBTS",
+        timestamp=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        open=5.80, high=5.82, low=5.70, close=5.75, volume=100_000,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_PROFIT_TRAIL="true",
+            PROFIT_TRAIL_PCT="0.95",
+            TRAILING_STOP_ATR_MULTIPLIER="0",
+            TRAILING_STOP_PROFIT_TRIGGER_R="999",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_BREAKEVEN_STOP="false",
+        ),
+        now=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"QBTS": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    updates = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    pt_updates = [i for i in updates if i.symbol == "QBTS" and i.reason == "profit_trail"]
+    assert pt_updates, "Short profit trail must emit UPDATE_STOP"
+    assert pt_updates[0].stop_price < 6.25, "Profit trail must lower the stop for shorts"
+
+
+def test_short_breakeven_stop_emits_when_low_hits_trigger():
+    """Short breakeven: trigger = 6.0*(1-0.0025)=5.985. bar.low=5.98 <= 5.985.
+    min_price=min(lowest_price=6.0, 5.98)=5.98.
+    trail_stop=round(5.98*1.002,2)=5.99. be_stop=min(6.0,5.99)=5.99.
+    be_stop=5.99 > close=5.97 → accept. effective_stop=6.25 > 5.99 → emit."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    position = _make_short_position(
+        entry_price=6.0, stop_price=6.25, initial_stop_price=6.25, lowest_price=6.0
+    )
+    bar = Bar(
+        symbol="QBTS",
+        timestamp=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        open=6.00, high=6.02, low=5.98, close=5.97, volume=100_000,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_BREAKEVEN_STOP="true",
+            BREAKEVEN_TRIGGER_PCT="0.0025",
+            BREAKEVEN_TRAIL_PCT="0.002",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+            TRAILING_STOP_ATR_MULTIPLIER="0",
+            TRAILING_STOP_PROFIT_TRIGGER_R="999",
+        ),
+        now=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"QBTS": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    updates = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    be_updates = [i for i in updates if i.symbol == "QBTS" and i.reason == "breakeven"]
+    assert be_updates, "Short breakeven must emit UPDATE_STOP"
+    assert be_updates[0].stop_price <= 6.0, "Breakeven stop must be at or below entry for short"
+
+
+def test_short_cap_pass_lowers_stop_when_too_far_above_entry():
+    """Short cap: cap_stop = 6.0*(1+0.05)=6.30. current_stop=6.50 > 6.30.
+    close=5.80 < 6.30 → cap_stop above close → emit UPDATE_STOP at 6.30."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    position = _make_short_position(entry_price=6.0, stop_price=6.50, initial_stop_price=6.50)
+    bar = Bar(
+        symbol="QBTS",
+        timestamp=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        open=5.90, high=5.92, low=5.78, close=5.80, volume=100_000,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            MAX_STOP_PCT="0.05",
+            ENABLE_BREAKEVEN_STOP="false",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+            TRAILING_STOP_ATR_MULTIPLIER="0",
+            TRAILING_STOP_PROFIT_TRIGGER_R="999",
+        ),
+        now=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"QBTS": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    updates = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    cap_updates = [i for i in updates if i.symbol == "QBTS" and i.reason == "stop_cap_applied"]
+    assert cap_updates, "Short cap pass must emit UPDATE_STOP when stop too far above entry"
+    assert cap_updates[0].stop_price == round(6.0 * 1.05, 2)
+
+
+def test_short_option_skips_all_stop_update_passes():
+    """Short option (stop_price=0.0, strategy_name='short_option') must not emit UPDATE_STOP."""
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    position = _make_short_position(
+        symbol="ALHC250620P00005000",
+        entry_price=0.80,
+        stop_price=0.0,
+        initial_stop_price=0.0,
+        strategy_name="short_option",
+    )
+    bar = _make_bar("ALHC250620P00005000", close=0.60, high=0.65, low=0.50)
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_BREAKEVEN_STOP="true",
+            ENABLE_PROFIT_TRAIL="true",
+            SYMBOLS="ALHC250620P00005000",
+        ),
+        now=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"ALHC250620P00005000": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    updates = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
+    assert updates == [], "Short options must produce no UPDATE_STOP intents"
