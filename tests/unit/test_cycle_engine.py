@@ -2652,3 +2652,127 @@ def test_short_option_skips_all_stop_update_passes():
     )
     updates = [i for i in result.intents if i.intent_type == CycleIntentType.UPDATE_STOP]
     assert updates == [], "Short options must produce no UPDATE_STOP intents"
+
+
+def test_short_breakeven_uses_tracked_lowest_price():
+    """Short breakeven uses position.lowest_price when it is below current bar.low.
+
+    Setup: entry=6.00, lowest_price=5.85 (tracked from a prior cycle), bar.low=5.90.
+    trigger = 6.00 * (1 - 0.0025) = 5.985. bar.low=5.90 <= 5.985 → trigger fires.
+    min_price = min(5.85, 5.90) = 5.85  (tracked historical low wins).
+    trail_stop = round(5.85 * 1.002, 2) = 5.86.
+    be_stop = min(6.00, 5.86) = 5.86.
+    be_stop=5.86 > close=5.83 → accept. effective_stop=6.25 > 5.86 → emit.
+
+    Compare: same setup with lowest_price=6.0 gives trail_stop=5.91 — the
+    pre-tracked lowest_price produces a tighter (lower) stop.
+    """
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    position = _make_short_position(
+        entry_price=6.0, stop_price=6.25, initial_stop_price=6.25, lowest_price=5.85
+    )
+    bar = Bar(
+        symbol="QBTS",
+        timestamp=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        open=5.92, high=5.93, low=5.90, close=5.83, volume=100_000,
+    )
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_BREAKEVEN_STOP="true",
+            BREAKEVEN_TRIGGER_PCT="0.0025",
+            BREAKEVEN_TRAIL_PCT="0.002",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+            TRAILING_STOP_ATR_MULTIPLIER="0",
+            TRAILING_STOP_PROFIT_TRIGGER_R="999",
+        ),
+        now=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"QBTS": [bar]},
+        daily_bars_by_symbol={},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    be_updates = [
+        i for i in result.intents
+        if i.intent_type == CycleIntentType.UPDATE_STOP
+        and i.symbol == "QBTS"
+        and i.reason == "breakeven"
+    ]
+    assert be_updates, "Short breakeven must emit UPDATE_STOP"
+    # be_stop from tracked lowest_price=5.85: round(5.85*1.002,2)=5.86
+    # NOT from bar.low=5.90: round(5.90*1.002,2)=5.91
+    assert be_updates[0].stop_price == pytest.approx(5.86), (
+        f"Expected 5.86 (from tracked lowest_price=5.85), got {be_updates[0].stop_price}"
+    )
+
+
+def test_short_trailing_stop_atr_unavailable_falls_back_to_bar_high():
+    """Short trailing stop: when ATR is unavailable (< period+1 daily bars), falls back to bar.high.
+
+    Mirrors test_trailing_stop_atr_unavailable_falls_back_to_bar_low for longs (line ~1041).
+
+    Setup:
+      entry_price=10.00, initial_stop_price=10.50, stop_price=10.50, quantity=-50
+      risk_per_share = entry_price - initial_stop_price = 10.00 - 10.50 = -0.50 (computed property)
+      TRAILING_STOP_PROFIT_TRIGGER_R=0.001
+      profit_trigger = 10.00 + 0.001 * (-0.50) = 9.9995
+      bar.low=9.80 <= 9.9995 → profit trigger fires
+
+    ATR: only 3 daily bars; calculate_atr(period=14) requires 15 → returns None.
+    Short fallback (engine.py:289-291):
+      new_stop = round(min(stop_price=10.50, entry_price=10.00, bar.high=9.85), 2) = 9.85
+    Accept: 9.85 < 10.50 (tightening) AND 9.85 > close=9.82 → emit UPDATE_STOP at 9.85.
+    """
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    position = OpenPosition(
+        symbol="TSLA",
+        entry_timestamp=datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc),
+        entry_price=10.00,
+        quantity=-50,
+        entry_level=10.50,
+        initial_stop_price=10.50,  # risk_per_share = 10.00 - 10.50 = -0.50
+        stop_price=10.50,
+        strategy_name="bear_breakdown",
+    )
+    bar = Bar(
+        symbol="TSLA",
+        timestamp=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        open=9.90, high=9.85, low=9.80, close=9.82, volume=200_000,
+    )
+    # 3 daily bars → ATR(14) requires 15, so calculate_atr returns None
+    short_daily_bars = [
+        Bar(
+            symbol="TSLA",
+            timestamp=datetime(2026, 5, 1 + i, 20, 0, tzinfo=timezone.utc),
+            open=10.0, high=10.1, low=9.9, close=10.0, volume=100_000,
+        )
+        for i in range(3)
+    ]
+    result = evaluate_cycle(
+        settings=make_settings(
+            SYMBOLS="TSLA",
+            TRAILING_STOP_ATR_MULTIPLIER="1.5",
+            TRAILING_STOP_PROFIT_TRIGGER_R="0.001",
+            ENABLE_BREAKEVEN_STOP="false",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+        ),
+        now=datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc),
+        equity=10_000.0,
+        intraday_bars_by_symbol={"TSLA": [bar]},
+        daily_bars_by_symbol={"TSLA": short_daily_bars},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+    tsla_updates = [
+        i for i in result.intents
+        if i.intent_type == CycleIntentType.UPDATE_STOP and i.symbol == "TSLA"
+    ]
+    assert tsla_updates, "Short trailing stop must emit UPDATE_STOP when ATR unavailable"
+    # new_stop = round(min(10.50, 10.00, bar.high=9.85), 2) = 9.85
+    assert tsla_updates[0].stop_price == pytest.approx(9.85)
