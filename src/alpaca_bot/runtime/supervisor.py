@@ -1356,6 +1356,9 @@ class RuntimeSupervisor:
         store_lock = getattr(self.runtime, "store_lock", None)
         result = []
         for position in positions:
+            if position.quantity < 0:
+                result.append(position)
+                continue
             bars = intraday_bars_by_symbol.get(position.symbol, ())
             if not bars:
                 result.append(position)

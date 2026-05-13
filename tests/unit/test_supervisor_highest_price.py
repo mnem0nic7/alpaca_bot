@@ -270,3 +270,31 @@ def test_load_open_positions_null_highest_price_falls_back_to_entry_price():
 
     positions = supervisor._load_open_positions()
     assert positions[0].highest_price == 3.00  # falls back to entry_price
+
+
+def test_apply_highest_price_updates_skips_short_positions():
+    """Short positions (qty < 0) must be passed through unchanged — highest_price is only for longs."""
+    settings = _make_settings()
+    pstore = _RecordingPositionStore()
+    supervisor = _make_supervisor(settings, pstore)
+
+    # bar.high=5.20 > highest_price=5.00 — without the guard this WOULD trigger an update,
+    # writing a new highest_price to the DB for a short position.
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc),
+        entry_price=5.00,
+        quantity=-100.0,
+        entry_level=5.03,
+        initial_stop_price=5.03,
+        stop_price=5.03,
+        trailing_active=False,
+        highest_price=5.00,
+        strategy_name="bear_breakdown",
+    )
+    bars = {"AAPL": [_make_bar(high=5.20)]}
+
+    result = supervisor._apply_highest_price_updates([position], bars)
+
+    assert result[0].highest_price == 5.00, "Short position highest_price must not be updated"
+    assert pstore.update_calls == [], "No DB write should occur for short positions"
