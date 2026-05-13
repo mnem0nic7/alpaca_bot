@@ -72,6 +72,7 @@ class PositionRecord:
     strategy_name: str = "breakout"
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     highest_price: float | None = None
+    lowest_price: float | None = None
 
 
 @dataclass(frozen=True)

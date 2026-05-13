@@ -73,6 +73,7 @@ class OpenPosition:
     stop_price: float
     trailing_active: bool = False
     highest_price: float = 0.0
+    lowest_price: float = 0.0
     strategy_name: str = "breakout"
 
     @property
