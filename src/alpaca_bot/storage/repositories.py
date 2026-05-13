@@ -244,7 +244,7 @@ def _row_to_order_record(row: Any) -> OrderRecord:
 
 
 def _contract_multiplier(strategy_name: str | None) -> int:
-    return 100 if strategy_name == "option" else 1
+    return 100 if strategy_name in ("option", "short_option") else 1
 
 
 class OrderStore:
@@ -868,7 +868,7 @@ class OrderStore:
                 SELECT x.strategy_name,
                        (x.fill_price - e.fill_price)
                            * COALESCE(x.filled_quantity, x.quantity)
-                           * CASE WHEN x.strategy_name = 'option' THEN 100 ELSE 1 END AS pnl
+                           * CASE WHEN x.strategy_name IN ('option', 'short_option') THEN 100 ELSE 1 END AS pnl
                   FROM orders x
                   JOIN LATERAL (
                       SELECT fill_price

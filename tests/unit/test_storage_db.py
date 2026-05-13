@@ -348,6 +348,19 @@ class TestDailyRealizedPnl:
         )
         assert pnl == pytest.approx(-240.0)
 
+    def test_short_option_trade_applies_100x_multiplier(self):
+        """short_option exit applies ×100: (0.70 - 0.55) × 7 × 100 = 105.0.
+        This directly tests the safety-gate path — daily_realized_pnl feeds the
+        portfolio loss-limit check and must apply the multiplier for short_option."""
+        rows = [("BCRX260618P00009000", 0.55, 0.70, 7, "short_option")]
+        store = self._store(rows)
+        pnl = store.daily_realized_pnl(
+            trading_mode=self.MODE,
+            strategy_version=self.STRATEGY,
+            session_date=self.SESSION_DATE,
+        )
+        assert pnl == pytest.approx(105.0)
+
 
 class TestDailyRealizedPnlBySymbol:
     SESSION_DATE = date(2026, 4, 25)
@@ -698,6 +711,30 @@ class TestListTradePnlByStrategy:
         assert len(result) == 1
         assert result[0]["strategy_name"] == "option"
         assert result[0]["pnl"] == pytest.approx(-80.0)
+
+    def test_short_option_trade_pnl_applies_100x_multiplier(self) -> None:
+        """short_option trade: (0.70 - 0.55) × 7 × 100 = 105.0."""
+        # row: (strategy_name, exit_date, qty, exit_fill, entry_fill)
+        rows = [("short_option", date(2026, 1, 2), 7, 0.70, 0.55)]
+        store = self._make_store(rows)
+        result = store.list_trade_pnl_by_strategy(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            start_date=date(2026, 1, 1),
+            end_date=date(2026, 1, 28),
+        )
+        assert len(result) == 1
+        assert result[0]["strategy_name"] == "short_option"
+        assert result[0]["pnl"] == pytest.approx(105.0)
+
+
+def test_contract_multiplier_short_option_returns_100() -> None:
+    """_contract_multiplier must return 100 for 'short_option', just like 'option'."""
+    from alpaca_bot.storage.repositories import _contract_multiplier
+    assert _contract_multiplier("short_option") == 100
+    assert _contract_multiplier("option") == 100
+    assert _contract_multiplier("breakout") == 1
+    assert _contract_multiplier(None) == 1
 
 
 # ── test_win_loss_counts_by_strategy ─────────────────────────────────────────
