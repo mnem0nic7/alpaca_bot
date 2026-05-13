@@ -136,70 +136,75 @@ def recover_startup_state(
         if broker_position.quantity < 0:
             is_option = _is_option_symbol(broker_position.symbol)
             resolved_entry_price = broker_position.entry_price or 0.0
+            _short_existing = local_positions_by_symbol.get(broker_position.symbol, [])
+            _short_record = _short_existing[0] if len(_short_existing) == 1 else None
             if is_option:
                 synced_positions.append(
                     PositionRecord(
                         symbol=broker_position.symbol,
                         trading_mode=settings.trading_mode,
                         strategy_version=settings.strategy_version,
-                        strategy_name="short_option",
+                        strategy_name=_short_record.strategy_name if _short_record else "short_option",
                         quantity=broker_position.quantity,
-                        entry_price=resolved_entry_price,
-                        stop_price=0.0,
-                        initial_stop_price=0.0,
-                        opened_at=timestamp,
+                        entry_price=broker_position.entry_price if broker_position.entry_price is not None else (_short_record.entry_price if _short_record else 0.0),
+                        stop_price=_short_record.stop_price if _short_record else 0.0,
+                        initial_stop_price=_short_record.initial_stop_price if _short_record else 0.0,
+                        opened_at=_short_record.opened_at if _short_record else timestamp,
                         updated_at=timestamp,
                     )
                 )
-                runtime.audit_event_store.append(
-                    AuditEvent(
-                        event_type="startup_recovery_imported_short_option",
-                        symbol=broker_position.symbol,
-                        payload={
-                            "symbol": broker_position.symbol,
-                            "qty": broker_position.quantity,
-                            "entry_price": resolved_entry_price,
-                        },
-                        created_at=timestamp,
-                    ),
-                    commit=False,
-                )
+                if _short_record is None:
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="startup_recovery_imported_short_option",
+                            symbol=broker_position.symbol,
+                            payload={
+                                "symbol": broker_position.symbol,
+                                "qty": broker_position.quantity,
+                                "entry_price": resolved_entry_price,
+                            },
+                            created_at=timestamp,
+                        ),
+                        commit=False,
+                    )
             else:
-                stop_price = round(
+                _initial_stop = round(
                     resolved_entry_price * (1 + settings.breakout_stop_buffer_pct), 2
                 ) if resolved_entry_price > 0 else 0.0
+                stop_price = _short_record.stop_price if _short_record else _initial_stop
                 synced_positions.append(
                     PositionRecord(
                         symbol=broker_position.symbol,
                         trading_mode=settings.trading_mode,
                         strategy_version=settings.strategy_version,
-                        strategy_name="short_equity",
+                        strategy_name=_short_record.strategy_name if _short_record else "short_equity",
                         quantity=broker_position.quantity,
-                        entry_price=resolved_entry_price,
+                        entry_price=broker_position.entry_price if broker_position.entry_price is not None else (_short_record.entry_price if _short_record else 0.0),
                         stop_price=stop_price,
-                        initial_stop_price=stop_price,
-                        opened_at=timestamp,
+                        initial_stop_price=_short_record.initial_stop_price if _short_record else _initial_stop,
+                        opened_at=_short_record.opened_at if _short_record else timestamp,
                         updated_at=timestamp,
                     )
                 )
-                if stop_price > 0.0:
-                    new_positions_needing_stop.append(
-                        (broker_position.symbol, broker_position.quantity, stop_price, "short_equity")
+                if _short_record is None:
+                    if _initial_stop > 0.0:
+                        new_positions_needing_stop.append(
+                            (broker_position.symbol, broker_position.quantity, _initial_stop, "short_equity")
+                        )
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="startup_recovery_imported_short_equity",
+                            symbol=broker_position.symbol,
+                            payload={
+                                "symbol": broker_position.symbol,
+                                "qty": broker_position.quantity,
+                                "entry_price": resolved_entry_price,
+                                "stop_price": _initial_stop,
+                            },
+                            created_at=timestamp,
+                        ),
+                        commit=False,
                     )
-                runtime.audit_event_store.append(
-                    AuditEvent(
-                        event_type="startup_recovery_imported_short_equity",
-                        symbol=broker_position.symbol,
-                        payload={
-                            "symbol": broker_position.symbol,
-                            "qty": broker_position.quantity,
-                            "entry_price": resolved_entry_price,
-                            "stop_price": stop_price,
-                        },
-                        created_at=timestamp,
-                    ),
-                    commit=False,
-                )
             broker_positions_by_symbol[broker_position.symbol] = broker_position
             continue
         local_for_symbol = local_positions_by_symbol.get(broker_position.symbol, [])

@@ -2295,3 +2295,126 @@ def test_short_position_not_skipped_anymore():
     assert calls, "position_store.replace_all must be called"
     synced = calls[-1]["positions"]
     assert any(p.symbol == "QBTS" for p in synced), "QBTS must appear in synced positions"
+
+
+def test_short_equity_existing_record_preserves_stop_no_audit_event():
+    """On runtime reconciliation cycles the short-equity position already exists
+    locally with a (possibly trailed) stop_price.  recover_startup_state must:
+    - preserve the trailed stop rather than resetting to the initial formula
+    - not re-emit startup_recovery_imported_short_equity
+    If there is no active broker stop (crash-recovery scenario), a new stop is
+    correctly re-queued at the PRESERVED (trailed) price, not the initial formula."""
+    settings = make_settings()
+    now = datetime(2026, 5, 13, 19, 0, tzinfo=timezone.utc)
+    opened = datetime(2026, 5, 13, 13, 0, tzinfo=timezone.utc)
+
+    # Simulate a trailed stop lower than the initial formula would produce.
+    initial_stop = round(5.50 * (1 + settings.breakout_stop_buffer_pct), 2)
+    trailed_stop = initial_stop - 0.10  # engine moved it down after import
+
+    existing_record = PositionRecord(
+        symbol="QBTS",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="short_equity",
+        quantity=-50,
+        entry_price=5.50,
+        stop_price=trailed_stop,
+        initial_stop_price=initial_stop,
+        opened_at=opened,
+        updated_at=opened,
+    )
+    broker_position = BrokerPosition(symbol="QBTS", quantity=-50, entry_price=5.50)
+    position_store = RecordingPositionStore(existing_positions=[existing_record])
+    order_store = RecordingOrderStore()
+    audit_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings, position_store=position_store, order_store=order_store,
+        audit_event_store=audit_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    calls = position_store.replace_all_calls
+    saved = calls[-1]["positions"]
+    pos = next(p for p in saved if p.symbol == "QBTS")
+
+    assert pos.stop_price == trailed_stop, (
+        f"Existing trailed stop must be preserved; got {pos.stop_price} "
+        f"(initial formula would give {initial_stop})"
+    )
+    assert pos.initial_stop_price == initial_stop
+    assert pos.opened_at == opened, "opened_at must be preserved from existing record"
+
+    imported = [
+        e for e in audit_store.appended
+        if e.event_type == "startup_recovery_imported_short_equity"
+    ]
+    assert imported == [], "No imported audit event when record already exists"
+
+    # If the second pass re-queues a stop (crash-recovery path), it must use the
+    # trailed price, not the initial formula.
+    stop_orders = [o for o in order_store.saved if o.symbol == "QBTS" and o.intent_type == "stop"]
+    if stop_orders:
+        assert stop_orders[0].stop_price == trailed_stop, (
+            f"Re-queued stop must use trailed price {trailed_stop}, "
+            f"not initial formula {initial_stop}"
+        )
+
+
+def test_short_option_existing_record_no_duplicate_audit_event():
+    """On runtime reconciliation cycles the short-option position already exists
+    locally.  recover_startup_state must not re-emit
+    startup_recovery_imported_short_option and must preserve existing fields."""
+    settings = make_settings()
+    now = datetime(2026, 5, 13, 19, 0, tzinfo=timezone.utc)
+    opened = datetime(2026, 5, 13, 13, 0, tzinfo=timezone.utc)
+
+    existing_record = PositionRecord(
+        symbol="ALHC250620P00005000",
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="short_option",
+        quantity=-3,
+        entry_price=0.80,
+        stop_price=0.0,
+        initial_stop_price=0.0,
+        opened_at=opened,
+        updated_at=opened,
+    )
+    broker_position = BrokerPosition(
+        symbol="ALHC250620P00005000", quantity=-3, entry_price=0.80
+    )
+    position_store = RecordingPositionStore(existing_positions=[existing_record])
+    order_store = RecordingOrderStore()
+    audit_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings, position_store=position_store, order_store=order_store,
+        audit_event_store=audit_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    imported = [
+        e for e in audit_store.appended
+        if e.event_type == "startup_recovery_imported_short_option"
+    ]
+    assert imported == [], "No imported audit event when record already exists"
+
+    calls = position_store.replace_all_calls
+    saved = calls[-1]["positions"]
+    pos = next(p for p in saved if p.symbol == "ALHC250620P00005000")
+    assert pos.stop_price == 0.0
+    assert pos.opened_at == opened, "opened_at must be preserved from existing record"
