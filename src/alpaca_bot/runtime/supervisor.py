@@ -67,6 +67,13 @@ from alpaca_bot.storage.models import OptionOrderRecord
 STREAM_HEARTBEAT_TIMEOUT_SECONDS = 300
 
 
+def _external_short_upnl(broker_positions: list[BrokerPosition]) -> float:
+    return sum(
+        (bp.unrealized_pl for bp in broker_positions if bp.quantity < 0 and bp.unrealized_pl is not None),
+        0.0,
+    )
+
+
 @dataclass(frozen=True)
 class SupervisorCycleReport:
     entries_disabled: bool
@@ -152,6 +159,10 @@ class RuntimeSupervisor:
         self._consecutive_loss_gate_fired: set[date] = set()
         # Session dates for which a stale-carryover notification has been sent.
         self._stale_cleanup_notified: set[date] = set()
+        # Per-session external short unrealized P&L baseline: keyed by session_date.
+        self._session_external_upnl_baseline: dict[date, float] = {}
+        # Dates where _loss_limit_fired was seeded from DB (not a live breach).
+        self._loss_limit_loaded_from_db: set[date] = set()
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
@@ -343,10 +354,17 @@ class RuntimeSupervisor:
             )
             if persisted is not None and persisted.equity_baseline is not None:
                 self._session_equity_baseline[session_date] = persisted.equity_baseline
+                if persisted.external_upnl_baseline is not None:
+                    self._session_external_upnl_baseline[session_date] = (
+                        persisted.external_upnl_baseline
+                    )
                 if persisted.entries_disabled:
                     self._loss_limit_fired.add(session_date)
+                    self._loss_limit_loaded_from_db.add(session_date)
             else:
+                _ext_upnl = _external_short_upnl(broker_open_positions)
                 self._session_equity_baseline[session_date] = account.equity
+                self._session_external_upnl_baseline[session_date] = _ext_upnl
                 self._save_session_state(
                     DailySessionState(
                         session_date=session_date,
@@ -356,6 +374,7 @@ class RuntimeSupervisor:
                         entries_disabled=False,
                         flatten_complete=False,
                         equity_baseline=account.equity,
+                        external_upnl_baseline=_ext_upnl,
                         updated_at=timestamp,
                     )
                 )
@@ -430,8 +449,16 @@ class RuntimeSupervisor:
         loss_limit = self.settings.daily_loss_limit_pct * baseline_equity
         # Include unrealized losses via broker-reported equity delta so open
         # positions with large drawdowns trigger the limit before stops fill.
-        total_pnl = account.equity - baseline_equity
-        if total_pnl < -loss_limit:
+        # Exclude the intraday change in external short unrealized P&L so that
+        # externally-managed short positions don't consume the bot's loss budget.
+        external_upnl_now = _external_short_upnl(broker_open_positions)
+        external_upnl_baseline_val = self._session_external_upnl_baseline.get(
+            session_date, external_upnl_now
+        )
+        adjusted_pnl = (account.equity - baseline_equity) - (
+            external_upnl_now - external_upnl_baseline_val
+        )
+        if adjusted_pnl < -loss_limit:
             self._loss_limit_fired.add(session_date)
         # During extended-hours sessions the _loss_limit_fired set may have been
         # populated by the regular-session consecutive-loss gate (not an actual
@@ -439,7 +466,7 @@ class RuntimeSupervisor:
         # regular session doesn't silently block the entire after-hours session.
         _is_extended_session = session_type in {SessionType.PRE_MARKET, SessionType.AFTER_HOURS}
         daily_loss_limit_breached = (
-            total_pnl < -loss_limit
+            adjusted_pnl < -loss_limit
             if _is_extended_session
             else session_date in self._loss_limit_fired
         )
@@ -462,8 +489,9 @@ class RuntimeSupervisor:
                     event_type="daily_loss_limit_breached",
                     payload={
                         "realized_pnl": realized_pnl,
-                        "total_pnl": total_pnl,
+                        "total_pnl": adjusted_pnl,
                         "limit": loss_limit,
+                        "re_fire": session_date in self._loss_limit_loaded_from_db,
                         "timestamp": timestamp.isoformat(),
                     },
                     created_at=timestamp,
@@ -474,7 +502,7 @@ class RuntimeSupervisor:
                     self._notifier.send(
                         subject="Daily loss limit breached",
                         body=(
-                            f"Total PnL {total_pnl:.2f} (realized {realized_pnl:.2f}) "
+                            f"Total PnL {adjusted_pnl:.2f} (realized {realized_pnl:.2f}) "
                             f"exceeded limit {-loss_limit:.2f}. Entries disabled for the session."
                         ),
                     )

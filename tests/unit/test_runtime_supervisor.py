@@ -3472,3 +3472,164 @@ def test_daily_session_state_has_external_upnl_baseline_field() -> None:
         flatten_complete=False,
     )
     assert state_default.external_upnl_baseline is None
+
+
+def test_external_short_upnl_excluded_from_loss_limit(monkeypatch) -> None:
+    """External short positions (quantity < 0, unrealized_pl set) must not count
+    toward the daily loss limit. Only bot-managed adjusted P&L triggers the breach.
+
+    Numbers:
+      baseline_equity = 100_000
+      account.equity  =  98_800   → raw total_pnl = -1_200
+      external_upnl_baseline = -200  (stored when baseline was set)
+      external_upnl_now      = -1_300 (short lost more as price rose)
+      adjusted_pnl = -1_200 - (-1_300 - (-200)) = -1_200 + 1_100 = -100
+      loss_limit = 1% × 100_000 = 1_000
+      -100 < -1_000 → False → no breach
+    """
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    settings = make_settings()  # DAILY_LOSS_LIMIT_PCT=0.01
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+
+    short_position = BrokerPosition(
+        symbol="QBTS",
+        quantity=-500.0,
+        entry_price=2.50,
+        market_value=-650.0,
+        unrealized_pl=-1_300.0,
+    )
+    broker = FakeBroker(
+        account=BrokerAccount(equity=98_800.0, buying_power=197_600.0, trading_blocked=False),
+        open_positions=[short_position],
+    )
+    order_store = RecordingOrderStore(daily_pnl=0.0)
+    supervisor, runtime = _make_minimal_supervisor(
+        module, RuntimeSupervisor,
+        settings=settings, order_store=order_store, broker=broker,
+        now=now, equity_baseline=100_000.0,
+    )
+    from alpaca_bot.strategy.breakout import session_day as _session_day
+    supervisor._session_external_upnl_baseline[_session_day(now, settings)] = -200.0
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    assert report.entries_disabled is False, (
+        "Entries must not be disabled when bot-managed adjusted_pnl is within the limit"
+    )
+    breach_events = [
+        e for e in runtime.audit_event_store.appended
+        if getattr(e, "event_type", None) == "daily_loss_limit_breached"
+    ]
+    assert len(breach_events) == 0
+
+
+def test_external_short_upnl_baseline_persisted_on_first_cycle(monkeypatch) -> None:
+    """On the first cycle of a session the supervisor must save external_upnl_baseline
+    (sum of unrealized_pl for all short-qty broker positions) alongside equity_baseline."""
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+
+    short_position = BrokerPosition(
+        symbol="QBTS",
+        quantity=-500.0,
+        entry_price=2.50,
+        market_value=-650.0,
+        unrealized_pl=-500.0,
+    )
+    broker = FakeBroker(
+        account=BrokerAccount(equity=100_000.0, buying_power=200_000.0, trading_blocked=False),
+        open_positions=[short_position],
+    )
+    session_store = RecordingDailySessionStateStore()
+    order_store = RecordingOrderStore(daily_pnl=0.0)
+    runtime = make_runtime_context(
+        settings, order_store=order_store, daily_session_state_store=session_store
+    )
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        cycle_intent_executor=lambda **kwargs: None,
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    baseline_rows = [
+        s for s in session_store.saved
+        if getattr(s, "strategy_name", None) == "_equity"
+    ]
+    assert len(baseline_rows) >= 1
+    assert baseline_rows[0].external_upnl_baseline == pytest.approx(-500.0)
+
+
+def test_external_short_upnl_baseline_restored_from_db_on_restart(monkeypatch) -> None:
+    """On restart, external_upnl_baseline from the persisted DB row must be loaded into
+    _session_external_upnl_baseline so the loss limit adjustment stays correct."""
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    session_date = date(2026, 4, 25)
+
+    class PersistedBaselineStore(RecordingDailySessionStateStore):
+        def load(
+            self, *, session_date, trading_mode, strategy_version, strategy_name="breakout"
+        ):
+            if strategy_name == "_equity":
+                return DailySessionState(
+                    session_date=session_date,
+                    trading_mode=trading_mode,
+                    strategy_version=strategy_version,
+                    strategy_name="_equity",
+                    entries_disabled=False,
+                    flatten_complete=False,
+                    equity_baseline=100_000.0,
+                    external_upnl_baseline=-300.0,
+                )
+            return None
+
+    broker = FakeBroker(
+        account=BrokerAccount(equity=100_000.0, buying_power=200_000.0, trading_blocked=False)
+    )
+    order_store = RecordingOrderStore(daily_pnl=0.0)
+    runtime = make_runtime_context(
+        settings,
+        order_store=order_store,
+        daily_session_state_store=PersistedBaselineStore(),
+    )
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        cycle_intent_executor=lambda **kwargs: None,
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+    monkeypatch.setattr(module, "execute_cycle_intents", lambda **kwargs: None)
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    assert supervisor._session_external_upnl_baseline.get(session_date) == pytest.approx(-300.0), (
+        "external_upnl_baseline must be loaded from persisted DB row after restart"
+    )
