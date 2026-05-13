@@ -1494,3 +1494,99 @@ def test_non_42210000_stop_error_still_marks_error() -> None:
     assert "order_dispatch_failed" in event_types
     assert "order_dispatch_stop_price_rejected" not in event_types
 
+
+# ---------------------------------------------------------------------------
+# Buy-side routing tests
+# ---------------------------------------------------------------------------
+
+class RoutingBroker:
+    """Minimal broker that records (method_name, kwargs) for routing assertions."""
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+
+    def _record(self, name, kwargs):
+        self.calls.append((name, kwargs))
+        return SimpleNamespace(
+            broker_order_id="fake-id",
+            client_order_id=kwargs.get("client_order_id", "coid"),
+            status="accepted",
+            filled_qty=0,
+            filled_avg_price=None,
+            limit_price=None,
+            stop_price=kwargs.get("stop_price"),
+        )
+
+    def submit_stop_order(self, **kw): return self._record("submit_stop_order", kw)
+    def submit_buy_stop_order(self, **kw): return self._record("submit_buy_stop_order", kw)
+    def submit_market_exit(self, **kw): return self._record("submit_market_exit", kw)
+    def submit_market_buy_to_cover(self, **kw): return self._record("submit_market_buy_to_cover", kw)
+    def submit_option_market_buy_to_close(self, **kw): return self._record("submit_option_market_buy_to_close", kw)
+    def submit_stop_limit_entry(self, **kw): return self._record("submit_stop_limit_entry", kw)
+    def submit_limit_entry(self, **kw): return self._record("submit_limit_entry", kw)
+    def cancel_order(self, order_id: str): self.calls.append(("cancel_order", order_id))
+
+
+def _make_routing_stop_order(side: str) -> OrderRecord:
+    return OrderRecord(
+        client_order_id=f"test-stop-{side}",
+        symbol="QBTS",
+        side=side,
+        intent_type="stop",
+        status="pending_submit",
+        quantity=100,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        stop_price=6.05,
+    )
+
+
+def _make_routing_exit_order(side: str, symbol: str = "QBTS") -> OrderRecord:
+    return OrderRecord(
+        client_order_id=f"test-exit-{side}",
+        symbol=symbol,
+        side=side,
+        intent_type="exit",
+        status="pending_submit",
+        quantity=50,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+    )
+
+
+def test_buy_side_stop_routes_to_submit_buy_stop_order():
+    from alpaca_bot.runtime.order_dispatch import _submit_order
+    broker = RoutingBroker()
+    _submit_order(order=_make_routing_stop_order("buy"), broker=broker, settings=make_settings())
+    assert len(broker.calls) == 1
+    method_name, _ = broker.calls[0]
+    assert method_name == "submit_buy_stop_order", (
+        f"Buy-side stop must route to submit_buy_stop_order, got {method_name!r}"
+    )
+
+
+def test_sell_side_stop_routes_to_submit_stop_order():
+    from alpaca_bot.runtime.order_dispatch import _submit_order
+    broker = RoutingBroker()
+    _submit_order(order=_make_routing_stop_order("sell"), broker=broker, settings=make_settings())
+    assert broker.calls[0][0] == "submit_stop_order"
+
+
+def test_buy_side_exit_equity_routes_to_submit_market_buy_to_cover():
+    from alpaca_bot.runtime.order_dispatch import _submit_order
+    broker = RoutingBroker()
+    _submit_order(order=_make_routing_exit_order("buy", symbol="QBTS"), broker=broker, settings=make_settings())
+    assert broker.calls[0][0] == "submit_market_buy_to_cover", (
+        f"Buy-side equity exit must route to submit_market_buy_to_cover, got {broker.calls[0][0]!r}"
+    )
+
+
+def test_sell_side_exit_routes_to_submit_market_exit():
+    from alpaca_bot.runtime.order_dispatch import _submit_order
+    broker = RoutingBroker()
+    _submit_order(order=_make_routing_exit_order("sell", symbol="AAPL"), broker=broker, settings=make_settings())
+    assert broker.calls[0][0] == "submit_market_exit"
+

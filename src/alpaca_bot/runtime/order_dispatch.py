@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
@@ -496,7 +497,16 @@ def _submit_order(
             limit_price=order.limit_price,
             client_order_id=order.client_order_id,
         )
+    _OCC_RE = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
+
     if order.intent_type == "stop":
+        if order.side == "buy":
+            return broker.submit_buy_stop_order(
+                symbol=order.symbol,
+                quantity=order.quantity,
+                stop_price=order.stop_price,
+                client_order_id=order.client_order_id,
+            )
         return broker.submit_stop_order(
             symbol=order.symbol,
             quantity=order.quantity,
@@ -504,6 +514,18 @@ def _submit_order(
             client_order_id=order.client_order_id,
         )
     if order.intent_type == "exit":
+        if order.side == "buy":
+            if _OCC_RE.match(order.symbol):
+                return broker.submit_option_market_buy_to_close(
+                    occ_symbol=order.symbol,
+                    quantity=order.quantity,
+                    client_order_id=order.client_order_id,
+                )
+            return broker.submit_market_buy_to_cover(
+                symbol=order.symbol,
+                quantity=order.quantity,
+                client_order_id=order.client_order_id,
+            )
         return broker.submit_market_exit(
             symbol=order.symbol,
             quantity=order.quantity,
