@@ -1343,12 +1343,10 @@ def test_reconciliation_grace_period_resets_count_when_stop_found_at_broker() ->
 # Regression: negative broker quantity must be skipped, not crash recovery
 # ---------------------------------------------------------------------------
 
-def test_recover_startup_state_skips_negative_qty_broker_position() -> None:
-    """A broker position with quantity <= 0 (e.g. short from a double-sell) must be
-    skipped and recorded as a mismatch — not inserted into the DB, which would
-    violate the CHECK (quantity >= 0) constraint and crash the supervisor every cycle.
-
-    The normal (positive-qty) position in the same call must still be processed.
+def test_recover_startup_state_imports_negative_qty_broker_position_as_short() -> None:
+    """A broker position with quantity < 0 (genuine short position) must now be imported
+    as a short_equity position, not skipped.  The normal (positive-qty) position in the
+    same call must still be processed correctly.
     """
     settings = make_settings()
     now = datetime(2026, 5, 7, 20, 0, tzinfo=timezone.utc)
@@ -1362,7 +1360,7 @@ def test_recover_startup_state_skips_negative_qty_broker_position() -> None:
         audit_event_store=audit_event_store,
     )
 
-    report = recover_startup_state(
+    recover_startup_state(
         settings=settings,
         runtime=runtime,
         broker_open_positions=[
@@ -1373,33 +1371,29 @@ def test_recover_startup_state_skips_negative_qty_broker_position() -> None:
         now=now,
     )
 
-    # Must not raise — the crash loop is the core symptom this test guards against.
-
-    # SKYT must appear in mismatches (non-positive qty recorded for operator review).
-    skyt_mismatches = [m for m in report.mismatches if "SKYT" in m]
-    assert skyt_mismatches, (
-        f"Expected a mismatch entry for SKYT negative qty, got mismatches={report.mismatches}"
-    )
-
-    # SKYT must NOT appear in synced positions (should have been skipped entirely).
     synced_symbols = {
         pos.symbol
         for call in position_store.replace_all_calls
         for pos in call["positions"]
     }
-    assert "SKYT" not in synced_symbols, "negative-qty SKYT must not be written to position_store"
-
+    # SKYT (negative qty) must now be synced as a short_equity position.
+    assert "SKYT" in synced_symbols, "negative-qty SKYT must be imported as short_equity"
     # AAPL (normal positive qty) must still be processed correctly.
     assert "AAPL" in synced_symbols, "normal AAPL position must still be synced"
 
-    # A durable AuditEvent must be emitted so the skip is traceable even if recovery raises later.
-    skyt_audit_events = [
+    # Short import event must be emitted, not the old skip event.
+    skyt_import_events = [
         e for e in audit_event_store.appended
-        if e.event_type == "startup_recovery_skipped_nonpositive_qty" and e.symbol == "SKYT"
+        if e.event_type == "startup_recovery_imported_short_equity" and e.symbol == "SKYT"
     ]
-    assert skyt_audit_events, (
-        f"Expected an audit event for SKYT negative qty skip, got events={[e.event_type for e in audit_event_store.appended]}"
+    assert skyt_import_events, (
+        f"Expected startup_recovery_imported_short_equity for SKYT, got {[e.event_type for e in audit_event_store.appended]}"
     )
+    skipped_events = [
+        e for e in audit_event_store.appended
+        if e.event_type == "startup_recovery_skipped_nonpositive_qty"
+    ]
+    assert skipped_events == [], "Short positions must no longer emit the skip event"
 
 
 # ---------------------------------------------------------------------------
@@ -2170,3 +2164,134 @@ def test_option_stop_buffer_pct_parses_from_env() -> None:
 def test_option_stop_buffer_pct_defaults_to_ten_percent() -> None:
     settings = make_settings()  # does not set OPTION_STOP_BUFFER_PCT
     assert settings.option_stop_buffer_pct == 0.10
+
+
+# ---------------------------------------------------------------------------
+# Short position import tests
+# ---------------------------------------------------------------------------
+
+def test_short_equity_position_is_imported_with_buy_stop():
+    """A broker short equity position with no local record must be imported with
+    a buy-stop above entry (not skipped) and strategy_name='short_equity'."""
+    settings = make_settings()
+    now = datetime(2026, 5, 13, 19, 0, tzinfo=timezone.utc)
+
+    broker_position = BrokerPosition(symbol="QBTS", quantity=-50, entry_price=5.50)
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(
+        settings, position_store=position_store, order_store=order_store
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    calls = position_store.replace_all_calls
+    assert calls, "replace_all must have been called"
+    saved_positions = calls[-1]["positions"]
+    short_pos = next((p for p in saved_positions if p.symbol == "QBTS"), None)
+    assert short_pos is not None, "Short position must be saved"
+    assert short_pos.quantity == -50
+    assert short_pos.strategy_name == "short_equity"
+
+    expected_stop = round(5.50 * (1 + settings.breakout_stop_buffer_pct), 2)
+    assert short_pos.stop_price == expected_stop, (
+        f"Short stop must be above entry: expected {expected_stop}, got {short_pos.stop_price}"
+    )
+
+    buy_stops = [
+        o for o in order_store.saved
+        if o.intent_type == "stop" and o.status == "pending_submit" and o.symbol == "QBTS"
+    ]
+    assert len(buy_stops) == 1, "One buy-stop must be queued for short equity"
+    assert buy_stops[0].side == "buy", "Stop for short equity must have side='buy'"
+    assert buy_stops[0].stop_price == expected_stop
+
+    imported_events = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "startup_recovery_imported_short_equity"
+    ]
+    assert len(imported_events) == 1
+
+
+def test_short_option_position_is_imported_with_no_stop():
+    """A broker short option position must be imported with stop_price=0.0,
+    strategy_name='short_option', and no stop order queued."""
+    settings = make_settings()
+    now = datetime(2026, 5, 13, 19, 0, tzinfo=timezone.utc)
+
+    broker_position = BrokerPosition(
+        symbol="ALHC250620P00005000", quantity=-3, entry_price=0.80
+    )
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(
+        settings, position_store=position_store, order_store=order_store
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    calls = position_store.replace_all_calls
+    saved_positions = calls[-1]["positions"]
+    opt_pos = next(
+        (p for p in saved_positions if p.symbol == "ALHC250620P00005000"), None
+    )
+    assert opt_pos is not None
+    assert opt_pos.quantity == -3
+    assert opt_pos.stop_price == 0.0
+    assert opt_pos.strategy_name == "short_option"
+
+    stop_orders = [
+        o for o in order_store.saved
+        if o.intent_type == "stop" and o.symbol == "ALHC250620P00005000"
+    ]
+    assert stop_orders == [], "No stop order must be queued for short options"
+
+    imported_events = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "startup_recovery_imported_short_option"
+    ]
+    assert len(imported_events) == 1
+
+
+def test_short_position_not_skipped_anymore():
+    """Previously the bot skipped positions with quantity <= 0.
+    After this change, short positions must be synced, not skipped."""
+    settings = make_settings()
+    now = datetime(2026, 5, 13, 19, 0, tzinfo=timezone.utc)
+    broker_position = BrokerPosition(symbol="QBTS", quantity=-10, entry_price=5.50)
+    position_store = RecordingPositionStore()
+    order_store = RecordingOrderStore()
+    runtime = make_runtime_context(
+        settings, position_store=position_store, order_store=order_store
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[broker_position],
+        broker_open_orders=[],
+        now=now,
+    )
+
+    skipped_events = [
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "startup_recovery_skipped_nonpositive_qty"
+    ]
+    assert skipped_events == [], "Short positions must no longer be skipped"
+
+    calls = position_store.replace_all_calls
+    assert calls, "position_store.replace_all must be called"
+    synced = calls[-1]["positions"]
+    assert any(p.symbol == "QBTS" for p in synced), "QBTS must appear in synced positions"

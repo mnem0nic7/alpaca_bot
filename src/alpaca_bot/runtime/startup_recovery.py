@@ -113,12 +113,11 @@ def recover_startup_state(
     # Tracks brand-new positions (no prior local record) that need a stop order queued.
     new_positions_needing_stop: list[tuple[str, int, float, str]] = []  # (symbol, qty, stop_price, strategy_name)
     for broker_position in broker_open_positions:
-        if broker_position.quantity <= 0:
+        if broker_position.quantity == 0:
             _log.warning(
-                "startup_recovery: skipping broker position %s with non-positive qty=%s "
-                "(possible short or stale position — manual review required)",
+                "startup_recovery: skipping broker position %s with zero qty "
+                "(stale closed position — manual review required)",
                 broker_position.symbol,
-                broker_position.quantity,
             )
             mismatches.append(
                 f"broker position non-positive quantity skipped: {broker_position.symbol} qty={broker_position.quantity}"
@@ -133,6 +132,75 @@ def recover_startup_state(
                 commit=False,
             )
             broker_positions_by_symbol.pop(broker_position.symbol, None)
+            continue
+        if broker_position.quantity < 0:
+            is_option = _is_option_symbol(broker_position.symbol)
+            resolved_entry_price = broker_position.entry_price or 0.0
+            if is_option:
+                synced_positions.append(
+                    PositionRecord(
+                        symbol=broker_position.symbol,
+                        trading_mode=settings.trading_mode,
+                        strategy_version=settings.strategy_version,
+                        strategy_name="short_option",
+                        quantity=broker_position.quantity,
+                        entry_price=resolved_entry_price,
+                        stop_price=0.0,
+                        initial_stop_price=0.0,
+                        opened_at=timestamp,
+                        updated_at=timestamp,
+                    )
+                )
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="startup_recovery_imported_short_option",
+                        symbol=broker_position.symbol,
+                        payload={
+                            "symbol": broker_position.symbol,
+                            "qty": broker_position.quantity,
+                            "entry_price": resolved_entry_price,
+                        },
+                        created_at=timestamp,
+                    ),
+                    commit=False,
+                )
+            else:
+                stop_price = round(
+                    resolved_entry_price * (1 + settings.breakout_stop_buffer_pct), 2
+                ) if resolved_entry_price > 0 else 0.0
+                synced_positions.append(
+                    PositionRecord(
+                        symbol=broker_position.symbol,
+                        trading_mode=settings.trading_mode,
+                        strategy_version=settings.strategy_version,
+                        strategy_name="short_equity",
+                        quantity=broker_position.quantity,
+                        entry_price=resolved_entry_price,
+                        stop_price=stop_price,
+                        initial_stop_price=stop_price,
+                        opened_at=timestamp,
+                        updated_at=timestamp,
+                    )
+                )
+                if stop_price > 0.0:
+                    new_positions_needing_stop.append(
+                        (broker_position.symbol, broker_position.quantity, stop_price, "short_equity")
+                    )
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="startup_recovery_imported_short_equity",
+                        symbol=broker_position.symbol,
+                        payload={
+                            "symbol": broker_position.symbol,
+                            "qty": broker_position.quantity,
+                            "entry_price": resolved_entry_price,
+                            "stop_price": stop_price,
+                        },
+                        created_at=timestamp,
+                    ),
+                    commit=False,
+                )
+            broker_positions_by_symbol[broker_position.symbol] = broker_position
             continue
         local_for_symbol = local_positions_by_symbol.get(broker_position.symbol, [])
 
@@ -263,7 +331,7 @@ def recover_startup_state(
             # also preserved in the DB write loop below.
             if _is_never_submitted(order):
                 continue
-            is_stop = order.intent_type == "stop" and order.side == "sell"
+            is_stop = order.intent_type == "stop"
             if is_stop and (order.reconciliation_miss_count + 1) < RECONCILIATION_MISS_THRESHOLD:
                 continue
             mismatches.append(f"local order missing at broker: {order.client_order_id}")
@@ -301,6 +369,7 @@ def recover_startup_state(
     # Defense-in-depth against RC-3: even if reconciliation clears a stop locally, never
     # queue a recovery stop when the broker already has a sell order for that symbol.
     broker_sell_symbols = {o.symbol for o in broker_open_orders if o.side == "sell"}
+    broker_buy_symbols = {o.symbol for o in broker_open_orders if o.side == "buy"}
 
     try:
         runtime.position_store.replace_all(
@@ -317,7 +386,9 @@ def recover_startup_state(
                     sym,
                 )
                 continue
-            if sym in broker_sell_symbols:
+            order_side = "buy" if qty < 0 else "sell"
+            broker_protective_symbols = broker_buy_symbols if qty < 0 else broker_sell_symbols
+            if sym in broker_protective_symbols:
                 runtime.audit_event_store.append(
                     AuditEvent(
                         event_type="recovery_stop_suppressed_broker_has_stop",
@@ -337,10 +408,10 @@ def recover_startup_state(
                     OrderRecord(
                         client_order_id=recovery_stop_id,
                         symbol=sym,
-                        side="sell",
+                        side=order_side,
                         intent_type="stop",
                         status="pending_submit",
-                        quantity=qty,
+                        quantity=abs(qty),
                         trading_mode=settings.trading_mode,
                         strategy_version=settings.strategy_version,
                         strategy_name=strategy_name_sr,
@@ -378,7 +449,9 @@ def recover_startup_state(
                     pos.symbol,
                 )
                 continue
-            if pos.symbol in broker_sell_symbols:
+            is_short_pos = pos.quantity < 0
+            broker_protective_symbols = broker_buy_symbols if is_short_pos else broker_sell_symbols
+            if pos.symbol in broker_protective_symbols:
                 runtime.audit_event_store.append(
                     AuditEvent(
                         event_type="recovery_stop_suppressed_broker_has_stop",
@@ -399,10 +472,14 @@ def recover_startup_state(
                 continue
             broker_pos = broker_positions_by_symbol.get(pos.symbol)
             current_price: float | None = None
-            if broker_pos and broker_pos.market_value is not None and broker_pos.quantity > 0:
-                current_price = broker_pos.market_value / broker_pos.quantity
+            if broker_pos and broker_pos.market_value is not None and broker_pos.quantity != 0:
+                current_price = abs(broker_pos.market_value / broker_pos.quantity)
 
-            if current_price is not None and pos.stop_price >= current_price:
+            stop_triggered = (
+                (pos.quantity > 0 and current_price is not None and pos.stop_price >= current_price)
+                or (pos.quantity < 0 and current_price is not None and pos.stop_price > 0 and pos.stop_price <= current_price)
+            )
+            if stop_triggered:
                 recovery_exit_id = (
                     f"startup_recovery:{settings.strategy_version}:"
                     f"{timestamp.date().isoformat()}:{pos.symbol}:exit"
@@ -415,14 +492,15 @@ def recover_startup_state(
                     current_price,
                     pos.quantity,
                 )
+                order_side_exit = "buy" if pos.quantity < 0 else "sell"
                 runtime.order_store.save(
                     OrderRecord(
                         client_order_id=recovery_exit_id,
                         symbol=pos.symbol,
-                        side="sell",
+                        side=order_side_exit,
                         intent_type="exit",
                         status="pending_submit",
-                        quantity=pos.quantity,
+                        quantity=abs(pos.quantity),
                         trading_mode=settings.trading_mode,
                         strategy_version=settings.strategy_version,
                         strategy_name=pos.strategy_name,
@@ -491,21 +569,22 @@ def recover_startup_state(
                     pos.stop_price,
                     pos.quantity,
                 )
+                order_side_stop = "buy" if pos.quantity < 0 else "sell"
                 runtime.order_store.save(
                     OrderRecord(
                         client_order_id=recovery_stop_id,
                         symbol=pos.symbol,
-                        side="sell",
+                        side=order_side_stop,
                         intent_type="stop",
                         status="pending_submit",
-                        quantity=pos.quantity,
+                        quantity=abs(pos.quantity),
                         trading_mode=settings.trading_mode,
                         strategy_version=settings.strategy_version,
                         strategy_name=pos.strategy_name,
                         created_at=timestamp,
                         updated_at=timestamp,
                         stop_price=pos.stop_price,
-                        initial_stop_price=pos.stop_price,
+                        initial_stop_price=pos.initial_stop_price,
                         signal_timestamp=None,
                     ),
                     commit=False,
