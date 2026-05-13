@@ -16,7 +16,7 @@
 - **Modify:** `src/alpaca_bot/storage/repositories.py` — lines 247 and 871
 - **Modify:** `src/alpaca_bot/web/templates/dashboard.html` — line 451
 - **Test:** `tests/unit/test_web_service.py` — add 3 tests after line 1819
-- **Test:** `tests/unit/test_storage_db.py` — add 2 tests after line 700
+- **Test:** `tests/unit/test_storage_db.py` — add 3 tests: 1 method inside `TestListTradePnlByStrategy`, 1 method inside `TestDailyRealizedPnl`, 1 standalone function
 
 ---
 
@@ -49,9 +49,10 @@ def test_to_trade_record_short_option_pnl_multiplied_by_100() -> None:
 
 
 def test_compute_capital_pct_short_option_multiplies_by_100() -> None:
+    # _compute_capital_pct guards against total <= 0, so use positive qty to reach the assertion.
     short_opt_pos = SimpleNamespace(
         symbol="BCRX260618P00009000",
-        quantity=-7,
+        quantity=7,
         entry_price=0.55,
         strategy_name="short_option",
     )
@@ -61,19 +62,10 @@ def test_compute_capital_pct_short_option_multiplies_by_100() -> None:
         entry_price=150.0,
         strategy_name="breakout",
     )
-    # short_option notional = 0.55 * -7 * 100 = -385 (negative qty → strategy value negative)
-    # _compute_capital_pct sums by strategy; total may be <= 0 → returns {}
-    # Test with positive qty to match the function's total > 0 guard:
-    long_short_opt_pos = SimpleNamespace(
-        symbol="BCRX260618P00009000",
-        quantity=7,
-        entry_price=0.55,
-        strategy_name="short_option",
-    )
     # short_option notional = 0.55 * 7 * 100 = 385
     # equity notional = 150.0 * 10 * 1 = 1500
     # total = 1885; short_option pct = 385/1885*100 ≈ 20.42
-    result = _compute_capital_pct([long_short_opt_pos, equity_pos], {})
+    result = _compute_capital_pct([short_opt_pos, equity_pos], {})
     short_opt_pct = result.get("short_option", 0.0)
     assert abs(short_opt_pct - 385.0 / 1885.0 * 100) < 0.1
 
@@ -155,9 +147,9 @@ git commit -m "fix: apply ×100 multiplier to short_option in web/service.py"
 - Modify: `src/alpaca_bot/storage/repositories.py:247,871`
 - Test: `tests/unit/test_storage_db.py`
 
-- [ ] **Step 1: Write 2 failing tests**
+- [ ] **Step 1: Write 3 failing tests**
 
-Add these tests at the end of the `TestListTradePnlByStrategy` class in `tests/unit/test_storage_db.py` (after line 700, inside the class body — match the indentation of the other methods in that class):
+**Test A** — Add inside `TestListTradePnlByStrategy` (after line 700, inside the class body — match the 4-space indentation of the other methods):
 
 ```python
     def test_short_option_trade_pnl_applies_100x_multiplier(self) -> None:
@@ -176,7 +168,24 @@ Add these tests at the end of the `TestListTradePnlByStrategy` class in `tests/u
         assert result[0]["pnl"] == pytest.approx(105.0)
 ```
 
-And also add a standalone function after the `TestListTradePnlByStrategy` class (after line 700) to test `_contract_multiplier` directly:
+**Test B** — Add inside `TestDailyRealizedPnl` (after `test_option_null_entry_fill_fail_safe_also_multiplied` at line ~349, inside the class body):
+
+```python
+    def test_short_option_trade_applies_100x_multiplier(self):
+        """short_option exit applies ×100: (0.70 - 0.55) × 7 × 100 = 105.0.
+        This directly tests the safety-gate path — daily_realized_pnl feeds the
+        portfolio loss-limit check and must apply the multiplier for short_option."""
+        rows = [("BCRX260618P00009000", 0.55, 0.70, 7, "short_option")]
+        store = self._store(rows)
+        pnl = store.daily_realized_pnl(
+            trading_mode=self.MODE,
+            strategy_version=self.STRATEGY,
+            session_date=self.SESSION_DATE,
+        )
+        assert pnl == pytest.approx(105.0)
+```
+
+**Test C** — Add as a standalone module-level function after the `TestListTradePnlByStrategy` class (not inside any class — no indentation):
 
 ```python
 def test_contract_multiplier_short_option_returns_100() -> None:
@@ -191,10 +200,10 @@ def test_contract_multiplier_short_option_returns_100() -> None:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-pytest "tests/unit/test_storage_db.py::TestListTradePnlByStrategy::test_short_option_trade_pnl_applies_100x_multiplier" tests/unit/test_storage_db.py::test_contract_multiplier_short_option_returns_100 -v
+pytest "tests/unit/test_storage_db.py::TestListTradePnlByStrategy::test_short_option_trade_pnl_applies_100x_multiplier" "tests/unit/test_storage_db.py::TestDailyRealizedPnl::test_short_option_trade_applies_100x_multiplier" tests/unit/test_storage_db.py::test_contract_multiplier_short_option_returns_100 -v
 ```
 
-Expected: 2 FAILures. `test_short_option_trade_pnl` fails because pnl = 1.05 (no multiplier). `test_contract_multiplier_short_option_returns_100` fails because `_contract_multiplier("short_option")` returns 1.
+Expected: 3 FAILures. All three fail because `_contract_multiplier("short_option")` returns 1 instead of 100.
 
 - [ ] **Step 3: Fix `_contract_multiplier` at line 247**
 
