@@ -89,8 +89,8 @@ The guard is replaced with direction-aware import logic.
 - No stop order queued
 - Audit event: `startup_recovery_imported_short_option`
 
-OCC symbol detection: string length > 6 and contains digits and letters in the OCC
-format (same heuristic already used elsewhere in the codebase for option routing).
+OCC symbol detection: use the existing `_is_option_symbol(symbol)` helper in
+`startup_recovery.py` which matches the regex `r"^[A-Z]{1,6}\d{6}[CP]\d{8}$"`.
 
 ---
 
@@ -145,12 +145,26 @@ Accept candidate when: long `candidate > stop and candidate < close`; short
 `candidate < stop and candidate > close`.
 
 #### Breakeven trailing pass
-| Direction | Logic |
-|-----------|-------|
-| Long | trigger = `entry * (1 + breakeven_trigger_pct)`, check `high >= trigger`, trail uses `highest_price` |
-| Short | trigger = `entry * (1 - breakeven_trigger_pct)`, check `low <= trigger`, trail uses `lowest_price` |
 
-New stop for short breakeven: `min(entry_price, entry * (1 - breakeven_trail_pct))`.
+Long (existing):
+```
+trigger = entry * (1 + breakeven_trigger_pct)   # e.g. entry * 1.0025
+if high >= trigger:
+    max_price = max(position.highest_price, bar.high)
+    trail_stop = round(max_price * (1 - breakeven_trail_pct), 2)   # 0.2% below best
+    be_stop = max(entry_price, trail_stop)                          # at least breakeven
+    if be_stop < bar.close: emit UPDATE_STOP
+```
+
+Short (new symmetric mirror):
+```
+trigger = entry * (1 - breakeven_trigger_pct)   # e.g. entry * 0.9975
+if low <= trigger:
+    min_price = min(position.lowest_price, bar.low)
+    trail_stop = round(min_price * (1 + breakeven_trail_pct), 2)   # 0.2% above best
+    be_stop = min(entry_price, trail_stop)                          # at most breakeven
+    if be_stop > bar.close: emit UPDATE_STOP
+```
 
 #### Cap pass (max stop distance)
 | Direction | Logic |
@@ -170,20 +184,33 @@ New stop for short breakeven: `min(entry_price, entry * (1 - breakeven_trail_pct
 
 **File:** `execution/alpaca.py`
 
-Three new methods added to `AlpacaBroker`:
+Three new methods added to `AlpacaBroker`, each mirroring an existing sell-side method
+with `side=BUY`:
 
 ```python
-def submit_buy_stop_order(self, symbol: str, qty: int, stop_price: float) -> str:
-    """Protective stop for a short equity position (buy-stop above entry)."""
+def submit_buy_stop_order(
+    self, *, symbol: str, qty: int, stop_price: float, client_order_id: str
+) -> BrokerOrder:
+    """Protective stop for a short equity position (buy-stop above entry).
+    Mirrors submit_stop_order but with OrderSide.BUY."""
 
-def submit_market_buy_to_cover(self, symbol: str, qty: int) -> str:
-    """Market buy-to-cover to close a short equity position."""
+def submit_market_buy_to_cover(
+    self, *, symbol: str, qty: int, client_order_id: str
+) -> BrokerOrder:
+    """Market buy-to-cover to close a short equity position.
+    Mirrors submit_market_exit but with OrderSide.BUY."""
 
-def submit_limit_buy_to_close_option(self, occ_symbol: str, qty: int, limit_price: float) -> str:
-    """Limit buy-to-close for a short option position."""
+def submit_option_market_buy_to_close(
+    self, *, occ_symbol: str, quantity: int, client_order_id: str
+) -> BrokerOrder:
+    """Market buy-to-close for a short option position.
+    Mirrors submit_option_market_exit but with OrderSide.BUY."""
 ```
 
-All three follow the same Alpaca REST pattern as their sell-side counterparts.
+Alpaca uses `OrderSide.BUY` for both equity buy-to-cover and option buy-to-close —
+there are no separate `BUY_TO_COVER` / `BUY_TO_CLOSE` side values in the SDK. Market
+orders are used for all three (same as the existing sell-side exits) for fill certainty
+at EOD.
 
 ---
 
@@ -210,9 +237,10 @@ No other changes to dispatch logic.
 - `OrderRecord.side` = `"buy"` when `position.quantity < 0`.
 
 **`_execute_exit`:**
-- Routes to `broker.submit_market_buy_to_cover(qty=abs(position.quantity))` when
-  `position.quantity < 0` (equity shorts).
-- Routes to `broker.submit_limit_buy_to_close_option(...)` when short option.
+- Routes to `broker.submit_market_buy_to_cover(symbol=..., qty=abs(position.quantity))`
+  when `position.quantity < 0` and not an OCC symbol (equity short).
+- Routes to `broker.submit_option_market_buy_to_close(occ_symbol=..., quantity=abs(position.quantity))`
+  when short option (OCC symbol, `strategy_name == "short_option"`).
 
 ---
 
