@@ -332,6 +332,27 @@ class AlpacaExecutionAdapter:
             _retry_with_backoff(lambda: self._trading.submit_order(request))
         )
 
+    def submit_buy_stop_order(
+        self,
+        *,
+        symbol: str,
+        quantity: float | None = None,
+        qty: float | None = None,
+        stop_price: float,
+        client_order_id: str,
+    ) -> BrokerOrder:
+        resolved_qty = _resolve_order_quantity(quantity=quantity, qty=qty)
+        request = _stop_order_request(
+            symbol=symbol,
+            quantity=resolved_qty,
+            stop_price=stop_price,
+            client_order_id=client_order_id,
+            side="buy",
+        )
+        return _parse_broker_order(
+            _retry_with_backoff(lambda: self._trading.submit_order(request))
+        )
+
     def submit_market_exit(
         self,
         *,
@@ -346,6 +367,25 @@ class AlpacaExecutionAdapter:
             quantity=resolved_qty,
             client_order_id=client_order_id,
             side="sell",
+        )
+        return _parse_broker_order(
+            _retry_with_backoff(lambda: self._trading.submit_order(request))
+        )
+
+    def submit_market_buy_to_cover(
+        self,
+        *,
+        symbol: str,
+        quantity: float | None = None,
+        qty: float | None = None,
+        client_order_id: str,
+    ) -> BrokerOrder:
+        resolved_qty = _resolve_order_quantity(quantity=quantity, qty=qty)
+        request = _market_order_request(
+            symbol=symbol,
+            quantity=resolved_qty,
+            client_order_id=client_order_id,
+            side="buy",
         )
         return _parse_broker_order(
             _retry_with_backoff(lambda: self._trading.submit_order(request))
@@ -430,6 +470,26 @@ class AlpacaExecutionAdapter:
             symbol=occ_symbol,
             qty=quantity,
             side=OrderSide.SELL,
+            time_in_force=TimeInForce.DAY,
+            client_order_id=client_order_id,
+        )
+        return _parse_broker_order(
+            _retry_with_backoff(lambda: self._trading.submit_order(order_data))
+        )
+
+    def submit_option_market_buy_to_close(
+        self,
+        *,
+        occ_symbol: str,
+        quantity: int,
+        client_order_id: str,
+    ) -> BrokerOrder:
+        from alpaca.trading.requests import MarketOrderRequest  # type: ignore[import]
+        from alpaca.trading.enums import OrderSide, TimeInForce  # type: ignore[import]
+        order_data = MarketOrderRequest(
+            symbol=occ_symbol,
+            qty=quantity,
+            side=OrderSide.BUY,
             time_in_force=TimeInForce.DAY,
             client_order_id=client_order_id,
         )
