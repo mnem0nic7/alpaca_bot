@@ -3,9 +3,16 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import re
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Protocol, Sequence
+
+_OCC_RE = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
+
+
+def _is_short_option_symbol(symbol: str) -> bool:
+    return bool(_OCC_RE.match(symbol))
 
 if TYPE_CHECKING:
     from alpaca_bot.strategy.session import SessionType
@@ -213,7 +220,10 @@ def _execute_update_stop(
 ) -> str | None:
     if position is None or stop_price is None:
         return None
-    if stop_price <= position.stop_price:
+    is_short = position.quantity < 0
+    if (not is_short and stop_price <= position.stop_price) or (
+        is_short and stop_price >= position.stop_price
+    ):
         return None
 
     if lock_ctx is None:
@@ -294,19 +304,29 @@ def _execute_update_stop(
                 lock_ctx=lock_ctx,
                 context="update_stop",
             )
-            broker_order = broker.submit_stop_order(
-                symbol=symbol,
-                quantity=position.quantity,
-                stop_price=stop_price,
-                client_order_id=client_order_id,
-            )
+            if is_short:
+                broker_order = broker.submit_buy_stop_order(
+                    symbol=symbol,
+                    quantity=abs(position.quantity),
+                    stop_price=stop_price,
+                    client_order_id=client_order_id,
+                )
+                order_side = "buy"
+            else:
+                broker_order = broker.submit_stop_order(
+                    symbol=symbol,
+                    quantity=position.quantity,
+                    stop_price=stop_price,
+                    client_order_id=client_order_id,
+                )
+                order_side = "sell"
             updated_order = OrderRecord(
                 client_order_id=client_order_id,
                 symbol=symbol,
-                side="sell",
+                side=order_side,
                 intent_type="stop",
                 status=str(broker_order.status).lower(),
-                quantity=position.quantity,
+                quantity=abs(position.quantity),
                 trading_mode=settings.trading_mode,
                 strategy_version=settings.strategy_version,
                 created_at=now,
@@ -449,6 +469,9 @@ def _execute_exit(
 
     if lock_ctx is None:
         lock_ctx = contextlib.nullcontext()
+
+    is_short = position.quantity < 0
+    exit_method = "submit_market_exit"  # overwritten below; initialized here for except-block safety
 
     # Guard against duplicate EXIT dispatch — read under lock.
     with lock_ctx:
@@ -802,21 +825,37 @@ def _execute_exit(
     )
     # Submit exit outside the lock.
     try:
-        if limit_price is not None:
+        if is_short:
+            if _is_short_option_symbol(symbol):
+                broker_order = broker.submit_option_market_buy_to_close(
+                    occ_symbol=symbol,
+                    quantity=abs(int(position.quantity)),
+                    client_order_id=client_order_id,
+                )
+                exit_method = "submit_option_market_buy_to_close"
+            else:
+                broker_order = broker.submit_market_buy_to_cover(
+                    symbol=symbol,
+                    quantity=abs(position.quantity),
+                    client_order_id=client_order_id,
+                )
+                exit_method = "submit_market_buy_to_cover"
+        elif limit_price is not None:
             broker_order = broker.submit_limit_exit(
                 symbol=symbol,
                 quantity=position.quantity,
                 limit_price=limit_price,
                 client_order_id=client_order_id,
             )
+            exit_method = "submit_limit_exit"
         else:
             broker_order = broker.submit_market_exit(
                 symbol=symbol,
                 quantity=position.quantity,
                 client_order_id=client_order_id,
             )
+            exit_method = "submit_market_exit"
     except Exception as exc:
-        exit_method = "submit_limit_exit" if limit_price is not None else "submit_market_exit"
         exc_msg = str(exc).lower()
 
         if "insufficient qty available" in exc_msg:
@@ -832,7 +871,20 @@ def _execute_exit(
                 lock_ctx=lock_ctx,
             )
             try:
-                if limit_price is not None:
+                if is_short:
+                    if _is_short_option_symbol(symbol):
+                        broker_order = broker.submit_option_market_buy_to_close(
+                            occ_symbol=symbol,
+                            quantity=abs(int(position.quantity)),
+                            client_order_id=client_order_id,
+                        )
+                    else:
+                        broker_order = broker.submit_market_buy_to_cover(
+                            symbol=symbol,
+                            quantity=abs(position.quantity),
+                            client_order_id=client_order_id,
+                        )
+                elif limit_price is not None:
                     broker_order = broker.submit_limit_exit(
                         symbol=symbol,
                         quantity=position.quantity,
@@ -876,14 +928,15 @@ def _execute_exit(
                                 f"exit_failed_recovery:{settings.strategy_version}:"
                                 f"{now.date().isoformat()}:{symbol}:stop"
                             )
+                            _recovery_side = "buy" if is_short else "sell"
                             runtime.order_store.save(
                                 OrderRecord(
                                     client_order_id=_recovery_stop_id,
                                     symbol=symbol,
-                                    side="sell",
+                                    side=_recovery_side,
                                     intent_type="stop",
                                     status="pending_submit",
-                                    quantity=position.quantity,
+                                    quantity=abs(position.quantity),
                                     trading_mode=settings.trading_mode,
                                     strategy_version=settings.strategy_version,
                                     strategy_name=strategy_name,
@@ -967,14 +1020,15 @@ def _execute_exit(
                             f"exit_failed_recovery:{settings.strategy_version}:"
                             f"{now.date().isoformat()}:{symbol}:stop"
                         )
+                        _recovery_side = "buy" if is_short else "sell"
                         runtime.order_store.save(
                             OrderRecord(
                                 client_order_id=_recovery_stop_id,
                                 symbol=symbol,
-                                side="sell",
+                                side=_recovery_side,
                                 intent_type="stop",
                                 status="pending_submit",
-                                quantity=position.quantity,
+                                quantity=abs(position.quantity),
                                 trading_mode=settings.trading_mode,
                                 strategy_version=settings.strategy_version,
                                 strategy_name=strategy_name,
@@ -1037,16 +1091,18 @@ def _execute_exit(
                     symbol,
                     strategy_name,
                 )
+                exit_order_side = "buy" if is_short else "sell"
+                exit_order_qty = abs(position.quantity)
                 for record in canceled_order_records:
                     runtime.order_store.save(record, commit=False)
                 runtime.order_store.save(
                     OrderRecord(
                         client_order_id=client_order_id,
                         symbol=symbol,
-                        side="sell",
+                        side=exit_order_side,
                         intent_type="exit",
                         status=str(broker_order.status).lower(),
-                        quantity=position.quantity,
+                        quantity=exit_order_qty,
                         trading_mode=settings.trading_mode,
                         strategy_version=settings.strategy_version,
                         created_at=now,
@@ -1075,16 +1131,18 @@ def _execute_exit(
                 )
                 runtime.connection.commit()
                 return canceled_stop_count, 1, 0  # exit submitted; position already cleared by stream
+            exit_order_side = "buy" if is_short else "sell"
+            exit_order_qty = abs(position.quantity)
             for record in canceled_order_records:
                 runtime.order_store.save(record, commit=False)
             runtime.order_store.save(
                 OrderRecord(
                     client_order_id=client_order_id,
                     symbol=symbol,
-                    side="sell",
+                    side=exit_order_side,
                     intent_type="exit",
                     status=str(broker_order.status).lower(),
-                    quantity=position.quantity,
+                    quantity=exit_order_qty,
                     trading_mode=settings.trading_mode,
                     strategy_version=settings.strategy_version,
                     created_at=now,
@@ -1146,7 +1204,7 @@ def _active_stop_orders(
     return [
         order
         for order in orders
-        if order.symbol == symbol and order.intent_type == "stop" and order.side == "sell"
+        if order.symbol == symbol and order.intent_type == "stop"
     ]
 
 

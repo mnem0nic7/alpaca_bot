@@ -3979,3 +3979,186 @@ def test_stale_exit_cancel_fails_already_canceled_proceeds() -> None:
         "Stale exit must be saved as canceled even when broker returns already-canceled"
     )
     assert broker.exit_calls, "Market exit must be submitted"
+
+
+# ── Task 7: direction-aware _execute_update_stop / _execute_exit ────────────
+
+class SpyBroker:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+
+    def _fake_order(self, **kwargs):
+        return SimpleNamespace(
+            broker_order_id="fake-id",
+            client_order_id=kwargs.get("client_order_id", ""),
+            status="accepted",
+        )
+
+    def submit_stop_order(self, **kwargs):
+        self.calls.append(("submit_stop_order", kwargs))
+        return self._fake_order(**kwargs)
+
+    def submit_buy_stop_order(self, **kwargs):
+        self.calls.append(("submit_buy_stop_order", kwargs))
+        return self._fake_order(**kwargs)
+
+    def submit_market_exit(self, **kwargs):
+        self.calls.append(("submit_market_exit", kwargs))
+        return self._fake_order(**kwargs)
+
+    def submit_market_buy_to_cover(self, **kwargs):
+        self.calls.append(("submit_market_buy_to_cover", kwargs))
+        return self._fake_order(**kwargs)
+
+    def submit_option_market_buy_to_close(self, **kwargs):
+        self.calls.append(("submit_option_market_buy_to_close", kwargs))
+        return self._fake_order(**kwargs)
+
+    def submit_limit_exit(self, **kwargs):
+        self.calls.append(("submit_limit_exit", kwargs))
+        return self._fake_order(**kwargs)
+
+    def replace_order(self, **kwargs):
+        self.calls.append(("replace_order", kwargs))
+        return self._fake_order(**kwargs)
+
+    def cancel_order(self, order_id: str) -> None:
+        self.calls.append(("cancel_order", order_id))
+
+    def get_open_orders_for_symbol(self, symbol: str) -> list:
+        return []
+
+
+def _make_short_position_record(
+    symbol: str = "QBTS",
+    quantity: float = -50,
+    stop_price: float = 6.25,
+    strategy_name: str = "short_equity",
+) -> PositionRecord:
+    now = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
+    return PositionRecord(
+        symbol=symbol,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name=strategy_name,
+        quantity=quantity,
+        entry_price=6.00,
+        stop_price=stop_price,
+        initial_stop_price=stop_price,
+        opened_at=now,
+        updated_at=now,
+    )
+
+
+def _make_short_runtime(position: PositionRecord) -> SimpleNamespace:
+    return SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+
+def test_execute_update_stop_short_rejects_higher_stop() -> None:
+    """For a short position, _execute_update_stop must return None when new stop >= current stop."""
+    from alpaca_bot.runtime.cycle_intent_execution import _execute_update_stop
+
+    position = _make_short_position_record(stop_price=6.25)
+    broker = SpyBroker()
+    now = datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc)
+    result = _execute_update_stop(
+        runtime=_make_short_runtime(position),
+        settings=make_settings(SYMBOLS="QBTS"),
+        broker=broker,
+        symbol="QBTS",
+        stop_price=6.30,  # higher than 6.25 — regression guard must fire
+        intent_timestamp=now,
+        position=position,
+        now=now,
+        strategy_name="short_equity",
+    )
+    assert result is None, "Higher stop must be rejected for short position"
+    assert broker.calls == [], "No broker call should be made"
+
+
+def test_execute_update_stop_short_routes_to_buy_stop_order() -> None:
+    """For a short position with no active stop, Path C must call submit_buy_stop_order."""
+    from alpaca_bot.runtime.cycle_intent_execution import _execute_update_stop
+
+    position = _make_short_position_record(stop_price=6.25)
+    broker = SpyBroker()
+    now = datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc)
+    result = _execute_update_stop(
+        runtime=_make_short_runtime(position),
+        settings=make_settings(SYMBOLS="QBTS"),
+        broker=broker,
+        symbol="QBTS",
+        stop_price=6.00,  # lower than 6.25 — must proceed
+        intent_timestamp=now,
+        position=position,
+        now=now,
+        strategy_name="short_equity",
+    )
+    assert result == "submitted"
+    method_names = [c[0] for c in broker.calls]
+    assert "submit_buy_stop_order" in method_names, (
+        f"Short stop update must call submit_buy_stop_order, got {method_names!r}"
+    )
+    assert "submit_stop_order" not in method_names, "Must not call sell-side submit_stop_order"
+
+
+def test_execute_exit_short_equity_routes_to_buy_to_cover() -> None:
+    """_execute_exit for a short equity position must call submit_market_buy_to_cover."""
+    from alpaca_bot.runtime.cycle_intent_execution import _execute_exit
+
+    position = _make_short_position_record(symbol="QBTS", quantity=-50, strategy_name="short_equity")
+    broker = SpyBroker()
+    now = datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc)
+    _execute_exit(
+        runtime=_make_short_runtime(position),
+        settings=make_settings(SYMBOLS="QBTS"),
+        broker=broker,
+        symbol="QBTS",
+        position=position,
+        limit_price=None,
+        intent_timestamp=now,
+        now=now,
+        reason="eod_flatten",
+        strategy_name="short_equity",
+    )
+    method_names = [c[0] for c in broker.calls]
+    assert "submit_market_buy_to_cover" in method_names, (
+        f"Short equity exit must call submit_market_buy_to_cover, got {method_names!r}"
+    )
+    assert "submit_market_exit" not in method_names, "Must not call sell-side submit_market_exit"
+
+
+def test_execute_exit_short_option_routes_to_buy_to_close() -> None:
+    """_execute_exit for a short option must call submit_option_market_buy_to_close."""
+    from alpaca_bot.runtime.cycle_intent_execution import _execute_exit
+
+    symbol = "ALHC250620P00005000"
+    position = _make_short_position_record(
+        symbol=symbol,
+        quantity=-3,
+        stop_price=0.0,
+        strategy_name="short_option",
+    )
+    broker = SpyBroker()
+    now = datetime(2026, 5, 13, 17, 0, tzinfo=timezone.utc)
+    _execute_exit(
+        runtime=_make_short_runtime(position),
+        settings=make_settings(SYMBOLS=symbol),
+        broker=broker,
+        symbol=symbol,
+        position=position,
+        limit_price=None,
+        intent_timestamp=now,
+        now=now,
+        reason="eod_flatten",
+        strategy_name="short_option",
+    )
+    method_names = [c[0] for c in broker.calls]
+    assert "submit_option_market_buy_to_close" in method_names, (
+        f"Short option exit must call submit_option_market_buy_to_close, got {method_names!r}"
+    )
