@@ -186,7 +186,7 @@ class DashboardSnapshot:
 
 
 def _option_multiplier(pos) -> int:
-    return 100 if getattr(pos, "strategy_name", None) == "option" else 1
+    return 100 if getattr(pos, "strategy_name", None) in ("option", "short_option") else 1
 
 
 def _compute_capital_pct(
@@ -509,7 +509,7 @@ def _to_trade_record(row: dict) -> TradeRecord:
     entry_fill = row["entry_fill"]
     exit_fill = row["exit_fill"]
     qty = row["qty"]
-    multiplier = 100 if row.get("strategy_name") == "option" else 1
+    multiplier = 100 if row.get("strategy_name") in ("option", "short_option") else 1
     pnl = (exit_fill - entry_fill) * qty * multiplier
     slippage = (
         row["entry_limit"] - entry_fill

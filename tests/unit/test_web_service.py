@@ -1817,3 +1817,54 @@ def test_total_deployed_notional_option_multiplied() -> None:
     result = total_deployed_notional([equity_pos, option_pos])
     # 5 * 150.0 * 1 + 2 * 1.20 * 100 = 750.0 + 240.0 = 990.0
     assert abs(result - 990.0) < 1e-9
+
+
+def test_to_trade_record_short_option_pnl_multiplied_by_100() -> None:
+    row = {
+        "symbol": "BCRX260618P00009000",
+        "strategy_name": "short_option",
+        "entry_fill": 0.55,
+        "entry_limit": None,
+        "entry_time": None,
+        "exit_time": None,
+        "exit_fill": 0.70,
+        "qty": 7,
+        "intent_type": "stop",
+    }
+    trade = _to_trade_record(row)
+    # (0.70 - 0.55) * 7 * 100 = 105.0
+    assert abs(trade.pnl - 105.0) < 1e-9
+
+
+def test_compute_capital_pct_short_option_multiplies_by_100() -> None:
+    # _compute_capital_pct guards against total <= 0, so use positive qty to reach the assertion.
+    short_opt_pos = SimpleNamespace(
+        symbol="BCRX260618P00009000",
+        quantity=7,
+        entry_price=0.55,
+        strategy_name="short_option",
+    )
+    equity_pos = SimpleNamespace(
+        symbol="AAPL",
+        quantity=10,
+        entry_price=150.0,
+        strategy_name="breakout",
+    )
+    # short_option notional = 0.55 * 7 * 100 = 385
+    # equity notional = 150.0 * 10 * 1 = 1500
+    # total = 1885; short_option pct = 385/1885*100 ≈ 20.42
+    result = _compute_capital_pct([short_opt_pos, equity_pos], {})
+    short_opt_pct = result.get("short_option", 0.0)
+    assert abs(short_opt_pct - 385.0 / 1885.0 * 100) < 0.1
+
+
+def test_total_deployed_notional_short_option_multiplied() -> None:
+    equity_pos = SimpleNamespace(
+        symbol="AAPL", quantity=5, entry_price=150.0, strategy_name="breakout"
+    )
+    short_opt_pos = SimpleNamespace(
+        symbol="BCRX260618P00009000", quantity=-7, entry_price=0.55, strategy_name="short_option"
+    )
+    result = total_deployed_notional([equity_pos, short_opt_pos])
+    # 5 * 150.0 * 1 + (-7) * 0.55 * 100 = 750.0 + (-385.0) = 365.0
+    assert abs(result - 365.0) < 1e-9
