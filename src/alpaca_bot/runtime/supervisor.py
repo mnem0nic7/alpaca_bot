@@ -1083,6 +1083,8 @@ class RuntimeSupervisor:
                 strategy_version=self.settings.strategy_version,
             )
             for pos in open_option_positions:
+                if pos.side == "sell":
+                    continue  # Short puts are closed next morning via stale-position carryover
                 sell_id = (
                     f"option:{self.settings.strategy_version}:{timestamp.date().isoformat()}"
                     f":{pos.occ_symbol}:sell:{timestamp.isoformat()}"
