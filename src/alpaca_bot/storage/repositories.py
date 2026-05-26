@@ -811,6 +811,95 @@ class OrderStore:
             if row[4] is not None
         ]
 
+    def list_closed_trade_records(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        since_date: date,
+        until_date: date,
+        market_timezone: str = "America/New_York",
+    ) -> list[dict]:
+        """Return one dict per closed equity round-trip in a date range.
+
+        Anchors on exit orders; correlated subquery finds the most recent
+        matching entry fill. Rows without a correlated entry are excluded.
+        Each dict: symbol, strategy_name, qty, entry_price, exit_price,
+                   entry_time, exit_time, pnl, hold_seconds.
+        """
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT
+                x.symbol,
+                x.strategy_name,
+                COALESCE(x.filled_quantity, x.quantity) AS qty,
+                x.fill_price AS exit_fill,
+                x.updated_at AS exit_time,
+                (SELECT e.fill_price
+                   FROM orders e
+                  WHERE e.symbol = x.symbol
+                    AND e.trading_mode = x.trading_mode
+                    AND e.strategy_version = x.strategy_version
+                    AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
+                    AND e.intent_type = 'entry'
+                    AND e.fill_price IS NOT NULL
+                    AND e.status = 'filled'
+                    AND e.updated_at <= x.updated_at
+                  ORDER BY e.updated_at DESC LIMIT 1) AS entry_fill,
+                (SELECT e.updated_at
+                   FROM orders e
+                  WHERE e.symbol = x.symbol
+                    AND e.trading_mode = x.trading_mode
+                    AND e.strategy_version = x.strategy_version
+                    AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
+                    AND e.intent_type = 'entry'
+                    AND e.fill_price IS NOT NULL
+                    AND e.status = 'filled'
+                    AND e.updated_at <= x.updated_at
+                  ORDER BY e.updated_at DESC LIMIT 1) AS entry_time
+            FROM orders x
+            WHERE x.trading_mode = %s
+              AND x.strategy_version = %s
+              AND x.intent_type IN ('stop', 'exit')
+              AND x.fill_price IS NOT NULL
+              AND x.status = 'filled'
+              AND DATE(x.updated_at AT TIME ZONE %s) >= %s
+              AND DATE(x.updated_at AT TIME ZONE %s) <= %s
+            ORDER BY x.updated_at
+            """,
+            (
+                trading_mode.value,
+                strategy_version,
+                market_timezone,
+                since_date,
+                market_timezone,
+                until_date,
+            ),
+        )
+        result = []
+        for row in rows:
+            if row[5] is None:
+                continue
+            qty = float(row[2])
+            exit_fill = float(row[3])
+            exit_time = row[4]
+            entry_fill = float(row[5])
+            entry_time = row[6]
+            hold_seconds = (exit_time - entry_time).total_seconds() if entry_time else 0.0
+            result.append({
+                "symbol": row[0],
+                "strategy_name": row[1],
+                "qty": qty,
+                "entry_price": entry_fill,
+                "exit_price": exit_fill,
+                "entry_time": entry_time,
+                "exit_time": exit_time,
+                "pnl": (exit_fill - entry_fill) * qty,
+                "hold_seconds": hold_seconds,
+            })
+        return result
+
     def win_loss_counts_by_strategy(
         self,
         *,
