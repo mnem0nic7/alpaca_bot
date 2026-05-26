@@ -5,7 +5,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, replace as dataclass_replace
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from typing import TYPE_CHECKING, Any, Callable, Protocol, Sequence
 
 _OCC_RE = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
@@ -823,6 +823,25 @@ def _execute_exit(
         lock_ctx=lock_ctx,
         context="exit",
     )
+    # Guard: options market only trades 09:30–16:00 ET; skip BTC outside those hours.
+    if is_short and _is_short_option_symbol(symbol):
+        local_time = now.astimezone(settings.market_timezone).time()
+        if local_time < time(9, 30) or local_time >= time(16, 0):
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="cycle_intent_skipped",
+                    symbol=symbol,
+                    payload={
+                        "reason": "options_market_closed",
+                        "local_time": local_time.isoformat(),
+                        "strategy_name": strategy_name,
+                    },
+                    created_at=now,
+                ),
+                commit=True,
+            )
+            return (0, 0, 0)
+
     # Submit exit outside the lock.
     try:
         if is_short:
