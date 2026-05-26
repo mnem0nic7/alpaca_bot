@@ -136,5 +136,39 @@ def dispatch_pending_option_orders(
                 "option order dispatch failed",
                 extra={"client_order_id": record.client_order_id},
             )
+            failed = OptionOrderRecord(
+                client_order_id=record.client_order_id,
+                occ_symbol=record.occ_symbol,
+                underlying_symbol=record.underlying_symbol,
+                option_type=record.option_type,
+                strike=record.strike,
+                expiry=record.expiry,
+                side=record.side,
+                status="failed",
+                quantity=record.quantity,
+                trading_mode=record.trading_mode,
+                strategy_version=record.strategy_version,
+                strategy_name=record.strategy_name,
+                limit_price=record.limit_price,
+                broker_order_id=record.broker_order_id,
+                fill_price=record.fill_price,
+                filled_quantity=record.filled_quantity,
+                created_at=record.created_at,
+                updated_at=timestamp,
+            )
+            runtime.option_order_store.save(failed, commit=True)
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="option_order_dispatch_failed",
+                    symbol=record.underlying_symbol,
+                    payload={
+                        "occ_symbol": record.occ_symbol,
+                        "side": record.side,
+                        "client_order_id": record.client_order_id,
+                    },
+                    created_at=timestamp,
+                ),
+                commit=True,
+            )
 
     return OptionDispatchReport(submitted_count=submitted_count)

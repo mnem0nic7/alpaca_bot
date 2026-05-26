@@ -157,6 +157,36 @@ class TestDispatchPendingOptionOrders:
         )
         assert result.submitted_count == 1
 
+    def test_dispatch_sets_status_failed_on_broker_exception(self):
+        """Broker exception → record updated to 'failed', not left as 'submitting',
+        and an option_order_dispatch_failed audit event is appended."""
+        from tests.unit.helpers import _base_env
+        from alpaca_bot.config import Settings
+        s = Settings.from_env(_base_env())
+
+        class _RaisingBroker:
+            def submit_option_market_exit(self, **kwargs):
+                raise RuntimeError("broker offline")
+            def submit_option_limit_entry(self, **kwargs):
+                raise RuntimeError("broker offline")
+
+        record = _record(status="pending_submit", side="sell", limit_price=None)
+        runtime = _FakeRuntime([record])
+        result = dispatch_pending_option_orders(
+            settings=s, runtime=runtime, broker=_RaisingBroker(), now=_now(),
+        )
+
+        assert result.submitted_count == 0
+        statuses = [r.status for r in runtime.option_order_store.saved]
+        assert "submitting" in statuses  # written before broker call
+        assert "failed" in statuses      # written in except block after failure
+        failed_events = [
+            e for e in runtime.audit_event_store.events
+            if e.event_type == "option_order_dispatch_failed"
+        ]
+        assert len(failed_events) == 1
+        assert failed_events[0].payload["client_order_id"] == record.client_order_id
+
     def test_order_saved_as_submitting_before_broker_call(self):
         """Write-before-dispatch: record is updated to 'submitting' before the broker call."""
         from tests.unit.helpers import _base_env
