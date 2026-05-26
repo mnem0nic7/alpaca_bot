@@ -2034,6 +2034,99 @@ class OptionOrderRepository:
             if row[4] is not None
         ]
 
+    def list_closed_option_trade_records(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        since_date: date,
+        until_date: date,
+        market_timezone: str = "America/New_York",
+    ) -> list[dict]:
+        """Return one dict per closed option round-trip in a date range.
+
+        Anchors on buy-to-close orders; correlated subquery finds the matching
+        sell fill (initial short sale). Rows without a correlated sell are excluded.
+        Each dict: occ_symbol, underlying, strategy_name, qty,
+                   premium_collected, close_cost, pnl, opened_at, closed_at.
+        pnl = (sell_fill - buy_fill) * qty * 100
+        """
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT x.occ_symbol,
+                   x.underlying_symbol,
+                   x.strategy_name,
+                   COALESCE(x.filled_quantity, x.quantity) AS qty,
+                   x.fill_price AS buy_fill,
+                   x.updated_at AS closed_at,
+                   (SELECT s.fill_price
+                      FROM option_orders s
+                     WHERE s.occ_symbol = x.occ_symbol
+                       AND s.trading_mode = x.trading_mode
+                       AND s.strategy_version = x.strategy_version
+                       AND s.strategy_name IS NOT DISTINCT FROM x.strategy_name
+                       AND s.side = 'sell'
+                       AND s.fill_price IS NOT NULL
+                       AND s.status = 'filled'
+                       AND s.updated_at <= x.updated_at
+                     ORDER BY s.updated_at DESC
+                     LIMIT 1) AS sell_fill,
+                   (SELECT s.updated_at
+                      FROM option_orders s
+                     WHERE s.occ_symbol = x.occ_symbol
+                       AND s.trading_mode = x.trading_mode
+                       AND s.strategy_version = x.strategy_version
+                       AND s.strategy_name IS NOT DISTINCT FROM x.strategy_name
+                       AND s.side = 'sell'
+                       AND s.fill_price IS NOT NULL
+                       AND s.status = 'filled'
+                       AND s.updated_at <= x.updated_at
+                     ORDER BY s.updated_at DESC
+                     LIMIT 1) AS opened_at
+              FROM option_orders x
+             WHERE x.trading_mode = %s
+               AND x.strategy_version = %s
+               AND x.side = 'buy'
+               AND x.fill_price IS NOT NULL
+               AND x.status = 'filled'
+               AND DATE(x.updated_at AT TIME ZONE %s) >= %s
+               AND DATE(x.updated_at AT TIME ZONE %s) <= %s
+             ORDER BY x.updated_at
+            """,
+            (
+                trading_mode.value,
+                strategy_version,
+                market_timezone,
+                since_date,
+                market_timezone,
+                until_date,
+            ),
+        )
+        result = []
+        for row in rows:
+            if row[6] is None:
+                continue
+            qty = int(row[3])
+            buy_fill = float(row[4])
+            closed_at = row[5]
+            sell_fill = float(row[6])
+            opened_at = row[7]
+            premium_collected = sell_fill * qty * 100
+            close_cost = buy_fill * qty * 100
+            result.append({
+                "occ_symbol": row[0],
+                "underlying": row[1],
+                "strategy_name": row[2],
+                "qty": qty,
+                "premium_collected": premium_collected,
+                "close_cost": close_cost,
+                "pnl": premium_collected - close_cost,
+                "opened_at": opened_at,
+                "closed_at": closed_at,
+            })
+        return result
+
     def load_by_broker_order_id(self, broker_order_id: str) -> OptionOrderRecord | None:
         row = fetch_one(
             self._connection,
