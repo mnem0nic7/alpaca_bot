@@ -213,3 +213,104 @@ def test_current_session_regular_uses_broker_clock():
     ts = datetime(2026, 4, 28, 16, 0, tzinfo=timezone.utc)
     result = sup._current_session(ts)
     assert result is SessionType.CLOSED
+
+
+def test_current_session_returns_closed_on_weekend_pre_market():
+    """Saturday pre-market: broker is_open=False, next_open is Monday → CLOSED."""
+    settings = _settings(
+        EXTENDED_HOURS_ENABLED="true",
+        PRE_MARKET_ENTRY_WINDOW_START="04:00",
+        PRE_MARKET_ENTRY_WINDOW_END="09:20",
+        AFTER_HOURS_ENTRY_WINDOW_START="16:05",
+        AFTER_HOURS_ENTRY_WINDOW_END="19:30",
+        EXTENDED_HOURS_FLATTEN_TIME="19:45",
+    )
+    from unittest.mock import MagicMock
+    from alpaca_bot.runtime.supervisor import RuntimeSupervisor
+
+    # Saturday 2026-05-30 at 08:00 EDT = 12:00 UTC; next_open = Monday 2026-06-01
+    sat_premarket = datetime(2026, 5, 30, 12, 0, tzinfo=timezone.utc)
+    next_open = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
+
+    clock = MagicMock()
+    clock.is_open = False
+    clock.next_open = next_open
+    broker = MagicMock()
+    broker.get_clock.return_value = clock
+
+    sup = RuntimeSupervisor(
+        settings=settings,
+        runtime=MagicMock(),
+        broker=broker,
+        market_data=MagicMock(),
+        stream=None,
+    )
+    assert sup._current_session(sat_premarket) is SessionType.CLOSED
+
+
+def test_current_session_returns_pre_market_on_trading_day():
+    """Monday pre-market: next_open is today → PRE_MARKET."""
+    settings = _settings(
+        EXTENDED_HOURS_ENABLED="true",
+        PRE_MARKET_ENTRY_WINDOW_START="04:00",
+        PRE_MARKET_ENTRY_WINDOW_END="09:20",
+        AFTER_HOURS_ENTRY_WINDOW_START="16:05",
+        AFTER_HOURS_ENTRY_WINDOW_END="19:30",
+        EXTENDED_HOURS_FLATTEN_TIME="19:45",
+    )
+    from unittest.mock import MagicMock
+    from alpaca_bot.runtime.supervisor import RuntimeSupervisor
+
+    # Monday 2026-06-01 at 08:00 EDT = 12:00 UTC; next_open is today at 09:30 ET
+    mon_premarket = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
+    next_open = datetime(2026, 6, 1, 13, 30, tzinfo=timezone.utc)
+
+    clock = MagicMock()
+    clock.is_open = False  # pre-market: not yet open
+    clock.next_open = next_open
+    broker = MagicMock()
+    broker.get_clock.return_value = clock
+
+    sup = RuntimeSupervisor(
+        settings=settings,
+        runtime=MagicMock(),
+        broker=broker,
+        market_data=MagicMock(),
+        stream=None,
+    )
+    assert sup._current_session(mon_premarket) is SessionType.PRE_MARKET
+
+
+def test_current_session_returns_closed_on_afterhours_trading_day():
+    """Monday after-hours: market closed, next_open is Tuesday → CLOSED.
+    After-hours equity trading is not used; returning CLOSED is acceptable and
+    prevents wasted cycles. Fix 1 already prevents option exits after 4pm ET."""
+    settings = _settings(
+        EXTENDED_HOURS_ENABLED="true",
+        PRE_MARKET_ENTRY_WINDOW_START="04:00",
+        PRE_MARKET_ENTRY_WINDOW_END="09:20",
+        AFTER_HOURS_ENTRY_WINDOW_START="16:05",
+        AFTER_HOURS_ENTRY_WINDOW_END="19:30",
+        EXTENDED_HOURS_FLATTEN_TIME="19:45",
+    )
+    from unittest.mock import MagicMock
+    from alpaca_bot.runtime.supervisor import RuntimeSupervisor
+
+    # Monday 2026-06-01 at 20:30 UTC = 16:30 EDT; next_open = Tuesday 2026-06-02
+    mon_afterhours = datetime(2026, 6, 1, 20, 30, tzinfo=timezone.utc)
+    next_open = datetime(2026, 6, 2, 13, 30, tzinfo=timezone.utc)
+
+    clock = MagicMock()
+    clock.is_open = False
+    clock.next_open = next_open
+    broker = MagicMock()
+    broker.get_clock.return_value = clock
+
+    sup = RuntimeSupervisor(
+        settings=settings,
+        runtime=MagicMock(),
+        broker=broker,
+        market_data=MagicMock(),
+        stream=None,
+    )
+    assert sup._current_session(mon_afterhours) is SessionType.CLOSED

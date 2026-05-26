@@ -2125,20 +2125,35 @@ class RuntimeSupervisor:
             "cannot determine market hours — refusing to proceed"
         )
 
+    def _get_broker_clock(self):
+        return (
+            self.broker.get_clock()
+            if hasattr(self.broker, "get_clock")
+            else self.broker.get_market_clock()
+        )
+
     def _current_session(self, timestamp: datetime) -> SessionType:
         session = detect_session_type(timestamp, self.settings)
         if session is SessionType.REGULAR:
             try:
-                clock = (
-                    self.broker.get_clock()
-                    if hasattr(self.broker, "get_clock")
-                    else self.broker.get_market_clock()
-                )
+                clock = self._get_broker_clock()
                 return SessionType.REGULAR if clock.is_open else SessionType.CLOSED
             except Exception:
                 return SessionType.REGULAR
         if session in (SessionType.PRE_MARKET, SessionType.AFTER_HOURS):
-            return session if self.settings.extended_hours_enabled else SessionType.CLOSED
+            if not self.settings.extended_hours_enabled:
+                return SessionType.CLOSED
+            try:
+                clock = self._get_broker_clock()
+                today_et = timestamp.astimezone(self.settings.market_timezone).date()
+                next_open_date = clock.next_open.astimezone(
+                    self.settings.market_timezone
+                ).date()
+                if not clock.is_open and next_open_date != today_et:
+                    return SessionType.CLOSED
+            except Exception:
+                pass  # broker unavailable: let session type proceed
+            return session
         return SessionType.CLOSED
 
     def _start_stream_thread(self, *, now: Callable[[], datetime]) -> None:
