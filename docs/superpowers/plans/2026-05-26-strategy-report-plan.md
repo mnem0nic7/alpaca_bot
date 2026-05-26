@@ -6,7 +6,7 @@
 
 **Architecture:** Two new read-only SQL query methods on existing repository classes; a new CLI file with pure compute functions (testable without DB) and render functions; a new entrypoint registered in `pyproject.toml`. Follows the exact same patterns as `session_eval_cli.py`.
 
-**Tech Stack:** Python 3.12, psycopg2 (via existing `ConnectionProtocol`), `argparse`, `csv` stdlib, pytest.
+**Tech Stack:** Python 3.12, psycopg3 (via `connect_postgres`), `argparse`, `csv` stdlib, pytest.
 
 ---
 
@@ -220,7 +220,7 @@ from typing import Sequence
 from zoneinfo import ZoneInfo
 
 from alpaca_bot.config import Settings, TradingMode
-from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres
+from alpaca_bot.storage.db import connect_postgres
 from alpaca_bot.storage.repositories import (
     AuditEventStore,
     OptionOrderRepository,
@@ -627,7 +627,7 @@ from typing import Sequence
 from zoneinfo import ZoneInfo
 
 from alpaca_bot.config import Settings, TradingMode
-from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres
+from alpaca_bot.storage.db import connect_postgres
 from alpaca_bot.storage.repositories import (
     AuditEventStore,
     OptionOrderRepository,
