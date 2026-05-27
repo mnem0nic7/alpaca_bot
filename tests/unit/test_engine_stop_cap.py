@@ -87,7 +87,7 @@ def _make_intraday_bars(price: float) -> list[Bar]:
 
 def _make_daily_bars() -> list[Bar]:
     bars = []
-    base = datetime(2026, 4, 1, 14, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     for i in range(25):
         bars.append(
             Bar(

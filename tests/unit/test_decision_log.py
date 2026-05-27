@@ -129,7 +129,9 @@ def test_cycle_result_has_decision_records_field() -> None:
 # ── Helpers for evaluate_cycle tests ────────────────────────────────────────
 
 def make_daily_bars(symbol: str = "AAPL", count: int = 22) -> list[Bar]:
-    start = datetime(2026, 3, 26, 20, 0, tzinfo=timezone.utc)
+    # Start chosen so bar[-1] lands on 2026-05-08 (day after _NOW = 2026-05-07),
+    # keeping bar age < viability_daily_bar_max_age_days (default 5).
+    start = datetime(2026, 4, 17, 20, 0, tzinfo=timezone.utc)
     return [
         Bar(
             symbol=symbol,

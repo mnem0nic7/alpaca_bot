@@ -749,6 +749,37 @@ def evaluate_cycle(
                         _spread_blocked.append(symbol)
                         continue
 
+                # Stale daily bar guard: reject entry if last daily bar is too old.
+                _daily_bar_age_days = (
+                    now - daily_bars[-1].timestamp.astimezone(timezone.utc)
+                ).days
+                if _daily_bar_age_days > settings.viability_daily_bar_max_age_days:
+                    _decision_records.append(DecisionRecord(
+                        cycle_at=now,
+                        symbol=symbol,
+                        strategy_name=strategy_name,
+                        trading_mode=_tm,
+                        strategy_version=_sv,
+                        decision="rejected",
+                        reject_stage="stale_data",
+                        reject_reason="daily_bars_stale",
+                        entry_level=None,
+                        signal_bar_close=None,
+                        relative_volume=None,
+                        atr=None,
+                        stop_price=None,
+                        limit_price=None,
+                        initial_stop_price=None,
+                        quantity=None,
+                        risk_per_share=None,
+                        equity=equity,
+                        filter_results={},
+                        vix_close=_ctx_vix_close,
+                        vix_above_sma=_ctx_vix_above_sma,
+                        sector_passing_pct=_ctx_sector_passing_pct,
+                    ))
+                    continue
+
                 if session_type is SessionType.AFTER_HOURS:
                     signal_index = next(
                         (

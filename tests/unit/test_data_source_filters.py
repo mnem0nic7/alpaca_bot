@@ -12,7 +12,9 @@ from alpaca_bot.domain import Bar, NewsItem, Quote
 
 def _make_daily_bars(symbol: str = "AAPL") -> list[Bar]:
     # 21 bars so daily_trend_filter_passes works with sma_period=5 (needs period+1).
-    start = datetime(2026, 3, 26, 20, 0, tzinfo=timezone.utc)
+    # Start chosen so bar[-1] lands on 2026-04-24 (same day as _INTRADAY_NOW),
+    # keeping bar age < viability_daily_bar_max_age_days (default 5).
+    start = datetime(2026, 4, 4, 20, 0, tzinfo=timezone.utc)
     return [
         Bar(
             symbol=symbol,

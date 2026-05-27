@@ -58,7 +58,9 @@ def make_settings(**overrides: str) -> Settings:
 
 def _make_daily_bars(symbol: str = "AAPL") -> list[Bar]:
     # 21 bars so daily_trend_filter_passes works with sma_period=20 (needs period+1 bars).
-    start = datetime(2026, 3, 26, 20, 0, tzinfo=timezone.utc)
+    # Start chosen so bar[-1] lands on 2026-04-24 (same day as intraday bars),
+    # keeping bar age < viability_daily_bar_max_age_days (default 5).
+    start = datetime(2026, 4, 4, 20, 0, tzinfo=timezone.utc)
     return [
         Bar(
             symbol=symbol,

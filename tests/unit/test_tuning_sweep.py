@@ -52,9 +52,11 @@ def _make_quiet_scenario() -> ReplayScenario:
             open=100.0, high=100.5, low=99.5, close=100.0, volume=500)
         for i in range(30)
     ]
+    # Start chosen so bar[-1] lands on 2026-04-24 (same day as t0),
+    # keeping bar age < viability_daily_bar_max_age_days (default 5).
     daily = [
         Bar(symbol="AAPL",
-            timestamp=datetime(2026, 3, 26, 20, 0, tzinfo=timezone.utc) + timedelta(days=i),
+            timestamp=datetime(2026, 3, 30, 20, 0, tzinfo=timezone.utc) + timedelta(days=i),
             open=89.0 + i, high=90.0 + i, low=88.0 + i, close=90.0 + i, volume=1_000_000)
         for i in range(25)
     ]

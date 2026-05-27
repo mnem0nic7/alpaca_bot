@@ -29,10 +29,13 @@ _NOW = datetime(2026, 5, 9, 14, 30, tzinfo=timezone.utc)
 
 def _daily_bars(symbol: str, count: int = 22) -> list[Bar]:
     from datetime import timedelta
+    # Start chosen so bar[-1] lands on 2026-05-09 (same day as _NOW),
+    # keeping bar age < viability_daily_bar_max_age_days (default 5).
+    _start = datetime(2026, 4, 17, tzinfo=timezone.utc)
     return [
         Bar(
             symbol=symbol,
-            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(days=i),
+            timestamp=_start + timedelta(days=i),
             open=100.0,
             high=101.0,
             low=99.0,

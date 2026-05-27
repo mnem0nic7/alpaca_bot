@@ -40,7 +40,9 @@ def make_settings(**overrides: str) -> Settings:
 def make_daily_bars(symbol: str = "AAPL") -> list[Bar]:
     # 21 bars so daily_trend_filter_passes works with sma_period=20 (needs period+1 bars
     # to exclude the potentially-partial last bar from the SMA window).
-    start = datetime(2026, 3, 26, 20, 0, tzinfo=timezone.utc)
+    # Start chosen so bar[-1] lands on 2026-04-24 (same day as the test `now`),
+    # keeping bar age < viability_daily_bar_max_age_days (default 5).
+    start = datetime(2026, 4, 4, 20, 0, tzinfo=timezone.utc)
     return [
         Bar(
             symbol=symbol,
@@ -2884,3 +2886,53 @@ def test_zero_close_bar_is_filtered_before_atr(caplog) -> None:
     assert len(entry_intents) == 1, (
         f"Expected 1 ENTRY intent after zero-bar filtering, got {len(entry_intents)}"
     )
+
+
+def test_stale_daily_bar_at_entry_emits_decision_record() -> None:
+    """When the last daily bar is older than viability_daily_bar_max_age_days (default 5),
+    the engine must reject the entry and emit a DecisionRecord with
+    reject_stage='stale_data' and reject_reason='daily_bars_stale'."""
+    _CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    # Build bars whose last timestamp is 2026-04-17 → age = 7 days > 5
+    stale_start = datetime(2026, 3, 28, 20, 0, tzinfo=timezone.utc)
+    stale_bars = [
+        Bar(
+            symbol="AAPL",
+            timestamp=stale_start + timedelta(days=i),
+            open=89.0 + i,
+            high=90.0 + i,
+            low=88.0 + i,
+            close=90.0 + i,
+            volume=1_000_000 + i * 1000,
+        )
+        for i in range(21)
+    ]
+    # last bar timestamp: 2026-03-28 + 20d = 2026-04-17; age from now = 7 days
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": stale_bars},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+    )
+
+    assert [i for i in result.intents if i.intent_type == _CycleIntentType.ENTRY] == [], (
+        "No ENTRY intent must be produced when daily bars are stale"
+    )
+    stale_rejections = [
+        dr for dr in result.decision_records
+        if dr.reject_stage == "stale_data" and dr.reject_reason == "daily_bars_stale"
+    ]
+    assert len(stale_rejections) == 1, (
+        f"Expected 1 stale_data/daily_bars_stale DecisionRecord, got "
+        f"{len(stale_rejections)}: {result.decision_records!r}"
+    )
+    r = stale_rejections[0]
+    assert r.symbol == "AAPL"
+    assert r.decision == "rejected"
