@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
 from alpaca_bot.domain.enums import IntentType
 from alpaca_bot.domain.models import ReplayEvent, ReplayResult
@@ -30,6 +31,7 @@ class BacktestReport:
     mean_return_pct: float | None   # None when total_trades == 0
     max_drawdown_pct: float | None  # None when peak equity never exceeds 0
     sharpe_ratio: float | None = None
+    annualized_sharpe: float | None = None  # daily-bucketed, sqrt(252) annualized
     profit_factor: float | None = None  # gross_wins_pnl / abs(gross_losses_pnl); None when no losses
     stop_wins: int = 0
     stop_losses: int = 0
@@ -110,6 +112,7 @@ def report_from_records(
         mean_return_pct=mean_return_pct,
         max_drawdown_pct=max_drawdown_pct,
         sharpe_ratio=_compute_sharpe(trades),
+        annualized_sharpe=_compute_annualized_sharpe(trades),
         profit_factor=profit_factor,
         stop_wins=stop_wins,
         stop_losses=stop_losses,
@@ -214,6 +217,30 @@ def _compute_sharpe(trades: list[ReplayTradeRecord]) -> float | None:
     if std_r == 0.0:
         return None
     return mean_r / std_r
+
+
+def _compute_annualized_sharpe(trades: list[ReplayTradeRecord]) -> float | None:
+    """Daily-bucketed Sharpe ratio annualized by sqrt(252).
+
+    Groups trades by exit date, sums PnL per day — consistent with weighting.py.
+    Returns None when fewer than 2 distinct trading days or zero std.
+    """
+    if len(trades) < 2:
+        return None
+    daily: dict[date, float] = {}
+    for t in trades:
+        d = t.exit_time.date()
+        daily[d] = daily.get(d, 0.0) + t.pnl
+    if len(daily) < 2:
+        return None
+    values = list(daily.values())
+    n = len(values)
+    mean = sum(values) / n
+    variance = sum((v - mean) ** 2 for v in values) / (n - 1)
+    std = variance ** 0.5
+    if std == 0.0:
+        return None
+    return mean / std * math.sqrt(252)
 
 
 def _compute_max_drawdown(
