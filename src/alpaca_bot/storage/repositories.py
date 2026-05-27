@@ -2282,6 +2282,81 @@ class DecisionLogStore:
             )
         return [dict(zip(_DECISION_LOG_COLS, row)) for row in rows]
 
+    def funnel_by_strategy(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        trading_mode: str,
+        market_timezone: str = "America/New_York",
+    ) -> list[dict]:
+        """Per-strategy funnel counts for a date range.
+
+        Each row: strategy_name, evaluated, not_skipped, not_prefiltered,
+        signal_fired, passed_entry_filter, sized, accepted.
+        Counts represent rows that passed *through* each stage — monotonically
+        non-increasing from left to right.
+        """
+        _cols = (
+            "strategy_name", "evaluated", "not_skipped", "not_prefiltered",
+            "signal_fired", "passed_entry_filter", "sized", "accepted",
+        )
+        rows = fetch_all(
+            self._connection,
+            """
+            SELECT
+                strategy_name,
+                COUNT(*) AS evaluated,
+                COUNT(*) FILTER (
+                    WHERE decision NOT IN (
+                        'skipped_existing_position', 'skipped_already_traded'
+                    )
+                ) AS not_skipped,
+                COUNT(*) FILTER (
+                    WHERE decision NOT IN (
+                        'skipped_existing_position', 'skipped_already_traded'
+                    )
+                      AND reject_stage IS DISTINCT FROM 'pre_filter'
+                      AND reject_stage IS DISTINCT FROM 'stale_data'
+                ) AS not_prefiltered,
+                COUNT(*) FILTER (
+                    WHERE decision NOT IN (
+                        'skipped_existing_position', 'skipped_already_traded',
+                        'skipped_no_signal'
+                    )
+                      AND reject_stage IS DISTINCT FROM 'pre_filter'
+                      AND reject_stage IS DISTINCT FROM 'stale_data'
+                ) AS signal_fired,
+                COUNT(*) FILTER (
+                    WHERE decision NOT IN (
+                        'skipped_existing_position', 'skipped_already_traded',
+                        'skipped_no_signal'
+                    )
+                      AND reject_stage IS DISTINCT FROM 'pre_filter'
+                      AND reject_stage IS DISTINCT FROM 'stale_data'
+                      AND reject_stage IS DISTINCT FROM 'vwap_filter'
+                ) AS passed_entry_filter,
+                COUNT(*) FILTER (
+                    WHERE decision NOT IN (
+                        'skipped_existing_position', 'skipped_already_traded',
+                        'skipped_no_signal'
+                    )
+                      AND reject_stage IS DISTINCT FROM 'pre_filter'
+                      AND reject_stage IS DISTINCT FROM 'stale_data'
+                      AND reject_stage IS DISTINCT FROM 'vwap_filter'
+                      AND reject_stage IS DISTINCT FROM 'sizing'
+                ) AS sized,
+                COUNT(*) FILTER (WHERE decision = 'accepted') AS accepted
+            FROM decision_log
+            WHERE DATE(cycle_at AT TIME ZONE %s) BETWEEN %s AND %s
+              AND trading_mode = %s
+            GROUP BY strategy_name
+            ORDER BY strategy_name
+            """,
+            (market_timezone, start_date, end_date, trading_mode),
+        )
+        return [dict(zip(_cols, row)) for row in rows]
+
 
 class MarketContextStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
