@@ -2776,3 +2776,73 @@ def test_short_trailing_stop_atr_unavailable_falls_back_to_bar_high():
     assert tsla_updates, "Short trailing stop must emit UPDATE_STOP when ATR unavailable"
     # new_stop = round(min(10.50, 10.00, bar.high=9.85), 2) = 9.85
     assert tsla_updates[0].stop_price == pytest.approx(9.85)
+
+
+def test_sizing_rejection_quantity_zero_emits_decision_record() -> None:
+    """When position size rounds to zero, a DecisionRecord with reject_stage='sizing',
+    reject_reason='quantity_zero' must appear in cycle_result.decision_records."""
+    _CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=now,
+        equity=0.01,  # so tiny that quantity rounds to 0
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+    )
+
+    sizing_rejections = [
+        dr for dr in result.decision_records
+        if dr.reject_stage == "sizing" and dr.reject_reason == "quantity_zero"
+    ]
+    assert len(sizing_rejections) == 1, (
+        f"Expected 1 sizing/quantity_zero DecisionRecord, got {len(sizing_rejections)}: "
+        f"{result.decision_records!r}"
+    )
+    r = sizing_rejections[0]
+    assert r.symbol == "AAPL"
+    assert r.decision == "rejected"
+    assert r.quantity == 0.0
+    assert r.equity == pytest.approx(0.01)
+
+
+def test_sizing_rejection_below_min_notional_emits_decision_record() -> None:
+    """When quantity * limit_price < MIN_POSITION_NOTIONAL, a DecisionRecord with
+    reject_stage='sizing', reject_reason='below_min_notional' must be emitted."""
+    _CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    # AAPL signal limit_price is ~110.x (from make_breakout_intraday_bars).
+    # With RISK_PER_TRADE_PCT=0.0025 and equity=10_000: risk_budget=25,
+    # risk_per_share≈2.12, qty_float≈11.8.
+    # MAX_POSITION_PCT=0.05 caps at floor(0.05*10_000/110.x)=4 shares.
+    # 4 * 110.x ≈ 440 < 2000 → below_min_notional fires.
+    result = evaluate_cycle(
+        settings=make_settings(MIN_POSITION_NOTIONAL="2000"),
+        now=now,
+        equity=10_000.0,
+        intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+    )
+
+    notional_rejections = [
+        dr for dr in result.decision_records
+        if dr.reject_stage == "sizing" and dr.reject_reason == "below_min_notional"
+    ]
+    assert len(notional_rejections) == 1, (
+        f"Expected 1 sizing/below_min_notional DecisionRecord, got "
+        f"{len(notional_rejections)}: {result.decision_records!r}"
+    )
+    r = notional_rejections[0]
+    assert r.symbol == "AAPL"
+    assert r.decision == "rejected"
+    assert r.quantity is not None and r.quantity > 0
