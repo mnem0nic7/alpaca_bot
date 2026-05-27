@@ -140,6 +140,13 @@ def evaluate_cycle(
     else:
         past_flatten = is_past_flatten_time(now, settings)
 
+    # Pre-filter zero-close bars from all daily series once, so every downstream
+    # path (trailing-stop ATR, viability exit, entry) works with clean data.
+    daily_bars_by_symbol = {
+        sym: _filter_valid_bars(bars, label=sym)
+        for sym, bars in daily_bars_by_symbol.items()
+    }
+
     for position in open_positions:
         if past_flatten:
             if position.symbol in emitted_exit_symbols:
@@ -691,7 +698,6 @@ def evaluate_cycle(
                     continue
                 bars = intraday_bars_by_symbol.get(symbol, ())
                 daily_bars = daily_bars_by_symbol.get(symbol, ())
-                daily_bars = _filter_valid_bars(daily_bars, label=symbol)
                 if not bars or not daily_bars:
                     continue
                 latest_bar = bars[-1]
@@ -750,10 +756,12 @@ def evaluate_cycle(
                         continue
 
                 # Stale daily bar guard: reject entry if last daily bar is too old.
-                _daily_bar_age_days = (
-                    now - daily_bars[-1].timestamp.astimezone(timezone.utc)
-                ).days
-                if _daily_bar_age_days > settings.viability_daily_bar_max_age_days:
+                # max(0, ...) ensures future-timestamped bars (age < 0) are treated as fresh, not as -1.
+                entry_daily_bar_age_days = max(
+                    0,
+                    (now - daily_bars[-1].timestamp.astimezone(timezone.utc)).days,
+                )
+                if entry_daily_bar_age_days > settings.viability_daily_bar_max_age_days:
                     _decision_records.append(DecisionRecord(
                         cycle_at=now,
                         symbol=symbol,
@@ -927,30 +935,33 @@ def evaluate_cycle(
                         settings=settings,
                         fractionable=fractionable,
                     )
+                    _sizing_dr_kwargs = dict(
+                        cycle_at=now,
+                        symbol=symbol,
+                        strategy_name=strategy_name,
+                        trading_mode=_tm,
+                        strategy_version=_sv,
+                        decision="rejected",
+                        reject_stage="sizing",
+                        entry_level=signal.entry_level,
+                        signal_bar_close=signal.signal_bar.close,
+                        relative_volume=signal.relative_volume,
+                        atr=None,
+                        stop_price=signal.stop_price,
+                        limit_price=signal.limit_price,
+                        initial_stop_price=effective_initial_stop,
+                        risk_per_share=round(signal.limit_price - effective_initial_stop, 4),
+                        equity=equity,
+                        filter_results={},
+                        vix_close=_ctx_vix_close,
+                        vix_above_sma=_ctx_vix_above_sma,
+                        sector_passing_pct=_ctx_sector_passing_pct,
+                    )
                     if quantity <= 0.0:
                         _decision_records.append(DecisionRecord(
-                            cycle_at=now,
-                            symbol=symbol,
-                            strategy_name=strategy_name,
-                            trading_mode=_tm,
-                            strategy_version=_sv,
-                            decision="rejected",
-                            reject_stage="sizing",
+                            **_sizing_dr_kwargs,
                             reject_reason="quantity_zero",
-                            entry_level=signal.entry_level,
-                            signal_bar_close=signal.signal_bar.close,
-                            relative_volume=signal.relative_volume,
-                            atr=None,
-                            stop_price=signal.stop_price,
-                            limit_price=signal.limit_price,
-                            initial_stop_price=effective_initial_stop,
                             quantity=0.0,
-                            risk_per_share=round(signal.limit_price - effective_initial_stop, 4),
-                            equity=equity,
-                            filter_results={},
-                            vix_close=_ctx_vix_close,
-                            vix_above_sma=_ctx_vix_above_sma,
-                            sector_passing_pct=_ctx_sector_passing_pct,
                         ))
                         continue
                     if (
@@ -958,28 +969,9 @@ def evaluate_cycle(
                         and quantity * signal.limit_price < settings.min_position_notional
                     ):
                         _decision_records.append(DecisionRecord(
-                            cycle_at=now,
-                            symbol=symbol,
-                            strategy_name=strategy_name,
-                            trading_mode=_tm,
-                            strategy_version=_sv,
-                            decision="rejected",
-                            reject_stage="sizing",
+                            **_sizing_dr_kwargs,
                             reject_reason="below_min_notional",
-                            entry_level=signal.entry_level,
-                            signal_bar_close=signal.signal_bar.close,
-                            relative_volume=signal.relative_volume,
-                            atr=None,
-                            stop_price=signal.stop_price,
-                            limit_price=signal.limit_price,
-                            initial_stop_price=effective_initial_stop,
                             quantity=quantity,
-                            risk_per_share=round(signal.limit_price - effective_initial_stop, 4),
-                            equity=equity,
-                            filter_results={},
-                            vix_close=_ctx_vix_close,
-                            vix_above_sma=_ctx_vix_above_sma,
-                            sector_passing_pct=_ctx_sector_passing_pct,
                         ))
                         continue
                     _candidate_signals[symbol] = (
