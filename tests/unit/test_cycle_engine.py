@@ -2846,3 +2846,41 @@ def test_sizing_rejection_below_min_notional_emits_decision_record() -> None:
     assert r.symbol == "AAPL"
     assert r.decision == "rejected"
     assert r.quantity is not None and r.quantity > 0
+
+
+def test_zero_close_bar_is_filtered_before_atr(caplog) -> None:
+    """A daily bar with close=0 must be dropped before ATR computation.
+    The engine must log a warning and the remaining bars must be used."""
+    import logging
+    _CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    good_bars = make_daily_bars()
+    zero_bar = Bar(
+        symbol="AAPL",
+        timestamp=good_bars[10].timestamp,
+        open=0.0, high=0.0, low=0.0, close=0.0, volume=0,
+    )
+    contaminated = good_bars[:10] + [zero_bar] + good_bars[10:]
+
+    with caplog.at_level(logging.WARNING, logger="alpaca_bot.core.engine"):
+        result = evaluate_cycle(
+            settings=make_settings(),
+            now=now,
+            equity=100_000.0,
+            intraday_bars_by_symbol={"AAPL": make_breakout_intraday_bars()},
+            daily_bars_by_symbol={"AAPL": contaminated},
+            open_positions=[],
+            working_order_symbols=set(),
+            traded_symbols_today=set(),
+            entries_disabled=False,
+        )
+
+    warning_msgs = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("zero-close" in m for m in warning_msgs), (
+        f"Expected a zero-close warning; got: {warning_msgs!r}"
+    )
+    entry_intents = [i for i in result.intents if i.intent_type == _CycleIntentType.ENTRY]
+    assert len(entry_intents) == 1, (
+        f"Expected 1 ENTRY intent after zero-bar filtering, got {len(entry_intents)}"
+    )

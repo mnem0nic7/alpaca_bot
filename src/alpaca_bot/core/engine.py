@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from enum import StrEnum
@@ -29,6 +30,19 @@ from alpaca_bot.strategy.session import (
 if TYPE_CHECKING:
     from alpaca_bot.storage import DailySessionState
     from alpaca_bot.domain.models import OptionContract
+
+logger = logging.getLogger(__name__)
+
+
+def _filter_valid_bars(bars: Sequence[Bar], *, label: str = "") -> tuple[Bar, ...]:
+    valid = tuple(b for b in bars if b.close > 0)
+    if len(valid) < len(bars):
+        logger.warning(
+            "_filter_valid_bars: dropped %d zero-close bars%s",
+            len(bars) - len(valid),
+            f" for {label}" if label else "",
+        )
+    return valid
 
 
 class CycleIntentType(StrEnum):
@@ -677,6 +691,7 @@ def evaluate_cycle(
                     continue
                 bars = intraday_bars_by_symbol.get(symbol, ())
                 daily_bars = daily_bars_by_symbol.get(symbol, ())
+                daily_bars = _filter_valid_bars(daily_bars, label=symbol)
                 if not bars or not daily_bars:
                     continue
                 latest_bar = bars[-1]
