@@ -48,3 +48,20 @@ def test_market_context_filter_env_overrides():
     assert s.sector_etf_sma_period == 10
     assert s.sector_filter_min_passing_pct == 0.6
     assert s.enable_vwap_entry_filter is True
+
+
+def test_option_chain_symbols_default_is_empty():
+    s = Settings.from_env(_base_env())
+    assert s.option_chain_symbols == ()
+
+
+def test_option_chain_symbols_parsed_from_csv():
+    env = _base_env(OPTION_CHAIN_SYMBOLS="ALHC,AMLX,AROC")
+    s = Settings.from_env(env)
+    assert s.option_chain_symbols == ("ALHC", "AMLX", "AROC")
+
+
+def test_option_chain_symbols_strips_whitespace():
+    env = _base_env(OPTION_CHAIN_SYMBOLS=" ALHC , AMLX ")
+    s = Settings.from_env(env)
+    assert s.option_chain_symbols == ("ALHC", "AMLX")
