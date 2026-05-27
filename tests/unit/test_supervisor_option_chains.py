@@ -42,7 +42,12 @@ class RecordingAuditStore:
 def _make_supervisor(*, adapter, audit_store=None, get_stock_bars=None, extra_env=None):
     """Build a RuntimeSupervisor wired with a watchlist returning _WATCHLIST_SYMBOLS."""
     RuntimeSupervisor = import_module("alpaca_bot.runtime.supervisor").RuntimeSupervisor
-    env = {**_base_env(), "ENABLE_OPTIONS_TRADING": "true", **(extra_env or {})}
+    env = {
+        **_base_env(),
+        "ENABLE_OPTIONS_TRADING": "true",
+        "OPTION_CHAIN_SYMBOLS": ",".join(_WATCHLIST_SYMBOLS),
+        **(extra_env or {}),
+    }
     settings = Settings.from_env(env)
     if get_stock_bars is None:
         get_stock_bars = lambda **_: {sym: [] for sym in _WATCHLIST_SYMBOLS}
@@ -113,19 +118,56 @@ def _make_supervisor(*, adapter, audit_store=None, get_stock_bars=None, extra_en
     )
 
 
-def test_option_chain_fetch_uses_watchlist_not_settings_symbols():
-    """Adapter must be called for intraday_bars_by_symbol keys, not settings.symbols."""
+def test_option_chain_fetch_uses_option_chain_symbols_not_full_watchlist():
+    """Only OPTION_CHAIN_SYMBOLS must be fetched, not every symbol in intraday_bars_by_symbol."""
+    # Watchlist has ACHR, METC, SLS but OPTION_CHAIN_SYMBOLS only covers ACHR and METC.
     adapter = RecordingOptionChainAdapter()
-    supervisor = _make_supervisor(adapter=adapter)
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        extra_env={"OPTION_CHAIN_SYMBOLS": "ACHR,METC"},
+    )
     supervisor.run_cycle_once(now=lambda: _NOW)
 
-    assert set(adapter.fetched) == set(_WATCHLIST_SYMBOLS), (
-        f"Expected fetches for {_WATCHLIST_SYMBOLS!r}, got {adapter.fetched!r}"
+    assert set(adapter.fetched) == {"ACHR", "METC"}, (
+        f"Expected only ACHR,METC; got {adapter.fetched!r}"
     )
-    for sym in ("AAPL", "MSFT"):
-        assert sym not in adapter.fetched, (
-            f"{sym!r} is in settings.symbols but not the watchlist — must not be fetched"
-        )
+    assert "SLS" not in adapter.fetched, "SLS not in OPTION_CHAIN_SYMBOLS — must not be fetched"
+
+
+def test_option_chain_fetch_symbol_not_in_bars_is_skipped():
+    """A symbol in OPTION_CHAIN_SYMBOLS that has no intraday bars must not be fetched."""
+    # Bars only cover ACHR and METC — SLS is configured but absent from bars.
+    bars_by_symbol = {
+        "ACHR": [Bar(symbol="ACHR", timestamp=_NOW, open=10.0, high=11.0, low=9.0, close=10.5, volume=100_000)],
+        "METC": [Bar(symbol="METC", timestamp=_NOW, open=20.0, high=21.0, low=19.0, close=20.5, volume=100_000)],
+    }
+    adapter = RecordingOptionChainAdapter()
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        get_stock_bars=lambda **_: bars_by_symbol,
+        # OPTION_CHAIN_SYMBOLS includes SLS (via _WATCHLIST_SYMBOLS default) but bars don't
+    )
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert "SLS" not in adapter.fetched, (
+        "SLS has no intraday bars — must not be fetched even though it's in OPTION_CHAIN_SYMBOLS"
+    )
+    assert "ACHR" in adapter.fetched
+    assert "METC" in adapter.fetched
+
+
+def test_option_chain_empty_symbols_fetches_nothing():
+    """With OPTION_CHAIN_SYMBOLS=[], no chains should be fetched."""
+    adapter = RecordingOptionChainAdapter()
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        extra_env={"OPTION_CHAIN_SYMBOLS": ""},
+    )
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert adapter.fetched == [], (
+        f"Expected no fetches with empty OPTION_CHAIN_SYMBOLS; got {adapter.fetched!r}"
+    )
 
 
 def test_option_chain_exception_does_not_block_other_symbols():
@@ -139,62 +181,21 @@ def test_option_chain_exception_does_not_block_other_symbols():
     assert "METC" in adapter.fetched  # attempted even though it raised
 
 
-def test_option_chains_fetched_audit_event_keys_match_watchlist():
-    """option_chains_fetched payload keys must equal intraday_bars_by_symbol keys."""
+def test_option_chains_fetched_audit_payload_only_contains_option_chain_symbols():
+    """option_chains_fetched payload keys must be exactly OPTION_CHAIN_SYMBOLS, not the full watchlist."""
     audit_store = RecordingAuditStore()
     adapter = RecordingOptionChainAdapter()
-    supervisor = _make_supervisor(adapter=adapter, audit_store=audit_store)
+    # OPTION_CHAIN_SYMBOLS only covers ACHR and METC — SLS is on the watchlist but not configured
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        audit_store=audit_store,
+        extra_env={"OPTION_CHAIN_SYMBOLS": "ACHR,METC"},
+    )
     supervisor.run_cycle_once(now=lambda: _NOW)
 
     chain_events = [e for e in audit_store.events if e.event_type == "option_chains_fetched"]
     assert len(chain_events) == 1, f"Expected 1 option_chains_fetched event, got {len(chain_events)}"
-    assert set(chain_events[0].payload) == set(_WATCHLIST_SYMBOLS), (
-        f"Audit payload keys {set(chain_events[0].payload)!r} must equal "
-        f"watchlist {set(_WATCHLIST_SYMBOLS)!r}"
+    assert set(chain_events[0].payload) == {"ACHR", "METC"}, (
+        f"Audit payload keys {set(chain_events[0].payload)!r} must equal OPTION_CHAIN_SYMBOLS"
     )
-
-
-def test_volume_filter_excludes_low_volume_symbols() -> None:
-    """Symbols below OPTION_CHAIN_MIN_TOTAL_VOLUME must not reach the adapter."""
-    # ACHR and METC each have 100,000 volume (>= threshold=50,000) → fetched.
-    # SLS has 10,000 volume (< threshold) → must NOT be fetched.
-    bars_by_symbol = {
-        "ACHR": [Bar(symbol="ACHR", timestamp=_NOW, open=10.0, high=11.0, low=9.0, close=10.5, volume=100_000)],
-        "METC": [Bar(symbol="METC", timestamp=_NOW, open=20.0, high=21.0, low=19.0, close=20.5, volume=100_000)],
-        "SLS":  [Bar(symbol="SLS",  timestamp=_NOW, open=5.0,  high=6.0,  low=4.5,  close=5.5,  volume=10_000)],
-    }
-    adapter = RecordingOptionChainAdapter()
-    supervisor = _make_supervisor(
-        adapter=adapter,
-        get_stock_bars=lambda **_: bars_by_symbol,
-        extra_env={"OPTION_CHAIN_MIN_TOTAL_VOLUME": "50000"},
-    )
-    supervisor.run_cycle_once(now=lambda: _NOW)
-
-    assert "ACHR" in adapter.fetched, "ACHR (volume=100k) must be fetched"
-    assert "METC" in adapter.fetched, "METC (volume=100k) must be fetched"
-    assert "SLS" not in adapter.fetched, (
-        f"SLS (volume=10k < threshold=50k) must not be fetched; got {adapter.fetched!r}"
-    )
-
-
-def test_volume_filter_zero_disables_filter() -> None:
-    """OPTION_CHAIN_MIN_TOTAL_VOLUME=0 must fetch all symbols regardless of volume."""
-    # SLS has only 1 share of volume — far below any practical threshold.
-    # With min_vol=0, the filter is disabled and SLS must still be fetched.
-    bars_by_symbol = {
-        "ACHR": [Bar(symbol="ACHR", timestamp=_NOW, open=10.0, high=11.0, low=9.0, close=10.5, volume=100_000)],
-        "METC": [Bar(symbol="METC", timestamp=_NOW, open=20.0, high=21.0, low=19.0, close=20.5, volume=100_000)],
-        "SLS":  [Bar(symbol="SLS",  timestamp=_NOW, open=5.0,  high=6.0,  low=4.5,  close=5.5,  volume=1)],
-    }
-    adapter = RecordingOptionChainAdapter()
-    supervisor = _make_supervisor(
-        adapter=adapter,
-        get_stock_bars=lambda **_: bars_by_symbol,
-        # extra_env omitted → OPTION_CHAIN_MIN_TOTAL_VOLUME defaults to "0"
-    )
-    supervisor.run_cycle_once(now=lambda: _NOW)
-
-    assert set(adapter.fetched) == {"ACHR", "METC", "SLS"}, (
-        f"All symbols must be fetched when min_vol=0; got {adapter.fetched!r}"
-    )
+    assert "SLS" not in chain_events[0].payload, "SLS is not in OPTION_CHAIN_SYMBOLS — must not appear in payload"

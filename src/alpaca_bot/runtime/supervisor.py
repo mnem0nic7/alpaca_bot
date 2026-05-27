@@ -182,6 +182,11 @@ class RuntimeSupervisor:
         if settings.enable_options_trading:
             option_chain_adapter = AlpacaOptionChainAdapter.from_settings(settings)
             option_broker = broker
+            if not settings.option_chain_symbols:
+                logger.warning(
+                    "ENABLE_OPTIONS_TRADING=true but OPTION_CHAIN_SYMBOLS is empty"
+                    " — option strategies will be disabled this session"
+                )
         return cls(
             settings=settings,
             runtime=bootstrap_runtime(settings),
@@ -801,12 +806,11 @@ class RuntimeSupervisor:
             def _fetch_one(sym: str) -> tuple[str, list]:
                 return sym, self._option_chain_adapter.get_option_chain(sym, self.settings)
 
-            executor = ThreadPoolExecutor(max_workers=5)
-            min_vol = self.settings.option_chain_min_total_volume
-            symbols_to_fetch = [
-                sym for sym, bars in intraday_bars_by_symbol.items()
-                if min_vol == 0 or sum(b.volume for b in bars) >= min_vol
-            ]
+            executor = ThreadPoolExecutor(max_workers=10)
+            configured = set(s.upper() for s in self.settings.option_chain_symbols)
+            # Fetch only configured underlyings that also have intraday bars this session.
+            # OPTION_CHAIN_MIN_TOTAL_VOLUME is no longer used for symbol selection.
+            symbols_to_fetch = [sym for sym in intraday_bars_by_symbol if sym in configured]
             futures = {executor.submit(_fetch_one, sym): sym for sym in symbols_to_fetch}
             try:
                 for future in as_completed(futures, timeout=45):
@@ -838,10 +842,9 @@ class RuntimeSupervisor:
                         (opt_name, factory(option_chains_by_symbol))
                     )
             option_chain_counts = {
-                sym: len(chains) for sym, chains in option_chains_by_symbol.items()
+                sym: len(option_chains_by_symbol.get(sym, []))
+                for sym in self.settings.option_chain_symbols
             }
-            for sym in intraday_bars_by_symbol:
-                option_chain_counts.setdefault(sym, 0)
             self._append_audit(
                 AuditEvent(
                     event_type="option_chains_fetched",
