@@ -67,3 +67,49 @@ def test_funnel_by_strategy_empty_result() -> None:
         trading_mode="paper",
     )
     assert result == []
+
+
+def test_funnel_cli_prints_header_and_rows(monkeypatch, capsys) -> None:
+    """main() prints strategy funnel table to stdout."""
+    from types import SimpleNamespace
+    import alpaca_bot.admin.funnel_report_cli as cli_module
+
+    fake_rows = [
+        {
+            "strategy_name": "breakout",
+            "evaluated": 100,
+            "not_skipped": 90,
+            "not_prefiltered": 60,
+            "signal_fired": 30,
+            "passed_entry_filter": 28,
+            "sized": 27,
+            "accepted": 15,
+        },
+    ]
+
+    class _FakeSettings:
+        database_url = "postgresql://x:x@localhost/x"
+        market_timezone = SimpleNamespace(key="America/New_York")
+
+    class _FakeStore:
+        def __init__(self, conn):
+            pass
+
+        def funnel_by_strategy(self, **kwargs):
+            return fake_rows
+
+    # Patch on cli_module (the bound names), not on the source modules.
+    # Project pattern: monkeypatch.setattr(cli_module, "Settings", ...) so the
+    # reference already imported into the CLI module namespace is replaced.
+    monkeypatch.setattr(cli_module, "Settings", SimpleNamespace(from_env=lambda: _FakeSettings()))
+    monkeypatch.setattr(cli_module, "connect_postgres", lambda url: None)
+    monkeypatch.setattr(cli_module, "DecisionLogStore", _FakeStore)
+
+    exit_code = cli_module.main(["--days", "7"])
+
+    output = capsys.readouterr().out
+    assert "breakout" in output
+    assert "Strategy" in output  # header
+    assert "100" in output        # evaluated count
+    assert "15" in output         # accepted count
+    assert exit_code == 0
