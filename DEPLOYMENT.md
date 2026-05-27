@@ -81,6 +81,10 @@ FLATTEN_TIME=15:45
 # OPTION_DTE_MIN=21        # minimum days-to-expiry when selecting contracts
 # OPTION_DTE_MAX=60        # maximum days-to-expiry when selecting contracts
 # OPTION_DELTA_TARGET=0.50 # target delta for contract selection (0 < value ≤ 1.0)
+# OPTION_CHAIN_SYMBOLS=ALHC,AMLX,AROC  # required when ENABLE_OPTIONS_TRADING=true;
+#   comma-separated list of underlying tickers to fetch option chains for.
+#   If empty (the default), option strategies are silently disabled even when
+#   ENABLE_OPTIONS_TRADING=true (a warning is logged at startup).
 #
 # Bear (put) strategies are activated alongside ENABLE_OPTIONS_TRADING. When enabled,
 # all 11 bearish strategies run in parallel with the existing breakout_calls strategy.
