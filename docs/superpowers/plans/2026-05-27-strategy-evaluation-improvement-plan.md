@@ -586,13 +586,11 @@ git commit -m "feat: add DecisionLogStore.funnel_by_strategy() SQL query"
 Append to `tests/unit/test_funnel_report.py`:
 
 ```python
-import io
-import sys
-from unittest.mock import patch
-
-
-def test_funnel_cli_prints_header_and_rows(monkeypatch) -> None:
+def test_funnel_cli_prints_header_and_rows(monkeypatch, capsys) -> None:
     """main() prints strategy funnel table to stdout."""
+    from types import SimpleNamespace
+    import alpaca_bot.admin.funnel_report_cli as cli_module
+
     fake_rows = [
         {
             "strategy_name": "breakout",
@@ -606,9 +604,9 @@ def test_funnel_cli_prints_header_and_rows(monkeypatch) -> None:
         },
     ]
 
-    # Patch DecisionLogStore.funnel_by_strategy so no real DB is needed
-    from alpaca_bot.storage import repositories as repos_module
-    from alpaca_bot.storage.repositories import DecisionLogStore
+    class _FakeSettings:
+        database_url = "postgresql://x:x@localhost/x"
+        market_timezone = SimpleNamespace(key="America/New_York")
 
     class _FakeStore:
         def __init__(self, conn):
@@ -617,27 +615,16 @@ def test_funnel_cli_prints_header_and_rows(monkeypatch) -> None:
         def funnel_by_strategy(self, **kwargs):
             return fake_rows
 
-    monkeypatch.setattr(repos_module, "DecisionLogStore", _FakeStore)
-
-    # Patch connect_postgres to avoid needing a real DATABASE_URL
-    import alpaca_bot.admin.funnel_report_cli as cli_module
+    # Patch on cli_module (the bound names), not on the source modules.
+    # Project pattern: monkeypatch.setattr(cli_module, "Settings", ...) so the
+    # reference already imported into the CLI module namespace is replaced.
+    monkeypatch.setattr(cli_module, "Settings", SimpleNamespace(from_env=lambda: _FakeSettings()))
     monkeypatch.setattr(cli_module, "connect_postgres", lambda url: None)
+    monkeypatch.setattr(cli_module, "DecisionLogStore", _FakeStore)
 
-    # Patch Settings.from_env to avoid requiring real env vars
-    import alpaca_bot.config as config_module
+    exit_code = cli_module.main(["--days", "7"])
 
-    class _FakeSettings:
-        database_url = "postgresql://x:x@localhost/x"
-        trading_mode = type("TM", (), {"value": "paper"})()
-        market_timezone = type("TZ", (), {"key": "America/New_York"})()
-
-    monkeypatch.setattr(config_module.Settings, "from_env", staticmethod(lambda: _FakeSettings()))
-
-    captured = io.StringIO()
-    with patch("sys.stdout", captured):
-        exit_code = cli_module.main(["--days", "7"])
-
-    output = captured.getvalue()
+    output = capsys.readouterr().out
     assert "breakout" in output
     assert "Strategy" in output  # header
     assert "100" in output        # evaluated count
@@ -702,7 +689,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             market_timezone=settings.market_timezone.key,
         )
     finally:
-        conn.close()
+        close_fn = getattr(conn, "close", None)
+        if callable(close_fn):
+            close_fn()
 
     _print_table(rows, start_date, end_date)
     return 0
