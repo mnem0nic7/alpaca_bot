@@ -80,3 +80,28 @@ def test_backtest_report_annualized_sharpe_defaults_to_none() -> None:
         win_rate=0.6, mean_return_pct=0.01, max_drawdown_pct=0.05, sharpe_ratio=1.0,
     )
     assert report.annualized_sharpe is None
+
+
+from alpaca_bot.tuning.sweep import score_report
+
+
+def test_score_report_prefers_annualized_sharpe_when_both_set() -> None:
+    report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+        win_rate=0.6, mean_return_pct=0.01, max_drawdown_pct=0.05,
+        sharpe_ratio=1.0,
+        annualized_sharpe=3.5,  # annualized > sharpe_ratio — should win
+    )
+    result = score_report(report, min_trades=3)
+    assert result == pytest.approx(3.5)
+
+
+def test_score_report_falls_back_to_sharpe_when_annualized_none() -> None:
+    report = BacktestReport(
+        trades=(), total_trades=5, winning_trades=3, losing_trades=2,
+        win_rate=0.6, mean_return_pct=0.01, max_drawdown_pct=0.05,
+        sharpe_ratio=2.5,
+        annualized_sharpe=None,
+    )
+    result = score_report(report, min_trades=3)
+    assert result == pytest.approx(2.5)

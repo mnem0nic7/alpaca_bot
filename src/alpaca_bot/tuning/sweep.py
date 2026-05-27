@@ -143,7 +143,9 @@ def score_report(
         return None
     if max_trades > 0 and report.total_trades > max_trades:
         return None
-    if report.sharpe_ratio is not None:
+    if report.annualized_sharpe is not None:
+        base = report.annualized_sharpe
+    elif report.sharpe_ratio is not None:
         base = report.sharpe_ratio
     elif report.mean_return_pct is None:
         return None
@@ -176,6 +178,8 @@ def _aggregate_reports(reports: list[BacktestReport | None]) -> BacktestReport |
     max_drawdown_pct: float | None = max(drawdowns) if drawdowns else None
     sharpes = [r.sharpe_ratio for r in valid if r.sharpe_ratio is not None]
     sharpe_ratio: float | None = sum(sharpes) / len(sharpes) if sharpes else None
+    ann_sharpes = [r.annualized_sharpe for r in valid if r.annualized_sharpe is not None]
+    annualized_sharpe: float | None = sum(ann_sharpes) / len(ann_sharpes) if ann_sharpes else None
     profit_factors = [r.profit_factor for r in valid if r.profit_factor is not None]
     profit_factor: float | None = sum(profit_factors) / len(profit_factors) if profit_factors else None
     stop_wins = sum(r.stop_wins for r in valid)
@@ -199,6 +203,7 @@ def _aggregate_reports(reports: list[BacktestReport | None]) -> BacktestReport |
         mean_return_pct=mean_return_pct,
         max_drawdown_pct=max_drawdown_pct,
         sharpe_ratio=sharpe_ratio,
+        annualized_sharpe=annualized_sharpe,
         profit_factor=profit_factor,
         stop_wins=stop_wins,
         stop_losses=stop_losses,
