@@ -18,6 +18,8 @@
 | `src/alpaca_bot/runtime/supervisor.py` | Replace `symbols_to_fetch`; `max_workers` 5→10; audit payload; startup warning |
 | `tests/unit/test_config.py` | Add `option_chain_symbols` parse tests |
 | `tests/unit/test_supervisor_option_chains.py` | Supply `OPTION_CHAIN_SYMBOLS` in helper; replace volume-filter tests |
+| `DEPLOYMENT.md` | Document `OPTION_CHAIN_SYMBOLS` env var |
+| `/etc/alpaca_bot/alpaca-bot.env` | Add `OPTION_CHAIN_SYMBOLS=ALHC,AMLX,AROC,BCRX,BFLY,CMG,CNK,ASAN,ATEC` |
 
 ---
 
@@ -393,7 +395,7 @@ with:
 
 ```python
             executor = ThreadPoolExecutor(max_workers=10)
-            configured = set(self.settings.option_chain_symbols)
+            configured = set(s.upper() for s in self.settings.option_chain_symbols)
             # Fetch only configured underlyings that also have intraday bars this session.
             # OPTION_CHAIN_MIN_TOTAL_VOLUME is no longer used for symbol selection.
             symbols_to_fetch = [sym for sym in intraday_bars_by_symbol if sym in configured]
@@ -448,6 +450,7 @@ git commit -m "feat: decouple option chain fetch from equity watchlist via OPTIO
 ## Task 3: Update Production Env and Redeploy
 
 **Files:**
+- Modify: `DEPLOYMENT.md`
 - Modify: `/etc/alpaca_bot/alpaca-bot.env`
 - Action: redeploy
 
@@ -455,7 +458,25 @@ git commit -m "feat: decouple option chain fetch from equity watchlist via OPTIO
 This task is configuration, not code — but it's the step that actually unblocks live option entries. The 9 symbols listed are the underlyings confirmed from the `option_orders` table (the last session that had positions). Without this, `option_chain_symbols=()` in production and the warning log fires every cycle.
 `─────────────────────────────────────────────────`
 
-- [ ] **Step 1: Add `OPTION_CHAIN_SYMBOLS` to the production env file**
+- [ ] **Step 1: Document `OPTION_CHAIN_SYMBOLS` in `DEPLOYMENT.md`**
+
+In `DEPLOYMENT.md`, after line 83 (`# OPTION_DELTA_TARGET=0.50 ...`), insert:
+
+```
+# OPTION_CHAIN_SYMBOLS=ALHC,AMLX,AROC  # required when ENABLE_OPTIONS_TRADING=true;
+#   comma-separated list of underlying tickers to fetch option chains for.
+#   If empty (the default), option strategies are silently disabled even when
+#   ENABLE_OPTIONS_TRADING=true (a warning is logged at startup).
+```
+
+Commit:
+
+```bash
+git add DEPLOYMENT.md
+git commit -m "docs: document OPTION_CHAIN_SYMBOLS env var in DEPLOYMENT.md"
+```
+
+- [ ] **Step 2: Add `OPTION_CHAIN_SYMBOLS` to the production env file**
 
 Open `/etc/alpaca_bot/alpaca-bot.env` and add:
 
@@ -465,7 +486,7 @@ OPTION_CHAIN_SYMBOLS=ALHC,AMLX,AROC,BCRX,BFLY,CMG,CNK,ASAN,ATEC
 
 Place it near the other `OPTION_*` variables for readability.
 
-- [ ] **Step 2: Redeploy**
+- [ ] **Step 3: Redeploy**
 
 ```bash
 ./scripts/deploy.sh /etc/alpaca_bot/alpaca-bot.env
@@ -473,7 +494,7 @@ Place it near the other `OPTION_*` variables for readability.
 
 Expected: migrate runs, then supervisor restarts. First cycle after restart will log an `option_chains_fetched` audit event with only the 9 configured symbols — no timeout.
 
-- [ ] **Step 3: Verify in production logs**
+- [ ] **Step 4: Verify in production logs**
 
 ```bash
 docker logs alpaca_bot-supervisor-1 --tail 50 | grep -E "option_chain|OPTION_CHAIN"
@@ -481,7 +502,7 @@ docker logs alpaca_bot-supervisor-1 --tail 50 | grep -E "option_chain|OPTION_CHA
 
 Expected output: no "timed out" line; `option_chains_fetched` event logged with a payload that only contains the 9 configured symbols.
 
-- [ ] **Step 4: Verify in Postgres**
+- [ ] **Step 5: Verify in Postgres**
 
 ```sql
 SELECT payload
