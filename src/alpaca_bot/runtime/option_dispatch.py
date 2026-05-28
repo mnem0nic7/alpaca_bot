@@ -38,6 +38,7 @@ class BrokerProtocol(Protocol):
 @dataclass(frozen=True)
 class OptionDispatchReport:
     submitted_count: int
+    failed_count: int = 0
 
 
 def dispatch_pending_option_orders(
@@ -56,6 +57,7 @@ def dispatch_pending_option_orders(
     )
 
     submitted_count = 0
+    failed_count = 0
     for record in pending:
         try:
             submitting = OptionOrderRecord(
@@ -170,5 +172,6 @@ def dispatch_pending_option_orders(
                 ),
                 commit=True,
             )
+            failed_count += 1
 
-    return OptionDispatchReport(submitted_count=submitted_count)
+    return OptionDispatchReport(submitted_count=submitted_count, failed_count=failed_count)

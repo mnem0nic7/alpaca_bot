@@ -213,3 +213,38 @@ class TestDispatchPendingOptionOrders:
 
         dispatch_pending_option_orders(settings=s, runtime=runtime, broker=broker, now=_now())
         assert "submitting" in save_calls
+
+    def test_failed_count_increments_on_broker_error(self):
+        """failed_count in the report is 1 when broker raises for a single order."""
+        from tests.unit.helpers import _base_env
+        from alpaca_bot.config import Settings
+        s = Settings.from_env(_base_env())
+
+        class _RaisingBroker:
+            def submit_option_market_exit(self, **kwargs):
+                raise RuntimeError("broker offline")
+            def submit_option_limit_entry(self, **kwargs):
+                raise RuntimeError("broker offline")
+
+        record = _record(status="pending_submit", side="buy")
+        runtime = _FakeRuntime([record])
+        result = dispatch_pending_option_orders(
+            settings=s, runtime=runtime, broker=_RaisingBroker(), now=_now(),
+        )
+        assert result.submitted_count == 0
+        assert result.failed_count == 1
+
+    def test_failed_count_zero_on_successful_dispatch(self):
+        """failed_count is 0 when all orders dispatch without error."""
+        from tests.unit.helpers import _base_env
+        from alpaca_bot.config import Settings
+        s = Settings.from_env(_base_env())
+
+        record = _record(status="pending_submit", side="buy")
+        runtime = _FakeRuntime([record])
+        broker = _FakeOptionBroker()
+        result = dispatch_pending_option_orders(
+            settings=s, runtime=runtime, broker=broker, now=_now(),
+        )
+        assert result.submitted_count == 1
+        assert result.failed_count == 0

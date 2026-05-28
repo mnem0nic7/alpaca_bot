@@ -1082,14 +1082,16 @@ class RuntimeSupervisor:
         dispatch_report = self._order_dispatcher(**dispatch_kwargs)
 
         option_broker = getattr(self, "_option_broker", None)
+        option_dispatch_report = None
         if option_broker is not None and option_order_store is not None and session_type is SessionType.REGULAR:
-            dispatch_pending_option_orders(
+            option_dispatch_report = dispatch_pending_option_orders(
                 settings=self.settings,
                 runtime=self.runtime,
                 broker=option_broker,
             )
 
         # EOD option flatten: create sell records for all open option positions and dispatch.
+        option_dispatch_eod_report = None
         if is_past_flatten_time(timestamp, self.settings) and option_order_store is not None:
             open_option_positions = option_order_store.list_open_option_positions(
                 trading_mode=self.settings.trading_mode,
@@ -1120,11 +1122,18 @@ class RuntimeSupervisor:
                 )
                 option_order_store.save(sell_record, commit=True)
             if option_broker is not None and open_option_positions:
-                dispatch_pending_option_orders(
+                option_dispatch_eod_report = dispatch_pending_option_orders(
                     settings=self.settings,
                     runtime=self.runtime,
                     broker=option_broker,
                 )
+
+        self._notify_option_dispatch_failures(
+            total_failed=(
+                (option_dispatch_report.failed_count if option_dispatch_report is not None else 0)
+                + (option_dispatch_eod_report.failed_count if option_dispatch_eod_report is not None else 0)
+            )
+        )
 
         return SupervisorCycleReport(
             entries_disabled=entries_disabled,
@@ -2006,6 +2015,21 @@ class RuntimeSupervisor:
                     logger.exception(
                         "Notifier failed to send circuit breaker alert for %s", strategy_name
                     )
+
+    def _notify_option_dispatch_failures(self, *, total_failed: int) -> None:
+        if total_failed <= 0 or self._notifier is None:
+            return
+        try:
+            self._notifier.send(
+                subject=f"[alpaca-bot] Option dispatch failure: {total_failed} order(s) failed",
+                body=(
+                    f"{total_failed} option order(s) failed to dispatch this cycle.\n\n"
+                    f"Check the audit log for 'option_order_dispatch_failed' events "
+                    f"to see which symbols and order IDs were affected."
+                ),
+            )
+        except Exception:
+            logger.exception("Notifier failed to send option dispatch failure alert")
 
     def _effective_trading_status(
         self,
