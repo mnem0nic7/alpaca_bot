@@ -288,3 +288,96 @@ def test_circuit_breaker_skipped_when_config_zero():
         now=datetime(2026, 5, 28, 14, 0, tzinfo=timezone.utc),
     )
     assert saved_flags == []
+
+
+# ---------------------------------------------------------------------------
+# Task 4: Supervisor circuit breaker notification
+# ---------------------------------------------------------------------------
+
+
+def _make_notifier():
+    """Fake notifier that records (subject, body) tuples."""
+    sent: list[tuple[str, str]] = []
+
+    class _FakeNotifier:
+        def send(self, subject: str, body: str) -> None:
+            sent.append((subject, body))
+
+    return _FakeNotifier(), sent
+
+
+def test_circuit_breaker_sends_notification():
+    """When a strategy is disabled, notifier receives subject with strategy name and body with P&L details."""
+    supervisor, _, _ = _make_circuit_breaker_supervisor(
+        rolling_pnl_by_strategy={"bear_orb": -600.0},
+    )
+    notifier, sent = _make_notifier()
+    supervisor._notifier = notifier
+
+    supervisor._check_option_strategy_circuit_breakers(
+        session_date=date(2026, 5, 28),
+        now=datetime(2026, 5, 28, 14, 0, tzinfo=timezone.utc),
+    )
+
+    assert len(sent) == 1
+    subject, body = sent[0]
+    assert "bear_orb" in subject
+    assert "-600.00" in body or "600.00" in body
+    assert "enable-strategy" in body
+    assert "bear_orb" in body
+
+
+def test_circuit_breaker_no_notification_when_already_disabled():
+    """When strategy already disabled, notifier.send() is not called."""
+    existing = StrategyFlag(
+        strategy_name="bear_orb",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        enabled=False,
+    )
+    supervisor, _, _ = _make_circuit_breaker_supervisor(
+        rolling_pnl_by_strategy={"bear_orb": -600.0},
+        existing_flag=existing,
+    )
+    notifier, sent = _make_notifier()
+    supervisor._notifier = notifier
+
+    supervisor._check_option_strategy_circuit_breakers(
+        session_date=date(2026, 5, 28),
+        now=datetime(2026, 5, 28, 14, 0, tzinfo=timezone.utc),
+    )
+
+    assert sent == []
+
+
+def test_circuit_breaker_no_notification_when_notifier_none():
+    """With _notifier=None, no AttributeError is raised when breaching threshold."""
+    supervisor, saved_flags, _ = _make_circuit_breaker_supervisor(
+        rolling_pnl_by_strategy={"bear_orb": -600.0},
+    )
+    supervisor._notifier = None
+
+    supervisor._check_option_strategy_circuit_breakers(
+        session_date=date(2026, 5, 28),
+        now=datetime(2026, 5, 28, 14, 0, tzinfo=timezone.utc),
+    )
+    assert len(saved_flags) == 1  # flag still written; notification just skipped
+
+
+def test_circuit_breaker_notification_failure_does_not_crash_cycle():
+    """When notifier.send() raises, _check_option_strategy_circuit_breakers() does not propagate."""
+    supervisor, _, _ = _make_circuit_breaker_supervisor(
+        rolling_pnl_by_strategy={"bear_orb": -600.0},
+    )
+
+    class _BrokenNotifier:
+        def send(self, subject: str, body: str) -> None:
+            raise RuntimeError("SMTP timeout")
+
+    supervisor._notifier = _BrokenNotifier()
+
+    # Must not raise
+    supervisor._check_option_strategy_circuit_breakers(
+        session_date=date(2026, 5, 28),
+        now=datetime(2026, 5, 28, 14, 0, tzinfo=timezone.utc),
+    )

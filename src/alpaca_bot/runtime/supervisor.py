@@ -1988,6 +1988,24 @@ class RuntimeSupervisor:
                 threshold,
                 window_days,
             )
+            if self._notifier is not None:
+                try:
+                    self._notifier.send(
+                        subject=f"[alpaca-bot] Option circuit breaker: {strategy_name} disabled",
+                        body=(
+                            f"Strategy '{strategy_name}' has been automatically disabled by the "
+                            f"rolling-loss circuit breaker.\n\n"
+                            f"  Rolling P&L:  ${pnl:,.2f}\n"
+                            f"  Threshold:    ${threshold:,.2f}\n"
+                            f"  Window:       {window_days} days\n\n"
+                            f"Re-enable via:\n"
+                            f"  alpaca-bot-admin enable-strategy --strategy {strategy_name}"
+                        ),
+                    )
+                except Exception:
+                    logger.exception(
+                        "Notifier failed to send circuit breaker alert for %s", strategy_name
+                    )
 
     def _effective_trading_status(
         self,
