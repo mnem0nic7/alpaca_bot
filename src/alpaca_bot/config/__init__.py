@@ -178,6 +178,8 @@ class Settings:
     sector_etf_sma_period: int = 20
     sector_filter_min_passing_pct: float = 0.5
     enable_vwap_entry_filter: bool = False
+    option_strategy_max_rolling_loss_usd: float = 0.0
+    option_strategy_rolling_loss_days: int = 7
 
     def __post_init__(self) -> None:
         self.validate()
@@ -414,6 +416,12 @@ class Settings:
             enable_vwap_entry_filter=_parse_bool(
                 "ENABLE_VWAP_ENTRY_FILTER", values.get("ENABLE_VWAP_ENTRY_FILTER", "false")
             ),
+            option_strategy_max_rolling_loss_usd=float(
+                values.get("OPTION_STRATEGY_MAX_ROLLING_LOSS_USD", "0.0")
+            ),
+            option_strategy_rolling_loss_days=int(
+                values.get("OPTION_STRATEGY_ROLLING_LOSS_DAYS", "7")
+            ),
         )
         return settings
 
@@ -626,6 +634,10 @@ class Settings:
             raise ValueError("LOSING_STREAK_N must be at least 1")
         if not 0.0 < self.vol_raise_threshold <= 1.0:
             raise ValueError("VOL_RAISE_THRESHOLD must be between 0 (exclusive) and 1.0")
+        if self.option_strategy_max_rolling_loss_usd < 0:
+            raise ValueError("OPTION_STRATEGY_MAX_ROLLING_LOSS_USD must be >= 0")
+        if self.option_strategy_rolling_loss_days < 1:
+            raise ValueError("OPTION_STRATEGY_ROLLING_LOSS_DAYS must be >= 1")
 
 
 def _validate_positive_fraction(name: str, value: float) -> None:
