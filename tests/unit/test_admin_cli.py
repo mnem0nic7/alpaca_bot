@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from alpaca_bot.admin.cli import main
 from alpaca_bot.config import TradingMode
-from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord, TradingStatus, TradingStatusValue
+from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord, StrategyFlag, TradingStatus, TradingStatusValue
 
 
 class StoreFactoryStub:
@@ -191,6 +191,7 @@ def test_status_command_renders_current_status_text() -> None:
         connect=lambda: connection,
         trading_status_store_factory=StoreFactoryStub(status_store),
         audit_event_store_factory=StoreFactoryStub(audit_store),
+        strategy_flag_store_factory=StoreFactoryStub(FakeStrategyFlagStore()),
         stdout=stdout,
     )
 
@@ -645,3 +646,87 @@ def test_cancel_partial_fills_dry_run_prints_without_acting() -> None:
     rendered = stdout.getvalue()
     assert "AAPL" in rendered
     assert "MSFT" in rendered
+
+
+class FakeStrategyFlagStore:
+    def __init__(self, flags: list[StrategyFlag] | None = None) -> None:
+        self._flags = flags or []
+
+    def list_all(self, *, trading_mode: TradingMode, strategy_version: str) -> list[StrategyFlag]:
+        return self._flags
+
+
+def test_status_shows_disabled_strategies_when_some_are_disabled() -> None:
+    now = datetime(2026, 5, 28, 12, 0, tzinfo=timezone.utc)
+    connection = object()
+    status_store = RecordingTradingStatusStore(
+        loaded_status=TradingStatus(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            status=TradingStatusValue.ENABLED,
+            kill_switch_enabled=False,
+            status_reason=None,
+            updated_at=now,
+        )
+    )
+    audit_store = RecordingAuditEventStore()
+    flags = [
+        StrategyFlag(
+            strategy_name="bear_orb",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            enabled=False,
+            updated_at=now,
+        ),
+        StrategyFlag(
+            strategy_name="bull_orb",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            enabled=True,
+            updated_at=now,
+        ),
+    ]
+    stdout = io.StringIO()
+
+    exit_code = main(
+        ["status", "--mode", "paper", "--strategy-version", "v1-breakout"],
+        connect=lambda: connection,
+        trading_status_store_factory=StoreFactoryStub(status_store),
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        strategy_flag_store_factory=StoreFactoryStub(FakeStrategyFlagStore(flags)),
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+    rendered = stdout.getvalue().strip()
+    assert "disabled_strategies=bear_orb" in rendered
+
+
+def test_status_shows_dash_for_disabled_strategies_when_none_disabled() -> None:
+    now = datetime(2026, 5, 28, 12, 0, tzinfo=timezone.utc)
+    connection = object()
+    status_store = RecordingTradingStatusStore(
+        loaded_status=TradingStatus(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            status=TradingStatusValue.ENABLED,
+            kill_switch_enabled=False,
+            status_reason=None,
+            updated_at=now,
+        )
+    )
+    audit_store = RecordingAuditEventStore()
+    stdout = io.StringIO()
+
+    exit_code = main(
+        ["status", "--mode", "paper", "--strategy-version", "v1-breakout"],
+        connect=lambda: connection,
+        trading_status_store_factory=StoreFactoryStub(status_store),
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        strategy_flag_store_factory=StoreFactoryStub(FakeStrategyFlagStore([])),
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+    rendered = stdout.getvalue().strip()
+    assert "disabled_strategies=-" in rendered

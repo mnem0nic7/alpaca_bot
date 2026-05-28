@@ -374,13 +374,21 @@ def main(
                     f"strategy={strategy_version} status=unknown"
                 )
             else:
+                flag_store = strategy_flag_store_factory(connection)
+                all_flags = flag_store.list_all(
+                    trading_mode=trading_mode,
+                    strategy_version=strategy_version,
+                )
+                disabled = [f.strategy_name for f in all_flags if not f.enabled]
+                disabled_str = ",".join(disabled) if disabled else "-"
                 output = (
                     f"mode={current.trading_mode.value} "
                     f"strategy={current.strategy_version} "
                     f"status={current.status.value} "
                     f"kill_switch={str(current.kill_switch_enabled).lower()} "
                     f"reason={current.status_reason or '-'} "
-                    f"updated_at={current.updated_at.isoformat()}"
+                    f"updated_at={current.updated_at.isoformat()} "
+                    f"disabled_strategies={disabled_str}"
                 )
         elif args.command in ("enable-strategy", "disable-strategy"):
             output = _write_strategy_flag(
