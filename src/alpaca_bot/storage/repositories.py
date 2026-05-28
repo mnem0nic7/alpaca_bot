@@ -2129,6 +2129,35 @@ class OptionOrderRepository:
             })
         return result
 
+    def rolling_realized_pnl_by_strategy(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        since_date: date,
+        until_date: date,
+        market_timezone: str = "America/New_York",
+    ) -> dict[str, float]:
+        """Aggregate closed-trade P&L by strategy_name over a date window.
+
+        Uses list_closed_option_trade_records (BTC-anchored) so the amount is
+        attributable to the day the position was closed, not opened. Returns
+        {strategy_name: sum_pnl}. Strategies with no closed trades in the window
+        are absent from the result.
+        """
+        records = self.list_closed_option_trade_records(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            since_date=since_date,
+            until_date=until_date,
+            market_timezone=market_timezone,
+        )
+        result: dict[str, float] = {}
+        for rec in records:
+            name = rec["strategy_name"] or "_unknown"
+            result[name] = result.get(name, 0.0) + rec["pnl"]
+        return result
+
     def load_by_broker_order_id(self, broker_order_id: str) -> OptionOrderRecord | None:
         row = fetch_one(
             self._connection,
