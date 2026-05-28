@@ -491,12 +491,19 @@ def _render_operational_health(
         until=until_dt,
         limit=10000,
     )
+    circuit_breaker_fires = audit_store.list_by_event_types(
+        event_types=["option_strategy_circuit_breaker_triggered"],
+        since=since_dt,
+        until=until_dt,
+        limit=10000,
+    )
     options_skipped = sum(
         1 for e in skipped_events if e.payload.get("reason") == "options_market_closed"
     )
     print(f" Total cycles:       {len(cycles):>6}")
     print(f" Cycle errors:       {len(errors):>6}")
     print(f" Dispatch failures:  {len(dispatch_failures):>6}")
+    print(f" Circuit breakers:   {len(circuit_breaker_fires):>6}")
     print(f" Skipped exits (OCC):{options_skipped:>6}")
     print()
 

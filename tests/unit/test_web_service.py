@@ -584,7 +584,7 @@ def test_load_metrics_snapshot_passes_admin_event_types() -> None:
         tuning_result_store=SimpleNamespace(load_latest_best=lambda **_: None),
     )
 
-    assert captured_types == [["trading_status_changed", "strategy_flag_changed"]]
+    assert captured_types == [["trading_status_changed", "strategy_flag_changed", "option_strategy_circuit_breaker_triggered"]]
 
 
 def test_trade_record_exit_reason_and_hold_minutes() -> None:

@@ -4,11 +4,14 @@ from datetime import datetime, timezone
 
 import pytest
 
+from types import SimpleNamespace
+
 from alpaca_bot.admin.weekly_review_cli import (
     _group_by_date,
     _group_by_symbol,
     _trade_quality,
     _render_daily_table,
+    _render_operational_health,
     _render_symbol_attribution,
     _render_trade_quality,
 )
@@ -133,3 +136,26 @@ def test_weekly_review_no_trades_prints_no_data(capsys):
     })
     captured = capsys.readouterr()
     assert "no closed" in captured.out.lower()
+
+
+def test_render_operational_health_shows_circuit_breaker_count(capsys):
+    """Circuit breaker fires are counted and displayed in the operational health section."""
+    _since = datetime(2026, 5, 21, 0, 0, tzinfo=timezone.utc)
+    _until = datetime(2026, 5, 28, 0, 0, tzinfo=timezone.utc)
+
+    cb_event = SimpleNamespace(
+        event_type="option_strategy_circuit_breaker_triggered",
+        payload={"strategy_name": "bear_orb"},
+    )
+
+    def _fake_list_by_event_types(*, event_types, since, until, limit):
+        if "option_strategy_circuit_breaker_triggered" in event_types:
+            return [cb_event]
+        return []
+
+    fake_audit_store = SimpleNamespace(list_by_event_types=_fake_list_by_event_types)
+
+    _render_operational_health(fake_audit_store, _since, _until)
+    captured = capsys.readouterr()
+    assert "Circuit breaker" in captured.out or "circuit breaker" in captured.out.lower()
+    assert "1" in captured.out

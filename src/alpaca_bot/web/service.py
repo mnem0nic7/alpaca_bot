@@ -33,7 +33,11 @@ from alpaca_bot.storage.repositories import TuningResultStore
 from alpaca_bot.storage.db import ConnectionProtocol
 from alpaca_bot.strategy import ALL_STRATEGY_NAMES, OPTION_STRATEGY_FACTORIES, STRATEGY_REGISTRY
 
-ADMIN_EVENT_TYPES = ["trading_status_changed", "strategy_flag_changed"]
+ADMIN_EVENT_TYPES = [
+    "trading_status_changed",
+    "strategy_flag_changed",
+    "option_strategy_circuit_breaker_triggered",
+]
 
 ALL_AUDIT_EVENT_TYPES = [
     "daily_loss_limit_breached",
