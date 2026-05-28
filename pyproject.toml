@@ -29,6 +29,7 @@ alpaca-bot-sweep    = "alpaca_bot.tuning.sweep_cli:main"
 alpaca-bot-session-eval = "alpaca_bot.admin.session_eval_cli:main"
 alpaca-bot-strategy-report = "alpaca_bot.admin.strategy_report_cli:main"
 alpaca-bot-funnel-report = "alpaca_bot.admin.funnel_report_cli:main"
+alpaca-bot-weekly-review = "alpaca_bot.admin.weekly_review_cli:main"
 alpaca-bot-nightly = "alpaca_bot.nightly.cli:main"
 alpaca-bot-premarket = "alpaca_bot.nightly.premarket_cli:main"
 
