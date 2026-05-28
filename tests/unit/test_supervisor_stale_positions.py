@@ -432,9 +432,10 @@ def test_stale_cleanup_called_during_run_cycle_once(monkeypatch) -> None:
 _OCC = "ALHC260618P00017500"
 
 
-def test_stale_occ_position_skips_executor_and_emits_audit():
-    """OCC stale position → executor NOT called, audit event written with
-    skipped_exit_option_count=1."""
+def test_stale_occ_position_exits_via_executor():
+    """OCC stale position → executor IS called with EXIT intent (market-hours guard
+    is in _execute_exit, not here). Regression test for commit 8a04791 which
+    disabled OCC exits unnecessarily."""
     supervisor, executor, settings = _make_supervisor()
     now = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
     session_date = now.astimezone(settings.market_timezone).date()
@@ -448,19 +449,16 @@ def test_stale_occ_position_skips_executor_and_emits_audit():
         timestamp=now,
     )
 
-    assert executor.calls == []
-
-    stale_events = [
-        e for e in supervisor._test_audit_store.appended
-        if e.event_type == "stale_positions_detected"
-    ]
-    assert len(stale_events) == 1
-    assert _OCC in stale_events[0].payload["symbols"]
-    assert stale_events[0].payload["skipped_exit_option_count"] == 1
+    assert len(executor.calls) == 1
+    intents = executor.calls[0]["cycle_result"].intents
+    assert len(intents) == 1
+    assert intents[0].symbol == _OCC
+    assert intents[0].intent_type == CycleIntentType.EXIT
+    assert intents[0].reason == "stale_position_carryover"
 
 
-def test_stale_mixed_list_only_equity_goes_to_executor():
-    """Mixed stale list: OCC symbol skips executor, equity symbol is sent."""
+def test_stale_mixed_list_includes_occ_in_exit_intents():
+    """Mixed stale list: BOTH OCC and equity symbols go to the executor."""
     supervisor, executor, settings = _make_supervisor()
     now = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
     session_date = now.astimezone(settings.market_timezone).date()
@@ -478,7 +476,35 @@ def test_stale_mixed_list_only_equity_goes_to_executor():
     )
 
     assert len(executor.calls) == 1
-    intents = executor.calls[0]["cycle_result"].intents
-    symbols = {i.symbol for i in intents}
-    assert symbols == {"AAPL"}
-    assert _OCC not in symbols
+    symbols = {i.symbol for i in executor.calls[0]["cycle_result"].intents}
+    assert symbols == {_OCC, "AAPL"}
+
+
+def test_stale_audit_event_has_option_and_equity_counts():
+    """Audit event payload includes option_symbol_count and equity_symbol_count
+    fields (replaces the removed skipped_exit_option_count field)."""
+    supervisor, _, settings = _make_supervisor()
+    now = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
+    session_date = now.astimezone(settings.market_timezone).date()
+    stale_ts = datetime(2026, 5, 23, 20, 0, tzinfo=timezone.utc)
+
+    positions = [
+        _make_open_position(_OCC, stale_ts, strategy_name="bear_orb"),
+        _make_open_position("AAPL", stale_ts, strategy_name="breakout"),
+    ]
+
+    supervisor._close_stale_carryover_positions(
+        session_date=session_date,
+        open_positions=positions,
+        timestamp=now,
+    )
+
+    stale_events = [
+        e for e in supervisor._test_audit_store.appended
+        if e.event_type == "stale_positions_detected"
+    ]
+    assert len(stale_events) == 1
+    payload = stale_events[0].payload
+    assert payload["option_symbol_count"] == 1
+    assert payload["equity_symbol_count"] == 1
+    assert "skipped_exit_option_count" not in payload

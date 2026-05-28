@@ -1485,8 +1485,8 @@ class RuntimeSupervisor:
         if not stale:
             return
 
-        stale_equity = [p for p in stale if not _is_occ_symbol(p.symbol)]
-        stale_options = [p for p in stale if _is_occ_symbol(p.symbol)]
+        occ_stale = [p for p in stale if _is_occ_symbol(p.symbol)]
+        equity_stale = [p for p in stale if not _is_occ_symbol(p.symbol)]
 
         self._append_audit(
             AuditEvent(
@@ -1500,37 +1500,37 @@ class RuntimeSupervisor:
                         ).date().isoformat()
                         for p in stale
                     },
-                    "skipped_exit_option_count": len(stale_options),
+                    "option_symbol_count": len(occ_stale),
+                    "equity_symbol_count": len(equity_stale),
                     "timestamp": timestamp.isoformat(),
                 },
                 created_at=timestamp,
             )
         )
 
-        if stale_equity:
-            intents = [
-                CycleIntent(
-                    intent_type=CycleIntentType.EXIT,
-                    symbol=p.symbol,
-                    timestamp=timestamp,
-                    reason="stale_position_carryover",
-                    strategy_name=p.strategy_name,
-                )
-                for p in stale_equity
-            ]
-            try:
-                self._cycle_intent_executor(
-                    settings=self.settings,
-                    runtime=self.runtime,
-                    broker=self.broker,
-                    cycle_result=CycleResult(as_of=timestamp, intents=intents),
-                    now=timestamp,
-                )
-            except Exception:
-                logger.exception(
-                    "Failed to execute stale carryover exits for %s; will retry next cycle",
-                    [p.symbol for p in stale_equity],
-                )
+        intents = [
+            CycleIntent(
+                intent_type=CycleIntentType.EXIT,
+                symbol=p.symbol,
+                timestamp=timestamp,
+                reason="stale_position_carryover",
+                strategy_name=p.strategy_name,
+            )
+            for p in stale
+        ]
+        try:
+            self._cycle_intent_executor(
+                settings=self.settings,
+                runtime=self.runtime,
+                broker=self.broker,
+                cycle_result=CycleResult(as_of=timestamp, intents=intents),
+                now=timestamp,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to execute stale carryover exits for %s; will retry next cycle",
+                [p.symbol for p in stale],
+            )
 
         if session_date not in self._stale_cleanup_notified and self._notifier is not None:
             self._stale_cleanup_notified.add(session_date)
