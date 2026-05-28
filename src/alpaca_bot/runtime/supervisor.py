@@ -1080,7 +1080,7 @@ class RuntimeSupervisor:
         dispatch_report = self._order_dispatcher(**dispatch_kwargs)
 
         option_broker = getattr(self, "_option_broker", None)
-        if option_broker is not None and option_order_store is not None:
+        if option_broker is not None and option_order_store is not None and session_type is SessionType.REGULAR:
             dispatch_pending_option_orders(
                 settings=self.settings,
                 runtime=self.runtime,
