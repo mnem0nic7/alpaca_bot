@@ -92,6 +92,12 @@ FLATTEN_TIME=15:45
 # To trade inverse ETFs instead of options, disable ENABLE_OPTIONS_TRADING and add
 # the inverse ETF ticker (e.g. SQQQ, SPXS) to SYMBOLS — the bearish equity signals
 # will then fire on those tickers directly without requiring an options chain.
+#
+# Rolling-loss circuit breaker: automatically disables an option strategy when its
+# realized P&L over the last N days falls below a threshold. Off by default (0 = disabled).
+# Recommended starting value for a $10K account: 500 (halt after losing $500 in 7 days).
+# OPTION_STRATEGY_MAX_ROLLING_LOSS_USD=500
+# OPTION_STRATEGY_ROLLING_LOSS_DAYS=7
 
 ALPACA_PAPER_API_KEY=replace-me
 ALPACA_PAPER_SECRET_KEY=replace-me
