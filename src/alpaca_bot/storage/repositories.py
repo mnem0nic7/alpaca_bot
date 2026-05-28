@@ -825,7 +825,7 @@ class OrderStore:
         Anchors on exit orders; correlated subquery finds the most recent
         matching entry fill. Rows without a correlated entry are excluded.
         Each dict: symbol, strategy_name, qty, entry_price, exit_price,
-                   entry_time, exit_time, pnl, hold_seconds.
+                   entry_time, exit_time, pnl, hold_seconds, intent_type.
         """
         rows = fetch_all(
             self._connection,
@@ -857,7 +857,8 @@ class OrderStore:
                     AND e.fill_price IS NOT NULL
                     AND e.status = 'filled'
                     AND e.updated_at <= x.updated_at
-                  ORDER BY e.updated_at DESC LIMIT 1) AS entry_time
+                  ORDER BY e.updated_at DESC LIMIT 1) AS entry_time,
+                x.intent_type
             FROM orders x
             WHERE x.trading_mode = %s
               AND x.strategy_version = %s
@@ -897,6 +898,7 @@ class OrderStore:
                 "exit_time": exit_time,
                 "pnl": (exit_fill - entry_fill) * qty,
                 "hold_seconds": hold_seconds,
+                "intent_type": row[7],
             })
         return result
 

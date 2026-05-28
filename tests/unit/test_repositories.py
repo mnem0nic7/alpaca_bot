@@ -739,3 +739,38 @@ def test_update_lowest_price_issues_targeted_update():
     assert "lowest_price" in sql
     assert 4.50 in params
     assert "QBTS" in params
+
+
+# ── list_closed_trade_records intent_type ────────────────────────────────────
+
+
+def test_list_closed_trade_records_includes_intent_type() -> None:
+    """Verify that intent_type is returned in each result dict."""
+    from datetime import date
+    from alpaca_bot.storage.repositories import OrderStore
+
+    _now = datetime(2026, 5, 21, 20, 0, 0, tzinfo=timezone.utc)
+    # Columns: symbol, strategy_name, qty, exit_fill, exit_time,
+    #          entry_fill, entry_time, intent_type
+    fake_row = ("AAPL", "breakout", 10.0, 105.0, _now, 100.0, _now, "stop")
+
+    class _FakeCursor:
+        def execute(self, sql: str, params=None) -> None:
+            pass
+
+        def fetchall(self) -> list:
+            return [fake_row]
+
+    class _FakeConn:
+        def cursor(self) -> _FakeCursor:
+            return _FakeCursor()
+
+    store = OrderStore(_FakeConn())
+    records = store.list_closed_trade_records(
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        since_date=date(2026, 5, 21),
+        until_date=date(2026, 5, 21),
+    )
+    assert len(records) == 1
+    assert records[0]["intent_type"] == "stop"
