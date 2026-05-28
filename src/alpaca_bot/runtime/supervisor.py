@@ -53,6 +53,7 @@ from alpaca_bot.storage import (
     EQUITY_SESSION_STATE_STRATEGY_NAME,
     GLOBAL_SESSION_STATE_STRATEGY_NAME,
     PositionRecord,
+    StrategyFlag,
     TradingStatusValue,
 )
 from alpaca_bot.strategy import OPTION_STRATEGY_FACTORIES, OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY, StrategySignalEvaluator
@@ -802,6 +803,7 @@ class RuntimeSupervisor:
         # breakout_calls is NOT in STRATEGY_REGISTRY — it is a factory that closes over chains.
         option_chains_by_symbol: dict = {}
         option_order_store = getattr(self.runtime, "option_order_store", None)
+        self._check_option_strategy_circuit_breakers(session_date=session_date, now=timestamp)
         if self._option_chain_adapter is not None:
             def _fetch_one(sym: str) -> tuple[str, list]:
                 return sym, self._option_chain_adapter.get_option_chain(sym, self.settings)
@@ -1905,6 +1907,87 @@ class RuntimeSupervisor:
                 },
                 created_at=now,
             ))
+
+    def _check_option_strategy_circuit_breakers(
+        self, *, session_date: date, now: datetime
+    ) -> None:
+        """Disable any option strategy whose rolling realized P&L breaches the threshold.
+
+        Reads closed option trade records anchored on buy-to-close date. Writes
+        StrategyFlag(enabled=False) and emits an audit event the first time a
+        strategy crosses the threshold. Subsequent cycles are no-ops (flag already
+        disabled). Re-enable via: alpaca-bot-admin enable-strategy --strategy <name>.
+
+        save() commits immediately (commit=True default) so the flag is visible to
+        the _flag_store.load() check at lines 828-843 later in the same cycle.
+        """
+        if self.settings.option_strategy_max_rolling_loss_usd <= 0.0:
+            return
+        opt_store = getattr(self.runtime, "option_order_store", None)
+        flag_store = getattr(self.runtime, "strategy_flag_store", None)
+        if opt_store is None or flag_store is None:
+            return
+
+        window_days = self.settings.option_strategy_rolling_loss_days
+        since_date = session_date - timedelta(days=window_days - 1)
+        store_lock = getattr(self.runtime, "store_lock", None)
+
+        try:
+            with store_lock if store_lock is not None else contextlib.nullcontext():
+                rolling_pnl = opt_store.rolling_realized_pnl_by_strategy(
+                    trading_mode=self.settings.trading_mode,
+                    strategy_version=self.settings.strategy_version,
+                    since_date=since_date,
+                    until_date=session_date,
+                    market_timezone=str(self.settings.market_timezone),
+                )
+        except Exception:
+            logger.exception(
+                "_check_option_strategy_circuit_breakers: failed to query rolling P&L"
+            )
+            return
+
+        threshold = -abs(self.settings.option_strategy_max_rolling_loss_usd)
+        for strategy_name, pnl in rolling_pnl.items():
+            if pnl > threshold:
+                continue
+            with store_lock if store_lock is not None else contextlib.nullcontext():
+                existing = flag_store.load(
+                    strategy_name=strategy_name,
+                    trading_mode=self.settings.trading_mode,
+                    strategy_version=self.settings.strategy_version,
+                )
+            if existing is not None and not existing.enabled:
+                continue
+            flag = StrategyFlag(
+                strategy_name=strategy_name,
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+                enabled=False,
+                updated_at=now,
+            )
+            with store_lock if store_lock is not None else contextlib.nullcontext():
+                flag_store.save(flag)  # commit=True (default): flag visible to _flag_store.load() later this cycle
+            self._append_audit(
+                AuditEvent(
+                    event_type="option_strategy_circuit_breaker_triggered",
+                    payload={
+                        "strategy_name": strategy_name,
+                        "rolling_pnl_usd": round(pnl, 2),
+                        "threshold_usd": threshold,
+                        "window_days": window_days,
+                    },
+                    created_at=now,
+                )
+            )
+            logger.warning(
+                "Option strategy %s disabled by circuit breaker: "
+                "rolling P&L %.2f < threshold %.2f (window: %d days)",
+                strategy_name,
+                pnl,
+                threshold,
+                window_days,
+            )
 
     def _effective_trading_status(
         self,
