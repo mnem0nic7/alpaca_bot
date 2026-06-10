@@ -625,6 +625,8 @@ class OrderStore:
                       AND e.fill_price IS NOT NULL
                       AND e.status = 'filled'
                       AND e.updated_at <= x.updated_at
+                      AND DATE(e.updated_at AT TIME ZONE %s)
+                          = DATE(x.updated_at AT TIME ZONE %s)
                     ORDER BY e.updated_at DESC LIMIT 1
                 ) AS entry_fill,
                 (
@@ -638,6 +640,8 @@ class OrderStore:
                       AND e.fill_price IS NOT NULL
                       AND e.status = 'filled'
                       AND e.updated_at <= x.updated_at
+                      AND DATE(e.updated_at AT TIME ZONE %s)
+                          = DATE(x.updated_at AT TIME ZONE %s)
                     ORDER BY e.updated_at DESC LIMIT 1
                 ) AS entry_limit,
                 (
@@ -651,6 +655,8 @@ class OrderStore:
                       AND e.fill_price IS NOT NULL
                       AND e.status = 'filled'
                       AND e.updated_at <= x.updated_at
+                      AND DATE(e.updated_at AT TIME ZONE %s)
+                          = DATE(x.updated_at AT TIME ZONE %s)
                     ORDER BY e.updated_at DESC LIMIT 1
                 ) AS entry_time,
                 x.fill_price AS exit_fill,
@@ -667,6 +673,12 @@ class OrderStore:
             ORDER BY x.updated_at
             """,
             (
+                market_timezone,
+                market_timezone,
+                market_timezone,
+                market_timezone,
+                market_timezone,
+                market_timezone,
                 trading_mode.value,
                 strategy_version,
                 market_timezone,
@@ -761,6 +773,8 @@ class OrderStore:
 
         Each dict: {strategy_name: str, exit_date: date, pnl: float}
         Filters out trades where entry_fill is NULL (no correlated entry order).
+        Entries are matched on the same session date as the exit;
+        carryover/recovery liquidations without a same-day entry are excluded.
         """
         rows = fetch_all(
             self._connection,
@@ -779,6 +793,8 @@ class OrderStore:
                        AND e.fill_price IS NOT NULL
                        AND e.status = 'filled'
                        AND e.updated_at <= x.updated_at
+                       AND DATE(e.updated_at AT TIME ZONE %s)
+                           = DATE(x.updated_at AT TIME ZONE %s)
                      ORDER BY e.updated_at DESC
                      LIMIT 1) AS entry_fill
               FROM orders x
@@ -792,6 +808,8 @@ class OrderStore:
              ORDER BY x.updated_at
             """,
             (
+                market_timezone,
+                market_timezone,
                 market_timezone,
                 trading_mode.value,
                 strategy_version,
@@ -846,6 +864,8 @@ class OrderStore:
                     AND e.fill_price IS NOT NULL
                     AND e.status = 'filled'
                     AND e.updated_at <= x.updated_at
+                    AND DATE(e.updated_at AT TIME ZONE %s)
+                        = DATE(x.updated_at AT TIME ZONE %s)
                   ORDER BY e.updated_at DESC LIMIT 1) AS entry_fill,
                 (SELECT e.updated_at
                    FROM orders e
@@ -857,6 +877,8 @@ class OrderStore:
                     AND e.fill_price IS NOT NULL
                     AND e.status = 'filled'
                     AND e.updated_at <= x.updated_at
+                    AND DATE(e.updated_at AT TIME ZONE %s)
+                        = DATE(x.updated_at AT TIME ZONE %s)
                   ORDER BY e.updated_at DESC LIMIT 1) AS entry_time,
                 x.intent_type
             FROM orders x
@@ -870,6 +892,10 @@ class OrderStore:
             ORDER BY x.updated_at
             """,
             (
+                market_timezone,
+                market_timezone,
+                market_timezone,
+                market_timezone,
                 trading_mode.value,
                 strategy_version,
                 market_timezone,

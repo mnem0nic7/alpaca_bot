@@ -774,3 +774,86 @@ def test_list_closed_trade_records_includes_intent_type() -> None:
     )
     assert len(records) == 1
     assert records[0]["intent_type"] == "stop"
+
+
+# ── same-session entry matching (S2) ─────────────────────────────────────────
+
+
+class _SqlCaptureCursor:
+    def __init__(self, log: list[tuple[str, tuple]]) -> None:
+        self._log = log
+
+    def execute(self, sql: str, params=None) -> None:
+        self._log.append((sql, tuple(params or ())))
+
+    def fetchall(self) -> list[tuple]:
+        return []
+
+    def fetchone(self):
+        return None
+
+
+class _SqlCaptureConn:
+    def __init__(self) -> None:
+        self.captured: list[tuple[str, tuple]] = []
+
+    def cursor(self) -> _SqlCaptureCursor:
+        return _SqlCaptureCursor(self.captured)
+
+    def commit(self) -> None:
+        pass
+
+    def rollback(self) -> None:
+        pass
+
+
+def test_trade_pnl_by_strategy_requires_same_session_entry() -> None:
+    """Entry fills must be matched on the same session date as the exit —
+    recovery liquidations with no same-day entry must drop out."""
+    from datetime import date
+    from alpaca_bot.storage.repositories import OrderStore
+
+    conn = _SqlCaptureConn()
+    repo = OrderStore(conn)
+    repo.list_trade_pnl_by_strategy(
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        start_date=date(2026, 6, 1),
+        end_date=date(2026, 6, 9),
+    )
+    sql, params = conn.captured[0]
+    assert sql.count("DATE(e.updated_at AT TIME ZONE %s)") == 1
+    assert params.count("America/New_York") == sql.count("AT TIME ZONE %s")
+
+
+def test_closed_trade_records_requires_same_session_entry() -> None:
+    from datetime import date
+    from alpaca_bot.storage.repositories import OrderStore
+
+    conn = _SqlCaptureConn()
+    repo = OrderStore(conn)
+    repo.list_closed_trade_records(
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        since_date=date(2026, 6, 1),
+        until_date=date(2026, 6, 9),
+    )
+    sql, params = conn.captured[0]
+    assert sql.count("DATE(e.updated_at AT TIME ZONE %s)") == 2
+    assert params.count("America/New_York") == sql.count("AT TIME ZONE %s")
+
+
+def test_closed_trades_requires_same_session_entry() -> None:
+    from datetime import date
+    from alpaca_bot.storage.repositories import OrderStore
+
+    conn = _SqlCaptureConn()
+    repo = OrderStore(conn)
+    repo.list_closed_trades(
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        session_date=date(2026, 6, 9),
+    )
+    sql, params = conn.captured[0]
+    assert sql.count("DATE(e.updated_at AT TIME ZONE %s)") == 3
+    assert params.count("America/New_York") == sql.count("AT TIME ZONE %s")
