@@ -326,7 +326,42 @@ def test_evaluate_cycle_capacity_full_emits_capacity_rejected() -> None:
     )
 
     capacity_recs = [r for r in result.decision_records if r.reject_stage == "capacity"]
-    assert len(capacity_recs) >= 1
+    assert len(capacity_recs) == 1
+    rec = capacity_recs[0]
+    assert rec.symbol == "_capacity_"
+    assert rec.reject_reason == "capacity_full"
+    assert rec.filter_results == {"blocked_symbol_count": 2}
+
+
+def test_capacity_aggregate_excludes_held_and_working_symbols() -> None:
+    """Symbols already held or working are not counted as capacity-blocked."""
+    settings = make_settings(SYMBOLS="AAPL,MSFT,GOOGL", MAX_OPEN_POSITIONS="1")
+    now = datetime(2026, 5, 7, 14, 30, tzinfo=timezone.utc)
+    pos = OpenPosition(
+        symbol="AAPL",
+        quantity=5,
+        entry_price=200.0,
+        entry_level=198.0,
+        initial_stop_price=195.0,
+        stop_price=195.0,
+        entry_timestamp=now,
+    )
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"MSFT": [make_intraday_bar("MSFT")]},
+        daily_bars_by_symbol={"MSFT": make_daily_bars("MSFT")},
+        open_positions=[pos],
+        working_order_symbols={"GOOGL"},
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=lambda **kw: None,
+        global_open_count=2,
+    )
+    capacity_recs = [r for r in result.decision_records if r.reject_stage == "capacity"]
+    assert len(capacity_recs) == 1
+    assert capacity_recs[0].filter_results == {"blocked_symbol_count": 1}
 
 
 def test_evaluate_cycle_flatten_all_returns_empty_decision_records() -> None:

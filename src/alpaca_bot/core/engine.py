@@ -7,7 +7,14 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Mapping, Sequence
 
 from alpaca_bot.config import Settings
-from alpaca_bot.domain import Bar, DecisionRecord, NewsItem, OpenPosition, Quote
+from alpaca_bot.domain import (
+    CAPACITY_SENTINEL_SYMBOL,
+    Bar,
+    DecisionRecord,
+    NewsItem,
+    OpenPosition,
+    Quote,
+)
 from alpaca_bot.domain.models import MarketContext
 from alpaca_bot.risk import calculate_position_size
 from alpaca_bot.risk.option_sizing import calculate_option_position_size
@@ -633,12 +640,19 @@ def evaluate_cycle(
                 settings.max_open_positions - len(open_positions) - len(working_order_symbols), 0
             )
         if available_slots == 0:
-            for _csym in (symbols or settings.symbols):
-                if _csym in open_position_symbols or _csym in working_order_symbols:
-                    continue
+            # One aggregate record per strategy per cycle instead of one row
+            # per blocked symbol — a 1,000-symbol watchlist at zero capacity
+            # would otherwise write ~1,000 rows per strategy every cycle.
+            _blocked_count = sum(
+                1
+                for _csym in (symbols or settings.symbols)
+                if _csym not in open_position_symbols
+                and _csym not in working_order_symbols
+            )
+            if _blocked_count > 0:
                 _decision_records.append(DecisionRecord(
                     cycle_at=now,
-                    symbol=_csym,
+                    symbol=CAPACITY_SENTINEL_SYMBOL,
                     strategy_name=strategy_name,
                     trading_mode=_tm,
                     strategy_version=_sv,
@@ -655,7 +669,7 @@ def evaluate_cycle(
                     quantity=None,
                     risk_per_share=None,
                     equity=None,
-                    filter_results={},
+                    filter_results={"blocked_symbol_count": _blocked_count},
                     vix_close=_ctx_vix_close,
                     vix_above_sma=_ctx_vix_above_sma,
                     sector_passing_pct=_ctx_sector_passing_pct,

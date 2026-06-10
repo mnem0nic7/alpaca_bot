@@ -1,4 +1,4 @@
-from alpaca_bot.domain.decision_record import DecisionRecord
+from alpaca_bot.domain.decision_record import CAPACITY_SENTINEL_SYMBOL, DecisionRecord
 from alpaca_bot.domain.enums import IntentType
 from alpaca_bot.domain.models import (
     Bar,
@@ -14,6 +14,7 @@ from alpaca_bot.domain.models import (
 
 __all__ = [
     "Bar",
+    "CAPACITY_SENTINEL_SYMBOL",
     "DecisionRecord",
     "EntrySignal",
     "IntentType",

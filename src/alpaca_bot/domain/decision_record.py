@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+# Sentinel symbol for the per-strategy aggregate capacity record. When
+# available_slots == 0, the engine emits ONE record with this symbol and
+# filter_results={"blocked_symbol_count": N} instead of N per-symbol rows.
+CAPACITY_SENTINEL_SYMBOL = "_capacity_"
+
 
 @dataclass(frozen=True)
 class DecisionRecord:
