@@ -1722,9 +1722,9 @@ class ConfidenceFloorStore:
             INSERT INTO confidence_floor_store (
                 trading_mode, strategy_version, floor_value,
                 manual_floor_baseline, equity_high_watermark,
-                set_by, reason, updated_at
+                set_by, reason, updated_at, floor_raised_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (trading_mode, strategy_version)
             DO UPDATE SET
                 floor_value = EXCLUDED.floor_value,
@@ -1732,7 +1732,8 @@ class ConfidenceFloorStore:
                 equity_high_watermark = EXCLUDED.equity_high_watermark,
                 set_by = EXCLUDED.set_by,
                 reason = EXCLUDED.reason,
-                updated_at = EXCLUDED.updated_at
+                updated_at = EXCLUDED.updated_at,
+                floor_raised_at = EXCLUDED.floor_raised_at
             """,
             (
                 rec.trading_mode.value,
@@ -1743,6 +1744,7 @@ class ConfidenceFloorStore:
                 rec.set_by,
                 rec.reason,
                 rec.updated_at,
+                rec.floor_raised_at,
             ),
             commit=commit,
         )
@@ -1755,7 +1757,7 @@ class ConfidenceFloorStore:
             """
             SELECT trading_mode, strategy_version, floor_value,
                    manual_floor_baseline, equity_high_watermark,
-                   set_by, reason, updated_at
+                   set_by, reason, updated_at, floor_raised_at
             FROM confidence_floor_store
             WHERE trading_mode = %s AND strategy_version = %s
             """,
@@ -1772,6 +1774,7 @@ class ConfidenceFloorStore:
             set_by=row[5],
             reason=row[6],
             updated_at=row[7],
+            floor_raised_at=row[8],
         )
 
 

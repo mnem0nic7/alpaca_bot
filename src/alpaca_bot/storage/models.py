@@ -141,3 +141,4 @@ class ConfidenceFloor:
     set_by: str  # 'system' | 'operator'
     reason: str
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    floor_raised_at: datetime | None = None  # when the system last auto-raised; None for operator floors
