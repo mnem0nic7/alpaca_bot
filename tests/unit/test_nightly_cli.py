@@ -617,3 +617,72 @@ def test_nightly_cli_writes_audit_event_after_sweep(monkeypatch, tmp_path):
     assert payload["best_strategy"] == "breakout"
     assert payload["candidate_env_written"] is True
     assert "best_score" in payload
+
+
+def test_nightly_cli_prunes_decision_log_by_default(monkeypatch, tmp_path):
+    """Without --no-db, the pipeline prunes decision_log and audits the count."""
+    from alpaca_bot.nightly import cli as module
+
+    _patch_env(monkeypatch)
+    _patch_common_db(monkeypatch, module, symbols=[])  # skip backfill/evolve
+
+    prune_calls = []
+
+    class FakeDecisionLogStore:
+        def __init__(self, conn): pass
+
+        def prune(self, *, older_than_days, now):
+            prune_calls.append({"older_than_days": older_than_days})
+            return 7
+
+    events = []
+
+    class FakeAuditEventStore:
+        def __init__(self, conn): pass
+
+        def append(self, event, *, commit=True):
+            events.append(event)
+
+    monkeypatch.setattr(module, "DecisionLogStore", FakeDecisionLogStore, raising=False)
+    monkeypatch.setattr(module, "AuditEventStore", FakeAuditEventStore)
+
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--output-dir", str(tmp_path),
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert prune_calls == [{"older_than_days": 30}]
+    pruned = [e for e in events if e.event_type == "decision_log_pruned"]
+    assert len(pruned) == 1
+    assert pruned[0].payload["deleted_count"] == 7
+    assert pruned[0].payload["source"] == "nightly"
+
+
+def test_nightly_cli_no_db_skips_prune(monkeypatch, tmp_path):
+    """--no-db must skip the destructive decision_log prune entirely."""
+    from alpaca_bot.nightly import cli as module
+
+    _patch_env(monkeypatch)
+    _patch_common_db(monkeypatch, module, symbols=[])
+
+    prune_calls = []
+
+    class FakeDecisionLogStore:
+        def __init__(self, conn): pass
+
+        def prune(self, *, older_than_days, now):
+            prune_calls.append({"older_than_days": older_than_days})
+            return 7
+
+    monkeypatch.setattr(module, "DecisionLogStore", FakeDecisionLogStore, raising=False)
+
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db", "--output-dir", str(tmp_path),
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert prune_calls == []

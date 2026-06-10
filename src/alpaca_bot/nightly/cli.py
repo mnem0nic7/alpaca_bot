@@ -19,6 +19,7 @@ from alpaca_bot.storage.models import EQUITY_SESSION_STATE_STRATEGY_NAME, AuditE
 from alpaca_bot.storage.repositories import (
     AuditEventStore,
     DailySessionStateStore,
+    DecisionLogStore,
     OrderStore,
     TuningResultStore,
     WatchlistStore,
@@ -61,6 +62,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Comma-separated strategy names or 'all' (default: all)")
     parser.add_argument("--no-db", action="store_true",
                         help="Skip persisting results to tuning_results")
+    parser.add_argument("--prune-keep-days", type=int, default=30,
+                        help="Prune decision_log rows older than N days after the "
+                             "report (default: 30; 0 disables)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Skip Alpaca API calls; use existing scenario files in --output-dir")
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
@@ -297,6 +301,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                 strategy_name="all",
             )
             _print_rolling_report(report, report_days=args.report_days)
+
+        # ── Decision log retention ────────────────────────────────────────────
+        if not args.no_db and args.prune_keep_days > 0:
+            try:
+                deleted = DecisionLogStore(conn).prune(
+                    older_than_days=args.prune_keep_days, now=now
+                )
+                AuditEventStore(conn).append(
+                    AuditEvent(
+                        event_type="decision_log_pruned",
+                        payload={
+                            "deleted_count": deleted,
+                            "keep_days": args.prune_keep_days,
+                            "source": "nightly",
+                        },
+                        created_at=now,
+                    )
+                )
+                print(
+                    f"\nDecision log pruned: {deleted} rows older than "
+                    f"{args.prune_keep_days} days removed."
+                )
+            except Exception as exc:
+                print(f"Warning: decision_log prune failed: {exc}", file=sys.stderr)
 
     finally:
         close = getattr(conn, "close", None)
