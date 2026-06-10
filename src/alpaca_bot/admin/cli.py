@@ -14,6 +14,7 @@ from alpaca_bot.storage import (
     AuditEventStore,
     ConfidenceFloor,
     ConfidenceFloorStore,
+    DecisionLogStore,
     OrderRecord,
     OrderStore,
     PositionRecord,
@@ -103,6 +104,15 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
     scf_parser.add_argument("--strategy-version", default=defaults.strategy_version)
     scf_parser.add_argument("--value", type=float, required=True)
     scf_parser.add_argument("--reason", required=True)
+
+    pdl_parser = subparsers.add_parser("prune-decision-log")
+    pdl_parser.add_argument(
+        "--mode",
+        choices=[mode.value for mode in TradingMode],
+        default=defaults.trading_mode.value,
+    )
+    pdl_parser.add_argument("--strategy-version", default=defaults.strategy_version)
+    pdl_parser.add_argument("--keep-days", type=int, default=30)
 
     return parser
 
@@ -345,6 +355,7 @@ def main(
     strategy_weight_store_factory: Callable[[ConnectionProtocol], StrategyWeightStore] = StrategyWeightStore,
     strategy_flag_store_factory: Callable[[ConnectionProtocol], StrategyFlagStore] = StrategyFlagStore,
     confidence_floor_store_factory: Callable[[ConnectionProtocol], ConfidenceFloorStore] = ConfidenceFloorStore,
+    decision_log_store_factory: Callable[[ConnectionProtocol], DecisionLogStore] = DecisionLogStore,
 ) -> int:
     parsed_argv = list(sys.argv[1:] if argv is None else argv)
     if settings is not None:
@@ -458,6 +469,26 @@ def main(
                 reason=args.reason,
                 now=timestamp,
                 stdout=stdout or sys.stdout,
+            )
+        elif args.command == "prune-decision-log":
+            if args.keep_days < 1:
+                raise SystemExit("--keep-days must be at least 1")
+            dl_store = decision_log_store_factory(connection)
+            deleted = dl_store.prune(older_than_days=args.keep_days, now=timestamp)
+            audit_store.append(
+                AuditEvent(
+                    event_type="decision_log_pruned",
+                    payload={
+                        "deleted_count": deleted,
+                        "keep_days": args.keep_days,
+                        "source": "admin",
+                    },
+                    created_at=timestamp,
+                )
+            )
+            output = (
+                f"decision_log pruned: deleted={deleted} "
+                f"keep_days={args.keep_days}"
             )
         else:
             command_reason = getattr(args, "reason", None)

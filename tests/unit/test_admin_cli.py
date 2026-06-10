@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 import io
 from types import SimpleNamespace
 
+import pytest
+
 from alpaca_bot.admin.cli import main
 from alpaca_bot.config import TradingMode
 from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord, StrategyFlag, TradingStatus, TradingStatusValue
@@ -730,3 +732,54 @@ def test_status_shows_dash_for_disabled_strategies_when_none_disabled() -> None:
     assert exit_code == 0
     rendered = stdout.getvalue().strip()
     assert "disabled_strategies=-" in rendered
+
+
+# ── prune-decision-log ───────────────────────────────────────────────────────
+
+
+class FakeDecisionLogStore:
+    def __init__(self) -> None:
+        self.prune_calls: list[dict] = []
+
+    def prune(self, *, older_than_days: int, now: datetime) -> int:
+        self.prune_calls.append({"older_than_days": older_than_days, "now": now})
+        return 42
+
+
+def test_prune_decision_log_command_prunes_and_audits() -> None:
+    now = datetime(2026, 6, 10, 12, 0, tzinfo=timezone.utc)
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+    dl_store = FakeDecisionLogStore()
+    out = io.StringIO()
+
+    exit_code = main(
+        ["prune-decision-log", "--keep-days", "14"],
+        connect=lambda: connection,
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        decision_log_store_factory=StoreFactoryStub(dl_store),
+        now=lambda: now,
+        stdout=out,
+    )
+
+    assert exit_code == 0
+    assert dl_store.prune_calls == [{"older_than_days": 14, "now": now}]
+    events = [e for e in audit_store.appended if e.event_type == "decision_log_pruned"]
+    assert len(events) == 1
+    assert events[0].payload["deleted_count"] == 42
+    assert events[0].payload["keep_days"] == 14
+    assert "deleted=42" in out.getvalue()
+
+
+def test_prune_decision_log_rejects_keep_days_below_one() -> None:
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+
+    with pytest.raises(SystemExit):
+        main(
+            ["prune-decision-log", "--keep-days", "0"],
+            connect=lambda: connection,
+            audit_event_store_factory=StoreFactoryStub(RecordingAuditEventStore()),
+            decision_log_store_factory=StoreFactoryStub(FakeDecisionLogStore()),
+            now=lambda: datetime(2026, 6, 10, tzinfo=timezone.utc),
+            stdout=io.StringIO(),
+        )

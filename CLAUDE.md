@@ -31,6 +31,7 @@ alpaca-bot-admin status
 alpaca-bot-admin halt --reason "..."
 alpaca-bot-admin resume --reason "..."
 alpaca-bot-admin close-only --reason "..."
+alpaca-bot-admin prune-decision-log --keep-days 30
 
 # Generate dashboard password hash
 alpaca-bot-web-hash-password
