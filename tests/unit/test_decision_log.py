@@ -492,6 +492,40 @@ def test_decision_log_store_exported_from_storage() -> None:
     assert DLS is DecisionLogStore
 
 
+class _PruneConn:
+    def __init__(self, rowcount: int) -> None:
+        self.executed: list[tuple[str, tuple]] = []
+        self.committed = False
+        self._rowcount = rowcount
+
+    def cursor(self):
+        conn = self
+
+        class _Cursor:
+            rowcount = conn._rowcount
+
+            def execute(self, sql, params=None):
+                conn.executed.append((sql, tuple(params or ())))
+
+        return _Cursor()
+
+    def commit(self) -> None:
+        self.committed = True
+
+
+def test_decision_log_prune_deletes_before_cutoff_and_returns_count() -> None:
+    conn = _PruneConn(rowcount=12345)
+    store = DecisionLogStore(conn)
+    now = datetime(2026, 6, 10, 12, 0, tzinfo=timezone.utc)
+    deleted = store.prune(older_than_days=30, now=now)
+    assert deleted == 12345
+    assert conn.committed
+    sql, params = conn.executed[0]
+    assert "DELETE FROM decision_log" in sql
+    assert "cycle_at <" in sql
+    assert params == (datetime(2026, 5, 11, 12, 0, tzinfo=timezone.utc),)
+
+
 # ── run_cycle best-effort write ──────────────────────────────────────────────
 
 from alpaca_bot.runtime.cycle import run_cycle

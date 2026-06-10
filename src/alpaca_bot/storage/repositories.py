@@ -6,7 +6,7 @@ import uuid as _uuid_module
 
 logger = logging.getLogger(__name__)
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from alpaca_bot.config import TradingMode
@@ -2305,6 +2305,22 @@ class DecisionLogStore:
         ]
         cur = conn.cursor()
         cur.executemany(sql, params)
+
+    def prune(self, *, older_than_days: int, now: datetime) -> int:
+        """Delete rows whose cycle_at is older than the cutoff; return count.
+
+        Single statement in one transaction — either all qualifying rows are
+        gone or none are.
+        """
+        cutoff = now - timedelta(days=older_than_days)
+        cursor = self._connection.cursor()
+        cursor.execute(
+            "DELETE FROM decision_log WHERE cycle_at < %s",
+            (cutoff,),
+        )
+        deleted = int(getattr(cursor, "rowcount", 0) or 0)
+        self._connection.commit()
+        return deleted
 
     def list_recent(
         self,
