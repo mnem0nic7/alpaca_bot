@@ -99,6 +99,10 @@ FLATTEN_TIME=15:45
 # OPTION_STRATEGY_MAX_ROLLING_LOSS_USD=500
 # OPTION_STRATEGY_ROLLING_LOSS_DAYS=7
 
+# Days a system-raised confidence floor may persist without a fresh raise
+# trigger before it auto-clears to the manual baseline (default 7)
+# FLOOR_AUTO_RAISE_MAX_AGE_DAYS=7
+
 ALPACA_PAPER_API_KEY=replace-me
 ALPACA_PAPER_SECRET_KEY=replace-me
 # For live mode, set:

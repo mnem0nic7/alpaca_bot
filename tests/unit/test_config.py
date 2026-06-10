@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from alpaca_bot.config import Settings
 
 
@@ -65,3 +67,16 @@ def test_option_chain_symbols_strips_whitespace():
     env = _base_env(OPTION_CHAIN_SYMBOLS=" ALHC , AMLX ")
     s = Settings.from_env(env)
     assert s.option_chain_symbols == ("ALHC", "AMLX")
+
+
+def test_floor_auto_raise_max_age_days_default_and_validation():
+    settings = Settings.from_env(_base_env())
+    assert settings.floor_auto_raise_max_age_days == 7
+
+    with pytest.raises(ValueError, match="FLOOR_AUTO_RAISE_MAX_AGE_DAYS"):
+        Settings.from_env(_base_env(FLOOR_AUTO_RAISE_MAX_AGE_DAYS="0"))
+
+
+def test_floor_auto_raise_max_age_days_env_override():
+    settings = Settings.from_env(_base_env(FLOOR_AUTO_RAISE_MAX_AGE_DAYS="14"))
+    assert settings.floor_auto_raise_max_age_days == 14

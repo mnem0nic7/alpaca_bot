@@ -80,6 +80,7 @@ class Settings:
     drawdown_raise_pct: float = 0.05
     losing_streak_n: int = 3
     vol_raise_threshold: float = 0.025
+    floor_auto_raise_max_age_days: int = 7
     prior_day_high_lookback_bars: int = 1
     orb_opening_bars: int = 2
     high_watermark_lookback_days: int = 252
@@ -220,6 +221,9 @@ class Settings:
             drawdown_raise_pct=float(values.get("DRAWDOWN_RAISE_PCT", "0.05")),
             losing_streak_n=int(values.get("LOSING_STREAK_N", "3")),
             vol_raise_threshold=float(values.get("VOL_RAISE_THRESHOLD", "0.025")),
+            floor_auto_raise_max_age_days=int(
+                values.get("FLOOR_AUTO_RAISE_MAX_AGE_DAYS", "7")
+            ),
             prior_day_high_lookback_bars=int(values.get("PRIOR_DAY_HIGH_LOOKBACK_BARS", "1")),
             orb_opening_bars=int(values.get("ORB_OPENING_BARS", "2")),
             high_watermark_lookback_days=int(values.get("HIGH_WATERMARK_LOOKBACK_DAYS", "252")),
@@ -634,6 +638,8 @@ class Settings:
             raise ValueError("LOSING_STREAK_N must be at least 1")
         if not 0.0 < self.vol_raise_threshold <= 1.0:
             raise ValueError("VOL_RAISE_THRESHOLD must be between 0 (exclusive) and 1.0")
+        if self.floor_auto_raise_max_age_days < 1:
+            raise ValueError("FLOOR_AUTO_RAISE_MAX_AGE_DAYS must be at least 1")
         if self.option_strategy_max_rolling_loss_usd < 0:
             raise ValueError("OPTION_STRATEGY_MAX_ROLLING_LOSS_USD must be >= 0")
         if self.option_strategy_rolling_loss_days < 1:
