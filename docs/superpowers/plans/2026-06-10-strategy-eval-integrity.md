@@ -542,29 +542,27 @@ def test_confidence_floor_raised_at_defaults_to_none() -> None:
     assert rec.floor_raised_at is None
 ```
 
-Also extend the file's existing upsert/load round-trip test (if it uses a recording fake connection) to assert `floor_raised_at` appears in both the INSERT column list and the SELECT column list. If the existing tests only check the dataclass, add:
+The file already has `_FakeConn`/`_FakeCursor` fakes and a `_make_floor(**kwargs)` helper — reuse them; do NOT add a new capture fake. **Two required harness fixes in the same file:**
+
+1. `_FakeCursor.execute` (line ~38) simulates the upsert by storing `self._conn._rows = [params[:8]]` — change the slice to `params[:9]`, or the new ninth param (`floor_raised_at`) is silently truncated and the round-trip test fails confusingly.
+2. `test_confidence_floor_upsert_then_load` (line ~78) manually sets `conn._rows` to an 8-tuple — append a trailing `None` (the `floor_raised_at` column) so `load`'s `row[8]` doesn't IndexError.
+
+Then add the round-trip test:
 
 ```python
-def test_confidence_floor_store_sql_includes_floor_raised_at() -> None:
-    conn = _SqlCaptureConn()  # same capture fake as in test_repositories.py; define locally
+def test_confidence_floor_store_round_trips_floor_raised_at() -> None:
+    conn = _FakeConn()
     store = ConfidenceFloorStore(conn)
-    store.upsert(ConfidenceFloor(
-        trading_mode=TradingMode.PAPER,
-        strategy_version="v1",
-        floor_value=0.45,
-        manual_floor_baseline=0.25,
-        equity_high_watermark=100_000.0,
-        set_by="system",
-        reason="test",
-        updated_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
-        floor_raised_at=datetime(2026, 6, 1, tzinfo=timezone.utc),
-    ))
-    store.load(trading_mode=TradingMode.PAPER, strategy_version="v1")
-    upsert_sql = conn.captured[0][0]
-    load_sql = conn.captured[1][0]
-    assert "floor_raised_at" in upsert_sql
-    assert "floor_raised_at" in load_sql
+    raised_at = datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc)
+    store.upsert(_make_floor(set_by="system", floor_raised_at=raised_at))
+    assert "floor_raised_at" in conn._last_sql  # INSERT mentions the column
+    loaded = store.load(trading_mode=TradingMode.PAPER, strategy_version="v1")
+    assert "floor_raised_at" in conn._last_sql  # SELECT mentions the column
+    assert loaded is not None
+    assert loaded.floor_raised_at == raised_at
 ```
+
+(The fake cursor copies INSERT params into `_rows`, so a real round-trip assertion works once fix 1 is in: upsert writes 9 values, load reads `row[8]`.)
 
 And a migration-exists test (mirror `test_migration_015_exists_and_contains_decision_log` in `tests/unit/test_decision_log.py`):
 
@@ -1029,10 +1027,10 @@ git commit -m "feat: add DecisionLogStore.prune with cutoff by cycle_at"
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `tests/unit/test_admin_cli.py` (reuse the file's existing fakes for connection/settings/audit store — mirror how other command tests inject `connect=` and factories; the snippet below shows the shape, adapt fixture names to the file):
+Add to `tests/unit/test_admin_cli.py`. The file's established conventions (verified): fakes are named WITHOUT leading underscores (`RecordingAuditEventStore` with an `.appended` list, `StoreFactoryStub(store)` wrapping a store as a factory), connections are `SimpleNamespace(commit=lambda: None, close=lambda: None)`, and tests do NOT pass `settings=` — providing `connect=` makes `main` use `_fallback_settings()`.
 
 ```python
-class _FakeDecisionLogStore:
+class FakeDecisionLogStore:
     def __init__(self) -> None:
         self.prune_calls: list[dict] = []
 
@@ -1042,23 +1040,21 @@ class _FakeDecisionLogStore:
 
 
 def test_prune_decision_log_command_prunes_and_audits() -> None:
-    dl_store = _FakeDecisionLogStore()
-    audit_store = _RecordingAuditEventStore()  # reuse the file's recording fake
+    dl_store = FakeDecisionLogStore()
+    audit_store = RecordingAuditEventStore()
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
     out = io.StringIO()
+    now = datetime(2026, 6, 10, 12, 0, tzinfo=timezone.utc)
     code = main(
         ["prune-decision-log", "--keep-days", "14"],
-        settings=_settings(),
-        connect=lambda: SimpleNamespace(close=lambda: None),
-        audit_event_store_factory=lambda conn: audit_store,
-        decision_log_store_factory=lambda conn: dl_store,
-        now=lambda: datetime(2026, 6, 10, 12, 0, tzinfo=timezone.utc),
+        connect=lambda: connection,
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        decision_log_store_factory=StoreFactoryStub(dl_store),
+        now=lambda: now,
         stdout=out,
     )
     assert code == 0
-    assert dl_store.prune_calls == [{
-        "older_than_days": 14,
-        "now": datetime(2026, 6, 10, 12, 0, tzinfo=timezone.utc),
-    }]
+    assert dl_store.prune_calls == [{"older_than_days": 14, "now": now}]
     events = [e for e in audit_store.appended if e.event_type == "decision_log_pruned"]
     assert len(events) == 1
     assert events[0].payload["deleted_count"] == 42
@@ -1070,12 +1066,11 @@ def test_prune_decision_log_rejects_keep_days_below_one() -> None:
     with pytest.raises(SystemExit):
         main(
             ["prune-decision-log", "--keep-days", "0"],
-            settings=_settings(),
-            connect=lambda: SimpleNamespace(close=lambda: None),
+            connect=lambda: SimpleNamespace(commit=lambda: None, close=lambda: None),
         )
 ```
 
-(`_settings()` / `_RecordingAuditEventStore` — use whatever the file already provides; `tests/unit/test_admin_reset_weights.py` has both patterns if `test_admin_cli.py` differs.)
+(If `StoreFactoryStub` requires the store class rather than an instance, mirror whichever call shape the file's existing tests use — e.g. how `audit_event_store_factory` is injected in the halt/resume tests.)
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1162,35 +1157,73 @@ git commit -m "feat: add alpaca-bot-admin prune-decision-log command"
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `tests/unit/test_nightly_cli.py` (the file's tests monkeypatch module-level store classes via `_patch_common_db`; follow that pattern):
+Add to `tests/unit/test_nightly_cli.py` (the file's tests monkeypatch module-level store classes via `_patch_common_db`; follow that pattern).
+
+**Path-of-execution constraint (verified):** with default symbols and an empty `--output-dir`, `main` returns 1 at the "need at least 2 scenario files" check BEFORE reaching the prune. Use `_patch_common_db(monkeypatch, module, symbols=[])` — the empty-watchlist path skips backfill/evolve entirely and still reaches the report + prune, returning 0 (same trick as the existing `test_nightly_cli_no_watchlist_symbols_skips_evolve`). And since the prune is gated on `not args.no_db` (it is a destructive DELETE — it must respect the don't-touch-the-DB flag), the happy-path test must NOT pass `--no-db`. `_patch_common_db` does not patch `AuditEventStore`, so patch it with a recording fake too:
 
 ```python
 def test_nightly_cli_prunes_decision_log(monkeypatch, tmp_path):
-    import alpaca_bot.nightly.cli as module
+    """With DB writes enabled, the pipeline prunes decision_log after the report."""
+    from alpaca_bot.nightly import cli as module
+
     _patch_env(monkeypatch)
-    _patch_common_db(monkeypatch, module)
+    _patch_common_db(monkeypatch, module, symbols=[])  # skip backfill/evolve, reach the report
 
     prune_calls: list[dict] = []
 
     class FakeDecisionLogStore:
-        def __init__(self, conn):
-            pass
-
+        def __init__(self, conn): pass
         def prune(self, *, older_than_days, now):
             prune_calls.append({"older_than_days": older_than_days})
             return 7
 
+    appended = []
+
+    class FakeAuditEventStore:
+        def __init__(self, conn): pass
+        def append(self, event, **kw): appended.append(event)
+
     monkeypatch.setattr(module, "DecisionLogStore", FakeDecisionLogStore)
+    monkeypatch.setattr(module, "AuditEventStore", FakeAuditEventStore)
     monkeypatch.setattr(sys, "argv", [
-        "alpaca-bot-nightly", "--dry-run", "--no-db",
-        "--output-dir", str(tmp_path),
+        "nightly", "--dry-run", "--output-dir", str(tmp_path),
     ])
+
     result = module.main()
+
     assert result == 0
     assert prune_calls == [{"older_than_days": 30}]
-```
+    pruned = [e for e in appended if e.event_type == "decision_log_pruned"]
+    assert len(pruned) == 1
+    assert pruned[0].payload["deleted_count"] == 7
+    assert pruned[0].payload["source"] == "nightly"
 
-(Adapt the argv to match what the file's existing dry-run test passes — copy its argv and add nothing; `--dry-run` with an empty `--output-dir` is the established minimal path. If `_patch_common_db` patches `AuditEventStore`, the audit append is covered; otherwise also patch it with a recording fake as the existing `nightly_sweep_completed` tests do.)
+
+def test_nightly_cli_no_db_skips_prune(monkeypatch, tmp_path):
+    """--no-db must skip the destructive prune entirely."""
+    from alpaca_bot.nightly import cli as module
+
+    _patch_env(monkeypatch)
+    _patch_common_db(monkeypatch, module, symbols=[])
+
+    prune_calls: list[dict] = []
+
+    class FakeDecisionLogStore:
+        def __init__(self, conn): pass
+        def prune(self, **kw):
+            prune_calls.append(kw)
+            return 0
+
+    monkeypatch.setattr(module, "DecisionLogStore", FakeDecisionLogStore)
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db", "--output-dir", str(tmp_path),
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert prune_calls == []
+```
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1215,7 +1248,7 @@ In `src/alpaca_bot/nightly/cli.py`:
 
 ```python
         # ── Decision-log retention ───────────────────────────────────────────
-        if args.prune_keep_days > 0:
+        if not args.no_db and args.prune_keep_days > 0:
             try:
                 deleted = DecisionLogStore(conn).prune(
                     older_than_days=args.prune_keep_days, now=now
@@ -1282,3 +1315,5 @@ Expected: `023_add_floor_raised_at.sql` is the highest-numbered file.
 4. **Max-age clock semantics:** fresh raise → re-stamp; hysteresis → no stamp; NULL clock on a raised floor → backfill to `now` (window starts at deploy, conservative); operator floors exempt; clear emits `confidence_floor_auto_cleared` with reason `max age exceeded (Nd)`.
 5. **Prune is one DELETE in one transaction** — crash-safe; partial deletion is impossible. The existing `cycle_at DESC` index serves the cutoff scan.
 6. **No behavior change to order submission, sizing, or stops** in any task; paper/live parity holds (no mode-conditional code anywhere in S1–S4).
+7. **`OptionOrderRepository.list_trade_pnl_by_strategy` (repositories.py:1975) is deliberately NOT same-day constrained.** Option strategies legitimately hold across sessions (the June-18 short puts), so the S2 same-session predicate applies only to the three equity methods. Both supervisor consumers (losing-streak check at supervisor.py:410–420, weights refresh at 1736–1746) call the equity and option variants separately, so the fix propagates everywhere it should without touching option attribution.
+8. **Nightly prune is gated on `not args.no_db`** — prune is a destructive DELETE and must respect the don't-touch-the-DB flag, even though the nightly connection itself is opened unconditionally.
