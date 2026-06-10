@@ -2332,33 +2332,36 @@ class DecisionLogStore:
             "strategy_name", "evaluated", "not_skipped", "not_prefiltered",
             "signal_fired", "passed_entry_filter", "sized", "accepted",
         )
+        # Aggregate capacity rows (symbol='_capacity_') carry
+        # filter_results->>'blocked_symbol_count' = N and must count as N
+        # blocked symbols; all other rows weight as 1 (NULL → COALESCE 1).
         rows = fetch_all(
             self._connection,
             """
             SELECT
                 strategy_name,
-                COUNT(*) AS evaluated,
-                COUNT(*) FILTER (
+                COALESCE(SUM(w), 0) AS evaluated,
+                COALESCE(SUM(w) FILTER (
                     WHERE decision NOT IN (
                         'skipped_existing_position', 'skipped_already_traded'
                     )
-                ) AS not_skipped,
-                COUNT(*) FILTER (
+                ), 0) AS not_skipped,
+                COALESCE(SUM(w) FILTER (
                     WHERE decision NOT IN (
                         'skipped_existing_position', 'skipped_already_traded'
                     )
                       AND reject_stage IS DISTINCT FROM 'pre_filter'
                       AND reject_stage IS DISTINCT FROM 'stale_data'
-                ) AS not_prefiltered,
-                COUNT(*) FILTER (
+                ), 0) AS not_prefiltered,
+                COALESCE(SUM(w) FILTER (
                     WHERE decision NOT IN (
                         'skipped_existing_position', 'skipped_already_traded',
                         'skipped_no_signal'
                     )
                       AND reject_stage IS DISTINCT FROM 'pre_filter'
                       AND reject_stage IS DISTINCT FROM 'stale_data'
-                ) AS signal_fired,
-                COUNT(*) FILTER (
+                ), 0) AS signal_fired,
+                COALESCE(SUM(w) FILTER (
                     WHERE decision NOT IN (
                         'skipped_existing_position', 'skipped_already_traded',
                         'skipped_no_signal'
@@ -2366,8 +2369,8 @@ class DecisionLogStore:
                       AND reject_stage IS DISTINCT FROM 'pre_filter'
                       AND reject_stage IS DISTINCT FROM 'stale_data'
                       AND reject_stage IS DISTINCT FROM 'vwap_filter'
-                ) AS passed_entry_filter,
-                COUNT(*) FILTER (
+                ), 0) AS passed_entry_filter,
+                COALESCE(SUM(w) FILTER (
                     WHERE decision NOT IN (
                         'skipped_existing_position', 'skipped_already_traded',
                         'skipped_no_signal'
@@ -2376,11 +2379,15 @@ class DecisionLogStore:
                       AND reject_stage IS DISTINCT FROM 'stale_data'
                       AND reject_stage IS DISTINCT FROM 'vwap_filter'
                       AND reject_stage IS DISTINCT FROM 'sizing'
-                ) AS sized,
-                COUNT(*) FILTER (WHERE decision = 'accepted') AS accepted
-            FROM decision_log
-            WHERE DATE(cycle_at AT TIME ZONE %s) BETWEEN %s AND %s
-              AND trading_mode = %s
+                ), 0) AS sized,
+                COALESCE(SUM(w) FILTER (WHERE decision = 'accepted'), 0) AS accepted
+            FROM (
+                SELECT strategy_name, decision, reject_stage,
+                       COALESCE((filter_results->>'blocked_symbol_count')::int, 1) AS w
+                FROM decision_log
+                WHERE DATE(cycle_at AT TIME ZONE %s) BETWEEN %s AND %s
+                  AND trading_mode = %s
+            ) weighted
             GROUP BY strategy_name
             ORDER BY strategy_name
             """,

@@ -6,13 +6,14 @@ from alpaca_bot.storage.repositories import DecisionLogStore
 
 
 class _FakeCursor:
-    """Cursor that returns predefined rows from fetchall()."""
+    """Cursor that returns predefined rows from fetchall() and records SQL."""
 
-    def __init__(self, rows: list[tuple]) -> None:
+    def __init__(self, rows: list[tuple], log: list[str]) -> None:
         self._rows = rows
+        self._log = log
 
     def execute(self, sql: str, params) -> None:
-        pass  # no-op; rows are predefined
+        self._log.append(sql)
 
     def fetchall(self) -> list[tuple]:
         return self._rows
@@ -21,9 +22,10 @@ class _FakeCursor:
 class _FakeConn:
     def __init__(self, rows: list[tuple]) -> None:
         self._rows = rows
+        self.executed_sql: list[str] = []
 
     def cursor(self) -> _FakeCursor:
-        return _FakeCursor(self._rows)
+        return _FakeCursor(self._rows, self.executed_sql)
 
 
 def _make_rows() -> list[tuple]:
@@ -56,6 +58,22 @@ def test_funnel_by_strategy_returns_dicts_with_correct_counts() -> None:
 
     orb = next(r for r in result if r["strategy_name"] == "orb")
     assert orb["accepted"] == 1
+
+
+def test_funnel_by_strategy_weights_aggregate_capacity_rows() -> None:
+    """The SQL must weight rows by blocked_symbol_count so one aggregate
+    '_capacity_' record counts as N blocked symbols (and plain rows as 1)."""
+    conn = _FakeConn(_make_rows())
+    store = DecisionLogStore(conn)
+    store.funnel_by_strategy(
+        start_date=date(2026, 5, 1),
+        end_date=date(2026, 5, 7),
+        trading_mode="paper",
+    )
+    sql = conn.executed_sql[0]
+    assert "blocked_symbol_count" in sql
+    assert "SUM(w)" in sql
+    assert "COUNT(*)" not in sql
 
 
 def test_funnel_by_strategy_empty_result() -> None:
