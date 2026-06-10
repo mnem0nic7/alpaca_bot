@@ -1832,6 +1832,7 @@ class RuntimeSupervisor:
         watermark = rec.equity_high_watermark if rec is not None else current_equity
         new_floor = current_floor
         reason_parts: list[str] = []
+        raise_triggered = False
 
         # Update high-watermark if equity improved
         new_watermark = max(watermark, current_equity)
@@ -1845,6 +1846,7 @@ class RuntimeSupervisor:
             if drawdown_pct > self.settings.drawdown_raise_pct:
                 new_floor = min(current_floor + self.settings.floor_raise_step, 0.80)
                 reason_parts.append(f"drawdown {drawdown_pct:.1%}")
+                raise_triggered = True
             elif already_raised and drawdown_pct > clear_threshold:
                 # Still in the hysteresis band — keep the raise alive
                 reason_parts.append(f"drawdown hysteresis {drawdown_pct:.1%}")
@@ -1864,21 +1866,56 @@ class RuntimeSupervisor:
                     max(new_floor, current_floor + self.settings.floor_raise_step), 0.80
                 )
                 reason_parts.append(f"vol {daily_vol:.2%}")
+                raise_triggered = True
             elif already_raised and daily_vol > vol_clear_threshold:
                 # Still in the hysteresis band — keep the raise alive
                 reason_parts.append(f"vol hysteresis {daily_vol:.2%}")
+
+        # Auto-raise clock: a fresh raise trigger (re)stamps it; the hysteresis
+        # keep-alive deliberately does not — otherwise the max-age escape below
+        # could never fire while the band holds.
+        prev_raised_at = rec.floor_raised_at if rec is not None else None
+        new_raised_at = prev_raised_at
+        if raise_triggered:
+            new_raised_at = now
+        elif current_floor > manual_baseline + 1e-9 and prev_raised_at is None:
+            # Raised before floor_raised_at existed — start the clock now.
+            new_raised_at = now
 
         # Auto-clear: when no trigger fired and floor was previously auto-raised,
         # restore it to the last operator-set baseline.
         reason_parts_for_clear: str | None = None
         if not reason_parts and new_floor > manual_baseline + 1e-9:
             new_floor = manual_baseline
+            new_raised_at = None
             reason_parts_for_clear = "all triggers cleared"
+
+        # Max-age escape: a system-raised floor kept alive only by hysteresis can
+        # deadlock — the raised floor blocks entries, so equity can never climb
+        # back above the clear threshold. After FLOOR_AUTO_RAISE_MAX_AGE_DAYS
+        # without a fresh raise trigger, clear to the manual baseline.
+        if (
+            not raise_triggered
+            and reason_parts_for_clear is None
+            and new_floor > manual_baseline + 1e-9
+            and (rec is None or rec.set_by == "system")
+            and new_raised_at is not None
+            and now - new_raised_at
+                > timedelta(days=self.settings.floor_auto_raise_max_age_days)
+        ):
+            new_floor = manual_baseline
+            new_raised_at = None
+            reason_parts = []
+            reason_parts_for_clear = (
+                f"max age exceeded "
+                f"({self.settings.floor_auto_raise_max_age_days}d)"
+            )
 
         floor_changed = abs(new_floor - current_floor) > 1e-9
         watermark_changed = abs(new_watermark - watermark) > 1e-9
+        raised_at_changed = new_raised_at != prev_raised_at
 
-        if not floor_changed and not watermark_changed:
+        if not floor_changed and not watermark_changed and not raised_at_changed:
             return
 
         reason = (
@@ -1895,6 +1932,7 @@ class RuntimeSupervisor:
             set_by="system",
             reason=reason,
             updated_at=now,
+            floor_raised_at=new_raised_at,
         )
 
         with store_lock if store_lock is not None else contextlib.nullcontext():

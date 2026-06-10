@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -9,16 +9,24 @@ from alpaca_bot.config import TradingMode
 from alpaca_bot.storage.models import ConfidenceFloor
 
 
-def _make_floor(floor_value: float, watermark: float, manual_baseline: float | None = None) -> ConfidenceFloor:
+def _make_floor(
+    floor_value: float,
+    watermark: float,
+    manual_baseline: float | None = None,
+    *,
+    set_by: str = "system",
+    floor_raised_at: datetime | None = None,
+) -> ConfidenceFloor:
     return ConfidenceFloor(
         trading_mode=TradingMode.PAPER,
         strategy_version="v1",
         floor_value=floor_value,
         manual_floor_baseline=manual_baseline if manual_baseline is not None else floor_value,
         equity_high_watermark=watermark,
-        set_by="system",
+        set_by=set_by,
         reason="test",
         updated_at=datetime(2026, 5, 8, tzinfo=timezone.utc),
+        floor_raised_at=floor_raised_at,
     )
 
 
@@ -220,7 +228,11 @@ def test_drawdown_hysteresis_keeps_floor_raised() -> None:
     # Floor was already raised from 0.25 to 0.35. manual_baseline=0.25.
     # Equity recovered to 9700 → drawdown = 3% which is above clear_threshold (2.5%)
     # but below raise_threshold (5%). Should stay at 0.35 (not clear, not raise further).
-    rec = _make_floor(floor_value=0.35, watermark=10000.0, manual_baseline=0.25)
+    # A recent floor_raised_at avoids the legacy NULL-clock backfill write.
+    rec = _make_floor(
+        floor_value=0.35, watermark=10000.0, manual_baseline=0.25,
+        floor_raised_at=datetime(2026, 5, 8, tzinfo=timezone.utc),
+    )
     floor_store._rec = rec
 
     sup._check_and_update_floor_triggers(
@@ -272,6 +284,94 @@ def test_both_triggers_active_raises_floor_by_one_step_only() -> None:
     assert len(floor_store.upserted) == 1
     # Should advance by ONE step (0.10), not two (0.20)
     assert floor_store.upserted[0].floor_value == pytest.approx(0.35)  # 0.25 + 0.10
+
+
+def test_max_age_clears_system_raised_floor() -> None:
+    """A system-raised floor older than FLOOR_AUTO_RAISE_MAX_AGE_DAYS clears to
+    the manual baseline even while hysteresis would keep it alive."""
+    now = datetime(2026, 6, 10, 14, 30, tzinfo=timezone.utc)
+    rec = _make_floor(
+        0.80, 100_000.0, manual_baseline=0.25,
+        floor_raised_at=now - timedelta(days=8),
+    )
+    sup, store = _make_supervisor_with_floor()
+    store._rec = rec
+    # equity 97,100 → drawdown 2.9%: inside the hysteresis band (2.5%–5%)
+    sup._check_and_update_floor_triggers(
+        current_equity=97_100.0, now=now, daily_bars_for_vol=[],
+    )
+    assert store.upserted, "expected a floor write"
+    updated = store.upserted[-1]
+    assert updated.floor_value == pytest.approx(0.25)
+    assert updated.floor_raised_at is None
+    assert "max age exceeded" in updated.reason
+
+
+def test_fresh_raise_trigger_resets_max_age_clock() -> None:
+    """An active raise trigger (drawdown > threshold) re-stamps floor_raised_at."""
+    now = datetime(2026, 6, 10, 14, 30, tzinfo=timezone.utc)
+    rec = _make_floor(
+        0.45, 100_000.0, manual_baseline=0.25,
+        floor_raised_at=now - timedelta(days=8),
+    )
+    sup, store = _make_supervisor_with_floor()
+    store._rec = rec
+    # equity 94,000 → drawdown 6%: above DRAWDOWN_RAISE_PCT (5%) — fresh trigger
+    sup._check_and_update_floor_triggers(
+        current_equity=94_000.0, now=now, daily_bars_for_vol=[],
+    )
+    updated = store.upserted[-1]
+    assert updated.floor_value > 0.45  # raised further, not cleared
+    assert updated.floor_raised_at == now
+
+
+def test_hysteresis_does_not_reset_max_age_clock() -> None:
+    """Keep-alive must not refresh the clock — otherwise the escape never fires."""
+    now = datetime(2026, 6, 10, 14, 30, tzinfo=timezone.utc)
+    raised_at = now - timedelta(days=3)
+    rec = _make_floor(
+        0.80, 100_000.0, manual_baseline=0.25, floor_raised_at=raised_at,
+    )
+    sup, store = _make_supervisor_with_floor()
+    store._rec = rec
+    sup._check_and_update_floor_triggers(
+        current_equity=97_100.0, now=now, daily_bars_for_vol=[],
+    )
+    # Hysteresis band, clock under max age: floor unchanged, clock unchanged.
+    if store.upserted:
+        assert store.upserted[-1].floor_raised_at == raised_at
+        assert store.upserted[-1].floor_value == pytest.approx(0.80)
+
+
+def test_legacy_raised_floor_with_null_clock_gets_backfilled() -> None:
+    """Floors raised before the column existed start their clock on first sight."""
+    now = datetime(2026, 6, 10, 14, 30, tzinfo=timezone.utc)
+    rec = _make_floor(0.80, 100_000.0, manual_baseline=0.25, floor_raised_at=None)
+    sup, store = _make_supervisor_with_floor()
+    store._rec = rec
+    sup._check_and_update_floor_triggers(
+        current_equity=97_100.0, now=now, daily_bars_for_vol=[],
+    )
+    assert store.upserted, "expected a write to backfill the clock"
+    updated = store.upserted[-1]
+    assert updated.floor_raised_at == now
+    assert updated.floor_value == pytest.approx(0.80)  # not cleared yet
+
+
+def test_operator_set_floor_is_never_max_age_cleared() -> None:
+    """set_by='operator' floors are exempt from the max-age escape."""
+    now = datetime(2026, 6, 10, 14, 30, tzinfo=timezone.utc)
+    rec = _make_floor(
+        0.60, 100_000.0, manual_baseline=0.25,
+        set_by="operator", floor_raised_at=now - timedelta(days=30),
+    )
+    sup, store = _make_supervisor_with_floor()
+    store._rec = rec
+    sup._check_and_update_floor_triggers(
+        current_equity=97_100.0, now=now, daily_bars_for_vol=[],
+    )
+    for updated in store.upserted:
+        assert updated.floor_value == pytest.approx(0.60)
 
 
 def test_compute_losing_day_streaks_detects_consecutive_losses() -> None:
