@@ -647,3 +647,106 @@ def test_parse_grid_importable_from_sweep_module() -> None:
     from alpaca_bot.tuning.sweep import _parse_grid
     result = _parse_grid(["BREAKOUT_LOOKBACK_BARS=15,20,25"])
     assert result == {"BREAKOUT_LOOKBACK_BARS": ["15", "20", "25"]}
+
+
+# ---------------------------------------------------------------------------
+# audit subcommand
+# ---------------------------------------------------------------------------
+
+_GOLDEN_SCENARIO = Path(__file__).resolve().parent.parent / "golden" / "breakout_success.json"
+
+# Same env dict as tests/unit/test_replay_golden.py make_settings — the only
+# addition is REPLAY_SLIPPAGE_BPS, pinned so the test is deterministic even if
+# the ambient environment sets it.
+_AUDIT_ENV = {
+    "TRADING_MODE": "paper",
+    "ENABLE_LIVE_TRADING": "false",
+    "STRATEGY_VERSION": "v1-breakout",
+    "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+    "MARKET_DATA_FEED": "sip",
+    "SYMBOLS": "AAPL,MSFT,SPY",
+    "DAILY_SMA_PERIOD": "20",
+    "BREAKOUT_LOOKBACK_BARS": "20",
+    "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+    "RELATIVE_VOLUME_THRESHOLD": "1.5",
+    "ENTRY_TIMEFRAME_MINUTES": "15",
+    "RISK_PER_TRADE_PCT": "0.0025",
+    "MAX_POSITION_PCT": "0.05",
+    "MAX_OPEN_POSITIONS": "3",
+    "DAILY_LOSS_LIMIT_PCT": "0.01",
+    "STOP_LIMIT_BUFFER_PCT": "0.001",
+    "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+    "ENTRY_STOP_PRICE_BUFFER": "0.01",
+    "ENTRY_WINDOW_START": "10:00",
+    "ENTRY_WINDOW_END": "15:30",
+    "FLATTEN_TIME": "15:45",
+    "ATR_PERIOD": "14",
+    "REPLAY_SLIPPAGE_BPS": "0",
+}
+
+
+def _set_audit_env(monkeypatch) -> None:
+    for key, value in _AUDIT_ENV.items():
+        monkeypatch.setenv(key, value)
+
+
+def test_audit_subcommand_writes_markdown_and_json(tmp_path, monkeypatch):
+    import shutil
+
+    from alpaca_bot.replay.cli import main
+
+    _set_audit_env(monkeypatch)
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+    shutil.copy(_GOLDEN_SCENARIO, scenario_dir / "a.json")
+    shutil.copy(_GOLDEN_SCENARIO, scenario_dir / "b.json")
+
+    out_md = tmp_path / "audit.md"
+    out_json = tmp_path / "audit.json"
+    rc = main([
+        "audit",
+        "--scenario-dir", str(scenario_dir),
+        "--strategies", "breakout",
+        "--slippage-bps", "5",
+        "--output", str(out_md),
+        "--json", str(out_json),
+    ])
+    assert rc == 0
+
+    md = out_md.read_text()
+    assert "| strategy |" in md
+    assert "breakout" in md
+
+    rows = json.loads(out_json.read_text())
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["strategy"] == "breakout"
+    assert row["scenarios"] == 2
+    assert row["trades"] >= 2  # golden scenario trades once, copied twice
+    assert row["verdict"] in (
+        "negative-edge", "no-evidence", "positive-edge", "insufficient-data"
+    )
+    assert row["cost_drag"] >= 0
+
+
+def test_audit_subcommand_unknown_strategy_fails(tmp_path, monkeypatch):
+    import shutil
+
+    from alpaca_bot.replay.cli import main
+
+    _set_audit_env(monkeypatch)
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+    shutil.copy(_GOLDEN_SCENARIO, scenario_dir / "a.json")
+    rc = main(["audit", "--scenario-dir", str(scenario_dir), "--strategies", "bogus"])
+    assert rc == 1
+
+
+def test_audit_subcommand_empty_dir_fails(tmp_path, monkeypatch):
+    from alpaca_bot.replay.cli import main
+
+    _set_audit_env(monkeypatch)
+    empty = tmp_path / "none"
+    empty.mkdir()
+    rc = main(["audit", "--scenario-dir", str(empty)])
+    assert rc == 1

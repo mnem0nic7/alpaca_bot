@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import dataclasses
 import io
 import json
 import os
@@ -9,6 +10,7 @@ import sys
 from pathlib import Path
 
 from alpaca_bot.config import Settings
+from alpaca_bot.replay.audit import StrategyAuditRow, run_audit
 from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord
 from alpaca_bot.replay.runner import ReplayRunner
 from alpaca_bot.strategy import STRATEGY_REGISTRY
@@ -65,6 +67,32 @@ def main(argv: list[str] | None = None) -> int:
     )
     swp_p.add_argument("--min-trades", type=int, default=3, metavar="N")
 
+    # --- audit subcommand ---
+    aud_p = subparsers.add_parser(
+        "audit",
+        help="Cost-aware significance audit of strategies across a scenario directory",
+    )
+    aud_p.add_argument("--scenario-dir", required=True, metavar="DIR")
+    aud_p.add_argument(
+        "--strategies",
+        default=None,
+        metavar="s1,s2,...",
+        help="comma-separated strategy names (default: all registered)",
+    )
+    aud_p.add_argument(
+        "--slippage-bps",
+        type=float,
+        default=None,
+        metavar="BPS",
+        help="cost level for the costed run (default: REPLAY_SLIPPAGE_BPS)",
+    )
+    aud_p.add_argument(
+        "--limit", type=int, default=0, metavar="N",
+        help="audit only the first N scenario files (0 = all)",
+    )
+    aud_p.add_argument("--output", metavar="FILE", default="-")
+    aud_p.add_argument("--json", dest="json_path", metavar="FILE", default=None)
+
     args = parser.parse_args(argv)
 
     if args.subcommand == "run":
@@ -73,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_compare(args)
     if args.subcommand == "sweep":
         return _cmd_sweep(args)
+    if args.subcommand == "audit":
+        return _cmd_audit(args)
     return 1  # unreachable — argparse enforces subcommand
 
 
@@ -155,6 +185,76 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
         params_str = " ".join(f"{k}={v}" for k, v in c.params.items())
         print(f"{rank:<5} {c.score:>8.4f}  {trades:>6}  {mean_ret:>8}  {params_str}")
     return 0
+
+
+def _cmd_audit(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+
+    if args.strategies:
+        names = [s.strip() for s in args.strategies.split(",")]
+        invalid = [n for n in names if n not in STRATEGY_REGISTRY]
+        if invalid:
+            print(f"Unknown strategies: {', '.join(invalid)}", file=sys.stderr)
+            return 1
+    else:
+        names = list(STRATEGY_REGISTRY)
+
+    paths = sorted(Path(args.scenario_dir).glob("*.json"))
+    if args.limit > 0:
+        paths = paths[: args.limit]
+    if not paths:
+        print(f"No scenario files in {args.scenario_dir}", file=sys.stderr)
+        return 1
+
+    scenarios = [ReplayRunner.load_scenario(p) for p in paths]
+    bps = (
+        args.slippage_bps
+        if args.slippage_bps is not None
+        else settings.replay_slippage_bps
+    )
+
+    rows = run_audit(
+        scenarios=scenarios,
+        settings=settings,
+        strategies=names,
+        slippage_bps=bps,
+        on_progress=lambda msg: print(f"[audit] {msg}", file=sys.stderr),
+    )
+
+    _write_output(_format_audit_markdown(rows, slippage_bps=bps), args.output)
+    if args.json_path:
+        Path(args.json_path).write_text(
+            json.dumps([dataclasses.asdict(r) for r in rows], indent=2)
+        )
+    return 0
+
+
+def _format_audit_markdown(rows: list[StrategyAuditRow], *, slippage_bps: float) -> str:
+    def fmt(v: float | None, spec: str = ".2f") -> str:
+        return "n/a" if v is None else format(v, spec)
+
+    lines = [
+        f"# Strategy audit — {slippage_bps:g} bps/side vs frictionless",
+        "",
+        "| strategy | scenarios | trades | win rate | profit factor | total P&L "
+        "| mean/trade | ann. Sharpe | 95% CI mean/trade | p(edge>0) "
+        "| frictionless P&L | cost drag | verdict |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for r in rows:
+        ci = (
+            f"[{fmt(r.ci_low, '.4f')}, {fmt(r.ci_high, '.4f')}]"
+            if r.ci_low is not None
+            else "n/a"
+        )
+        lines.append(
+            f"| {r.strategy} | {r.scenarios} | {r.trades} "
+            f"| {fmt(r.win_rate, '.1%')} | {fmt(r.profit_factor)} "
+            f"| {r.total_pnl:.2f} | {fmt(r.mean_trade_pnl, '.4f')} "
+            f"| {fmt(r.annualized_sharpe)} | {ci} | {fmt(r.p_positive, '.4f')} "
+            f"| {r.zero_cost_total_pnl:.2f} | {r.cost_drag:.2f} | **{r.verdict}** |"
+        )
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------
