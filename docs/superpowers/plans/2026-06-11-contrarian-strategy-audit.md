@@ -121,20 +121,43 @@ This preserves every existing exact-arithmetic expectation (golden replays, swee
 - [ ] **Step 2: Write the failing tests** (`tests/unit/test_replay_slippage.py`)
 
 ```python
+from pathlib import Path
+
 from alpaca_bot.config import Settings
 from alpaca_bot.replay.runner import ReplayRunner
 
+GOLDEN_DIR = Path(__file__).resolve().parent.parent / "golden"
+
+# Same base env as tests/unit/test_replay_golden.py make_settings, so the
+# golden scenario produces the same trades here.
+BASE_ENV = {
+    "TRADING_MODE": "paper",
+    "ENABLE_LIVE_TRADING": "false",
+    "STRATEGY_VERSION": "v1-breakout",
+    "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+    "MARKET_DATA_FEED": "sip",
+    "SYMBOLS": "AAPL,MSFT,SPY",
+    "DAILY_SMA_PERIOD": "20",
+    "BREAKOUT_LOOKBACK_BARS": "20",
+    "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+    "RELATIVE_VOLUME_THRESHOLD": "1.5",
+    "ENTRY_TIMEFRAME_MINUTES": "15",
+    "RISK_PER_TRADE_PCT": "0.0025",
+    "MAX_POSITION_PCT": "0.05",
+    "MAX_OPEN_POSITIONS": "3",
+    "DAILY_LOSS_LIMIT_PCT": "0.01",
+    "STOP_LIMIT_BUFFER_PCT": "0.001",
+    "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+    "ENTRY_STOP_PRICE_BUFFER": "0.01",
+    "ENTRY_WINDOW_START": "10:00",
+    "ENTRY_WINDOW_END": "15:30",
+    "FLATTEN_TIME": "15:45",
+    "ATR_PERIOD": "14",
+}
+
 
 def make_settings(**overrides: str) -> Settings:
-    values = {
-        "TRADING_MODE": "paper",
-        "ENABLE_LIVE_TRADING": "false",
-        "STRATEGY_VERSION": "v1-breakout",
-        "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
-        "MARKET_DATA_FEED": "sip",
-        "SYMBOLS": "AAPL",
-        "ENTRY_TIMEFRAME_MINUTES": "15",
-    }
+    values = dict(BASE_ENV)
     values.update(overrides)
     return Settings.from_env(values)
 
@@ -155,33 +178,31 @@ def test_slipped_zero_bps_is_identity():
     assert runner._slipped(123.456, side="sell") == 123.456
 
 
-def test_costed_replay_never_beats_frictionless(tmp_path):
-    """End-to-end directional check on a golden scenario: with costs on,
-    every trade's PnL must be <= the matching frictionless trade's PnL."""
-    from pathlib import Path
+def test_costed_replay_never_beats_frictionless():
+    """End-to-end directional check on the golden breakout scenario.
 
-    golden = sorted(
-        (Path(__file__).resolve().parent.parent / "golden").glob("*.json")
-    )
-    assert golden, "golden scenario fixtures missing"
-    scenario = ReplayRunner.load_scenario(golden[0])
+    Compares return_pct, not pnl: the slipped entry price feeds position
+    sizing, so quantity can differ between runs and pnl is not directly
+    comparable per trade. return_pct = (exit - entry) / entry is
+    quantity-independent and must be strictly worse with costs.
+    """
+    scenario = ReplayRunner.load_scenario(GOLDEN_DIR / "breakout_success.json")
 
     free = ReplayRunner(make_settings(REPLAY_SLIPPAGE_BPS="0")).run(scenario)
     costed = ReplayRunner(make_settings(REPLAY_SLIPPAGE_BPS="20")).run(scenario)
 
     free_trades = free.backtest_report.trades
     costed_trades = costed.backtest_report.trades
-    assert len(free_trades) == len(costed_trades)
-    assert len(free_trades) >= 1, "scenario must produce at least one trade"
+    assert len(free_trades) == len(costed_trades)  # triggers use unslipped prices
+    assert len(free_trades) >= 1, "golden scenario must produce at least one trade"
     for f, c in zip(free_trades, costed_trades):
         assert c.entry_price >= f.entry_price
         assert c.exit_price <= f.exit_price
-        assert c.pnl < f.pnl
+        assert c.return_pct < f.return_pct
 ```
 
-Note: if `tests/golden/` scenario produces zero trades with default params, pass the same
-`make_settings` overrides that `test_replay_golden.py` uses for that scenario (copy its
-override dict) so the entry actually triggers — check that file when wiring the test.
+(`test_replay_golden.py::test_breakout_success_golden_scenario` runs this scenario with
+the same env dict and no overrides, so it is guaranteed to produce trades.)
 
 - [ ] **Step 3: Run tests to verify they fail**
 
@@ -650,18 +671,61 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 - Modify: `src/alpaca_bot/replay/cli.py`
 - Test: `tests/unit/test_backtest_cli.py` (append)
 
-- [ ] **Step 1: Write the failing test** (append to `tests/unit/test_backtest_cli.py`; reuse that module's existing scenario-fixture/env helpers — it already tests `run`/`compare` with tmp scenario JSON files and env patching; follow the same pattern)
+- [ ] **Step 1: Write the failing test** (append to `tests/unit/test_backtest_cli.py`)
+
+`test_backtest_cli.py` mostly fakes the runner for formatter tests; the audit test instead
+exercises the real path end-to-end: copy the golden breakout scenario into a tmp directory
+and set the required env vars (because `_cmd_audit` calls `Settings.from_env()` with no
+args, which reads `os.environ`). Add `main` to the module's existing
+`from alpaca_bot.replay.cli import ...` import line if it is not already imported, plus
+`import shutil` at the top.
 
 ```python
+_GOLDEN_SCENARIO = Path(__file__).resolve().parent.parent / "golden" / "breakout_success.json"
+
+# Same env dict as tests/unit/test_replay_golden.py make_settings — the only
+# addition is REPLAY_SLIPPAGE_BPS, pinned so the test is deterministic even if
+# the ambient environment sets it.
+_AUDIT_ENV = {
+    "TRADING_MODE": "paper",
+    "ENABLE_LIVE_TRADING": "false",
+    "STRATEGY_VERSION": "v1-breakout",
+    "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+    "MARKET_DATA_FEED": "sip",
+    "SYMBOLS": "AAPL,MSFT,SPY",
+    "DAILY_SMA_PERIOD": "20",
+    "BREAKOUT_LOOKBACK_BARS": "20",
+    "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+    "RELATIVE_VOLUME_THRESHOLD": "1.5",
+    "ENTRY_TIMEFRAME_MINUTES": "15",
+    "RISK_PER_TRADE_PCT": "0.0025",
+    "MAX_POSITION_PCT": "0.05",
+    "MAX_OPEN_POSITIONS": "3",
+    "DAILY_LOSS_LIMIT_PCT": "0.01",
+    "STOP_LIMIT_BUFFER_PCT": "0.001",
+    "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+    "ENTRY_STOP_PRICE_BUFFER": "0.01",
+    "ENTRY_WINDOW_START": "10:00",
+    "ENTRY_WINDOW_END": "15:30",
+    "FLATTEN_TIME": "15:45",
+    "ATR_PERIOD": "14",
+    "REPLAY_SLIPPAGE_BPS": "0",
+}
+
+
+def _set_audit_env(monkeypatch) -> None:
+    for key, value in _AUDIT_ENV.items():
+        monkeypatch.setenv(key, value)
+
+
 def test_audit_subcommand_writes_markdown_and_json(tmp_path, monkeypatch):
-    # Reuse the module's existing scenario fixture helper to write two tiny
-    # scenario JSON files into a directory.
+    import shutil
+
+    _set_audit_env(monkeypatch)
     scenario_dir = tmp_path / "scenarios"
     scenario_dir.mkdir()
-    _write_scenario_file(scenario_dir / "a.json")  # module helper
-    _write_scenario_file(scenario_dir / "b.json")
-    _patch_settings_env(monkeypatch)  # module helper, sets required env vars
-    monkeypatch.setenv("REPLAY_SLIPPAGE_BPS", "0")
+    shutil.copy(_GOLDEN_SCENARIO, scenario_dir / "a.json")
+    shutil.copy(_GOLDEN_SCENARIO, scenario_dir / "b.json")
 
     out_md = tmp_path / "audit.md"
     out_json = tmp_path / "audit.json"
@@ -679,29 +743,36 @@ def test_audit_subcommand_writes_markdown_and_json(tmp_path, monkeypatch):
     assert "| strategy |" in md
     assert "breakout" in md
 
-    import json as jsonlib
-    rows = jsonlib.loads(out_json.read_text())
+    rows = json.loads(out_json.read_text())
     assert len(rows) == 1
     row = rows[0]
     assert row["strategy"] == "breakout"
     assert row["scenarios"] == 2
+    assert row["trades"] >= 2  # golden scenario trades once, copied twice
     assert row["verdict"] in (
         "negative-edge", "no-evidence", "positive-edge", "insufficient-data"
     )
-    assert "cost_drag" in row
+    assert row["cost_drag"] >= 0
+
+
+def test_audit_subcommand_unknown_strategy_fails(tmp_path, monkeypatch):
+    import shutil
+
+    _set_audit_env(monkeypatch)
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+    shutil.copy(_GOLDEN_SCENARIO, scenario_dir / "a.json")
+    rc = main(["audit", "--scenario-dir", str(scenario_dir), "--strategies", "bogus"])
+    assert rc == 1
 
 
 def test_audit_subcommand_empty_dir_fails(tmp_path, monkeypatch):
-    _patch_settings_env(monkeypatch)
+    _set_audit_env(monkeypatch)
     empty = tmp_path / "none"
     empty.mkdir()
     rc = main(["audit", "--scenario-dir", str(empty)])
     assert rc == 1
 ```
-
-If `test_backtest_cli.py` does not actually have `_write_scenario_file` / `_patch_settings_env`
-helpers under those names, use whatever scenario-writing and env-setup code its existing
-`run`/`compare` tests use — copy those few lines rather than inventing new fixtures.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -869,8 +940,8 @@ Expected: deploy completes, `alpaca-bot-ops-check` passes (deploy.sh runs it).
 
 ```bash
 cd /workspace/alpaca_bot && set -a && source /etc/alpaca_bot/alpaca-bot.env && set +a && \
-docker compose -f deploy/compose.yaml run --rm --entrypoint alpaca-bot-backtest nightly \
-  audit --scenario-dir /data/scenarios --limit 20 \
+docker compose -f deploy/compose.yaml run --rm nightly \
+  alpaca-bot-backtest audit --scenario-dir /data/scenarios --limit 20 \
   --output /data/audit-smoke.md --json /data/audit-smoke.json
 ```
 
@@ -880,8 +951,8 @@ Expected: exit 0, `/var/lib/alpaca-bot/nightly/audit-smoke.md` contains an 11-ro
 
 ```bash
 cd /workspace/alpaca_bot && set -a && source /etc/alpaca_bot/alpaca-bot.env && set +a && \
-docker compose -f deploy/compose.yaml run --rm --entrypoint alpaca-bot-backtest nightly \
-  audit --scenario-dir /data/scenarios \
+docker compose -f deploy/compose.yaml run --rm nightly \
+  alpaca-bot-backtest audit --scenario-dir /data/scenarios \
   --output /data/audit-full.md --json /data/audit-full.json
 ```
 
@@ -979,3 +1050,29 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
   fixtures to 0; full `pytest` in Task 2 Step 5 catches stragglers.
 - **Safety:** no broker paths touched; `evaluate_cycle()` untouched; audit CLI is read-only
   over scenario files; Task 6 deploy uses the standard script after market hours.
+
+## Grilling record (Stage 3, 2026-06-11)
+
+All plan-and-refine domain questions answered from the codebase; three defects found and
+fixed in this revision:
+
+1. **Task 2 e2e test asserted `c.pnl < f.pnl`** — unsound: the slipped entry price feeds
+   `calculate_position_size`, so quantity can differ between the 0-bps and N-bps runs and a
+   losing trade can show a *smaller* absolute loss with costs. Rewritten to assert
+   `c.return_pct < f.return_pct` (quantity-independent, strictly worse with adverse
+   slippage) plus directional `entry_price`/`exit_price` checks, using the golden
+   `breakout_success.json` scenario which is guaranteed to produce trades.
+2. **Task 5 test referenced nonexistent helpers** (`_write_scenario_file`,
+   `_patch_settings_env` — `test_backtest_cli.py` has no such fixtures; it monkeypatches
+   `_cli.Settings` for formatter tests). Rewritten to copy the golden scenario into a tmp
+   dir and `monkeypatch.setenv` the full env dict, exercising the real `main(["audit", ...])`.
+3. **Task 6 used `docker compose run --entrypoint alpaca-bot-backtest`** — the image has
+   `CMD ["alpaca-bot-supervisor"]` and **no** ENTRYPOINT; the repo convention (cron, deploy
+   scripts) is `docker compose run --rm nightly <command>`. Fixed in Steps 3–4.
+
+Verified clean (no plan change needed): `Settings.__post_init__` re-validates on
+`dataclasses.replace` so the audit's 0-bps/N-bps copies are validated; sweep inherits costs
+because `tuning/sweep.py` builds `Settings.from_env({**base_env, **overrides})` per combo;
+missing/misspelled `REPLAY_SLIPPAGE_BPS` falls back to the conservative 5.0 default (safe
+direction); `REPLAY_SLIPPAGE_BPS=0` is an exact rollback; no Postgres, no broker, no
+migration, no live/paper divergence anywhere in the change.
