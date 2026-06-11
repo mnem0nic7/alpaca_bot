@@ -80,3 +80,17 @@ def test_floor_auto_raise_max_age_days_default_and_validation():
 def test_floor_auto_raise_max_age_days_env_override():
     settings = Settings.from_env(_base_env(FLOOR_AUTO_RAISE_MAX_AGE_DAYS="14"))
     assert settings.floor_auto_raise_max_age_days == 14
+
+
+def test_replay_slippage_bps_default_and_validation():
+    settings = Settings.from_env(_base_env())
+    assert settings.replay_slippage_bps == 5.0
+    with pytest.raises(ValueError, match="REPLAY_SLIPPAGE_BPS"):
+        Settings.from_env(_base_env(REPLAY_SLIPPAGE_BPS="-1"))
+    with pytest.raises(ValueError, match="REPLAY_SLIPPAGE_BPS"):
+        Settings.from_env(_base_env(REPLAY_SLIPPAGE_BPS="101"))
+
+
+def test_replay_slippage_bps_env_override():
+    settings = Settings.from_env(_base_env(REPLAY_SLIPPAGE_BPS="0"))
+    assert settings.replay_slippage_bps == 0.0

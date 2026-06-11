@@ -157,6 +157,9 @@ class Settings:
     profit_trail_pct: float = 0.95
     enable_profit_target: bool = False
     profit_target_r: float = 2.0
+    # Adverse per-side slippage applied to every simulated replay fill, in
+    # basis points. Sweep and nightly inherit it via the shared ReplayRunner.
+    replay_slippage_bps: float = 5.0
     trend_filter_exit_lookback_days: int = 1
     enable_breakeven_stop: bool = True
     breakeven_trigger_pct: float = 0.0025
@@ -377,6 +380,7 @@ class Settings:
                 "ENABLE_PROFIT_TARGET", values.get("ENABLE_PROFIT_TARGET", "false")
             ),
             profit_target_r=float(values.get("PROFIT_TARGET_R", "2.0")),
+            replay_slippage_bps=float(values.get("REPLAY_SLIPPAGE_BPS", "5.0")),
             trend_filter_exit_lookback_days=int(
                 values.get("TREND_FILTER_EXIT_LOOKBACK_DAYS", "1")
             ),
@@ -626,6 +630,8 @@ class Settings:
             raise ValueError("MAX_LOSS_PER_TRADE_DOLLARS must be > 0")
         if self.profit_target_r <= 0:
             raise ValueError("PROFIT_TARGET_R must be > 0")
+        if not 0.0 <= self.replay_slippage_bps <= 100.0:
+            raise ValueError("REPLAY_SLIPPAGE_BPS must be between 0 and 100")
         if self.trend_filter_exit_lookback_days < 1:
             raise ValueError("TREND_FILTER_EXIT_LOOKBACK_DAYS must be >= 1")
         if not 0.0 <= self.confidence_floor <= 1.0:
