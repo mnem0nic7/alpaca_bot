@@ -676,9 +676,10 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 `test_backtest_cli.py` mostly fakes the runner for formatter tests; the audit test instead
 exercises the real path end-to-end: copy the golden breakout scenario into a tmp directory
 and set the required env vars (because `_cmd_audit` calls `Settings.from_env()` with no
-args, which reads `os.environ`). Add `main` to the module's existing
-`from alpaca_bot.replay.cli import ...` import line if it is not already imported, plus
-`import shutil` at the top.
+args, which reads `os.environ`). Follow the file's existing convention of importing `main`
+function-locally (`from alpaca_bot.replay.cli import main` inside each test — see
+`test_backtest_cli_invalid_strategy_exits` at line 240); `shutil` is likewise imported
+locally in the tests below. The module already imports `json` and `Path` at the top.
 
 ```python
 _GOLDEN_SCENARIO = Path(__file__).resolve().parent.parent / "golden" / "breakout_success.json"
@@ -721,6 +722,8 @@ def _set_audit_env(monkeypatch) -> None:
 def test_audit_subcommand_writes_markdown_and_json(tmp_path, monkeypatch):
     import shutil
 
+    from alpaca_bot.replay.cli import main
+
     _set_audit_env(monkeypatch)
     scenario_dir = tmp_path / "scenarios"
     scenario_dir.mkdir()
@@ -758,6 +761,8 @@ def test_audit_subcommand_writes_markdown_and_json(tmp_path, monkeypatch):
 def test_audit_subcommand_unknown_strategy_fails(tmp_path, monkeypatch):
     import shutil
 
+    from alpaca_bot.replay.cli import main
+
     _set_audit_env(monkeypatch)
     scenario_dir = tmp_path / "scenarios"
     scenario_dir.mkdir()
@@ -767,6 +772,8 @@ def test_audit_subcommand_unknown_strategy_fails(tmp_path, monkeypatch):
 
 
 def test_audit_subcommand_empty_dir_fails(tmp_path, monkeypatch):
+    from alpaca_bot.replay.cli import main
+
     _set_audit_env(monkeypatch)
     empty = tmp_path / "none"
     empty.mkdir()
