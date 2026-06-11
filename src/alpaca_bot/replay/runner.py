@@ -63,6 +63,18 @@ class ReplayRunner:
             intraday_bars=[Bar.from_dict(item) for item in payload["intraday_bars"]],
         )
 
+    def _slipped(self, price: float, *, side: str) -> float:
+        """Apply adverse slippage to a simulated fill price.
+
+        Buys fill higher, sells fill lower, by replay_slippage_bps per side.
+        Absorbs spread cost and the optimism of fill-at-touch limit exits.
+        """
+        bps = self.settings.replay_slippage_bps
+        if bps <= 0.0:
+            return price
+        factor = 1.0 + bps / 10_000.0 if side == "buy" else 1.0 - bps / 10_000.0
+        return round(price * factor, 4)
+
     def run(self, scenario: ReplayScenario) -> ReplayResult:
         bars = sorted(scenario.intraday_bars, key=lambda bar: bar.timestamp)
         state = ReplayState(equity=scenario.starting_equity)
@@ -200,6 +212,10 @@ class ReplayRunner:
             state.working_order = None
             return
 
+        # Adverse slippage on entry, capped at the limit (a stop-limit order
+        # cannot legally fill above its limit price).
+        fill_price = min(self._slipped(fill_price, side="buy"), order.limit_price)
+
         quantity = calculate_position_size(
             equity=state.equity,
             entry_price=fill_price,
@@ -250,7 +266,7 @@ class ReplayRunner:
         position.highest_price = max(position.highest_price, bar.high)
 
         if bar.low <= position.stop_price:
-            exit_price = min(position.stop_price, bar.open)
+            exit_price = self._slipped(min(position.stop_price, bar.open), side="sell")
             events.append(
                 ReplayEvent(
                     event_type=IntentType.STOP_HIT,
@@ -290,15 +306,16 @@ class ReplayRunner:
         if bar.high < target_price:
             return False
 
+        exit_price = self._slipped(target_price, side="sell")
         events.append(
             ReplayEvent(
                 event_type=IntentType.PROFIT_TARGET_HIT,
                 symbol=position.symbol,
                 timestamp=bar.timestamp,
-                details={"exit_price": round(target_price, 2)},
+                details={"exit_price": round(exit_price, 2)},
             )
         )
-        state.equity += (target_price - position.entry_price) * position.quantity
+        state.equity += (exit_price - position.entry_price) * position.quantity
         state.traded_symbols.add(
             (position.symbol, session_day(bar.timestamp, self.settings))
         )
@@ -315,15 +332,16 @@ class ReplayRunner:
         position = state.position
         if position is None:
             return
+        exit_price = self._slipped(bar.close, side="sell")
         events.append(
             ReplayEvent(
                 event_type=IntentType.EOD_EXIT,
                 symbol=position.symbol,
                 timestamp=bar.timestamp,
-                details={"exit_price": round(bar.close, 2)},
+                details={"exit_price": round(exit_price, 2)},
             )
         )
-        state.equity += (bar.close - position.entry_price) * position.quantity
+        state.equity += (exit_price - position.entry_price) * position.quantity
         state.traded_symbols.add(
             (position.symbol, session_day(bar.timestamp, self.settings))
         )

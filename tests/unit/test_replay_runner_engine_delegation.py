@@ -50,6 +50,7 @@ def make_settings(**overrides: str) -> Settings:
         "ENTRY_WINDOW_START": "10:00",
         "ENTRY_WINDOW_END": "15:30",
         "FLATTEN_TIME": "15:45",
+        "REPLAY_SLIPPAGE_BPS": "0",
         "ATR_PERIOD": "14",
     }
     values.update(overrides)

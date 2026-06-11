@@ -32,6 +32,7 @@ def _settings(**overrides: str) -> Settings:
         "ENTRY_WINDOW_START": "10:00",
         "ENTRY_WINDOW_END": "15:30",
         "FLATTEN_TIME": "15:45",
+        "REPLAY_SLIPPAGE_BPS": "0",
         "ENABLE_BREAKEVEN_STOP": "false",
         "ENABLE_PROFIT_TARGET": "true",
         "PROFIT_TARGET_R": "2.0",

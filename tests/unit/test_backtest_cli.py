@@ -34,6 +34,7 @@ _FAKE_SETTINGS = _Settings.from_env({
     "ENTRY_WINDOW_START": "10:00",
     "ENTRY_WINDOW_END": "15:30",
     "FLATTEN_TIME": "15:45",
+    "REPLAY_SLIPPAGE_BPS": "0",
 })
 
 
@@ -190,6 +191,7 @@ def test_replay_runner_passes_strategy_name_to_report() -> None:
         "ENTRY_WINDOW_START": "10:00",
         "ENTRY_WINDOW_END": "15:30",
         "FLATTEN_TIME": "15:45",
+        "REPLAY_SLIPPAGE_BPS": "0",
     })
     runner = ReplayRunner(settings, strategy_name="momentum")
     scenario = runner.load_scenario(_GOLDEN_DIR / "breakout_success.json")
@@ -224,6 +226,7 @@ def test_replay_runner_default_strategy_name_is_breakout() -> None:
         "ENTRY_WINDOW_START": "10:00",
         "ENTRY_WINDOW_END": "15:30",
         "FLATTEN_TIME": "15:45",
+        "REPLAY_SLIPPAGE_BPS": "0",
     })
     runner = ReplayRunner(settings)
     scenario = runner.load_scenario(_GOLDEN_DIR / "breakout_success.json")

@@ -317,6 +317,7 @@ def test_replay_runner_attaches_backtest_report_to_result() -> None:
             "ENTRY_WINDOW_START": "10:00",
             "ENTRY_WINDOW_END": "15:30",
             "FLATTEN_TIME": "15:45",
+            "REPLAY_SLIPPAGE_BPS": "0",
         })
 
     golden_dir = Path(__file__).resolve().parent.parent / "golden"
