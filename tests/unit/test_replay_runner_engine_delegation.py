@@ -58,21 +58,22 @@ def make_settings(**overrides: str) -> Settings:
 
 
 def _make_daily_bars(symbol: str = "AAPL") -> list[Bar]:
-    # 21 bars so daily_trend_filter_passes works with sma_period=20 (needs period+1 bars).
-    # Start chosen so bar[-1] lands on 2026-04-24 (same day as intraday bars),
-    # keeping bar age < viability_daily_bar_max_age_days (default 5).
-    start = datetime(2026, 4, 4, 20, 0, tzinfo=timezone.utc)
+    # 22 bars ending 2026-04-24 (same day as the intraday bars). The runner's
+    # point-in-time slice drops the 2026-04-24 bar, leaving 21 completed days —
+    # enough for daily_trend_filter_passes with sma_period=20 (needs period+1
+    # bars) — with a last-bar age of 1 day (< viability max of 5).
+    start = datetime(2026, 4, 3, 20, 0, tzinfo=timezone.utc)
     return [
         Bar(
             symbol=symbol,
             timestamp=start + timedelta(days=i),
-            open=89.0 + i,
-            high=90.0 + i,
-            low=88.0 + i,
-            close=90.0 + i,
-            volume=1_000_000 + i * 1000,
+            open=88.0 + i,
+            high=89.0 + i,
+            low=87.0 + i,
+            close=89.0 + i,
+            volume=999_000 + i * 1000,
         )
-        for i in range(21)
+        for i in range(22)
     ]
 
 
