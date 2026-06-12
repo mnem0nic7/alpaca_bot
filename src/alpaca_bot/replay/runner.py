@@ -118,6 +118,7 @@ class ReplayRunner:
                 traded_symbols_today=state.traded_symbols,
                 entries_disabled=False,
                 signal_evaluator=self.signal_evaluator,
+                symbols=(scenario.symbol,),
             )
 
             for intent in cycle_result.intents:
