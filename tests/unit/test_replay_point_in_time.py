@@ -116,3 +116,145 @@ def test_off_watchlist_scenario_symbol_is_evaluated() -> None:
 
     placed = [e for e in result.events if e.event_type == IntentType.ENTRY_ORDER_PLACED]
     assert placed, "scenario symbol outside settings.symbols was never evaluated"
+
+
+def test_daily_slice_is_point_in_time() -> None:
+    """Defect 2: on session day D the evaluator must never see a daily bar
+    dated >= D, and the slice must grow as the scenario crosses days."""
+    settings = make_settings()
+    captured: list[tuple[datetime, tuple[Bar, ...]]] = []
+
+    def capturing_evaluator(*, symbol, intraday_bars, signal_index, daily_bars, settings):
+        captured.append((intraday_bars[signal_index].timestamp, tuple(daily_bars)))
+        return None
+
+    # 22 daily bars 2026-04-03..2026-04-24 — includes bars dated ON both
+    # intraday days, which the slice must hide.
+    daily = _daily_bars(
+        "AAPL", start=datetime(2026, 4, 3, 20, 0, tzinfo=timezone.utc), count=22
+    )
+    intraday: list[Bar] = []
+    for day_num in (23, 24):
+        t0 = datetime(2026, 4, day_num, 14, 30, tzinfo=timezone.utc)  # 10:30 ET
+        intraday.extend(
+            Bar(
+                symbol="AAPL",
+                timestamp=t0 + timedelta(minutes=15 * i),
+                open=100.0,
+                high=100.5,
+                low=99.5,
+                close=100.0,
+                volume=1_000_000,
+            )
+            for i in range(8)
+        )
+    scenario = ReplayScenario(
+        name="two-day",
+        symbol="AAPL",
+        starting_equity=100_000.0,
+        daily_bars=daily,
+        intraday_bars=intraday,
+    )
+
+    ReplayRunner(settings, signal_evaluator=capturing_evaluator).run(scenario)
+
+    assert captured, "evaluator was never invoked"
+    tz = settings.market_timezone
+    sizes: dict[date, int] = {}
+    for signal_ts, daily_slice in captured:
+        day = session_day(signal_ts, settings)
+        assert daily_slice, "daily slice was empty"
+        assert max(b.timestamp.astimezone(tz).date() for b in daily_slice) < day
+        sizes[day] = len(daily_slice)
+    assert sorted(sizes) == [date(2026, 4, 23), date(2026, 4, 24)]
+    # Exactly one more completed day visible on the second session day.
+    assert sizes[date(2026, 4, 24)] == sizes[date(2026, 4, 23)] + 1
+
+
+def _breakout_day(symbol: str, day_start_utc: datetime) -> list[Bar]:
+    """One session: 20 quiet bars from 10:00 ET, a high-volume breakout bar at
+    15:00 ET, an execution bar, and bars out to the 15:45 ET flatten."""
+    t0 = day_start_utc.replace(hour=14, minute=0)  # 10:00 ET
+    bars = [
+        Bar(
+            symbol=symbol,
+            timestamp=t0 + timedelta(minutes=15 * i),
+            open=100.0,
+            high=100.5,
+            low=99.5,
+            close=100.0,
+            volume=1_000_000,
+        )
+        for i in range(20)
+    ]
+    breakout_ts = t0 + timedelta(minutes=15 * 20)  # 15:00 ET, inside entry window
+    bars.append(
+        Bar(symbol=symbol, timestamp=breakout_ts,
+            open=100.4, high=102.0, low=100.3, close=101.8, volume=2_500_000)
+    )
+    bars.append(  # execution bar: opens above stop 100.51, below limit 100.61
+        Bar(symbol=symbol, timestamp=breakout_ts + timedelta(minutes=15),
+            open=100.55, high=101.2, low=100.4, close=100.9, volume=1_200_000)
+    )
+    bars.append(
+        Bar(symbol=symbol, timestamp=breakout_ts + timedelta(minutes=30),
+            open=100.9, high=101.0, low=100.5, close=100.8, volume=900_000)
+    )
+    bars.append(  # 15:45 ET — engine emits the EOD flatten exit here
+        Bar(symbol=symbol, timestamp=breakout_ts + timedelta(minutes=45),
+            open=100.8, high=100.9, low=100.4, close=100.6, volume=900_000)
+    )
+    return bars
+
+
+def test_trend_gate_varies_within_scenario() -> None:
+    """Defect 2 end-to-end with the real breakout evaluator: an uptrend that
+    breaks mid-scenario must allow entries while intact and block them after.
+
+    Old behavior: the full-series trend filter saw the post-crash close on
+    every bar, so the entire scenario produced zero entries."""
+    settings = make_settings()
+    symbol = "AAPL"
+    rising = [  # 2026-03-28 .. 2026-04-21, close 100 -> 124
+        Bar(
+            symbol=symbol,
+            timestamp=datetime(2026, 3, 28, 20, 0, tzinfo=timezone.utc) + timedelta(days=i),
+            open=99.5 + i,
+            high=100.5 + i,
+            low=99.0 + i,
+            close=100.0 + i,
+            volume=1_000_000,
+        )
+        for i in range(25)
+    ]
+    crash = Bar(
+        symbol=symbol,
+        timestamp=datetime(2026, 4, 22, 20, 0, tzinfo=timezone.utc),
+        open=123.5, high=124.0, low=79.5, close=80.0, volume=5_000_000,
+    )
+    flat = [
+        Bar(
+            symbol=symbol,
+            timestamp=datetime(2026, 4, d, 20, 0, tzinfo=timezone.utc),
+            open=80.0, high=80.5, low=79.5, close=80.0, volume=1_000_000,
+        )
+        for d in (23, 24)
+    ]
+    daily = rising + [crash] + flat
+
+    intraday = _breakout_day(symbol, datetime(2026, 4, 23, tzinfo=timezone.utc)) + _breakout_day(
+        symbol, datetime(2026, 4, 24, tzinfo=timezone.utc)
+    )
+    scenario = ReplayScenario(
+        name="trend-breaks",
+        symbol=symbol,
+        starting_equity=100_000.0,
+        daily_bars=daily,
+        intraday_bars=intraday,
+    )
+
+    result = ReplayRunner(settings).run(scenario)
+
+    placed = [e for e in result.events if e.event_type == IntentType.ENTRY_ORDER_PLACED]
+    assert len(placed) == 1, f"expected exactly one entry (day 1 only), got {len(placed)}"
+    assert session_day(placed[0].timestamp, settings) == date(2026, 4, 23)

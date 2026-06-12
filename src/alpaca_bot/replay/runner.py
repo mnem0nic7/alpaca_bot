@@ -77,8 +77,11 @@ class ReplayRunner:
 
     def run(self, scenario: ReplayScenario) -> ReplayResult:
         bars = sorted(scenario.intraday_bars, key=lambda bar: bar.timestamp)
+        sorted_daily = sorted(scenario.daily_bars, key=lambda bar: bar.timestamp)
         state = ReplayState(equity=scenario.starting_equity)
         events: list[ReplayEvent] = []
+        current_day: date | None = None
+        daily_slice: list[Bar] = []
 
         for index, bar in enumerate(bars):
             # --- Simulation mechanics: fill or expire working entry order ---
@@ -101,7 +104,18 @@ class ReplayRunner:
             # signal_index == len(bars_slice) - 1 matches the engine contract.
             bars_slice = bars[: index + 1]
             intraday_by_symbol = {bar.symbol: bars_slice}
-            daily_by_symbol = {bar.symbol: scenario.daily_bars}
+            # Mirror live data shape: the supervisor fetches daily bars with
+            # end = midnight ET of the session date, so the series the engine
+            # sees on day D contains only bars from completed days (< D).
+            day = session_day(bar.timestamp, self.settings)
+            if day != current_day:
+                current_day = day
+                daily_slice = [
+                    b
+                    for b in sorted_daily
+                    if b.timestamp.astimezone(self.settings.market_timezone).date() < day
+                ]
+            daily_by_symbol = {bar.symbol: daily_slice}
             working_order_symbols: set[str] = (
                 {state.working_order.symbol} if state.working_order is not None else set()
             )
