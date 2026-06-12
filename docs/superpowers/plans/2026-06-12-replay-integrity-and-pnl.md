@@ -518,10 +518,10 @@ Expected: migrate runs (no new migrations — "up to date"), web and supervisor 
 
 ```bash
 set -a && source /etc/alpaca_bot/alpaca-bot.env && set +a
-docker compose -f deploy/compose.yaml --profile ops run --rm ops-check
+docker compose -f deploy/compose.yaml run --rm admin alpaca-bot-ops-check
 ```
 
-(or `alpaca-bot-ops-check` per the established flow). Expected: `status=ok db=ok trading_mode=paper trading_status=enabled worker_status=fresh`. Confirm `docker compose -f deploy/compose.yaml ps` shows supervisor and web up.
+(There is no `ops-check` service; `alpaca-bot-ops-check` runs as a command override on the `admin` service, which shares the Docker network with `web`.) Expected: `status=ok db=ok trading_mode=paper trading_status=enabled worker_status=fresh`. Confirm `docker compose -f deploy/compose.yaml ps` shows supervisor and web up.
 
 No commit (no repo changes).
 
