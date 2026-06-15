@@ -152,8 +152,18 @@ from alpaca_bot.replay.lever_sweep import run_lever_sweep
 
 
 def _settings():
-    # Paper-mode base; only fields the sweep flips matter here.
-    return Settings.from_env()
+    # Paper-mode base built from an explicit env dict — the project idiom
+    # (see make_settings() in test_replay_audit.py). NEVER bare
+    # Settings.from_env(): that reads ambient os.environ and is non-hermetic.
+    return Settings.from_env({
+        "TRADING_MODE": "paper",
+        "ENABLE_LIVE_TRADING": "false",
+        "STRATEGY_VERSION": "v1-breakout",
+        "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+        "MARKET_DATA_FEED": "sip",
+        "SYMBOLS": "AAPL",
+        "ENTRY_TIMEFRAME_MINUTES": "15",
+    })
 
 
 def _trade(pnl):
@@ -448,7 +458,7 @@ def test_top_k_bounds_oos_runs():
 - [ ] **Step 2: Run tests to verify they fail, then pass**
 
 Run: `pytest tests/unit/test_lever_sweep.py -k "walk_forward or top_k" -v`
-Expected: PASS immediately (the implementation from Task 2 already covers this; if either fails, fix `run_lever_sweep`, not the test). If `Bar`/`ReplayScenario` constructor kwargs differ, adjust the fixture to match `src/alpaca_bot/domain/models.py` — read it first.
+Expected: PASS immediately (the implementation from Task 2 already covers this; if either fails, fix `run_lever_sweep`, not the test). The `Bar(symbol, timestamp, open, high, low, close, volume)` and `ReplayScenario(name, symbol, starting_equity, daily_bars, intraday_bars)` constructors used by the fixture are confirmed against `src/alpaca_bot/domain/models.py` (all positional/kwargs match; no defaults to satisfy). The 12-day fixture clears `split_scenario`'s ≥10-trading-date minimum.
 
 - [ ] **Step 3: Commit**
 
@@ -809,8 +819,19 @@ def _write_scenario(tmp_path, name):
     (tmp_path / f"{name}.json").write_text(_json.dumps(payload))
 
 
-def test_cli_lever_sweep_writes_report(tmp_path):
+def test_cli_lever_sweep_writes_report(tmp_path, monkeypatch):
+    # main() calls a bare Settings.from_env() internally. Make it hermetic by
+    # patching cli.Settings to return a fixed paper-mode Settings, mirroring
+    # the _patch_settings idiom in test_backtest_cli.py. Do NOT depend on
+    # ambient os.environ. The sweep then runs a REAL replay (no injected fake
+    # pooled_trades_fn) over the two tiny scenarios — exercising the full
+    # CLI -> run_lever_sweep -> run_audit -> ReplayRunner -> report path.
+    import alpaca_bot.replay.cli as cli_module
     from alpaca_bot.replay.cli import main
+
+    fixed = _settings()
+    fake_cls = type("S", (), {"from_env": staticmethod(lambda *a, **k: fixed)})
+    monkeypatch.setattr(cli_module, "Settings", fake_cls)
 
     _write_scenario(tmp_path, "AAA")
     _write_scenario(tmp_path, "BBB")
@@ -822,6 +843,9 @@ def test_cli_lever_sweep_writes_report(tmp_path):
     ])
     assert rc == 0
     text = out.read_text()
+    # Tiny scenarios likely yield zero bull_flag trades; report_from_records([])
+    # returns early (win_rate=None) so the row still constructs and the
+    # formatter renders the title + baseline regardless of trade count.
     assert "# Lever sweep — bull_flag" in text
     assert "baseline" in text
 ```
@@ -1033,7 +1057,23 @@ across all tasks and the CLI wiring. `StrategyAuditRow` fields used in fakes
 match `replay/audit.py`. `ReplayTradeRecord` constructor matches
 `replay/report.py`.
 
-**Note on `Bar`/`ReplayScenario` constructors (Task 3 fixtures):** verify field
-names against `src/alpaca_bot/domain/models.py` before running; adjust the
-fixture kwargs if they differ. This is the one place the plan assumes a
-constructor shape it did not read in full.
+**Grilling resolutions (all verified against source, 2026-06-15):**
+- `Bar` and `ReplayScenario` constructors in the Task 3 fixtures are confirmed
+  against `src/alpaca_bot/domain/models.py` — exact field match, no defaults.
+- **Settings construction is hermetic.** Every test helper builds Settings via
+  `Settings.from_env({...explicit dict...})` (the `make_settings()` idiom in
+  `test_replay_audit.py`), never bare `from_env()`. The CLI test patches
+  `cli.Settings` (the `_patch_settings` idiom in `test_backtest_cli.py`) so
+  `main()`'s internal bare `from_env()` is also hermetic.
+- `run_audit` derives all statistics from `record.pnl` (audit.py:92) and calls
+  `report_from_records`, which returns early on an empty trade list
+  (report.py:66-79, `win_rate=None`) — so the CLI test's real replay yielding
+  zero trades is safe.
+- `load_scenario` is a `@staticmethod` (`ReplayRunner.load_scenario(p)`) reading
+  top-level `name`/`symbol`/`starting_equity`(opt)/`daily_bars`/`intraday_bars`
+  with `Bar.from_dict` per bar — the Task 6 fixture JSON matches.
+- This is an **offline diagnostic**: no order submission, no Settings
+  persistence, no Postgres/broker I/O, no AuditEvent, `evaluate_cycle` untouched,
+  paper/live gates untouched. All financial-safety grill questions resolve to
+  "not applicable." The only production-touching step (Task 7) runs in an
+  ephemeral compose container and changes no config.
