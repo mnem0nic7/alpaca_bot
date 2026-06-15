@@ -201,14 +201,12 @@ def build_ofat_grid(base_settings: Settings) -> list[LeverPoint]:
             )
         )
 
-    # Family F — regime filter (toggle opposite of baseline).
-    regime_target = not base_settings.enable_regime_filter
-    points.append(
-        LeverPoint(
-            label=f"F_regime:{'on' if regime_target else 'off'}",
-            overrides={"enable_regime_filter": regime_target},
-        )
-    )
+    # Family F (regime filter) is intentionally OMITTED: the replay harness calls
+    # evaluate_cycle() without regime_bars (runner.py:124-136), so engine.py:519
+    # short-circuits `enable_regime_filter` to a no-op. Sweeping it would yield a
+    # guaranteed baseline-identical row that *reads* as "regime has no edge" when
+    # the truth is "the replay cannot evaluate regime." Excluded to avoid that
+    # measurement artifact; evaluating it needs a benchmark series in replay.
 
     # Family G — VWAP entry filter (toggle opposite of baseline).
     vwap_target = not base_settings.enable_vwap_entry_filter
@@ -246,7 +244,7 @@ def build_coarse_grid(base_settings: Settings) -> list[LeverPoint]:
          {"enable_profit_target": True, "profit_target_r": 3.0}),
         ("E_rel_vol:relative_volume_threshold=2.0",
          {"relative_volume_threshold": 2.0}),
-        ("F_regime:on", {"enable_regime_filter": True}),
+        # Family F (regime) omitted — inert in replay (see build_ofat_grid).
         ("G_vwap:off", {"enable_vwap_entry_filter": False}),
         ("H_session:end=14:00", {"entry_window_end": time(14, 0)}),
     )

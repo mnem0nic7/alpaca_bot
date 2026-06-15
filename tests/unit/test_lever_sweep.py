@@ -294,9 +294,13 @@ def test_ofat_grid_covers_expected_families():
     grid = build_ofat_grid(_settings())
     labels = " ".join(p.label for p in grid)
     for token in ["A_initial_stop", "B_trail_atr", "C_trail_trigger",
-                  "D_profit_target", "E_rel_vol", "F_regime", "G_vwap",
-                  "H_session"]:
+                  "D_profit_target", "E_rel_vol", "G_vwap", "H_session"]:
         assert token in labels
+    # Family F (regime) is intentionally excluded: it is inert in replay
+    # because evaluate_cycle() is called without regime_bars, so sweeping it
+    # would produce a misleading baseline-identical row.
+    assert "regime" not in labels
+    assert not any("enable_regime_filter" in p.overrides for p in grid)
 
 
 def test_coarse_grid_smaller_than_ofat():
