@@ -11,6 +11,11 @@ from pathlib import Path
 
 from alpaca_bot.config import Settings
 from alpaca_bot.replay.audit import StrategyAuditRow, run_audit
+from alpaca_bot.replay.break_even import (
+    DEFAULT_SLIPPAGE_LADDER,
+    format_break_even_markdown,
+    run_break_even_sweep,
+)
 from alpaca_bot.replay.lever_sweep import (
     build_coarse_grid,
     build_ofat_grid,
@@ -128,6 +133,31 @@ def main(argv: list[str] | None = None) -> int:
     lev_p.add_argument("--top-k", type=int, default=5, metavar="K")
     lev_p.add_argument("--output", metavar="FILE", default="-")
 
+    # --- break-even subcommand ---
+    be_p = subparsers.add_parser(
+        "break-even",
+        help="Slippage ladder: find where after-cost ci_low crosses zero",
+    )
+    be_p.add_argument("--scenario-dir", required=True, metavar="DIR")
+    be_p.add_argument(
+        "--strategy",
+        action="append",
+        choices=list(STRATEGY_REGISTRY),
+        metavar="NAME",
+        help="strategy to score (repeatable; default: bull_flag, vwap_reversion)",
+    )
+    be_p.add_argument(
+        "--slippage-ladder",
+        default=None,
+        metavar="b1,b2,...",
+        help="comma-separated bps/side levels (default: 0,1,2,3,4,5)",
+    )
+    be_p.add_argument(
+        "--limit", type=int, default=0, metavar="N",
+        help="use only the first N scenario files (0 = all)",
+    )
+    be_p.add_argument("--output", metavar="FILE", default="-")
+
     args = parser.parse_args(argv)
 
     if args.subcommand == "run":
@@ -140,6 +170,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_audit(args)
     if args.subcommand == "lever-sweep":
         return _cmd_lever_sweep(args)
+    if args.subcommand == "break-even":
+        return _cmd_break_even(args)
     return 1  # unreachable — argparse enforces subcommand
 
 
@@ -301,6 +333,38 @@ def _cmd_lever_sweep(args: argparse.Namespace) -> int:
         format_lever_sweep_markdown(rows, strategy=args.strategy, slippage_bps=bps),
         args.output,
     )
+    return 0
+
+
+def _cmd_break_even(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+
+    paths = sorted(Path(args.scenario_dir).glob("*.json"))
+    if args.limit > 0:
+        paths = paths[: args.limit]
+    if not paths:
+        print(f"No scenario files in {args.scenario_dir}", file=sys.stderr)
+        return 1
+    scenarios = [ReplayRunner.load_scenario(p) for p in paths]
+
+    strategies = args.strategy or ["bull_flag", "vwap_reversion"]
+    if args.slippage_ladder is not None:
+        ladder = tuple(float(x) for x in args.slippage_ladder.split(","))
+    else:
+        ladder = DEFAULT_SLIPPAGE_LADDER
+
+    results = [
+        run_break_even_sweep(
+            scenarios=scenarios,
+            settings=settings,
+            strategy=name,
+            slippage_ladder=ladder,
+            on_progress=lambda msg: print(f"[break-even] {msg}", file=sys.stderr),
+        )
+        for name in strategies
+    ]
+
+    _write_output(format_break_even_markdown(results), args.output)
     return 0
 
 
