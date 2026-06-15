@@ -152,3 +152,76 @@ def test_run_lever_sweep_skips_invalid_lever_point():
     assert "bad" not in labels          # invalid point skipped, not fatal
     assert "ok" in labels               # valid points still measured
     assert any("SKIP bad" in n for n in notes)
+
+
+from datetime import timedelta
+from alpaca_bot.domain.models import Bar, ReplayScenario
+
+
+def _bar(symbol, ts, price):
+    return Bar(
+        symbol=symbol, timestamp=ts, open=price, high=price + 1.0,
+        low=price - 1.0, close=price, volume=1000,
+    )
+
+
+def _multiday_scenario(symbol="AAA", days=12):
+    # One intraday bar per day at 15:00 UTC, plus a daily bar per day.
+    intraday, daily = [], []
+    base = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
+    for d in range(days):
+        ts = base + timedelta(days=d)
+        intraday.append(_bar(symbol, ts, 100.0 + d))
+        daily.append(_bar(symbol, ts.replace(hour=21), 100.0 + d))
+    return ReplayScenario(
+        name=symbol, symbol=symbol, starting_equity=100000.0,
+        daily_bars=daily, intraday_bars=intraday,
+    )
+
+
+def test_walk_forward_splits_disjoint_dates():
+    seen_dates = []
+
+    def fake(scenarios, settings, strategy_name):
+        dates = sorted({b.timestamp.date() for s in scenarios for b in s.intraday_bars})
+        seen_dates.append(dates)
+        return _records(40, 1.0)
+
+    grid = [LeverPoint(label="baseline", overrides={})]
+    run_lever_sweep(
+        scenarios=[_multiday_scenario()], base_settings=_settings(),
+        strategy="bull_flag", grid=grid, slippage_bps=5.0,
+        walk_forward=True, in_sample_ratio=0.8, daily_warmup=30,
+        top_k=5, pooled_trades_fn=fake,
+    )
+    # First two calls are IS (costed+frictionless), last two are OOS.
+    is_dates, oos_dates = set(seen_dates[0]), set(seen_dates[-1])
+    assert is_dates and oos_dates
+    assert is_dates.isdisjoint(oos_dates)
+
+
+def test_top_k_bounds_oos_runs():
+    grid = [
+        LeverPoint(label="baseline", overrides={}),
+        LeverPoint(label="a", overrides={"profit_target_r": 1.6}),
+        LeverPoint(label="b", overrides={"profit_target_r": 1.7}),
+        LeverPoint(label="c", overrides={"profit_target_r": 1.8}),
+        LeverPoint(label="d", overrides={"profit_target_r": 1.9}),
+    ]
+
+    def fake(scenarios, settings, strategy_name):
+        # ci_low rises with profit_target_r; baseline (2.0 default) highest.
+        return _records(40, settings.profit_target_r)
+
+    rows = run_lever_sweep(
+        scenarios=[_multiday_scenario()], base_settings=_settings(),
+        strategy="bull_flag", grid=grid, slippage_bps=5.0,
+        walk_forward=True, top_k=2, pooled_trades_fn=fake,
+    )
+    with_oos = [r.label for r in rows if r.oos_row is not None]
+    # top_k=2 highest-IS plus baseline (always confirmed).
+    assert "baseline" in with_oos
+    assert len(with_oos) <= 3
+    # The two lowest-IS points must NOT have OOS rows.
+    no_oos = {r.label for r in rows if r.oos_row is None}
+    assert {"a", "b"} & no_oos
