@@ -249,6 +249,30 @@ def test_run_lever_sweep_insufficient_data_sorts_last():
     assert rows[0].label == "good"
     assert rows[-1].label == "tiny"
     assert rows[-1].is_row.verdict == "insufficient-data"
+
+
+def test_run_lever_sweep_skips_invalid_lever_point():
+    # dataclasses.replace re-runs Settings.validate(); relative_volume_threshold
+    # <= 1.0 always raises ValueError regardless of baseline. The bad point must
+    # be skipped (with an on_progress note), not abort the whole sweep.
+    grid = [
+        LeverPoint(label="ok", overrides={"profit_target_r": 3.0}),
+        LeverPoint(label="bad", overrides={"relative_volume_threshold": 0.5}),
+    ]
+    notes: list[str] = []
+
+    def fake(scenarios, settings, strategy_name):
+        return _records(40, 1.0)
+
+    rows = run_lever_sweep(
+        scenarios=[object()], base_settings=_settings(), strategy="bull_flag",
+        grid=grid, slippage_bps=5.0, walk_forward=False,
+        pooled_trades_fn=fake, on_progress=notes.append,
+    )
+    labels = [r.label for r in rows]
+    assert "bad" not in labels          # invalid point skipped, not fatal
+    assert "ok" in labels               # valid points still measured
+    assert any("SKIP bad" in n for n in notes)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -315,11 +339,22 @@ def run_lever_sweep(
 
     scored: list[tuple["LeverPoint", StrategyAuditRow]] = []
     for point in grid:
-        is_row = _audit_one(
-            scenarios=is_scenarios, base_settings=base_settings, point=point,
-            strategy=strategy, slippage_bps=slippage_bps,
-            pooled_trades_fn=pooled_trades_fn,
-        )
+        # dataclasses.replace re-runs Settings.__post_init__ -> validate(), which
+        # raises ValueError for any override out of bounds *relative to the live
+        # baseline* (e.g. an entry_window_end the baseline's start/flatten bracket
+        # differently). Skip that single point rather than aborting the whole sweep.
+        # The OOS pass below needs no guard: it only revisits points already in
+        # `scored`, whose identical (scenario-independent) settings passed here.
+        try:
+            is_row = _audit_one(
+                scenarios=is_scenarios, base_settings=base_settings, point=point,
+                strategy=strategy, slippage_bps=slippage_bps,
+                pooled_trades_fn=pooled_trades_fn,
+            )
+        except ValueError as exc:
+            if on_progress is not None:
+                on_progress(f"SKIP {point.label}: invalid settings ({exc})")
+            continue
         scored.append((point, is_row))
         if on_progress is not None:
             on_progress(
@@ -360,7 +395,7 @@ def run_lever_sweep(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/unit/test_lever_sweep.py -k run_lever_sweep -v`
-Expected: PASS (3 tests)
+Expected: PASS (4 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -1065,6 +1100,14 @@ match `replay/audit.py`. `ReplayTradeRecord` constructor matches
   `test_replay_audit.py`), never bare `from_env()`. The CLI test patches
   `cli.Settings` (the `_patch_settings` idiom in `test_backtest_cli.py`) so
   `main()`'s internal bare `from_env()` is also hermetic.
+- **Validation re-runs on every override.** `Settings.__post_init__` calls
+  `validate()`, so `dataclasses.replace(base_settings, **overrides)` re-validates
+  and raises `ValueError` for any out-of-bounds value. All hardcoded OFAT grid
+  values are within bounds for the test baseline, but the Task 7 ops run uses the
+  *live* baseline (whose entry-window/flatten times may bracket `H_session`
+  differently), so `run_lever_sweep` guards each IS-pass point in try/except and
+  skips invalid points (with an on_progress `SKIP` note) instead of aborting the
+  sweep. Covered by `test_run_lever_sweep_skips_invalid_lever_point`.
 - `run_audit` derives all statistics from `record.pnl` (audit.py:92) and calls
   `report_from_records`, which returns early on an empty trade list
   (report.py:66-79, `win_rate=None`) — so the CLI test's real replay yielding
