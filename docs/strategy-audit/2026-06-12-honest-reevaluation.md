@@ -136,6 +136,46 @@ a dependency of this one.
 
 ## Config response decided (see Phase 3 / Task 6)
 
-The evidence-gated config response is recorded separately in the following
-commit. See the AuditEvent appended by the admin flow for the authoritative
-record of the action taken.
+Decision rules (from the spec) applied to the live strategy, breakout
+(`STRATEGY_VERSION=v1-breakout`):
+
+| Live-strategy verdict | Rule | This run |
+|---|---|---|
+| negative-edge | `close-only` via the existing admin flow (stops entries, lets open positions close, appends an AuditEvent) | **breakout = negative-edge → close-only applied** |
+| positive-edge | Candidates flow only through the nightly OOS gate → `candidate.env` | n/a |
+| no-evidence / insufficient-data | No config change; keep trading paper to gather live evidence | n/a |
+
+**Action taken (2026-06-15 15:14:23 UTC):**
+
+```
+docker compose -f deploy/compose.yaml run --rm admin \
+  close-only --reason "breakout measured negative-edge at 5 bps (2026-06-12 audit)"
+```
+
+Trading status transitioned `enabled → close_only` (`kill_switch=false`, so it is
+reversible with `alpaca-bot-admin resume`). The admin flow appended the
+corresponding `AuditEvent`. Post-state:
+
+```
+mode=paper strategy=v1-breakout status=close_only kill_switch=false
+reason=breakout measured negative-edge at 5 bps (2026-06-12 audit)
+disabled_strategies=bb_squeeze,failed_breakdown,vwap_cross,vwap_reversion
+```
+
+**Hard constraints honored:** `TRADING_MODE=paper` and `ENABLE_LIVE_TRADING=false`
+in `/etc/alpaca_bot/alpaca-bot.env` were **not** modified. No strategy parameter
+was hand-applied — the only change is the reversible close-only trading-status
+flag through the audited admin path.
+
+**Non-live strategies:** no promotions. No strategy measured positive-edge, so
+there is nothing to route through the OOS gate. The four already-disabled
+strategies (bb_squeeze, failed_breakdown, vwap_cross, vwap_reversion) remain
+disabled; bb_squeeze's negative-edge verdict corroborates keeping it off. The
+remaining negative-edge strategies (momentum, ema_pullback) are not the live
+strategy and are not separately enabled for live entries under
+`STRATEGY_VERSION=v1-breakout`; no action required.
+
+**Net effect:** the paper bot will open no new positions until an operator
+resumes it, which should happen only once a strategy demonstrates positive
+after-cost edge through the fixed harness and the OOS gate. Existing open
+positions continue to be managed (stops/exits) normally.
