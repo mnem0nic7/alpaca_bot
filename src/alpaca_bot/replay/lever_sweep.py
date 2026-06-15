@@ -83,12 +83,26 @@ def run_lever_sweep(
     on_progress: Callable[[str], None] | None = None,
 ) -> list["LeverSweepRow"]:
     if walk_forward:
-        pairs = [
-            split_scenario(
-                s, in_sample_ratio=in_sample_ratio, daily_warmup=daily_warmup
+        # split_scenario raises ValueError for a scenario with <10 trading dates.
+        # Skip such scenarios (with a note) rather than aborting the whole sweep,
+        # mirroring the per-point invalid-settings guard below. If NONE survive,
+        # raise one clear error instead of producing a misleading empty report.
+        pairs = []
+        for s in scenarios:
+            try:
+                pairs.append(
+                    split_scenario(
+                        s, in_sample_ratio=in_sample_ratio, daily_warmup=daily_warmup
+                    )
+                )
+            except ValueError as exc:
+                if on_progress is not None:
+                    on_progress(f"SKIP scenario '{s.name}': {exc}")
+        if not pairs:
+            raise ValueError(
+                "No scenarios survived the IS/OOS split — all too short "
+                "(need at least 10 trading dates each)."
             )
-            for s in scenarios
-        ]
         is_scenarios: list = [is_s for is_s, _ in pairs]
         oos_scenarios: list | None = [oos_s for _, oos_s in pairs]
     else:

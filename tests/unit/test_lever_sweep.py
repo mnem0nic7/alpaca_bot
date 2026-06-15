@@ -227,6 +227,48 @@ def test_top_k_bounds_oos_runs():
     assert {"a", "b"} & no_oos
 
 
+import pytest
+
+
+def test_walk_forward_skips_short_scenario_not_fatal():
+    # split_scenario raises ValueError for a scenario with <10 trading dates.
+    # That split happens BEFORE the per-point guard loop, so without a guard it
+    # would propagate uncaught and kill the whole sweep. A short scenario must be
+    # skipped (with an on_progress note) while the valid one is still measured.
+    notes: list[str] = []
+
+    def fake(scenarios, settings, strategy_name):
+        return _records(40, 1.0)
+
+    grid = [LeverPoint(label="baseline", overrides={})]
+    rows = run_lever_sweep(
+        scenarios=[_multiday_scenario("OK", days=12),
+                   _multiday_scenario("SHORT", days=5)],
+        base_settings=_settings(), strategy="bull_flag", grid=grid,
+        slippage_bps=5.0, walk_forward=True, pooled_trades_fn=fake,
+        on_progress=notes.append,
+    )
+    assert [r.label for r in rows] == ["baseline"]   # sweep completed
+    assert rows[0].oos_row is not None               # OOS still ran on survivor
+    assert any("SKIP scenario 'SHORT'" in n for n in notes)
+
+
+def test_walk_forward_all_short_raises_clean_error():
+    # If NO scenario survives the split, raise one clear ValueError rather than
+    # producing a misleading empty report.
+    def fake(scenarios, settings, strategy_name):
+        return _records(40, 1.0)
+
+    grid = [LeverPoint(label="baseline", overrides={})]
+    with pytest.raises(ValueError, match="No scenarios survived"):
+        run_lever_sweep(
+            scenarios=[_multiday_scenario("S1", days=5),
+                       _multiday_scenario("S2", days=4)],
+            base_settings=_settings(), strategy="bull_flag", grid=grid,
+            slippage_bps=5.0, walk_forward=True, pooled_trades_fn=fake,
+        )
+
+
 import dataclasses as _dc
 from alpaca_bot.replay.lever_sweep import build_ofat_grid, build_coarse_grid
 
