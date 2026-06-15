@@ -121,3 +121,39 @@ def run_break_even_sweep(
         points=tuple(points),
         break_even_bps=_interpolate_break_even(points),
     )
+
+
+def _fmt(v: float | None, spec: str = ".4f") -> str:
+    return "n/a" if v is None else format(v, spec)
+
+
+def format_break_even_markdown(results: Sequence[BreakEvenResult]) -> str:
+    lines: list[str] = ["# Break-even slippage — after-cost ci_low zero-crossing", ""]
+    for res in results:
+        lines.append(f"## {res.strategy} ({res.scenarios} scenarios)")
+        lines.append("")
+        if res.break_even_bps is None:
+            all_pos = all(
+                p.ci_low is not None and p.ci_low > 0.0 for p in res.points
+            )
+            note = (
+                "break-even > max rung (extend ladder)"
+                if all_pos
+                else "break-even: none (insufficient data)"
+            )
+        else:
+            note = f"break-even ≈ {res.break_even_bps:.2f} bps/side"
+        lines.append(f"**{note}**")
+        lines.append("")
+        lines.append(
+            "| bps/side | trades | mean | ci_low | ci_high | p_positive | verdict |"
+        )
+        lines.append("|---|---|---|---|---|---|---|")
+        for p in res.points:
+            lines.append(
+                f"| {p.slippage_bps:g} | {p.trades} | {_fmt(p.mean_trade_pnl)} | "
+                f"{_fmt(p.ci_low)} | {_fmt(p.ci_high)} | "
+                f"{_fmt(p.p_positive, '.4f')} | {p.verdict} |"
+            )
+        lines.append("")
+    return "\n".join(lines)

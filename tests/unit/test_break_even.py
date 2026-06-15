@@ -122,3 +122,31 @@ def test_sweep_insufficient_trades_yields_none_ci():
     assert result.points[0].ci_low is None
     assert result.points[0].verdict == "insufficient-data"
     assert result.break_even_bps is None
+
+
+from alpaca_bot.replay.break_even import (
+    BreakEvenResult,
+    format_break_even_markdown,
+)
+
+
+def test_format_renders_table_breakeven_and_handles_none():
+    res = BreakEvenResult(
+        strategy="bull_flag",
+        scenarios=999,
+        points=(
+            _pt(0.0, 6.0),
+            BreakEvenPoint(5.0, 100, 2.0, 200.0, -0.8, 5.0, 0.09, "no-evidence"),
+        ),
+        break_even_bps=4.7,
+    )
+    out = format_break_even_markdown([res])
+    assert "bull_flag" in out
+    assert "999" in out
+    assert "4.7" in out  # interpolated break-even surfaced
+    assert "| 0" in out and "| 5" in out  # ladder rows
+
+    res_none = BreakEvenResult("vwap_reversion", 999, (_pt(0.0, 5.0),), None)
+    out2 = format_break_even_markdown([res_none])
+    assert "vwap_reversion" in out2
+    assert "> max" in out2 or "none" in out2.lower()
