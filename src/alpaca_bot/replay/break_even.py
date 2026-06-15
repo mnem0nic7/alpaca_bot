@@ -75,3 +75,49 @@ def _interpolate_break_even(points: Sequence[BreakEvenPoint]) -> float | None:
             )
         prev = cur
     return None
+
+
+def run_break_even_sweep(
+    *,
+    scenarios: Sequence[ReplayScenario],
+    settings: Settings,
+    strategy: str,
+    slippage_ladder: Sequence[float] = DEFAULT_SLIPPAGE_LADDER,
+    pooled_trades_fn: PooledTradesFn = _replay_pooled_trades,
+    on_progress: Callable[[str], None] | None = None,
+) -> BreakEvenResult:
+    points: list[BreakEvenPoint] = []
+    for bps in sorted(slippage_ladder):
+        costed = dataclasses.replace(settings, replay_slippage_bps=bps)
+        trades = pooled_trades_fn(scenarios, costed, strategy)
+        pnls = [t.pnl for t in trades]
+        ci = bootstrap_mean_ci(pnls)
+        p = bootstrap_p_positive(pnls)  # already None below MIN_SAMPLES
+        verdict = classify_verdict(trades=len(pnls), ci=ci, p_positive=p)
+        points.append(
+            BreakEvenPoint(
+                slippage_bps=bps,
+                trades=len(pnls),
+                mean_trade_pnl=(
+                    round(sum(pnls) / len(pnls), 4) if pnls else None
+                ),
+                total_pnl=round(sum(pnls), 2),
+                ci_low=round(ci[0], 4) if ci is not None else None,
+                ci_high=round(ci[1], 4) if ci is not None else None,
+                p_positive=p,
+                verdict=verdict,
+            )
+        )
+        if on_progress is not None:
+            be = points[-1]
+            on_progress(
+                f"{strategy} @ {bps:g}bps: ci_low="
+                f"{'n/a' if be.ci_low is None else be.ci_low} "
+                f"trades={be.trades} verdict={be.verdict}"
+            )
+    return BreakEvenResult(
+        strategy=strategy,
+        scenarios=len(scenarios),
+        points=tuple(points),
+        break_even_bps=_interpolate_break_even(points),
+    )
