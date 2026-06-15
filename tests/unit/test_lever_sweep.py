@@ -261,3 +261,30 @@ def test_coarse_grid_smaller_than_ofat():
     base = _settings()
     assert len(build_coarse_grid(base)) < len(build_ofat_grid(base))
     assert any(p.label == "baseline" for p in build_coarse_grid(base))
+
+
+from alpaca_bot.replay.lever_sweep import format_lever_sweep_markdown
+
+
+def test_report_contains_baseline_and_ranking():
+    rows = [
+        LeverSweepRow(
+            label="D_profit_target:on@3.0", overrides={"profit_target_r": 3.0},
+            is_row=_audit_row(ci_low=1.2, verdict="positive-edge"),
+            oos_row=_audit_row(ci_low=0.4, verdict="no-evidence"),
+        ),
+        LeverSweepRow(
+            label="baseline", overrides={},
+            is_row=_audit_row(ci_low=-0.8, verdict="no-evidence"),
+            oos_row=_audit_row(ci_low=-1.0, verdict="no-evidence"),
+        ),
+    ]
+    md = format_lever_sweep_markdown(
+        rows, strategy="bull_flag", slippage_bps=5.0,
+    )
+    assert "# Lever sweep — bull_flag" in md
+    assert "baseline" in md
+    assert "D_profit_target:on@3.0" in md
+    assert "Δci_low" in md or "delta" in md.lower()
+    # Surviving-candidate section names the override.
+    assert "profit_target_r" in md

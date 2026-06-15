@@ -239,3 +239,91 @@ def build_coarse_grid(base_settings: Settings) -> list[LeverPoint]:
     for label, overrides in coarse:
         points.append(LeverPoint(label=label, overrides=overrides))
     return points
+
+
+def _fmt(v: float | None, spec: str = ".4f") -> str:
+    return "n/a" if v is None else format(v, spec)
+
+
+def format_lever_sweep_markdown(
+    rows: Sequence["LeverSweepRow"],
+    *,
+    strategy: str,
+    slippage_bps: float,
+    baseline_label: str = "baseline",
+) -> str:
+    base = next((r for r in rows if r.label == baseline_label), None)
+    base_ci = base.is_row.ci_low if base and base.is_row.ci_low is not None else None
+
+    lines: list[str] = [
+        f"# Lever sweep — {strategy} ({slippage_bps:g} bps/side)",
+        "",
+        "Ranked by in-sample after-cost `ci_low` (the audit verdict turns on "
+        "`ci_low > 0`). Read `trades` alongside `ci_low`: fewer trades widen the "
+        "CI, so a high mean with few trades can still fail the verdict. "
+        "Candidates only — promotion is via the nightly OOS gate.",
+        "",
+    ]
+
+    if base is not None:
+        lines += [
+            f"**Baseline** (`{baseline_label}`): IS ci_low="
+            f"{_fmt(base.is_row.ci_low)} trades={base.is_row.trades} "
+            f"verdict={base.is_row.verdict}"
+            + (
+                f"; OOS ci_low={_fmt(base.oos_row.ci_low)} "
+                f"verdict={base.oos_row.verdict}"
+                if base.oos_row is not None
+                else ""
+            ),
+            "",
+        ]
+
+    lines += [
+        "| rank | lever | IS ci_low | Δci_low | IS mean | IS trades | IS p | "
+        "IS verdict | OOS ci_low | OOS verdict |",
+        "|---|---|---|---|---|---|---|---|---|---|",
+    ]
+    for rank, r in enumerate(rows, 1):
+        delta = (
+            _fmt(r.is_row.ci_low - base_ci)
+            if (base_ci is not None and r.is_row.ci_low is not None)
+            else "n/a"
+        )
+        oos_ci = _fmt(r.oos_row.ci_low) if r.oos_row is not None else "—"
+        oos_v = r.oos_row.verdict if r.oos_row is not None else "—"
+        lines.append(
+            f"| {rank} | {r.label} | {_fmt(r.is_row.ci_low)} | {delta} | "
+            f"{_fmt(r.is_row.mean_trade_pnl)} | {r.is_row.trades} | "
+            f"{_fmt(r.is_row.p_positive)} | {r.is_row.verdict} | "
+            f"{oos_ci} | {oos_v} |"
+        )
+
+    # Surviving candidates: IS edge that holds up OOS (non-negative, not
+    # negative-edge). These are the hand-off to the nightly OOS gate.
+    survivors = [
+        r for r in rows
+        if r.oos_row is not None
+        and r.oos_row.verdict != "negative-edge"
+        and r.oos_row.ci_low is not None
+        and r.oos_row.ci_low >= 0.0
+        and r.label != baseline_label
+    ]
+    lines += ["", "## Candidates surviving OOS", ""]
+    if not survivors:
+        lines.append(
+            "None. No lever point held a non-negative OOS `ci_low`. This is a "
+            "valid null result — record it and iterate; do not promote anything."
+        )
+    else:
+        for r in survivors:
+            ov = ", ".join(f"{k}={v}" for k, v in r.overrides.items())
+            lines.append(
+                f"- `{r.label}` — overrides: {ov} — IS ci_low="
+                f"{_fmt(r.is_row.ci_low)} ({r.is_row.verdict}), OOS ci_low="
+                f"{_fmt(r.oos_row.ci_low)} ({r.oos_row.verdict}). "
+                "Route through `alpaca-bot-nightly` (sub-project B); do not "
+                "hand-apply."
+            )
+
+    return "\n".join(lines) + "\n"
