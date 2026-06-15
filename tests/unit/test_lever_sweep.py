@@ -288,3 +288,58 @@ def test_report_contains_baseline_and_ranking():
     assert "Δci_low" in md or "delta" in md.lower()
     # Surviving-candidate section names the override.
     assert "profit_target_r" in md
+
+
+import json as _json
+
+
+def _write_scenario(tmp_path, name):
+    base = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
+    intraday, daily = [], []
+    for d in range(12):
+        ts = base + timedelta(days=d)
+        intraday.append({
+            "symbol": name, "timestamp": ts.isoformat(), "open": 100.0 + d,
+            "high": 101.0 + d, "low": 99.0 + d, "close": 100.0 + d, "volume": 1000,
+        })
+        daily.append({
+            "symbol": name, "timestamp": ts.replace(hour=21).isoformat(),
+            "open": 100.0 + d, "high": 101.0 + d, "low": 99.0 + d,
+            "close": 100.0 + d, "volume": 1000,
+        })
+    payload = {
+        "name": name, "symbol": name, "starting_equity": 100000.0,
+        "daily_bars": daily, "intraday_bars": intraday,
+    }
+    (tmp_path / f"{name}.json").write_text(_json.dumps(payload))
+
+
+def test_cli_lever_sweep_writes_report(tmp_path, monkeypatch):
+    # main() calls a bare Settings.from_env() internally. Make it hermetic by
+    # patching cli.Settings to return a fixed paper-mode Settings, mirroring
+    # the _patch_settings idiom in test_backtest_cli.py. Do NOT depend on
+    # ambient os.environ. The sweep then runs a REAL replay (no injected fake
+    # pooled_trades_fn) over the two tiny scenarios — exercising the full
+    # CLI -> run_lever_sweep -> run_audit -> ReplayRunner -> report path.
+    import alpaca_bot.replay.cli as cli_module
+    from alpaca_bot.replay.cli import main
+
+    fixed = _settings()
+    fake_cls = type("S", (), {"from_env": staticmethod(lambda *a, **k: fixed)})
+    monkeypatch.setattr(cli_module, "Settings", fake_cls)
+
+    _write_scenario(tmp_path, "AAA")
+    _write_scenario(tmp_path, "BBB")
+    out = tmp_path / "report.md"
+    rc = main([
+        "lever-sweep", "--scenario-dir", str(tmp_path),
+        "--strategy", "bull_flag", "--slippage-bps", "5",
+        "--coarse", "--no-walk-forward", "--output", str(out),
+    ])
+    assert rc == 0
+    text = out.read_text()
+    # Tiny scenarios likely yield zero bull_flag trades; report_from_records([])
+    # returns early (win_rate=None) so the row still constructs and the
+    # formatter renders the title + baseline regardless of trade count.
+    assert "# Lever sweep — bull_flag" in text
+    assert "baseline" in text

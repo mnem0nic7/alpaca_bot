@@ -11,6 +11,12 @@ from pathlib import Path
 
 from alpaca_bot.config import Settings
 from alpaca_bot.replay.audit import StrategyAuditRow, run_audit
+from alpaca_bot.replay.lever_sweep import (
+    build_coarse_grid,
+    build_ofat_grid,
+    format_lever_sweep_markdown,
+    run_lever_sweep,
+)
 from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord
 from alpaca_bot.replay.runner import ReplayRunner
 from alpaca_bot.strategy import STRATEGY_REGISTRY
@@ -93,6 +99,35 @@ def main(argv: list[str] | None = None) -> int:
     aud_p.add_argument("--output", metavar="FILE", default="-")
     aud_p.add_argument("--json", dest="json_path", metavar="FILE", default=None)
 
+    # --- lever-sweep subcommand ---
+    lev_p = subparsers.add_parser(
+        "lever-sweep",
+        help="Sweep cost-drag/selectivity levers; rank by after-cost ci_low",
+    )
+    lev_p.add_argument("--scenario-dir", required=True, metavar="DIR")
+    lev_p.add_argument(
+        "--strategy", choices=list(STRATEGY_REGISTRY), required=True,
+        help="strategy to sweep (bull_flag / vwap_reversion are the leads)",
+    )
+    lev_p.add_argument(
+        "--slippage-bps", type=float, default=None, metavar="BPS",
+        help="cost level (default: REPLAY_SLIPPAGE_BPS)",
+    )
+    lev_p.add_argument(
+        "--limit", type=int, default=0, metavar="N",
+        help="use only the first N scenario files (0 = all)",
+    )
+    lev_p.add_argument(
+        "--coarse", action="store_true",
+        help="reduced grid (one value per family) for a fast pass",
+    )
+    lev_p.add_argument(
+        "--no-walk-forward", dest="walk_forward", action="store_false",
+        help="skip the IS/OOS split (audit the full scenarios in-sample only)",
+    )
+    lev_p.add_argument("--top-k", type=int, default=5, metavar="K")
+    lev_p.add_argument("--output", metavar="FILE", default="-")
+
     args = parser.parse_args(argv)
 
     if args.subcommand == "run":
@@ -103,6 +138,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_sweep(args)
     if args.subcommand == "audit":
         return _cmd_audit(args)
+    if args.subcommand == "lever-sweep":
+        return _cmd_lever_sweep(args)
     return 1  # unreachable — argparse enforces subcommand
 
 
@@ -226,6 +263,44 @@ def _cmd_audit(args: argparse.Namespace) -> int:
         Path(args.json_path).write_text(
             json.dumps([dataclasses.asdict(r) for r in rows], indent=2)
         )
+    return 0
+
+
+def _cmd_lever_sweep(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+
+    paths = sorted(Path(args.scenario_dir).glob("*.json"))
+    if args.limit > 0:
+        paths = paths[: args.limit]
+    if not paths:
+        print(f"No scenario files in {args.scenario_dir}", file=sys.stderr)
+        return 1
+    scenarios = [ReplayRunner.load_scenario(p) for p in paths]
+
+    bps = (
+        args.slippage_bps
+        if args.slippage_bps is not None
+        else settings.replay_slippage_bps
+    )
+    grid = (
+        build_coarse_grid(settings) if args.coarse else build_ofat_grid(settings)
+    )
+
+    rows = run_lever_sweep(
+        scenarios=scenarios,
+        base_settings=settings,
+        strategy=args.strategy,
+        grid=grid,
+        slippage_bps=bps,
+        walk_forward=args.walk_forward,
+        top_k=args.top_k,
+        on_progress=lambda msg: print(f"[lever-sweep] {msg}", file=sys.stderr),
+    )
+
+    _write_output(
+        format_lever_sweep_markdown(rows, strategy=args.strategy, slippage_bps=bps),
+        args.output,
+    )
     return 0
 
 
