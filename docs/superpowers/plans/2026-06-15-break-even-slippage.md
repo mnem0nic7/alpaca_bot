@@ -97,11 +97,7 @@ from alpaca_bot.replay.audit import (
     _replay_pooled_trades,
     classify_verdict,
 )
-from alpaca_bot.replay.stats import (
-    MIN_SAMPLES,
-    bootstrap_mean_ci,
-    bootstrap_p_positive,
-)
+from alpaca_bot.replay.stats import bootstrap_mean_ci, bootstrap_p_positive
 
 DEFAULT_SLIPPAGE_LADDER: tuple[float, ...] = (0.0, 1.0, 2.0, 3.0, 4.0, 5.0)
 
@@ -284,7 +280,7 @@ def run_break_even_sweep(
         trades = pooled_trades_fn(scenarios, costed, strategy)
         pnls = [t.pnl for t in trades]
         ci = bootstrap_mean_ci(pnls)
-        p = bootstrap_p_positive(pnls) if len(pnls) >= MIN_SAMPLES else None
+        p = bootstrap_p_positive(pnls)  # already None below MIN_SAMPLES
         verdict = classify_verdict(trades=len(pnls), ci=ci, p_positive=p)
         points.append(
             BreakEvenPoint(
@@ -450,10 +446,13 @@ from alpaca_bot.replay.cli import main
 
 
 def _write_scenario(path: Path) -> None:
-    # Minimal ReplayScenario JSON: a symbol and an empty/short bar set is enough
-    # to exercise the CLI wiring; the audit harness tolerates short scenarios.
+    # Minimal ReplayScenario JSON. load_scenario requires name + symbol +
+    # daily_bars + intraday_bars, and Bar.from_dict requires a per-bar symbol
+    # (verified against runner.py:59-63 and domain/models.py:20-30). A single
+    # short bar yields 0 trades — enough to exercise the CLI wiring.
     bars = [
         {
+            "symbol": "AAA",
             "timestamp": "2026-01-02T14:30:00+00:00",
             "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5,
             "volume": 1000,
@@ -462,7 +461,9 @@ def _write_scenario(path: Path) -> None:
     path.write_text(
         json.dumps(
             {
+                "name": "AAA_252d",
                 "symbol": "AAA",
+                "starting_equity": 100000.0,
                 "intraday_bars": bars,
                 "daily_bars": bars,
             }
@@ -629,25 +630,30 @@ Expected: 999
 
 - [ ] **Step 2: Run the ladder in the background over the full 999**
 
-Run (background — ~hours; the two strategies run sequentially within one process):
+The two strategies are independent (no data dependency), so run them as **two concurrent
+background jobs** to halve wall-clock (~5.5h each: 999 scenarios × 6 rungs × ~3.3s, vs ~11h
+sequential). Source the server env first in the same shell (never echo/commit its contents);
+the env is needed only to satisfy `Settings.from_env()` validation — the diagnostic opens no
+broker connection and writes no Postgres state:
 
 ```bash
-/home/ab-1/.local/bin/alpaca-bot-backtest break-even \
-  --scenario-dir /var/lib/alpaca-bot/nightly/scenarios \
-  --strategy bull_flag --strategy vwap_reversion \
-  --slippage-ladder 0,1,2,3,4,5 \
-  --output /tmp/break_even_full999.md \
-  2> /tmp/break_even_full999.stderr
+set -a && source /etc/alpaca_bot/alpaca-bot.env && set +a
+for strat in bull_flag vwap_reversion; do
+  /home/ab-1/.local/bin/alpaca-bot-backtest break-even \
+    --scenario-dir /var/lib/alpaca-bot/nightly/scenarios \
+    --strategy "$strat" \
+    --slippage-ladder 0,1,2,3,4,5 \
+    --output "/tmp/break_even_${strat}.md" \
+    2> "/tmp/break_even_${strat}.stderr" &
+done
 ```
 
-This needs Settings from env. Source the server env first in the same shell:
-`set -a && source /etc/alpaca_bot/alpaca-bot.env && set +a` (never echo/commit its contents).
-Because the diagnostic reads only scenario JSON (no broker, no Postgres writes), the env is
-needed only to satisfy `Settings.from_env()` validation.
+Launch each via the Bash tool with `run_in_background: true` (the harness re-invokes on exit).
+Each writes its own `/tmp/break_even_<strat>.md` and `.stderr`.
 
 - [ ] **Step 3: Inspect results**
 
-Read `/tmp/break_even_full999.md` and `/tmp/break_even_full999.stderr`. Record the per-rung `ci_low` and the interpolated break-even bps for each strategy.
+Read `/tmp/break_even_bull_flag.md`, `/tmp/break_even_vwap_reversion.md`, and their `.stderr` files. Record the per-rung `ci_low` and the interpolated break-even bps for each strategy.
 
 - [ ] **Step 4: If break-even falls outside `{0..5}`, extend the ladder**
 
