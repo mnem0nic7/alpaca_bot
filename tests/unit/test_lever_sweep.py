@@ -225,3 +225,39 @@ def test_top_k_bounds_oos_runs():
     # The two lowest-IS points must NOT have OOS rows.
     no_oos = {r.label for r in rows if r.oos_row is None}
     assert {"a", "b"} & no_oos
+
+
+import dataclasses as _dc
+from alpaca_bot.replay.lever_sweep import build_ofat_grid, build_coarse_grid
+
+
+def test_ofat_grid_has_baseline_and_constructs_valid_settings():
+    base = _settings()
+    grid = build_ofat_grid(base)
+    labels = [p.label for p in grid]
+    assert "baseline" in labels
+    # Baseline carries no overrides.
+    assert next(p for p in grid if p.label == "baseline").overrides == {}
+    # Every grid point yields a constructible Settings (in-range values only).
+    for p in grid:
+        _dc.replace(base, **p.overrides)  # must not raise
+    # No grid point duplicates the baseline value of its single-field family.
+    for p in grid:
+        for field, val in p.overrides.items():
+            if len(p.overrides) == 1:
+                assert getattr(base, field) != val or p.label == "baseline"
+
+
+def test_ofat_grid_covers_expected_families():
+    grid = build_ofat_grid(_settings())
+    labels = " ".join(p.label for p in grid)
+    for token in ["A_initial_stop", "B_trail_atr", "C_trail_trigger",
+                  "D_profit_target", "E_rel_vol", "F_regime", "G_vwap",
+                  "H_session"]:
+        assert token in labels
+
+
+def test_coarse_grid_smaller_than_ofat():
+    base = _settings()
+    assert len(build_coarse_grid(base)) < len(build_ofat_grid(base))
+    assert any(p.label == "baseline" for p in build_coarse_grid(base))
