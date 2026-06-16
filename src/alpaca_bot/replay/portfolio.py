@@ -19,6 +19,7 @@ cycle loop that drives entries/exits is layered on in a later task.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -39,7 +40,7 @@ from alpaca_bot.replay.mechanics import (
 )
 from alpaca_bot.replay.report import ReplayTradeRecord
 from alpaca_bot.risk.sizing import calculate_position_size
-from alpaca_bot.strategy import StrategySignalEvaluator
+from alpaca_bot.strategy import STRATEGY_REGISTRY, StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import session_day
 
 
@@ -284,3 +285,16 @@ class PortfolioReplayRunner:
             exit_time=bar.timestamp, exit_reason=reason, pnl=pnl,
             return_pct=(exit_price - pos.entry_price) / pos.entry_price,
         )
+
+
+def portfolio_pooled_trades(
+    scenarios: Sequence[ReplayScenario], settings: Settings, strategy_name: str
+) -> list[ReplayTradeRecord]:
+    """PooledTradesFn-compatible adapter: ONE shared-equity portfolio sim over all
+    scenarios. Drop-in for run_audit / run_break_even_sweep so the bootstrap CI
+    objective scores portfolio top-K identically to the single-symbol baseline."""
+    evaluator = STRATEGY_REGISTRY[strategy_name]
+    runner = PortfolioReplayRunner(
+        settings, signal_evaluator=evaluator, strategy_name=strategy_name
+    )
+    return runner.run(list(scenarios))
