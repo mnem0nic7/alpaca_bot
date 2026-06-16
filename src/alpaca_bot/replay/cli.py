@@ -22,6 +22,7 @@ from alpaca_bot.replay.lever_sweep import (
     format_lever_sweep_markdown,
     run_lever_sweep,
 )
+from alpaca_bot.replay.portfolio import portfolio_pooled_trades
 from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord
 from alpaca_bot.replay.runner import ReplayRunner
 from alpaca_bot.strategy import STRATEGY_REGISTRY
@@ -158,6 +159,39 @@ def main(argv: list[str] | None = None) -> int:
     )
     be_p.add_argument("--output", metavar="FILE", default="-")
 
+    # --- portfolio-audit subcommand ---
+    port_p = subparsers.add_parser(
+        "portfolio-audit",
+        help="Cross-sectional top-K replay: pool symbols into one equity pool, "
+        "sweep max_open_positions (K); read-only diagnostic",
+    )
+    port_p.add_argument("--scenario-dir", required=True, metavar="DIR")
+    port_p.add_argument(
+        "--strategy",
+        action="append",
+        choices=list(STRATEGY_REGISTRY),
+        required=True,
+        metavar="NAME",
+        help="strategy to score (repeatable)",
+    )
+    port_p.add_argument(
+        "--slippage-bps", type=float, default=5.0, metavar="BPS",
+        help="cost level for the costed run (default: 5.0)",
+    )
+    port_p.add_argument(
+        "--max-open-positions",
+        action="append",
+        type=int,
+        default=None,
+        metavar="K",
+        help="portfolio top-K cap (repeatable; default: settings.max_open_positions)",
+    )
+    port_p.add_argument(
+        "--limit", type=int, default=0, metavar="N",
+        help="use only the first N scenario files (0 = all)",
+    )
+    port_p.add_argument("--output", metavar="FILE", default="-")
+
     args = parser.parse_args(argv)
 
     if args.subcommand == "run":
@@ -172,6 +206,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_lever_sweep(args)
     if args.subcommand == "break-even":
         return _cmd_break_even(args)
+    if args.subcommand == "portfolio-audit":
+        return _cmd_portfolio_audit(args)
     return 1  # unreachable — argparse enforces subcommand
 
 
@@ -365,6 +401,45 @@ def _cmd_break_even(args: argparse.Namespace) -> int:
     ]
 
     _write_output(format_break_even_markdown(results), args.output)
+    return 0
+
+
+def _cmd_portfolio_audit(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+
+    paths = sorted(Path(args.scenario_dir).glob("*.json"))
+    if args.limit > 0:
+        paths = paths[: args.limit]
+    if not paths:
+        print(f"No scenario files in {args.scenario_dir}", file=sys.stderr)
+        return 1
+    scenarios = [ReplayRunner.load_scenario(p) for p in paths]
+
+    bps = args.slippage_bps
+    ks = args.max_open_positions or [settings.max_open_positions]
+
+    blocks = [
+        f"# Cross-sectional top-K portfolio audit — {bps:g} bps/side",
+        "",
+        f"Scenarios pooled into one equity pool: {len(scenarios)}. "
+        "Read-only diagnostic — no production config change.",
+        "",
+    ]
+    for k in ks:
+        ksettings = dataclasses.replace(settings, max_open_positions=k)
+        rows = run_audit(
+            scenarios=scenarios,
+            settings=ksettings,
+            strategies=args.strategy,
+            slippage_bps=bps,
+            pooled_trades_fn=portfolio_pooled_trades,
+            on_progress=lambda msg: print(f"[portfolio-audit] {msg}", file=sys.stderr),
+        )
+        blocks.append(f"## K={k} (max_open_positions)")
+        blocks.append("")
+        blocks.append(_format_audit_markdown(rows, slippage_bps=bps))
+
+    _write_output("\n".join(blocks), args.output)
     return 0
 
 
