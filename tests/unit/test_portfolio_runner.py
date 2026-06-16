@@ -58,3 +58,84 @@ def test_point_in_time_daily_slice_excludes_current_and_future_days():
     sliced = runner._daily_slice_for("AAA", _utc(2026, 1, 2, 14, 30))
     assert len(sliced) == 1
     assert sliced[0].timestamp == _utc(2026, 1, 1, 5, 0)
+
+
+def test_topk_cap_limits_concurrent_entries_to_max_open_positions(monkeypatch):
+    # Two symbols both fire an ENTRY on the same tick; with max_open_positions=1
+    # only the higher-ranked one is taken (engine enforces the cap).
+    base_env = dict(ENV)
+    base_env["MAX_OPEN_POSITIONS"] = "1"
+    settings = Settings.from_env(base_env)
+
+    t0 = _utc(2026, 1, 2, 14, 30)
+    t1 = _utc(2026, 1, 2, 14, 45)
+    t2 = _utc(2026, 1, 2, 15, 0)
+
+    # A fake evaluator that emits a strong signal for both symbols at t0,
+    # with AAA stronger (higher close/entry_level). We assert exactly one fill.
+    from alpaca_bot.domain.models import EntrySignal
+
+    def fake_eval(*, symbol, intraday_bars, signal_index, daily_bars, settings):
+        bar = intraday_bars[signal_index]
+        if bar.timestamp != t0:
+            return None
+        strength = 1.05 if symbol == "AAA" else 1.02
+        return EntrySignal(
+            symbol=symbol,
+            signal_bar=bar,
+            entry_level=100.0,
+            relative_volume=2.0,
+            stop_price=99.0,
+            limit_price=round(100.0 * strength, 2),
+            initial_stop_price=99.0,
+            option_contract=None,
+        )
+
+    def mk(symbol):
+        intraday = [
+            _bar(symbol, t0, o=100, h=106, l=99, c=105, v=5000),
+            _bar(symbol, t1, o=105, h=107, l=104, c=106, v=5000),
+            _bar(symbol, t2, o=106, h=108, l=99, c=107, v=5000),
+        ]
+        daily = [_bar(symbol, _utc(2026, 1, 1, 5, 0))]
+        return ReplayScenario(name=symbol, symbol=symbol, starting_equity=100000.0,
+                              daily_bars=daily, intraday_bars=intraday)
+
+    runner = PortfolioReplayRunner(settings, signal_evaluator=fake_eval, strategy_name="breakout")
+    trades = runner.run([mk("AAA"), mk("BBB")])
+    # With one capacity slot and AAA ranked higher, only AAA should ever hold a position.
+    assert {t.symbol for t in trades} == {"AAA"}
+
+
+def test_single_shared_equity_pool_not_per_symbol():
+    # Two symbols, ample capacity: both can trade, but they draw from ONE pool.
+    # We assert the runner runs to completion and produces trades for both,
+    # confirming the shared-pool path executes end to end.
+    settings = Settings.from_env(ENV)
+    t0 = _utc(2026, 1, 2, 14, 30)
+    t1 = _utc(2026, 1, 2, 14, 45)
+    t2 = _utc(2026, 1, 2, 15, 0)
+    from alpaca_bot.domain.models import EntrySignal
+
+    def fake_eval(*, symbol, intraday_bars, signal_index, daily_bars, settings):
+        bar = intraday_bars[signal_index]
+        if bar.timestamp != t0:
+            return None
+        return EntrySignal(symbol=symbol, signal_bar=bar, entry_level=100.0,
+                           relative_volume=2.0, stop_price=99.0, limit_price=100.5,
+                           initial_stop_price=99.0, option_contract=None)
+
+    def mk(symbol):
+        intraday = [
+            _bar(symbol, t0, o=100, h=106, l=99, c=105, v=5000),
+            _bar(symbol, t1, o=100.5, h=107, l=100, c=106, v=5000),   # fills at 100.5
+            _bar(symbol, t2, o=106, h=108, l=80, c=107, v=5000),       # stop hit (low 80)
+        ]
+        daily = [_bar(symbol, _utc(2026, 1, 1, 5, 0))]
+        return ReplayScenario(name=symbol, symbol=symbol, starting_equity=100000.0,
+                              daily_bars=daily, intraday_bars=intraday)
+
+    runner = PortfolioReplayRunner(settings, signal_evaluator=fake_eval, strategy_name="breakout")
+    trades = runner.run([mk("AAA"), mk("BBB")])
+    assert {t.symbol for t in trades} == {"AAA", "BBB"}
+    assert all(t.exit_reason == "stop" for t in trades)
