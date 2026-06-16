@@ -384,7 +384,7 @@ def test_stop_hit_gap_down_uses_bar_open_as_exit_price() -> None:
     The formula in _process_stop_hit is: exit_price = min(stop_price, bar.open)
     so a gap-down (bar.open < stop_price) yields bar.open.
     """
-    from alpaca_bot.replay.runner import ReplayRunner, ReplayState, _simulate_buy_stop_limit_fill
+    from alpaca_bot.replay.runner import ReplayRunner, ReplayState
     from alpaca_bot.domain.models import OpenPosition, ReplayEvent
 
     settings = make_settings()

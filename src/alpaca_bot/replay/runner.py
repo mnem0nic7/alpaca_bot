@@ -17,6 +17,10 @@ from alpaca_bot.domain.models import (
     ReplayScenario,
     WorkingEntryOrder,
 )
+from alpaca_bot.replay.mechanics import (
+    apply_slippage,
+    simulate_buy_stop_limit_fill,
+)
 from alpaca_bot.replay.report import build_backtest_report
 from alpaca_bot.risk.sizing import calculate_position_size
 from alpaca_bot.strategy import StrategySignalEvaluator
@@ -66,14 +70,9 @@ class ReplayRunner:
     def _slipped(self, price: float, *, side: str) -> float:
         """Apply adverse slippage to a simulated fill price.
 
-        Buys fill higher, sells fill lower, by replay_slippage_bps per side.
-        Absorbs spread cost and the optimism of fill-at-touch limit exits.
+        Delegates to mechanics.apply_slippage so both runners share one formula.
         """
-        bps = self.settings.replay_slippage_bps
-        if bps <= 0.0:
-            return price
-        factor = 1.0 + bps / 10_000.0 if side == "buy" else 1.0 - bps / 10_000.0
-        return round(price * factor, 4)
+        return apply_slippage(price, side=side, bps=self.settings.replay_slippage_bps)
 
     def run(self, scenario: ReplayScenario) -> ReplayResult:
         bars = sorted(scenario.intraday_bars, key=lambda bar: bar.timestamp)
@@ -207,7 +206,7 @@ class ReplayRunner:
         if bar.timestamp != order.active_bar_timestamp:
             return
 
-        fill_price = _simulate_buy_stop_limit_fill(
+        fill_price = simulate_buy_stop_limit_fill(
             bar=bar,
             stop_price=order.stop_price,
             limit_price=order.limit_price,
@@ -384,15 +383,3 @@ class ReplayRunner:
                     details={"stop_price": intent_stop},
                 )
             )
-
-
-def _simulate_buy_stop_limit_fill(*, bar: Bar, stop_price: float, limit_price: float) -> float | None:
-    if bar.open > limit_price:
-        return None
-    if bar.high < stop_price:
-        return None
-
-    fill_price = max(bar.open, stop_price)
-    if fill_price > limit_price:
-        return None
-    return round(fill_price, 2)
