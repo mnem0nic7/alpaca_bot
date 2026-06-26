@@ -292,3 +292,62 @@ def test_vwap_filter_passes_when_signal_bar_above_vwap() -> None:
     accepted = [r for r in result.decision_records if r.decision == "accepted"]
     assert len(accepted) == 1
     assert accepted[0].signal_bar_above_vwap is True
+
+
+def test_vwap_filter_uses_signal_session_only() -> None:
+    settings = _make_settings(ENABLE_VWAP_ENTRY_FILTER="true")
+    from datetime import timedelta
+
+    previous_day_high_volume = [
+        Bar(
+            symbol="AAPL",
+            timestamp=datetime(2026, 5, 8, 14, 0, tzinfo=timezone.utc)
+            + timedelta(minutes=i * 15),
+            open=300.0,
+            high=305.0,
+            low=298.0,
+            close=300.0,
+            volume=5_000_000,
+        )
+        for i in range(3)
+    ]
+    current_session = [
+        Bar(
+            symbol="AAPL",
+            timestamp=datetime(2026, 5, 9, 14, 0, tzinfo=timezone.utc),
+            open=50.0,
+            high=51.0,
+            low=49.0,
+            close=50.0,
+            volume=100,
+        ),
+        Bar(
+            symbol="AAPL",
+            timestamp=datetime(2026, 5, 9, 14, 15, tzinfo=timezone.utc),
+            open=149.0,
+            high=156.0,
+            low=148.0,
+            close=155.0,
+            volume=1_000_000,
+        ),
+    ]
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=_NOW,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": previous_day_high_volume + current_session},
+        daily_bars_by_symbol={"AAPL": _daily_bars("AAPL")},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=_fake_signal,
+    )
+
+    assert not any(r.reject_reason == "below_vwap" for r in result.decision_records)
+    accepted = [r for r in result.decision_records if r.decision == "accepted"]
+    assert len(accepted) == 1
+    assert accepted[0].signal_bar_above_vwap is True
+    assert accepted[0].vwap_at_signal is not None
+    assert accepted[0].vwap_at_signal < 155.0

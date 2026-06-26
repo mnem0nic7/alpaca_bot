@@ -47,6 +47,52 @@ def test_portfolio_audit_cli_writes_report(tmp_path, monkeypatch):
     assert "K=20" in text and "K=5" in text
 
 
+def test_portfolio_audit_cli_writes_jsonl_per_k(tmp_path, monkeypatch):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+    _write_scenario(scen / "AAA.json", "AAA")
+    _write_scenario(scen / "BBB.json", "BBB")
+    out = tmp_path / "report.md"
+    jsonl = tmp_path / "report.jsonl"
+    jsonl.write_text("stale\n")
+
+    rc = main([
+        "portfolio-audit", "--scenario-dir", str(scen),
+        "--strategy", "bull_flag", "--slippage-bps", "5",
+        "--max-open-positions", "20", "--max-open-positions", "5",
+        "--output", str(out),
+        "--jsonl", str(jsonl),
+    ])
+
+    assert rc == 0
+    lines = [json.loads(line) for line in jsonl.read_text().splitlines()]
+    assert [line["max_open_positions"] for line in lines] == [20, 5]
+    assert all(line["slippage_bps"] == 5 for line in lines)
+    assert all(line["scenarios"] == 2 for line in lines)
+    assert all(line["rows"][0]["strategy"] == "bull_flag" for line in lines)
+
+
+def test_portfolio_audit_cli_rejects_duplicate_symbols(tmp_path, monkeypatch, capsys):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+    _write_scenario(scen / "AAA_252d.json", "AAA")
+    _write_scenario(scen / "AAA_30d.json", "AAA")
+    jsonl = tmp_path / "report.jsonl"
+    jsonl.write_text("stale\n")
+
+    rc = main([
+        "portfolio-audit", "--scenario-dir", str(scen),
+        "--strategy", "bull_flag",
+        "--jsonl", str(jsonl),
+    ])
+
+    assert rc == 1
+    assert "duplicate scenario symbols: AAA" in capsys.readouterr().err
+    assert jsonl.read_text() == "stale\n"
+
+
 def test_portfolio_audit_cli_empty_dir_returns_1(tmp_path, monkeypatch):
     _set_env(monkeypatch)
     empty = tmp_path / "empty"

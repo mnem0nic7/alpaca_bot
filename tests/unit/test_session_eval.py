@@ -264,3 +264,62 @@ def test_session_eval_cli_produces_report(monkeypatch, capsys):
     assert "Session Evaluation" in out
     assert "AAPL" in out
     assert "stop" in out
+
+
+def test_session_eval_cli_guard_fails_when_pnl_below_threshold(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    t0 = datetime(2026, 5, 4, 10, 0, tzinfo=timezone.utc)
+    t1 = datetime(2026, 5, 4, 11, 0, tzinfo=timezone.utc)
+    fake_rows = [
+        {
+            "symbol": "AAPL", "strategy_name": "bull_flag", "intent_type": "stop",
+            "entry_fill": 100.0, "entry_limit": 100.05,
+            "entry_time": t0, "exit_fill": 98.0, "exit_time": t1, "qty": 10,
+        },
+        {
+            "symbol": "MSFT", "strategy_name": "bull_flag", "intent_type": "stop",
+            "entry_fill": 100.0, "entry_limit": 100.05,
+            "entry_time": t0, "exit_fill": 99.0, "exit_time": t1, "qty": 10,
+        },
+    ]
+    _patch_cli_deps(monkeypatch, rows=fake_rows)
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+        "--fail-below-pnl", "0",
+        "--min-trades-for-gate", "2",
+    ])
+
+    assert rc == 42
+    assert "Guard failed" in capsys.readouterr().out
+
+
+def test_session_eval_cli_guard_waits_for_min_trades(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    t0 = datetime(2026, 5, 4, 10, 0, tzinfo=timezone.utc)
+    t1 = datetime(2026, 5, 4, 11, 0, tzinfo=timezone.utc)
+    fake_rows = [
+        {
+            "symbol": "AAPL", "strategy_name": "bull_flag", "intent_type": "stop",
+            "entry_fill": 100.0, "entry_limit": 100.05,
+            "entry_time": t0, "exit_fill": 98.0, "exit_time": t1, "qty": 10,
+        },
+    ]
+    _patch_cli_deps(monkeypatch, rows=fake_rows)
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+        "--fail-below-pnl", "0",
+        "--min-trades-for-gate", "2",
+    ])
+
+    assert rc == 0
+    assert "Guard failed" not in capsys.readouterr().out

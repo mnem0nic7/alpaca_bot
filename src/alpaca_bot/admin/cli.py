@@ -27,7 +27,7 @@ from alpaca_bot.storage import (
     TradingStatusValue,
 )
 from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres
-from alpaca_bot.strategy import OPTION_STRATEGY_FACTORIES, STRATEGY_REGISTRY
+from alpaca_bot.strategy import ALL_STRATEGY_NAMES, OPTION_STRATEGY_FACTORIES, STRATEGY_REGISTRY
 
 
 def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
@@ -55,7 +55,7 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
         subparser = subparsers.add_parser(name)
         subparser.add_argument(
             "strategy_name",
-            choices=list(STRATEGY_REGISTRY),
+            choices=sorted(ALL_STRATEGY_NAMES),
         )
         subparser.add_argument(
             "--mode",

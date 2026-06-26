@@ -35,6 +35,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--strategy-version", metavar="VERSION",
                         help="Strategy version (default: STRATEGY_VERSION env var)")
     parser.add_argument("--strategy", metavar="NAME", help="Filter to a single strategy name")
+    parser.add_argument(
+        "--fail-below-pnl",
+        type=float,
+        metavar="DOLLARS",
+        help="Exit non-zero when closed-trade P&L is below this threshold.",
+    )
+    parser.add_argument(
+        "--min-trades-for-gate",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Minimum closed trades required before --fail-below-pnl is enforced.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
 
     eval_date: date = date.fromisoformat(args.date) if args.date else date.today()
@@ -94,6 +107,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     _print_session_report(report, eval_date=eval_date, trading_mode=args.mode,
                           strategy_version=strategy_version)
     _print_session_diagnostics(diagnostics)
+    if args.fail_below_pnl is not None:
+        total_pnl = sum(t.pnl for t in report.trades)
+        if report.total_trades >= args.min_trades_for_gate and total_pnl < args.fail_below_pnl:
+            print(
+                f"Guard failed: pnl=${total_pnl:.2f} below "
+                f"${args.fail_below_pnl:.2f} after {report.total_trades} trades."
+            )
+            return 42
     return 0
 
 

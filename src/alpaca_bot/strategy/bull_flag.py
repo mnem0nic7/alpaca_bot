@@ -32,10 +32,13 @@ def evaluate_bull_flag_signal(
         return None
 
     today = session_day(signal_bar.timestamp, settings)
-    today_bars = [
-        b for b in intraday_bars[: signal_index + 1]
-        if session_day(b.timestamp, settings) == today
-    ]
+    first_today_index = signal_index
+    while (
+        first_today_index > 0
+        and session_day(intraday_bars[first_today_index - 1].timestamp, settings) == today
+    ):
+        first_today_index -= 1
+    today_bars = intraday_bars[first_today_index : signal_index + 1]
 
     pole_bars = today_bars[:-1]
     if not pole_bars:
@@ -60,7 +63,6 @@ def evaluate_bull_flag_signal(
     if signal_bar.volume > pole_avg_volume * settings.bull_flag_consolidation_volume_ratio:
         return None
 
-    first_today_index = signal_index - len(today_bars) + 1
     if first_today_index < settings.relative_volume_lookback_bars:
         return None
     baseline_bars = intraday_bars[

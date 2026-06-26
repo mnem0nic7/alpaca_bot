@@ -41,7 +41,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _filter_valid_bars(bars: Sequence[Bar], *, label: str = "") -> tuple[Bar, ...]:
+def _filter_valid_bars(bars: Sequence[Bar], *, label: str = "") -> Sequence[Bar]:
+    if getattr(bars, "all_closes_positive", False):
+        return bars
     valid = tuple(b for b in bars if b.close > 0)
     if len(valid) < len(bars):
         logger.warning(
@@ -858,7 +860,13 @@ def evaluate_cycle(
                 # VWAP entry filter: reject when signal bar close < session VWAP.
                 # Fail-open: None VWAP (empty bars) never blocks.
                 if settings.enable_vwap_entry_filter:
-                    _vwap = calculate_vwap(bars)
+                    _vwap = calculate_vwap(
+                        _session_bars_through_index(
+                            bars=bars,
+                            signal_index=signal_index,
+                            settings=settings,
+                        )
+                    )
                     if _vwap is not None and signal.signal_bar.close < _vwap:
                         _decision_records.append(DecisionRecord(
                             cycle_at=now,
@@ -1099,3 +1107,19 @@ def _client_order_id(
         f"{signal_timestamp.date().isoformat()}:"
         f"{symbol}:entry:{signal_timestamp.isoformat()}"
     )
+
+
+def _session_bars_through_index(
+    *,
+    bars: Sequence[Bar],
+    signal_index: int,
+    settings: Settings,
+) -> Sequence[Bar]:
+    signal_day = session_day(bars[signal_index].timestamp, settings)
+    first_index = signal_index
+    while (
+        first_index > 0
+        and session_day(bars[first_index - 1].timestamp, settings) == signal_day
+    ):
+        first_index -= 1
+    return bars[first_index : signal_index + 1]

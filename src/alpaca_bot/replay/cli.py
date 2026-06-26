@@ -191,6 +191,13 @@ def main(argv: list[str] | None = None) -> int:
         help="use only the first N scenario files (0 = all)",
     )
     port_p.add_argument("--output", metavar="FILE", default="-")
+    port_p.add_argument(
+        "--jsonl",
+        dest="jsonl_path",
+        metavar="FILE",
+        default=None,
+        help="write one JSON line per completed K block, flushed during long runs",
+    )
 
     args = parser.parse_args(argv)
 
@@ -414,9 +421,20 @@ def _cmd_portfolio_audit(args: argparse.Namespace) -> int:
         print(f"No scenario files in {args.scenario_dir}", file=sys.stderr)
         return 1
     scenarios = [ReplayRunner.load_scenario(p) for p in paths]
+    duplicate_symbols = _duplicate_scenario_symbols(scenarios)
+    if duplicate_symbols:
+        print(
+            "portfolio-audit requires one scenario per symbol; duplicate "
+            f"scenario symbols: {', '.join(duplicate_symbols)}",
+            file=sys.stderr,
+        )
+        return 1
 
     bps = args.slippage_bps
     ks = args.max_open_positions or [settings.max_open_positions]
+    jsonl_path = Path(args.jsonl_path) if args.jsonl_path else None
+    if jsonl_path is not None:
+        jsonl_path.write_text("")
 
     blocks = [
         f"# Cross-sectional top-K portfolio audit — {bps:g} bps/side",
@@ -438,9 +456,43 @@ def _cmd_portfolio_audit(args: argparse.Namespace) -> int:
         blocks.append(f"## K={k} (max_open_positions)")
         blocks.append("")
         blocks.append(_format_audit_markdown(rows, slippage_bps=bps))
+        if jsonl_path is not None:
+            _append_portfolio_audit_jsonl(
+                jsonl_path,
+                max_open_positions=k,
+                slippage_bps=bps,
+                scenarios=len(scenarios),
+                rows=rows,
+            )
 
     _write_output("\n".join(blocks), args.output)
     return 0
+
+
+def _duplicate_scenario_symbols(scenarios: list) -> list[str]:
+    counts: dict[str, int] = {}
+    for scenario in scenarios:
+        counts[scenario.symbol] = counts.get(scenario.symbol, 0) + 1
+    return sorted(symbol for symbol, count in counts.items() if count > 1)
+
+
+def _append_portfolio_audit_jsonl(
+    path: Path,
+    *,
+    max_open_positions: int,
+    slippage_bps: float,
+    scenarios: int,
+    rows: list[StrategyAuditRow],
+) -> None:
+    payload = {
+        "max_open_positions": max_open_positions,
+        "slippage_bps": slippage_bps,
+        "scenarios": scenarios,
+        "rows": [dataclasses.asdict(r) for r in rows],
+    }
+    with path.open("a") as f:
+        f.write(json.dumps(payload) + "\n")
+        f.flush()
 
 
 def _format_audit_markdown(rows: list[StrategyAuditRow], *, slippage_bps: float) -> str:

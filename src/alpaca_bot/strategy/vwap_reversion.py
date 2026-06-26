@@ -35,10 +35,13 @@ def evaluate_vwap_reversion_signal(
         return None
 
     today = session_day(signal_bar.timestamp, settings)
-    today_bars = [
-        b for b in intraday_bars[: signal_index + 1]
-        if session_day(b.timestamp, settings) == today
-    ]
+    first_today_index = signal_index
+    while (
+        first_today_index > 0
+        and session_day(intraday_bars[first_today_index - 1].timestamp, settings) == today
+    ):
+        first_today_index -= 1
+    today_bars = intraday_bars[first_today_index : signal_index + 1]
 
     vwap = _calculate_vwap(today_bars)
     if vwap is None:

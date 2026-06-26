@@ -44,6 +44,12 @@ from alpaca_bot.strategy import STRATEGY_REGISTRY, StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import session_day
 
 
+class _KnownCleanBars(tuple):
+    """Tuple of bars already checked to have positive closes."""
+
+    all_closes_positive = True
+
+
 @dataclass
 class _Lane:
     """Per-symbol replay state in the shared-equity portfolio run."""
@@ -54,6 +60,33 @@ class _Lane:
     cursor: int = 0
     working_order: WorkingEntryOrder | None = None
     position: OpenPosition | None = None
+
+
+class _BarPrefix(Sequence[Bar]):
+    """Read-only prefix view over a bar list.
+
+    Portfolio replay calls the engine once per timestamp across many symbols.
+    Copying each symbol's full intraday history before every call dominates the
+    top-K audit. A Sequence view preserves the engine/evaluator contract while
+    only materializing slices the evaluator explicitly asks for.
+    """
+
+    def __init__(self, bars: list[Bar], length: int) -> None:
+        self._bars = bars
+        self._length = length
+
+    def __len__(self) -> int:
+        return self._length
+
+    def __getitem__(self, index: int | slice) -> Bar | list[Bar]:
+        if isinstance(index, slice):
+            start, stop, step = index.indices(self._length)
+            return [self._bars[i] for i in range(start, stop, step)]
+        if index < 0:
+            index += self._length
+        if index < 0 or index >= self._length:
+            raise IndexError(index)
+        return self._bars[index]
 
 
 class PortfolioReplayRunner:
@@ -67,13 +100,24 @@ class PortfolioReplayRunner:
         self.signal_evaluator = signal_evaluator
         self.strategy_name = strategy_name
         self._lanes: dict[str, _Lane] = {}
+        self._bars_by_timestamp: dict[datetime, list[tuple[str, int]]] = {}
+        self._daily_slice_cache: dict[tuple[str, date], Sequence[Bar]] = {}
 
     def _index_scenarios(self, scenarios: list[ReplayScenario]) -> None:
         self._lanes = {}
+        self._bars_by_timestamp = {}
+        self._daily_slice_cache = {}
         for sc in scenarios:
+            if sc.symbol in self._lanes:
+                raise ValueError(
+                    "PortfolioReplayRunner requires one scenario per symbol; "
+                    f"duplicate symbol: {sc.symbol}"
+                )
             intraday = sorted(sc.intraday_bars, key=lambda b: b.timestamp)
             daily = sorted(sc.daily_bars, key=lambda b: b.timestamp)
             self._lanes[sc.symbol] = _Lane(symbol=sc.symbol, intraday=intraday, daily=daily)
+            for idx, bar in enumerate(intraday):
+                self._bars_by_timestamp.setdefault(bar.timestamp, []).append((sc.symbol, idx))
 
     def _build_timeline(self, scenarios: list[ReplayScenario]) -> list[datetime]:
         stamps: set[datetime] = set()
@@ -82,11 +126,21 @@ class PortfolioReplayRunner:
                 stamps.add(b.timestamp)
         return sorted(stamps)
 
-    def _daily_slice_for(self, symbol: str, now: datetime) -> list[Bar]:
+    def _daily_slice_for(self, symbol: str, now: datetime) -> Sequence[Bar]:
         lane = self._lanes[symbol]
         day = session_day(now, self.settings)
+        cache_key = (symbol, day)
+        cached = self._daily_slice_cache.get(cache_key)
+        if cached is not None:
+            return cached
         tz = self.settings.market_timezone
-        return [b for b in lane.daily if b.timestamp.astimezone(tz).date() < day]
+        daily_slice: Sequence[Bar] = tuple(
+            b for b in lane.daily if b.timestamp.astimezone(tz).date() < day
+        )
+        if all(b.close > 0 for b in daily_slice):
+            daily_slice = _KnownCleanBars(daily_slice)
+        self._daily_slice_cache[cache_key] = daily_slice
+        return daily_slice
 
     # --- main loop -------------------------------------------------------
 
@@ -97,17 +151,13 @@ class PortfolioReplayRunner:
 
         trades: list[ReplayTradeRecord] = []
         traded_symbols: set[tuple[str, date]] = set()
-        # per-symbol next-index pointer into intraday bars
-        next_idx: dict[str, int] = {s: 0 for s in self._lanes}
 
         for now in timeline:
             fresh: list[str] = []
-            for sym, lane in self._lanes.items():
-                idx = next_idx[sym]
-                if idx < len(lane.intraday) and lane.intraday[idx].timestamp == now:
-                    lane.cursor = idx
-                    next_idx[sym] = idx + 1
-                    fresh.append(sym)
+            for sym, idx in self._bars_by_timestamp.get(now, ()):
+                lane = self._lanes[sym]
+                lane.cursor = idx
+                fresh.append(sym)
 
             # 1) Resolve fills/exits for fresh lanes (shared equity).
             for sym in fresh:
@@ -122,7 +172,8 @@ class PortfolioReplayRunner:
 
             # 2) One cross-sectional engine call over fresh symbols.
             intraday_by_symbol = {
-                s: self._lanes[s].intraday[: self._lanes[s].cursor + 1] for s in fresh
+                s: _BarPrefix(self._lanes[s].intraday, self._lanes[s].cursor + 1)
+                for s in fresh
             }
             daily_by_symbol = {s: self._daily_slice_for(s, now) for s in fresh}
             open_positions = [l.position for l in self._lanes.values() if l.position is not None]
