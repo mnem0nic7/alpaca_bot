@@ -22,3 +22,15 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "/var/log/alpaca-bot-paper-readiness.log" in cron_text
     assert "scripts/paper_profit_probe.sh" in cron_text
     assert "/var/log/alpaca-bot-profit-probe.log" in cron_text
+
+
+def test_paper_readiness_auto_resume_is_guarded() -> None:
+    script = Path("scripts/paper_readiness_check.sh").read_text()
+
+    assert 'PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"' in script
+    assert 'status=close_only' in script
+    assert 'kill_switch=false' in script
+    assert 'open_positions" == "0"' in script
+    assert "pre-open paper readiness auto-resume" in script
+    assert "--expect-trading-status enabled" in script
+    assert "--expect-only-enabled-strategy bull_flag" in script
