@@ -7,7 +7,21 @@ PROFIT_PROBE_MIN_TRADES="${PROFIT_PROBE_MIN_TRADES:-10}"
 PROFIT_PROBE_MIN_PNL="${PROFIT_PROBE_MIN_PNL:-0.01}"
 PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"
 
-default_session_date() {
+cd "$(dirname "$0")/.."
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "missing env file: $ENV_FILE" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
+
+fallback_session_date() {
   local dow
   local hhmm
   dow="$(TZ=America/New_York date +%u)"
@@ -26,13 +40,57 @@ default_session_date() {
   esac
 }
 
+load_latest_completed_session_date() {
+  "${compose[@]}" run -T --rm \
+    --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+
+settings = Settings.from_env()
+market_timezone = ZoneInfo(settings.market_timezone.key)
+now = datetime.now(market_timezone)
+calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+    start=now.date() - timedelta(days=14),
+    end=now.date(),
+)
+
+completed = []
+for session in calendar:
+    close_at = session.close_at
+    if close_at.tzinfo is None:
+        close_at = close_at.replace(tzinfo=market_timezone)
+    else:
+        close_at = close_at.astimezone(market_timezone)
+    if now >= close_at + timedelta(minutes=30):
+        completed.append(session.session_date)
+
+if not completed:
+    raise SystemExit("no completed market sessions found")
+
+print(max(completed).isoformat())
+PY
+}
+
+default_session_date() {
+  local calendar_date
+  if calendar_date="$(load_latest_completed_session_date)" \
+    && [[ "$calendar_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "$calendar_date"
+    return
+  fi
+
+  echo \
+    "paper profit probe warning: market calendar lookup failed; using weekday fallback" \
+    >&2
+  fallback_session_date
+}
+
 PROFIT_PROBE_DATE="${PROFIT_PROBE_DATE:-$(default_session_date)}"
-
-cd "$(dirname "$0")/.."
-
-set -a
-source "$ENV_FILE"
-set +a
 
 if [[ "$PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE" ]]; then
   echo \
@@ -42,7 +100,7 @@ if [[ "$PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE" ]]; then
   exit 43
 fi
 
-docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
+"${compose[@]}" run -T --rm \
   --entrypoint alpaca-bot-session-eval admin \
   --start-date "$PROFIT_PROBE_START_DATE" \
   --end-date "$PROFIT_PROBE_DATE" \
@@ -65,7 +123,7 @@ if ! BROKER_FLAT_CONTEXT="${PROFIT_PROBE_STRATEGY} paper proof ${PROFIT_PROBE_ST
 fi
 
 if [[ "$rc" -eq 42 || "$rc" -eq 43 ]]; then
-  if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
+  if ! "${compose[@]}" run -T --rm \
     --entrypoint alpaca-bot-funnel-report admin \
     --start "$PROFIT_PROBE_START_DATE" \
     --end "$PROFIT_PROBE_DATE" \
@@ -83,7 +141,7 @@ if [[ "$rc" -eq 42 || "$rc" -eq 44 ]]; then
       reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: broker exposure remains after close"
     fi
   fi
-  if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm admin \
+  if ! "${compose[@]}" run -T --rm admin \
     close-only \
     --mode "${TRADING_MODE:-paper}" \
     --strategy-version "$STRATEGY_VERSION" \

@@ -197,6 +197,11 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "paper profit probe pending: latest completed session" in profit_probe
     assert 'PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE' in profit_probe
     assert "paper proof pending" in profit_probe
+    assert "load_latest_completed_session_date" in profit_probe
+    assert "AlpacaExecutionAdapter.from_settings" in profit_probe
+    assert "get_market_calendar" in profit_probe
+    assert "close_at + timedelta(minutes=30)" in profit_probe
+    assert "market calendar lookup failed; using weekday fallback" in profit_probe
     assert "--start-date" in profit_probe
     assert "--end-date" in profit_probe
     assert 'hhmm="$(TZ=America/New_York date +%H%M)"' in profit_probe
