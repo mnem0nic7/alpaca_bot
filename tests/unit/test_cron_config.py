@@ -28,20 +28,24 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(session_guard) < cron_text.index(profit_probe)
     assert cron_text.index(profit_probe) < cron_text.index(nightly)
     assert cron_text.count("scripts/run_if_ny_time.sh") == 7
-    assert cron_text.count("scripts/run_check_with_audit.sh") == 6
+    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 6
+    assert "flock -n /var/lock/alpaca-bot-nightly.lock" in cron_text
+    assert "flock -n /var/lock/alpaca-bot-paper" not in cron_text
+    assert "flock -n /var/lock/alpaca-bot-session-guard.lock" not in cron_text
+    assert "flock -n /var/lock/alpaca-bot-profit-probe.lock" not in cron_text
     assert "alpaca-bot-premarket" not in cron_text
     assert "scripts/paper_readiness_check.sh" in cron_text
     assert cron_text.count("scripts/paper_readiness_check.sh") == 2
-    assert "run_check_with_audit.sh paper_readiness" in cron_text
+    assert "run_locked_check_with_audit.sh paper_readiness" in cron_text
     assert "/var/log/alpaca-bot-paper-readiness.log" in cron_text
     assert "scripts/paper_activity_check.sh" in cron_text
     assert cron_text.count("scripts/paper_activity_check.sh") == 2
-    assert "run_check_with_audit.sh paper_activity" in cron_text
+    assert "run_locked_check_with_audit.sh paper_activity" in cron_text
     assert "/var/log/alpaca-bot-paper-activity.log" in cron_text
     assert "scripts/paper_profit_probe.sh" in cron_text
-    assert "run_check_with_audit.sh paper_profit_probe" in cron_text
+    assert "run_locked_check_with_audit.sh paper_profit_probe" in cron_text
     assert "/var/log/alpaca-bot-profit-probe.log" in cron_text
-    assert "run_check_with_audit.sh session_guard" in cron_text
+    assert "run_locked_check_with_audit.sh session_guard" in cron_text
     assert 'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"' in install_cron
     assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" /etc/cron.d/alpaca-bot' in install_cron
     assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in install_cron
@@ -53,12 +57,32 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert 'cmp -s "$EXPECTED_CRON" "$INSTALLED_CRON"' in cron_health
     assert "systemctl is-active --quiet cron" in cron_health
     assert "ps -eo comm=" in cron_health
+    assert "run_locked_check_with_audit.sh" in cron_health
     assert "run_check_with_audit.sh" in cron_health
+    assert "scheduled_check_lock_skipped.sh" in cron_health
     assert "paper_readiness_check.sh" in cron_health
     assert "paper_activity_check.sh" in cron_health
     assert "session_guard.sh" in cron_health
     assert "paper_profit_probe.sh" in cron_health
     assert "cron health ok" in cron_health
+
+
+def test_locked_check_wrapper_audits_lock_skips() -> None:
+    wrapper = Path("scripts/run_locked_check_with_audit.sh").read_text()
+    lock_skip = Path("scripts/scheduled_check_lock_skipped.sh").read_text()
+
+    assert "flock -n -E 75" in wrapper
+    assert '"$ROOT_DIR/scripts/run_check_with_audit.sh"' in wrapper
+    assert '"$ROOT_DIR/scripts/scheduled_check_lock_skipped.sh"' in wrapper
+    assert 'if [[ "$rc" -eq 75 ]]' in wrapper
+    assert 'exit "$rc"' in wrapper
+    assert "scheduled check lock busy" in lock_skip
+    assert "scheduled check context:" in lock_skip
+    assert "paper_readiness)" in lock_skip
+    assert "paper_activity)" in lock_skip
+    assert "session_guard)" in lock_skip
+    assert "paper_profit_probe)" in lock_skip
+    assert "exit 48" in lock_skip
 
 
 def test_run_check_with_audit_records_scheduled_check_result() -> None:

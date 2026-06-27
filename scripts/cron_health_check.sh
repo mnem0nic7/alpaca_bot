@@ -46,7 +46,9 @@ fi
 
 for script in \
   run_if_ny_time.sh \
+  run_locked_check_with_audit.sh \
   run_check_with_audit.sh \
+  scheduled_check_lock_skipped.sh \
   paper_readiness_check.sh \
   paper_activity_check.sh \
   session_guard.sh \
