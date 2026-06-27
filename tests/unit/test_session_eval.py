@@ -383,6 +383,63 @@ def test_session_eval_cli_reports_decision_activity(monkeypatch, capsys):
     ) in out
 
 
+def test_session_eval_cli_fail_on_diagnostics_fails_dead_session(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    _patch_cli_deps(monkeypatch, rows=[])
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+        "--fail-on-diagnostics",
+    ])
+
+    assert rc == 46
+    out = capsys.readouterr().out
+    assert "No supervisor cycles recorded for evaluated window" in out
+    assert "Guard failed: operational diagnostics contain proof-blocking issues" in out
+
+
+def test_session_eval_cli_fail_on_diagnostics_allows_active_no_trade_day(
+    monkeypatch,
+    capsys,
+):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    latest = datetime(2026, 5, 4, 15, 30, tzinfo=timezone.utc)
+    _patch_cli_deps(monkeypatch, rows=[])
+    monkeypatch.setattr(
+        cli_module,
+        "_load_entries_disabled_cycle_stats",
+        lambda *_args, **_kwargs: (10, 0, {}),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_load_decision_activity_stats",
+        lambda *_args, **_kwargs: cli_module.DecisionActivityStats(
+            cycles=3,
+            records=2940,
+            accepted=0,
+            latest_cycle_at=latest,
+        ),
+    )
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+        "--fail-on-diagnostics",
+    ])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "No closed trades" in out
+    assert "Guard failed" not in out
+
+
 def test_load_entries_disabled_cycle_stats_parses_colon_reasons(monkeypatch):
     import alpaca_bot.admin.session_eval_cli as cli_module
 

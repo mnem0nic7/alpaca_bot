@@ -70,6 +70,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Exit non-zero when positions remain open after the evaluated session.",
     )
+    parser.add_argument(
+        "--fail-on-diagnostics",
+        action="store_true",
+        help=(
+            "Exit non-zero when operational diagnostics show missing cycles, "
+            "blocked entries, runtime errors, stream issues, reconciliation issues, "
+            "or missing decision activity."
+        ),
+    )
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
 
     try:
@@ -131,6 +140,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.fail_on_open_positions and diagnostics.open_positions:
             _print_open_position_guard_failure(diagnostics)
             return 44
+        if args.fail_on_diagnostics and diagnostics.has_guard_issues:
+            _print_diagnostics_guard_failure(diagnostics)
+            return 46
         if args.require_min_trades > 0:
             print(
                 f"Proof incomplete: 0 closed trades below required "
@@ -165,6 +177,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"${args.fail_below_pnl:.2f} after {report.total_trades} trades."
             )
             return 42
+    if args.fail_on_diagnostics and diagnostics.has_guard_issues:
+        _print_diagnostics_guard_failure(diagnostics)
+        return 46
     return 0
 
 
@@ -213,6 +228,10 @@ def _print_open_position_guard_failure(diagnostics: SessionDiagnostics) -> None:
         f"Guard failed: {len(diagnostics.open_positions)} open "
         f"position(s) remain after session: {symbols}."
     )
+
+
+def _print_diagnostics_guard_failure(diagnostics: SessionDiagnostics) -> None:
+    print("Guard failed: operational diagnostics contain proof-blocking issues.")
 
 
 def _row_to_trade_record(row: dict) -> ReplayTradeRecord:
@@ -268,6 +287,27 @@ class SessionDiagnostics:
             self.cycle_errors,
             self.dispatch_failures,
             self.failed_entries,
+            self.stream_issues,
+            self.open_positions,
+            self.reconciliation_issues,
+            self.entries_disabled_cycles,
+            self.strategy_disabled_cycles,
+            self.total_supervisor_cycles == 0,
+            self.total_supervisor_cycles > 0 and self.decision_activity.records == 0,
+        ])
+
+    @property
+    def has_guard_issues(self) -> bool:
+        """Return True for diagnostics that should fail an EOD proof guard.
+
+        Unfilled entry orders remain diagnostic output only. A stop-limit entry
+        can legitimately cancel without fill; missing cycles, disabled entries,
+        runtime errors, stream/reconciliation issues, open exposure, and missing
+        decision activity are proof-blocking.
+        """
+        return any([
+            self.cycle_errors,
+            self.dispatch_failures,
             self.stream_issues,
             self.open_positions,
             self.reconciliation_issues,

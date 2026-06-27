@@ -275,6 +275,9 @@ def test_post_close_checks_fail_on_open_positions() -> None:
 
     assert "--fail-on-open-positions" in session_guard
     assert "--fail-on-open-positions" in profit_probe
+    assert 'SESSION_GUARD_FAIL_ON_DIAGNOSTICS="${SESSION_GUARD_FAIL_ON_DIAGNOSTICS:-true}"' in session_guard
+    assert "SESSION_GUARD_FAIL_ON_DIAGNOSTICS must be true or false" in session_guard
+    assert "session_eval_args+=(--fail-on-diagnostics)" in session_guard
     assert "./scripts/broker_flat_check.sh" in session_guard
     assert "./scripts/broker_flat_check.sh" in profit_probe
     assert "broker exposure remains after close" in session_guard

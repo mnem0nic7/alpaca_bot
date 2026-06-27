@@ -212,6 +212,11 @@ def test_build_session_diagnostics_no_issues(monkeypatch):
         "_load_entries_disabled_cycle_stats",
         lambda *_args, **_kwargs: (10, 0, {}),
     )
+    monkeypatch.setattr(
+        cli_module,
+        "_load_decision_activity_stats",
+        lambda *_args, **_kwargs: cli_module.DecisionActivityStats(cycles=2, records=20),
+    )
 
     diag = cli_module._build_session_diagnostics(
         object(),  # conn — not used because stores are patched
@@ -316,8 +321,15 @@ def test_build_session_diagnostics_open_positions(monkeypatch):
 
 def test_print_no_issues(capsys):
     """Clean diagnostics prints 'No operational issues found'."""
-    from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
-    diag = SessionDiagnostics(total_supervisor_cycles=10)
+    from alpaca_bot.admin.session_eval_cli import (
+        DecisionActivityStats,
+        SessionDiagnostics,
+        _print_session_diagnostics,
+    )
+    diag = SessionDiagnostics(
+        total_supervisor_cycles=10,
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
     _print_session_diagnostics(diag)
     out = capsys.readouterr().out
     assert "No operational issues found" in out
@@ -387,6 +399,32 @@ def test_print_with_unfilled_entries(capsys):
     assert "Unfilled entries" in out
     assert "AAPL" in out
     assert "canceled" in out
+
+
+def test_unfilled_entries_do_not_trigger_hard_guard_issue():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    t = datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc)
+    order = OrderRecord(
+        client_order_id="id1",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="canceled",
+        quantity=10.0,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        created_at=t,
+        updated_at=t,
+    )
+    diag = SessionDiagnostics(
+        failed_entries=[order],
+        total_supervisor_cycles=10,
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.has_issues
+    assert not diag.has_guard_issues
 
 
 def test_print_with_open_positions(capsys):
