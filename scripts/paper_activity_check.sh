@@ -40,7 +40,8 @@ if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
   exit 0
 fi
 
-PAPER_READINESS_AUTO_RESUME=false ./scripts/paper_readiness_check.sh "$ENV_FILE"
+PAPER_READINESS_AUTO_RESUME=false PAPER_READINESS_REQUIRE_FLAT=false \
+  ./scripts/paper_readiness_check.sh "$ENV_FILE"
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 

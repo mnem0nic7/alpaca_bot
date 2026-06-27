@@ -4,6 +4,7 @@ set -euo pipefail
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"
 PAPER_READINESS_AUTO_RESET_WEIGHTS="${PAPER_READINESS_AUTO_RESET_WEIGHTS:-true}"
+PAPER_READINESS_REQUIRE_FLAT="${PAPER_READINESS_REQUIRE_FLAT:-true}"
 PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
 PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"
 
@@ -326,22 +327,26 @@ if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
   fi
 fi
 
-stock_exposure_counts="$(load_stock_exposure_counts)"
-IFS='|' read -r open_positions active_orders <<< "$stock_exposure_counts"
+if [[ "${PAPER_READINESS_REQUIRE_FLAT,,}" == "true" ]]; then
+  stock_exposure_counts="$(load_stock_exposure_counts)"
+  IFS='|' read -r open_positions active_orders <<< "$stock_exposure_counts"
 
-if [[ "${open_positions:-0}" != "0" ]]; then
-  echo "paper readiness failed: stock-only proof has $open_positions open stock positions" >&2
-  exit 1
+  if [[ "${open_positions:-0}" != "0" ]]; then
+    echo "paper readiness failed: stock-only proof has $open_positions open stock positions" >&2
+    exit 1
+  fi
+
+  if [[ "${active_orders:-0}" != "0" ]]; then
+    echo "paper readiness failed: stock-only proof has $active_orders active stock orders" >&2
+    exit 1
+  fi
+
+  echo "paper readiness stock exposure ok: positions=0 active_orders=0"
+
+  BROKER_FLAT_CONTEXT="paper readiness" ./scripts/broker_flat_check.sh "$ENV_FILE"
+else
+  echo "paper readiness flat exposure check skipped"
 fi
-
-if [[ "${active_orders:-0}" != "0" ]]; then
-  echo "paper readiness failed: stock-only proof has $active_orders active stock orders" >&2
-  exit 1
-fi
-
-echo "paper readiness stock exposure ok: positions=0 active_orders=0"
-
-BROKER_FLAT_CONTEXT="paper readiness" ./scripts/broker_flat_check.sh "$ENV_FILE"
 
 "${compose[@]}" run -T --rm \
   --entrypoint alpaca-bot-ops-check admin \

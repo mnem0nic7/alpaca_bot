@@ -41,6 +41,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
 
     assert 'PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"' in script
     assert 'PAPER_READINESS_AUTO_RESET_WEIGHTS="${PAPER_READINESS_AUTO_RESET_WEIGHTS:-true}"' in script
+    assert 'PAPER_READINESS_REQUIRE_FLAT="${PAPER_READINESS_REQUIRE_FLAT:-true}"' in script
     assert 'PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"' in script
     assert 'PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"' in script
     assert 'status=close_only' in script
@@ -51,6 +52,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "'pending_submit'" in script
     assert "'partially_filled'" in script
     assert "paper readiness stock exposure ok: positions=0 active_orders=0" in script
+    assert "paper readiness flat exposure check skipped" in script
     assert "stock-only proof has $open_positions open stock positions" in script
     assert "stock-only proof has $active_orders active stock orders" in script
     assert 'BROKER_FLAT_CONTEXT="paper readiness" ./scripts/broker_flat_check.sh "$ENV_FILE"' in script
@@ -98,6 +100,7 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "PAPER_ACTIVITY_WINDOW_MINUTES" in script
     assert 'PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
     assert "PAPER_READINESS_AUTO_RESUME=false" in script
+    assert "PAPER_READINESS_REQUIRE_FLAT=false" in script
     assert "decision_record_count" in script
     assert "entries_disabled" in script
     assert "blocked_strategy_names" in script
