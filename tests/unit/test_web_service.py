@@ -184,8 +184,12 @@ def test_load_dashboard_snapshot_loads_recent_scheduled_checks() -> None:
         datetime(2026, 6, 29, 21, 10, tzinfo=timezone.utc),
     )
     check_event.payload = {
-        "check_name": "session_guard",
+        "check_name": "paper_profit_probe",
         "session_date": "2026-06-29",
+        "proof_start": "2026-06-29",
+        "strategy": "bull_flag",
+        "min_trades": "10",
+        "min_pnl": "0.01",
         "status": "failed",
         "exit_code": 46,
     }

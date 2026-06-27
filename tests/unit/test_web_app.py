@@ -119,8 +119,12 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
         event_type="scheduled_check_completed",
         symbol=None,
         payload={
-            "check_name": "session_guard",
+            "check_name": "paper_profit_probe",
             "session_date": "2026-06-29",
+            "proof_start": "2026-06-29",
+            "strategy": "bull_flag",
+            "min_trades": "10",
+            "min_pnl": "0.01",
             "status": "failed",
             "exit_code": 46,
         },
@@ -207,8 +211,12 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "AAPL" in response.text
     assert "supervisor_cycle" in response.text
     assert "Scheduled Checks" in response.text
-    assert "session_guard" in response.text
+    assert "paper_profit_probe" in response.text
     assert "2026-06-29" in response.text
+    assert "strategy=bull_flag" in response.text
+    assert "proof=2026-06-29" in response.text
+    assert "trades&gt;=10" in response.text
+    assert "pnl&gt;=0.01" in response.text
     assert "failed" in response.text
     assert "46" in response.text
     assert connection.closed is True
