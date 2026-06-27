@@ -71,11 +71,27 @@ PY
 stats="$("${compose[@]}" exec -T postgres psql \
   -U "$POSTGRES_USER" \
   -d "$POSTGRES_DB" \
-  -tA -F '|' <<SQL
+  -tA -F '|' \
+  -v strategy_version="$STRATEGY_VERSION" \
+  -v paper_activity_strategy="$PAPER_ACTIVITY_STRATEGY" <<SQL
 WITH recent AS (
   SELECT event_type, payload, created_at
   FROM audit_events
   WHERE created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+),
+recent_decisions AS (
+  SELECT cycle_at, strategy_name
+  FROM decision_log
+  WHERE cycle_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+    AND trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+),
+enabled_strategies AS (
+  SELECT COALESCE(array_agg(strategy_name ORDER BY strategy_name), ARRAY[]::text[]) AS names
+  FROM strategy_flags
+  WHERE trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+    AND enabled = TRUE
 )
 SELECT
   COUNT(*) FILTER (WHERE event_type = 'supervisor_cycle')::int,
@@ -99,20 +115,40 @@ SELECT
   COALESCE(MAX(created_at) FILTER (WHERE event_type = 'decision_cycle_completed')::text, ''),
   COUNT(*) FILTER (
     WHERE event_type = 'supervisor_cycle'
-      AND COALESCE(payload->'blocked_strategy_names', '[]'::jsonb) ? '${PAPER_ACTIVITY_STRATEGY}'
+      AND COALESCE(payload->'blocked_strategy_names', '[]'::jsonb) ? :'paper_activity_strategy'
   )::int,
   COUNT(*) FILTER (
     WHERE event_type = 'decision_cycle_completed'
-      AND payload->>'strategy_name' = '${PAPER_ACTIVITY_STRATEGY}'
+      AND payload->>'strategy_name' = :'paper_activity_strategy'
   )::int,
   COALESCE(SUM(
     CASE
       WHEN event_type = 'decision_cycle_completed'
-       AND payload->>'strategy_name' = '${PAPER_ACTIVITY_STRATEGY}'
+       AND payload->>'strategy_name' = :'paper_activity_strategy'
       THEN COALESCE((payload->>'decision_record_count')::int, 0)
       ELSE 0
     END
   ), 0)::int,
+  COUNT(*) FILTER (
+    WHERE event_type = 'decision_cycle_completed'
+      AND NOT (payload ? 'strategy_name')
+  )::int,
+  COALESCE((
+    SELECT COUNT(DISTINCT cycle_at)::int
+    FROM recent_decisions
+    WHERE strategy_name = :'paper_activity_strategy'
+  ), 0)::int,
+  COALESCE((
+    SELECT COUNT(*)::int
+    FROM recent_decisions
+    WHERE strategy_name = :'paper_activity_strategy'
+  ), 0)::int,
+  COALESCE((
+    SELECT MAX(cycle_at)::text
+    FROM recent_decisions
+    WHERE strategy_name = :'paper_activity_strategy'
+  ), ''),
+  array_to_string((SELECT names FROM enabled_strategies), ','),
   COALESCE((
     SELECT string_agg(reason || ':' || reason_count::text, ',' ORDER BY reason)
     FROM (
@@ -138,7 +174,7 @@ SELECT
         )
       ) AS reason
       WHERE r.event_type = 'supervisor_cycle'
-        AND COALESCE(r.payload->'blocked_strategy_names', '[]'::jsonb) ? '${PAPER_ACTIVITY_STRATEGY}'
+        AND COALESCE(r.payload->'blocked_strategy_names', '[]'::jsonb) ? :'paper_activity_strategy'
       GROUP BY reason
     ) strategy_reason_counts
   ), '')
@@ -148,8 +184,9 @@ SQL
 
 IFS='|' read -r supervisor_cycles disabled_cycles decision_cycles decision_records \
   market_closed_idles latest_cycle latest_decision strategy_blocked_cycles \
-  strategy_decision_cycles strategy_decision_records disabled_reasons \
-  strategy_disabled_reasons <<< "$stats"
+  strategy_decision_cycles strategy_decision_records legacy_decision_cycles \
+  strategy_decision_log_cycles strategy_decision_log_records latest_decision_log \
+  active_strategy_names disabled_reasons strategy_disabled_reasons <<< "$stats"
 
 if [[ "${supervisor_cycles:-0}" -eq 0 && "${market_closed_idles:-0}" -gt 0 ]]; then
   if market_clock="$(load_market_clock_status)"; then
@@ -191,19 +228,19 @@ if [[ "${strategy_blocked_cycles:-0}" -gt 0 ]]; then
   exit 1
 fi
 
-if [[ "${decision_cycles:-0}" -eq 0 ]]; then
+if [[ "${decision_cycles:-0}" -eq 0 && "${strategy_decision_log_cycles:-0}" -eq 0 ]]; then
   echo "paper activity failed: no decision cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes" >&2
   exit 1
 fi
 
-if [[ "${strategy_decision_cycles:-0}" -eq 0 ]]; then
+if [[ "${strategy_decision_cycles:-0}" -eq 0 && "${strategy_decision_log_cycles:-0}" -eq 0 ]]; then
   echo "paper activity failed: no $PAPER_ACTIVITY_STRATEGY decision cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes" >&2
   exit 1
 fi
 
-if [[ "${strategy_decision_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" ]]; then
-  echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY decision_record_count=$strategy_decision_records below $PAPER_ACTIVITY_MIN_DECISION_RECORDS" >&2
+if [[ "${strategy_decision_log_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" ]]; then
+  echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY decision_log_records=$strategy_decision_log_records below $PAPER_ACTIVITY_MIN_DECISION_RECORDS" >&2
   exit 1
 fi
 
-echo "paper activity ok: supervisor_cycles=$supervisor_cycles decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_decision_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_records=$strategy_decision_records latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none}"
+echo "paper activity ok: supervisor_cycles=$supervisor_cycles decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
