@@ -359,7 +359,7 @@ blocked AS (
     AND strategy_version = :'strategy_version'
     AND entries_disabled = TRUE
     AND (
-      COALESCE(strategy_name, '_global') = '_global'
+      COALESCE(strategy_name, '_global') IN ('_global', '_equity')
       OR strategy_name IN (SELECT strategy_name FROM active)
     )
 )
@@ -372,7 +372,7 @@ SQL
 
   if [[ "${blocked_session_state_count:-0}" != "0" ]]; then
     echo \
-      "paper readiness failed: current session has entry blocks for [$blocked_session_state_names]" \
+      "paper readiness failed: current session has entry-blocking state for [$blocked_session_state_names]" \
       >&2
     exit 1
   fi

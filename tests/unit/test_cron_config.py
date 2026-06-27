@@ -81,10 +81,11 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness refusing auto-resume after failed proof guard" in script
     assert "paper proof failed" in script
     assert "session guard failed" in script
-    assert "current session has entry blocks" in script
+    assert "current session has entry-blocking state" in script
     assert "paper readiness session entry blocks ok: blocked=0" in script
     assert "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED" in script
     assert "CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'" in script
+    assert "IN ('_global', '_equity')" in script
     assert "LOSING_STREAK_N must be a positive integer" in script
     assert "paper readiness failed: active strategies at losing-streak gate" in script
     assert "paper readiness losing streak gate ok: blocked=0" in script
