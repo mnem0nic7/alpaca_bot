@@ -4,6 +4,7 @@ SHELL=/bin/bash
 # The env file must be sourced first: deploy/compose.yaml interpolates ${TRADING_MODE} etc.
 # from the calling shell, exactly like scripts/deploy.sh does.
 10 22 * * 1-5 root flock -n /var/lock/alpaca-bot-session-guard.lock /workspace/alpaca_bot/scripts/session_guard.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-session-guard.log 2>&1
+20 22 * * 1-5 root flock -n /var/lock/alpaca-bot-profit-probe.lock /workspace/alpaca_bot/scripts/paper_profit_probe.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-profit-probe.log 2>&1
 30 22 * * 1-5 root flock -n /var/lock/alpaca-bot-nightly.lock bash -lc 'mkdir -p /var/lib/alpaca-bot/nightly && cd /workspace/alpaca_bot && set -a && source /etc/alpaca_bot/alpaca-bot.env && set +a && docker compose -f deploy/compose.yaml run --rm nightly >> /var/log/alpaca-bot-nightly.log 2>&1 && ./scripts/apply_candidate.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-nightly.log 2>&1'
 # Pre-market check — runs at 08:30 ET (13:30 UTC) on weekdays
 30 13 * * 1-5 root flock -n /var/lock/alpaca-bot-nightly.lock bash -lc 'cd /workspace/alpaca_bot && set -a && source /etc/alpaca_bot/alpaca-bot.env && set +a && docker compose -f deploy/compose.yaml run --rm nightly alpaca-bot-premarket >> /var/log/alpaca-bot-premarket.log 2>&1'

@@ -244,6 +244,24 @@ def test_session_eval_cli_no_trades_exits_zero(monkeypatch, capsys):
     assert "No closed trades" in out
 
 
+def test_session_eval_cli_require_min_trades_fails_when_no_trades(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    _patch_cli_deps(monkeypatch, rows=[])
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+        "--require-min-trades", "1",
+    ])
+
+    assert rc == 43
+    out = capsys.readouterr().out
+    assert "No closed trades" in out
+    assert "Proof incomplete" in out
+
+
 def test_session_eval_cli_produces_report(monkeypatch, capsys):
     """main() calls report_from_records and prints the session report table."""
     import alpaca_bot.admin.session_eval_cli as cli_module
@@ -323,3 +341,29 @@ def test_session_eval_cli_guard_waits_for_min_trades(monkeypatch, capsys):
 
     assert rc == 0
     assert "Guard failed" not in capsys.readouterr().out
+
+
+def test_session_eval_cli_require_min_trades_fails_below_required_count(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    t0 = datetime(2026, 5, 4, 10, 0, tzinfo=timezone.utc)
+    t1 = datetime(2026, 5, 4, 11, 0, tzinfo=timezone.utc)
+    fake_rows = [
+        {
+            "symbol": "AAPL", "strategy_name": "bull_flag", "intent_type": "exit",
+            "entry_fill": 100.0, "entry_limit": 100.05,
+            "entry_time": t0, "exit_fill": 102.0, "exit_time": t1, "qty": 10,
+        },
+    ]
+    _patch_cli_deps(monkeypatch, rows=fake_rows)
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+        "--require-min-trades", "2",
+    ])
+
+    assert rc == 43
+    assert "Proof incomplete: 1 closed trades below required 2" in capsys.readouterr().out

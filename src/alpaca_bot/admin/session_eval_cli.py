@@ -48,6 +48,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="N",
         help="Minimum closed trades required before --fail-below-pnl is enforced.",
     )
+    parser.add_argument(
+        "--require-min-trades",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Exit non-zero unless at least N closed trades are present.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
 
     eval_date: date = date.fromisoformat(args.date) if args.date else date.today()
@@ -96,6 +103,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         strategy_label = f" (strategy={args.strategy})" if args.strategy else ""
         print(f"No closed trades for {eval_date}{strategy_label}.")
         _print_session_diagnostics(diagnostics)
+        if args.require_min_trades > 0:
+            print(
+                f"Proof incomplete: 0 closed trades below required "
+                f"{args.require_min_trades}."
+            )
+            return 43
         return 0
 
     trade_records = [_row_to_trade_record(row) for row in raw_trades]
@@ -107,6 +120,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     _print_session_report(report, eval_date=eval_date, trading_mode=args.mode,
                           strategy_version=strategy_version)
     _print_session_diagnostics(diagnostics)
+    if report.total_trades < args.require_min_trades:
+        print(
+            f"Proof incomplete: {report.total_trades} closed trades below "
+            f"required {args.require_min_trades}."
+        )
+        return 43
     if args.fail_below_pnl is not None:
         total_pnl = sum(t.pnl for t in report.trades)
         if report.total_trades >= args.min_trades_for_gate and total_pnl < args.fail_below_pnl:
