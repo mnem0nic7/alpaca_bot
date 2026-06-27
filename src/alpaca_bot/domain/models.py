@@ -60,6 +60,7 @@ class WorkingEntryOrder:
     initial_stop_price: float
     entry_level: float
     relative_volume: float
+    quantity: float | None = None
 
 
 @dataclass

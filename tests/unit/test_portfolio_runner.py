@@ -139,3 +139,44 @@ def test_single_shared_equity_pool_not_per_symbol():
     trades = runner.run([mk("AAA"), mk("BBB")])
     assert {t.symbol for t in trades} == {"AAA", "BBB"}
     assert all(t.exit_reason == "stop" for t in trades)
+
+
+def test_portfolio_fill_preserves_engine_selected_quantity():
+    settings = Settings.from_env({**ENV, "REPLAY_SLIPPAGE_BPS": "20"})
+    t0 = _utc(2026, 1, 2, 14, 30)
+    t1 = _utc(2026, 1, 2, 14, 45)
+    runner = PortfolioReplayRunner(settings, signal_evaluator=lambda **k: None, strategy_name="breakout")
+    runner._index_scenarios([
+        ReplayScenario(
+            name="AAA",
+            symbol="AAA",
+            starting_equity=100000.0,
+            daily_bars=[_bar("AAA", _utc(2026, 1, 1, 5, 0))],
+            intraday_bars=[
+                _bar("AAA", t0, o=100, h=101, l=99, c=100, v=5000),
+                _bar("AAA", t1, o=100, h=102, l=99, c=101, v=5000),
+            ],
+        )
+    ])
+    lane = runner._lanes["AAA"]
+    lane.cursor = 0
+    from alpaca_bot.core.engine import CycleIntent, CycleIntentType
+
+    runner._place_order(
+        lane,
+        CycleIntent(
+            intent_type=CycleIntentType.ENTRY,
+            symbol="AAA",
+            timestamp=t0,
+            quantity=123.0,
+            stop_price=100.0,
+            limit_price=101.0,
+            initial_stop_price=95.0,
+        ),
+    )
+    lane.cursor = 1
+
+    runner._resolve_order(lane, lane.intraday[lane.cursor], 100000.0)
+
+    assert lane.position is not None
+    assert lane.position.quantity == 123.0

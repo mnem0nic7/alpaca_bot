@@ -248,6 +248,7 @@ class PortfolioReplayRunner:
             initial_stop_price=intent.initial_stop_price,
             entry_level=0.0,
             relative_volume=0.0,
+            quantity=intent.quantity,
         )
 
     def _resolve_order(self, lane: _Lane, bar: Bar, equity: float) -> float:
@@ -264,10 +265,12 @@ class PortfolioReplayRunner:
             raw_fill=raw, limit_price=order.limit_price,
             bps=self.settings.replay_slippage_bps,
         )
-        qty = calculate_position_size(
-            equity=equity, entry_price=fill,
-            stop_price=order.initial_stop_price, settings=self.settings,
-        )
+        qty = order.quantity
+        if qty is None:
+            qty = calculate_position_size(
+                equity=equity, entry_price=fill,
+                stop_price=order.initial_stop_price, settings=self.settings,
+            )
         lane.position = OpenPosition(
             symbol=order.symbol, entry_timestamp=bar.timestamp, entry_price=fill,
             quantity=qty, entry_level=order.entry_level,

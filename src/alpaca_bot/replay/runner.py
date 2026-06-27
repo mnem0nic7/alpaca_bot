@@ -168,6 +168,7 @@ class ReplayRunner:
                         initial_stop_price=intent.initial_stop_price,  # type: ignore[arg-type]
                         entry_level=0.0,  # entry_level not carried in CycleIntent
                         relative_volume=0.0,  # relative_volume not carried in CycleIntent
+                        quantity=intent.quantity,
                     )
                     events.append(
                         ReplayEvent(
@@ -230,12 +231,14 @@ class ReplayRunner:
         # cannot legally fill above its limit price).
         fill_price = min(self._slipped(fill_price, side="buy"), order.limit_price)
 
-        quantity = calculate_position_size(
-            equity=state.equity,
-            entry_price=fill_price,
-            stop_price=order.initial_stop_price,
-            settings=self.settings,
-        )
+        quantity = order.quantity
+        if quantity is None:
+            quantity = calculate_position_size(
+                equity=state.equity,
+                entry_price=fill_price,
+                stop_price=order.initial_stop_price,
+                settings=self.settings,
+            )
         state.position = OpenPosition(
             symbol=order.symbol,
             entry_timestamp=bar.timestamp,

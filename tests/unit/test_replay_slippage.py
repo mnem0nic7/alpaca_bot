@@ -58,10 +58,10 @@ def test_slipped_zero_bps_is_identity():
 def test_costed_replay_never_beats_frictionless():
     """End-to-end directional check on the golden breakout scenario.
 
-    Compares return_pct, not pnl: the slipped entry price feeds position
-    sizing, so quantity can differ between runs and pnl is not directly
-    comparable per trade. return_pct = (exit - entry) / entry is
-    quantity-independent and must be strictly worse with costs.
+    Compares return_pct, not pnl: quantity is selected at signal time before the
+    simulated fill, while costed entry/exit prices still move adversely.
+    return_pct = (exit - entry) / entry is quantity-independent and must be
+    strictly worse with costs.
     """
     scenario = ReplayRunner.load_scenario(GOLDEN_DIR / "breakout_success.json")
 

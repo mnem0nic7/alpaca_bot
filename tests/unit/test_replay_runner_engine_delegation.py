@@ -610,6 +610,45 @@ def test_stale_working_entry_order_persists_without_crash_or_fill() -> None:
     assert expire_events == [], f"Unexpected expire events: {expire_events}"
 
 
+def test_existing_order_fill_preserves_engine_selected_quantity() -> None:
+    from alpaca_bot.domain.enums import IntentType
+    from alpaca_bot.domain.models import ReplayEvent, WorkingEntryOrder
+    from alpaca_bot.replay.runner import ReplayRunner, ReplayState
+
+    settings = make_settings(REPLAY_SLIPPAGE_BPS="20")
+    runner = ReplayRunner(settings)
+    ts = datetime(2026, 4, 24, 14, 15, tzinfo=timezone.utc)
+    order = WorkingEntryOrder(
+        symbol="AAPL",
+        signal_timestamp=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
+        active_bar_timestamp=ts,
+        stop_price=100.0,
+        limit_price=101.0,
+        initial_stop_price=95.0,
+        entry_level=100.0,
+        relative_volume=2.0,
+        quantity=123.0,
+    )
+    state = ReplayState(equity=100_000.0, working_order=order)
+    events: list[ReplayEvent] = []
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=ts,
+        open=100.0,
+        high=102.0,
+        low=99.0,
+        close=101.0,
+        volume=5000,
+    )
+
+    runner._process_existing_order(bar=bar, state=state, events=events)
+
+    assert state.position is not None
+    assert state.position.quantity == 123.0
+    fills = [event for event in events if event.event_type is IntentType.ENTRY_FILLED]
+    assert fills[0].details["quantity"] == 123.0
+
+
 # ---------------------------------------------------------------------------
 # Test: equity compounding after stop hit and EOD exit
 # ---------------------------------------------------------------------------
