@@ -141,11 +141,12 @@ def test_paper_readiness_lock_skip_does_not_block_after_pass(tmp_path: Path) -> 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_date = fake_bin / "date"
-    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-07-04\\n'\n")
     fake_date.chmod(0o755)
     fake_docker = fake_bin / "docker"
     fake_docker.write_text(
         "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_session_date=2026-07-06\\n'\n"
         "printf 'paper_readiness_latest_status=passed\\n'\n"
     )
     fake_docker.chmod(0o755)
@@ -165,10 +166,10 @@ def test_paper_readiness_lock_skip_does_not_block_after_pass(tmp_path: Path) -> 
 
     assert result.returncode == 0
     assert (
-        "scheduled check context: session_date=2026-06-29 "
+        "scheduled check context: session_date=2026-07-06 "
         "proof_start=2026-06-29 reason=lock_busy_already_passed"
     ) in result.stdout
-    assert "paper readiness lock busy after prior pass" in result.stdout
+    assert "paper readiness lock busy after prior pass for session 2026-07-06" in result.stdout
     assert "paper readiness check skipped" not in result.stdout
 
 
@@ -186,11 +187,12 @@ def test_paper_readiness_lock_skip_blocks_without_pass(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_date = fake_bin / "date"
-    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-07-04\\n'\n")
     fake_date.chmod(0o755)
     fake_docker = fake_bin / "docker"
     fake_docker.write_text(
         "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_session_date=2026-07-06\\n'\n"
         "printf 'paper_readiness_latest_status=\\n'\n"
     )
     fake_docker.chmod(0o755)
@@ -210,7 +212,7 @@ def test_paper_readiness_lock_skip_blocks_without_pass(tmp_path: Path) -> None:
 
     assert result.returncode == 48
     assert (
-        "scheduled check context: session_date=2026-06-29 "
+        "scheduled check context: session_date=2026-07-06 "
         "proof_start=2026-06-29 reason=lock_busy"
     ) in result.stdout
     assert "scheduled check lock busy: check=paper_readiness" in result.stderr
@@ -323,6 +325,7 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "scheduled check context:" in lock_skip
     assert "reason=lock_busy" in lock_skip
     assert "reason=lock_busy_already_passed" in lock_skip
+    assert "paper_readiness_session_date=" in lock_skip
     assert "paper_readiness_latest_status=" in lock_skip
     assert "paper_readiness)" in lock_skip
     assert "paper_activity)" in lock_skip

@@ -19,6 +19,66 @@ fi
 
 session_date="$(TZ=America/New_York date +%F)"
 
+fallback_readiness_session_date() {
+  local dow
+  dow="$(TZ=America/New_York date +%u)"
+  case "$dow" in
+    6) TZ=America/New_York date -d "2 days" +%F ;;
+    7) TZ=America/New_York date -d "1 day" +%F ;;
+    *) TZ=America/New_York date +%F ;;
+  esac
+}
+
+load_readiness_session_date() {
+  local lookup
+  local readiness_session_date
+
+  lookup="$(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
+    --entrypoint python admin <<'PY' || true
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+import os
+from zoneinfo import ZoneInfo
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+
+settings = Settings.from_env()
+override = os.environ.get("PAPER_READINESS_SESSION_DATE", "")
+
+if override:
+    session_date = date.fromisoformat(override)
+else:
+    market_timezone = ZoneInfo(settings.market_timezone.key)
+    today = datetime.now(market_timezone).date()
+    session_date = today
+    calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+        start=today,
+        end=today + timedelta(days=10),
+    )
+    for session in calendar:
+        if session.session_date >= today:
+            session_date = session.session_date
+            break
+
+print(f"paper_readiness_session_date={session_date.isoformat()}")
+PY
+)"
+
+  readiness_session_date="$(
+    printf '%s\n' "$lookup" \
+      | sed -n 's/^paper_readiness_session_date=//p' \
+      | tail -n 1
+  )"
+  if [[ "$readiness_session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "$readiness_session_date"
+    return
+  fi
+
+  fallback_readiness_session_date
+}
+
 load_latest_readiness_status() {
   local readiness_session_date="$1"
   local lookup
@@ -72,13 +132,14 @@ PY
 
 case "$CHECK_NAME" in
   paper_readiness)
-    latest_readiness_status="$(load_latest_readiness_status "$session_date")"
+    readiness_session_date="$(load_readiness_session_date)"
+    latest_readiness_status="$(load_latest_readiness_status "$readiness_session_date")"
     if [[ "$latest_readiness_status" == "passed" ]]; then
-      echo "scheduled check context: session_date=$session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy_already_passed"
-      echo "paper readiness lock busy after prior pass for session $session_date; not blocking entries"
+      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy_already_passed"
+      echo "paper readiness lock busy after prior pass for session $readiness_session_date; not blocking entries"
       exit 0
     fi
-    echo "scheduled check context: session_date=$session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy"
+    echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy"
     ;;
   paper_activity)
     echo "scheduled check context: session_date=$session_date strategy=${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}} reason=lock_busy"
