@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from alpaca_bot.config import Settings
+from alpaca_bot.replay.cli import _format_audit_markdown
 from alpaca_bot.replay.audit import StrategyAuditRow, classify_verdict, run_audit
 from alpaca_bot.replay.report import ReplayTradeRecord
 
@@ -72,3 +73,27 @@ def test_run_audit_insufficient_data():
     )
     assert rows[0].verdict == "insufficient-data"
     assert rows[0].ci_low is None and rows[0].p_positive is None
+
+
+def test_format_audit_markdown_labels_p_value_direction():
+    row = StrategyAuditRow(
+        strategy="bull_flag",
+        scenarios=80,
+        trades=186,
+        win_rate=0.672,
+        profit_factor=1.30,
+        total_pnl=1189.44,
+        mean_trade_pnl=6.3948,
+        annualized_sharpe=1.73,
+        ci_low=-3.2062,
+        ci_high=16.3553,
+        p_positive=0.0955,
+        zero_cost_total_pnl=1806.53,
+        cost_drag=617.09,
+        verdict="no-evidence",
+    )
+
+    out = _format_audit_markdown([row], slippage_bps=5.0)
+
+    assert "p(mean<=0)" in out
+    assert "p(edge>0)" not in out

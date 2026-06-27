@@ -526,7 +526,7 @@ def _format_audit_markdown(rows: list[StrategyAuditRow], *, slippage_bps: float)
         f"# Strategy audit — {slippage_bps:g} bps/side vs frictionless",
         "",
         "| strategy | scenarios | trades | win rate | profit factor | total P&L "
-        "| mean/trade | ann. Sharpe | 95% CI mean/trade | p(edge>0) "
+        "| mean/trade | ann. Sharpe | 95% CI mean/trade | p(mean<=0) "
         "| frictionless P&L | cost drag | verdict |",
         "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
