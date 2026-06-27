@@ -650,6 +650,8 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_false_or_unset ENABLE_NEWS_FILTER" in script
     assert "require_env_false_or_unset ENABLE_SPREAD_FILTER" in script
     assert "require_env_false_or_unset ENABLE_OPTIONS_TRADING" in script
+    assert "require_env_empty_or_unset OPTION_CHAIN_SYMBOLS" in script
+    assert 'check("option_chain_symbols", settings.option_chain_symbols, ())' in script
 
 
 def test_paper_activity_check_verifies_mid_session_evaluation() -> None:

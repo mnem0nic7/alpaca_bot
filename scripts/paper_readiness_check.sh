@@ -261,6 +261,15 @@ require_env_false_or_unset() {
   fi
 }
 
+require_env_empty_or_unset() {
+  local name="$1"
+  local actual="${!name:-}"
+  if [[ -n "$actual" ]]; then
+    echo "paper readiness failed: $name=$actual expected empty or unset" >&2
+    exit 1
+  fi
+}
+
 require_env_value STRATEGY_VERSION v1-breakout
 require_env_value MARKET_DATA_FEED iex
 require_env_value DAILY_SMA_PERIOD 20
@@ -296,6 +305,7 @@ require_env_false_or_unset ENABLE_REGIME_FILTER
 require_env_false_or_unset ENABLE_NEWS_FILTER
 require_env_false_or_unset ENABLE_SPREAD_FILTER
 require_env_false_or_unset ENABLE_OPTIONS_TRADING
+require_env_empty_or_unset OPTION_CHAIN_SYMBOLS
 
 run_container_settings_posture_check() {
   "${compose[@]}" run -T --rm \
@@ -360,6 +370,7 @@ check("enable_regime_filter", settings.enable_regime_filter, False)
 check("enable_news_filter", settings.enable_news_filter, False)
 check("enable_spread_filter", settings.enable_spread_filter, False)
 check("enable_options_trading", settings.enable_options_trading, False)
+check("option_chain_symbols", settings.option_chain_symbols, ())
 check("extended_hours_enabled", settings.extended_hours_enabled, False)
 check("enable_profit_target", settings.enable_profit_target, False)
 check("enable_trend_filter_exit", settings.enable_trend_filter_exit, False)

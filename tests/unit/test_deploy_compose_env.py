@@ -71,6 +71,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "ENABLE_NEWS_FILTER=false" in env_text
     assert "ENABLE_SPREAD_FILTER=false" in env_text
     assert "ENABLE_OPTIONS_TRADING=false" in env_text
+    assert "OPTION_CHAIN_SYMBOLS=" in env_text
 
 
 def test_init_server_generates_audited_paper_posture() -> None:
@@ -94,3 +95,4 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "PROFIT_TRAIL_PCT=0.95" in script
     assert "ENABLE_NEWS_FILTER=false" in script
     assert "ENABLE_SPREAD_FILTER=false" in script
+    assert "OPTION_CHAIN_SYMBOLS=" in script
