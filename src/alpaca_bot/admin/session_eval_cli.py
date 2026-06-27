@@ -264,6 +264,7 @@ class SessionDiagnostics:
             self.reconciliation_issues,
             self.entries_disabled_cycles,
             self.strategy_disabled_cycles,
+            self.total_supervisor_cycles == 0,
         ])
 
 
@@ -470,6 +471,9 @@ def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
         print(" ✓ No operational issues found")
         print()
         return
+
+    if diagnostics.total_supervisor_cycles == 0:
+        print(" ⚠ No supervisor cycles recorded for evaluated window")
 
     if diagnostics.cycle_errors:
         print(f" ⚠ Cycle errors: {len(diagnostics.cycle_errors)}")

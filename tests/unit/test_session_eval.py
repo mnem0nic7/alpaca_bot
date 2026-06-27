@@ -246,7 +246,7 @@ def _patch_cli_deps(
 
 
 def test_session_eval_cli_no_trades_exits_zero(monkeypatch, capsys):
-    """When list_closed_trades returns nothing, main() prints a message and returns 0."""
+    """When no trades or supervisor cycles exist, main() reports incomplete evidence."""
     import alpaca_bot.admin.session_eval_cli as cli_module
 
     _patch_cli_deps(monkeypatch, rows=[])
@@ -254,6 +254,8 @@ def test_session_eval_cli_no_trades_exits_zero(monkeypatch, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "No closed trades" in out
+    assert "No supervisor cycles recorded for evaluated window" in out
+    assert "No operational issues" not in out
 
 
 def test_session_eval_cli_reports_entries_disabled_cycles(monkeypatch, capsys):

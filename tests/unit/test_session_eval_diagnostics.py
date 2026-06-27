@@ -191,6 +191,11 @@ def test_build_session_diagnostics_no_issues(monkeypatch):
     monkeypatch.setattr(cli_module, "AuditEventStore", lambda conn: fake_audit_store)
     monkeypatch.setattr(cli_module, "OrderStore", lambda conn: fake_order_store)
     monkeypatch.setattr(cli_module, "PositionStore", lambda conn: fake_position_store)
+    monkeypatch.setattr(
+        cli_module,
+        "_load_entries_disabled_cycle_stats",
+        lambda *_args, **_kwargs: (10, 0, {}),
+    )
 
     diag = cli_module._build_session_diagnostics(
         object(),  # conn — not used because stores are patched
@@ -294,10 +299,21 @@ def test_build_session_diagnostics_open_positions(monkeypatch):
 def test_print_no_issues(capsys):
     """Clean diagnostics prints 'No operational issues found'."""
     from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
-    diag = SessionDiagnostics()
+    diag = SessionDiagnostics(total_supervisor_cycles=10)
     _print_session_diagnostics(diag)
     out = capsys.readouterr().out
     assert "No operational issues found" in out
+
+
+def test_print_with_no_supervisor_cycles(capsys):
+    """Missing supervisor cycles are reported as an operational issue."""
+    from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics
+
+    diag = SessionDiagnostics()
+    _print_session_diagnostics(diag)
+    out = capsys.readouterr().out
+    assert "No supervisor cycles recorded for evaluated window" in out
+    assert "No operational issues found" not in out
 
 
 def test_print_with_cycle_errors(capsys):
