@@ -197,5 +197,27 @@ def run_cycle(
                 except Exception:
                     pass
                 logger.warning("decision log write failed: %s", exc)
+                try:
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="decision_log_write_failed",
+                            payload={
+                                "trading_mode": settings.trading_mode.value,
+                                "strategy_version": settings.strategy_version,
+                                "strategy_name": strategy_name,
+                                "decision_record_count": len(result.decision_records),
+                                "cycle_timestamp": now.isoformat(),
+                                "error": str(exc),
+                            },
+                            created_at=now,
+                        ),
+                        commit=False,
+                    )
+                    runtime.connection.commit()
+                except Exception:
+                    try:
+                        runtime.connection.rollback()
+                    except Exception:
+                        pass
 
     return result

@@ -655,6 +655,12 @@ def test_run_cycle_decision_log_failure_does_not_raise(caplog) -> None:
     assert result is fake_result
     assert any("decision" in rec.message.lower() for rec in caplog.records)
     assert runtime.connection.rollback_count == 1
+    failure_event = runtime.audit_event_store.events[-1]
+    assert failure_event.event_type == "decision_log_write_failed"
+    assert failure_event.payload["strategy_name"] == "breakout"
+    assert failure_event.payload["decision_record_count"] == 1
+    assert failure_event.payload["error"] == "DB write failed"
+    assert runtime.connection.commit_count == 2
 
 
 # ── RuntimeContext has decision_log_store field ──────────────────────────────

@@ -198,6 +198,8 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
 
     assert "PAPER_ACTIVITY_WINDOW_MINUTES" in script
     assert 'PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"' in script
+    assert 'PAPER_ACTIVITY_REQUIRE_DECISION_LOG="${PAPER_ACTIVITY_REQUIRE_DECISION_LOG:-true}"' in script
+    assert "PAPER_ACTIVITY_REQUIRE_DECISION_LOG must be true or false" in script
     assert 'PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
     assert "PAPER_READINESS_AUTO_RESUME=false" in script
     assert "PAPER_READINESS_REQUIRE_FLAT=false" in script
@@ -226,7 +228,10 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "no supervisor cycles" in script
     assert "no decision cycles" in script
     assert "no $PAPER_ACTIVITY_STRATEGY decision cycles" in script
+    assert "no $PAPER_ACTIVITY_STRATEGY decision_log cycles" in script
+    assert "$PAPER_ACTIVITY_STRATEGY decision_log_records" in script
     assert "$PAPER_ACTIVITY_STRATEGY decision_evidence_records" in script
+    assert "require_decision_log" in script
 
 
 def test_post_close_checks_fail_on_open_positions() -> None:
