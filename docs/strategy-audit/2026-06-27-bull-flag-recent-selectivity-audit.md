@@ -124,3 +124,35 @@ close, producing 438/438 entries-disabled supervisor cycles and no valid
 The proof probe evaluates only completed sessions by default; before the June
 29 close it reports the proof as pending rather than scoring an in-progress
 session.
+
+Exact active-watchlist replay:
+
+After the deployment, live paper had 982 enabled, non-ignored watchlist symbols.
+The refreshed 999-scenario directory still covered every active symbol and had
+17 inactive extras (`ACLX`, `APLS`, `BK`, `CSGS`, `CTLP`, `CVGW`, `EXPI`,
+`FOLD`, `KALV`, `MASI`, `MCW`, `SEMR`, `SLNO`, `SNCY`, `STKL`, `UDMY`,
+`VSCO`). The paper posture was rechecked against a temporary symlinked scenario
+directory containing exactly those 982 active symbols.
+
+Command:
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+alpaca-bot-backtest portfolio-audit \
+  --scenario-dir /tmp/alpaca-active-scenarios \
+  --strategy bull_flag \
+  --slippage-bps 2 \
+  --max-open-positions 3 \
+  --starting-equity 17247.795
+```
+
+Result:
+
+| scenarios | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(edge>0) | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---|
+| 982 | 1050 | 71.6% | 1.42 | 1837.51 | 1.7500 | 3.66 | [0.8379, 2.6633] | 0.0000 | positive-edge |
+
+Decision: keep the deployed `RELATIVE_VOLUME_THRESHOLD=2.0`,
+`MAX_OPEN_POSITIONS=3`, floor-sized paper proof posture. Removing inactive
+scenario extras does not weaken the evidence; the exact live active universe
+still clears the positive-edge audit.
