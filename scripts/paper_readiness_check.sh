@@ -49,6 +49,117 @@ esac
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
+fallback_readiness_session_date() {
+  local dow
+  dow="$(TZ=America/New_York date +%u)"
+  case "$dow" in
+    6) TZ=America/New_York date -d "2 days" +%F ;;
+    7) TZ=America/New_York date -d "1 day" +%F ;;
+    *) TZ=America/New_York date +%F ;;
+  esac
+}
+
+load_readiness_session_date() {
+  local calendar_date
+  if calendar_date="$("${compose[@]}" run -T --rm \
+    --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+
+settings = Settings.from_env()
+market_timezone = ZoneInfo(settings.market_timezone.key)
+today = datetime.now(market_timezone).date()
+calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+    start=today,
+    end=today + timedelta(days=10),
+)
+for session in calendar:
+    if session.session_date >= today:
+        print(session.session_date.isoformat())
+        break
+else:
+    raise SystemExit("no upcoming market session found")
+PY
+  )" && [[ "$calendar_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "$calendar_date"
+    return
+  fi
+
+  echo \
+    "paper readiness warning: market calendar lookup failed; using weekday fallback" \
+    >&2
+  fallback_readiness_session_date
+}
+
+PAPER_READINESS_SESSION_DATE="${PAPER_READINESS_SESSION_DATE:-$(load_readiness_session_date)}"
+if [[ ! "$PAPER_READINESS_SESSION_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "PAPER_READINESS_SESSION_DATE must use YYYY-MM-DD" >&2
+  exit 1
+fi
+
+fallback_previous_session_date() {
+  local target_date="$1"
+  local dow
+  dow="$(TZ=America/New_York date -d "$target_date" +%u)"
+  case "$dow" in
+    1) TZ=America/New_York date -d "$target_date - 3 days" +%F ;;
+    *) TZ=America/New_York date -d "$target_date - 1 day" +%F ;;
+  esac
+}
+
+load_previous_session_date() {
+  local previous_date
+  if previous_date="$(PAPER_READINESS_SESSION_DATE="$PAPER_READINESS_SESSION_DATE" \
+    "${compose[@]}" run -T --rm \
+    -e PAPER_READINESS_SESSION_DATE="$PAPER_READINESS_SESSION_DATE" \
+    --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from datetime import date, timedelta
+import os
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+
+target_date = date.fromisoformat(os.environ["PAPER_READINESS_SESSION_DATE"])
+settings = Settings.from_env()
+calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+    start=target_date - timedelta(days=14),
+    end=target_date,
+)
+previous = [
+    session.session_date
+    for session in calendar
+    if session.session_date < target_date
+]
+if not previous:
+    raise SystemExit("no previous market session found")
+print(max(previous).isoformat())
+PY
+  )" && [[ "$previous_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "$previous_date"
+    return
+  fi
+
+  echo \
+    "paper readiness warning: previous market session lookup failed; using weekday fallback" \
+    >&2
+  fallback_previous_session_date "$PAPER_READINESS_SESSION_DATE"
+}
+
+PAPER_READINESS_PREVIOUS_SESSION_DATE="${PAPER_READINESS_PREVIOUS_SESSION_DATE:-$(load_previous_session_date)}"
+if [[ ! "$PAPER_READINESS_PREVIOUS_SESSION_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "PAPER_READINESS_PREVIOUS_SESSION_DATE must use YYYY-MM-DD" >&2
+  exit 1
+fi
+
+echo "scheduled check context: session_date=$PAPER_READINESS_SESSION_DATE previous_session_date=$PAPER_READINESS_PREVIOUS_SESSION_DATE proof_start=$PAPER_READINESS_PRIOR_PROOF_START_DATE"
+
 close_only_on_readiness_failure() {
   local rc="$?"
   trap - EXIT
@@ -344,117 +455,6 @@ if [[ "${PAPER_READINESS_REQUIRE_MARKET_DATA,,}" == "true" ]]; then
 else
   echo "paper readiness market data check skipped"
 fi
-
-fallback_readiness_session_date() {
-  local dow
-  dow="$(TZ=America/New_York date +%u)"
-  case "$dow" in
-    6) TZ=America/New_York date -d "2 days" +%F ;;
-    7) TZ=America/New_York date -d "1 day" +%F ;;
-    *) TZ=America/New_York date +%F ;;
-  esac
-}
-
-load_readiness_session_date() {
-  local calendar_date
-  if calendar_date="$("${compose[@]}" run -T --rm \
-    --entrypoint python admin <<'PY'
-from __future__ import annotations
-
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-
-from alpaca_bot.config import Settings
-from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
-
-settings = Settings.from_env()
-market_timezone = ZoneInfo(settings.market_timezone.key)
-today = datetime.now(market_timezone).date()
-calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
-    start=today,
-    end=today + timedelta(days=10),
-)
-for session in calendar:
-    if session.session_date >= today:
-        print(session.session_date.isoformat())
-        break
-else:
-    raise SystemExit("no upcoming market session found")
-PY
-  )" && [[ "$calendar_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    echo "$calendar_date"
-    return
-  fi
-
-  echo \
-    "paper readiness warning: market calendar lookup failed; using weekday fallback" \
-    >&2
-  fallback_readiness_session_date
-}
-
-PAPER_READINESS_SESSION_DATE="${PAPER_READINESS_SESSION_DATE:-$(load_readiness_session_date)}"
-if [[ ! "$PAPER_READINESS_SESSION_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-  echo "PAPER_READINESS_SESSION_DATE must use YYYY-MM-DD" >&2
-  exit 1
-fi
-
-fallback_previous_session_date() {
-  local target_date="$1"
-  local dow
-  dow="$(TZ=America/New_York date -d "$target_date" +%u)"
-  case "$dow" in
-    1) TZ=America/New_York date -d "$target_date - 3 days" +%F ;;
-    *) TZ=America/New_York date -d "$target_date - 1 day" +%F ;;
-  esac
-}
-
-load_previous_session_date() {
-  local previous_date
-  if previous_date="$(PAPER_READINESS_SESSION_DATE="$PAPER_READINESS_SESSION_DATE" \
-    "${compose[@]}" run -T --rm \
-    -e PAPER_READINESS_SESSION_DATE="$PAPER_READINESS_SESSION_DATE" \
-    --entrypoint python admin <<'PY'
-from __future__ import annotations
-
-from datetime import date, timedelta
-import os
-
-from alpaca_bot.config import Settings
-from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
-
-target_date = date.fromisoformat(os.environ["PAPER_READINESS_SESSION_DATE"])
-settings = Settings.from_env()
-calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
-    start=target_date - timedelta(days=14),
-    end=target_date,
-)
-previous = [
-    session.session_date
-    for session in calendar
-    if session.session_date < target_date
-]
-if not previous:
-    raise SystemExit("no previous market session found")
-print(max(previous).isoformat())
-PY
-  )" && [[ "$previous_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-    echo "$previous_date"
-    return
-  fi
-
-  echo \
-    "paper readiness warning: previous market session lookup failed; using weekday fallback" \
-    >&2
-  fallback_previous_session_date "$PAPER_READINESS_SESSION_DATE"
-}
-
-PAPER_READINESS_PREVIOUS_SESSION_DATE="${PAPER_READINESS_PREVIOUS_SESSION_DATE:-$(load_previous_session_date)}"
-if [[ ! "$PAPER_READINESS_PREVIOUS_SESSION_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-  echo "PAPER_READINESS_PREVIOUS_SESSION_DATE must use YYYY-MM-DD" >&2
-  exit 1
-fi
-
-echo "scheduled check context: session_date=$PAPER_READINESS_SESSION_DATE previous_session_date=$PAPER_READINESS_PREVIOUS_SESSION_DATE proof_start=$PAPER_READINESS_PRIOR_PROOF_START_DATE"
 
 watchlist_counts="$("${compose[@]}" exec -T postgres psql \
   -U "$POSTGRES_USER" \

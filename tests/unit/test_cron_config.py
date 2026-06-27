@@ -420,6 +420,11 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "no previous market session found" in script
     assert "market calendar lookup failed; using weekday fallback" in script
     assert "previous market session lookup failed; using weekday fallback" in script
+    context_index = script.index(
+        "scheduled check context: session_date=$PAPER_READINESS_SESSION_DATE"
+    )
+    assert context_index < script.index("trap close_only_on_readiness_failure EXIT")
+    assert context_index < script.index("run_market_data_smoke_check")
     assert "-v readiness_session_date=\"$PAPER_READINESS_SESSION_DATE\"" in script
     assert "session_date = (:'readiness_session_date')::date" in script
     assert "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
