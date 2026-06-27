@@ -113,6 +113,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'check("market_data_feed", settings.market_data_feed.value, "iex")' in script
     assert 'check("trailing_stop_atr_multiplier", settings.trailing_stop_atr_multiplier, 1.5)' in script
     assert 'check("enable_profit_trail", settings.enable_profit_trail, True)' in script
+    assert 'check("paper_proof_freeze", settings.paper_proof_freeze, True)' in script
     assert 'check("enable_vwap_entry_filter", settings.enable_vwap_entry_filter, True)' in script
     assert 'check("enable_news_filter", settings.enable_news_filter, False)' in script
     assert 'check("max_loss_per_trade_dollars", settings.max_loss_per_trade_dollars, None)' in script

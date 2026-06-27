@@ -76,6 +76,7 @@ class Settings:
     max_portfolio_exposure_pct: float = 0.30
     notify_slippage_threshold_pct: float = 0.005
     confidence_floor: float = 0.25
+    paper_proof_freeze: bool = False
     floor_raise_step: float = 0.10
     drawdown_raise_pct: float = 0.05
     losing_streak_n: int = 3
@@ -220,6 +221,9 @@ class Settings:
                 values.get("NOTIFY_SLIPPAGE_THRESHOLD_PCT", "0.005")
             ),
             confidence_floor=float(values.get("CONFIDENCE_FLOOR", "0.25")),
+            paper_proof_freeze=_parse_bool(
+                "PAPER_PROOF_FREEZE", values.get("PAPER_PROOF_FREEZE", "false")
+            ),
             floor_raise_step=float(values.get("FLOOR_RAISE_STEP", "0.10")),
             drawdown_raise_pct=float(values.get("DRAWDOWN_RAISE_PCT", "0.05")),
             losing_streak_n=int(values.get("LOSING_STREAK_N", "3")),

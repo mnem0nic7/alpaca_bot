@@ -201,6 +201,44 @@ def test_vol_trigger_raises_floor() -> None:
     assert "vol" in floor_store.upserted[0].reason.lower()
 
 
+def test_paper_proof_freeze_skips_auto_raise_writes() -> None:
+    from alpaca_bot.domain import Bar
+
+    sup, floor_store = _make_supervisor_with_floor({
+        "PAPER_PROOF_FREEZE": "true",
+        "VOL_RAISE_THRESHOLD": "0.02",
+        "FLOOR_RAISE_STEP": "0.10",
+        "CONFIDENCE_FLOOR": "0.25",
+    })
+    floor_store._rec = _make_floor(
+        floor_value=0.25,
+        watermark=10000.0,
+        manual_baseline=0.25,
+    )
+    closes = [100.0, 103.0, 99.9, 103.1, 99.7, 103.2]
+    bars = [
+        Bar(
+            symbol="SPY",
+            timestamp=datetime(2026, 4, i + 1, tzinfo=timezone.utc),
+            open=c,
+            high=c * 1.01,
+            low=c * 0.99,
+            close=c,
+            volume=1_000_000,
+        )
+        for i, c in enumerate(closes)
+    ]
+
+    sup._check_and_update_floor_triggers(
+        current_equity=9000.0,
+        now=datetime(2026, 5, 8, 14, 30, tzinfo=timezone.utc),
+        daily_bars_for_vol=bars,
+    )
+
+    assert floor_store.upserted == []
+    assert floor_store._rec.floor_value == pytest.approx(0.25)
+
+
 def test_no_record_first_cycle_writes_nothing() -> None:
     """On the very first cycle (no DB record), no write should occur."""
     sup, floor_store = _make_supervisor_with_floor({

@@ -82,6 +82,14 @@ def test_floor_auto_raise_max_age_days_env_override():
     assert settings.floor_auto_raise_max_age_days == 14
 
 
+def test_paper_proof_freeze_defaults_false_and_parses_env():
+    settings = Settings.from_env(_base_env())
+    assert settings.paper_proof_freeze is False
+
+    settings = Settings.from_env(_base_env(PAPER_PROOF_FREEZE="true"))
+    assert settings.paper_proof_freeze is True
+
+
 def test_replay_slippage_bps_default_and_validation():
     settings = Settings.from_env(_base_env())
     assert settings.replay_slippage_bps == 5.0

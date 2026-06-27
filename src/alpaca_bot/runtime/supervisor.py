@@ -1862,6 +1862,9 @@ class RuntimeSupervisor:
         Also updates the equity high-watermark whenever equity improves.
         Only writes to DB when a change is needed (reduces spurious audit events).
         """
+        if self.settings.paper_proof_freeze:
+            return
+
         floor_store = getattr(self.runtime, "confidence_floor_store", None)
         if floor_store is None:
             return
