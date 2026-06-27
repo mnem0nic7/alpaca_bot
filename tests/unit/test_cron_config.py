@@ -78,9 +78,14 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     script = Path("scripts/paper_activity_check.sh").read_text()
 
     assert "PAPER_ACTIVITY_WINDOW_MINUTES" in script
+    assert 'PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
     assert "PAPER_READINESS_AUTO_RESUME=false" in script
     assert "decision_record_count" in script
     assert "entries_disabled" in script
+    assert "blocked_strategy_names" in script
+    assert "strategy_entries_disabled_reasons" in script
+    assert "$PAPER_ACTIVITY_STRATEGY entries blocked" in script
+    assert "PAPER_ACTIVITY_STRATEGY contains unsupported characters" in script
     assert "market_closed" in script
     assert "no supervisor cycles" in script
     assert "no decision cycles" in script
