@@ -63,6 +63,12 @@ def _retry_with_backoff(fn: Callable[[], _T]) -> _T:
     raise last_exc
 
 
+def _asset_field(asset: Any, name: str) -> Any:
+    if isinstance(asset, Mapping):
+        return asset.get(name)
+    return getattr(asset, name, None)
+
+
 class AlpacaCredentialsError(ValueError):
     pass
 
@@ -112,6 +118,8 @@ class TradingClientProtocol(Protocol):
     def get_account(self) -> Any: ...
 
     def get_clock(self) -> Any: ...
+
+    def get_all_assets(self, filter: Any | None = None) -> list[Any]: ...
 
     def get_calendar(self, filters: Any | None = None) -> list[Any]: ...
 
@@ -535,11 +543,39 @@ class AlpacaExecutionAdapter:
 
     def get_fractionable_symbols(self, symbols: Sequence[str]) -> frozenset[str]:
         """Return the subset of symbols that Alpaca supports for fractional trading."""
+        requested = tuple(dict.fromkeys(str(symbol).upper() for symbol in symbols))
+        bulk_lookup = getattr(self._trading, "get_all_assets", None)
+        if bulk_lookup is not None:
+            try:
+                try:
+                    from alpaca.trading.enums import AssetClass, AssetStatus
+                    from alpaca.trading.requests import GetAssetsRequest
+                except ModuleNotFoundError:
+                    asset_filter = {"status": "active", "asset_class": "us_equity"}
+                else:
+                    asset_filter = GetAssetsRequest(
+                        status=AssetStatus.ACTIVE,
+                        asset_class=AssetClass.US_EQUITY,
+                    )
+                raw_assets = _retry_with_backoff(lambda: bulk_lookup(filter=asset_filter))
+                fractionable = set()
+                for asset in raw_assets:
+                    symbol = str(_asset_field(asset, "symbol") or "").upper()
+                    if symbol in requested and bool(_asset_field(asset, "fractionable")):
+                        fractionable.add(symbol)
+                return frozenset(symbol for symbol in requested if symbol in fractionable)
+            except Exception as exc:
+                _logger.warning(
+                    "get_fractionable_symbols: bulk lookup failed; falling back to "
+                    "per-symbol checks: %s",
+                    exc,
+                )
+
         result = set()
-        for symbol in symbols:
+        for symbol in requested:
             try:
                 asset = _retry_with_backoff(lambda s=symbol: self._trading.get_asset(s))
-                if asset.fractionable:
+                if _asset_field(asset, "fractionable"):
                     result.add(symbol)
             except Exception as exc:
                 _logger.warning("get_fractionable_symbols: skipping %s: %s", symbol, exc)

@@ -58,11 +58,19 @@ class AccountStub:
     trading_blocked: bool
 
 
+@dataclass
+class AssetStub:
+    symbol: str
+    fractionable: bool
+
+
 class TradingClientStub:
     def __init__(self) -> None:
         self.init_args: tuple[str, str, bool] | None = None
         self.calendar_filters: object | None = None
         self.order_filter: object | None = None
+        self.asset_filter: object | None = None
+        self.asset_calls: list[str] = []
         self.clock = ClockStub(
             timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
             is_open=True,
@@ -99,6 +107,11 @@ class TradingClientStub:
             buying_power="97500.50",
             trading_blocked=False,
         )
+        self.assets = [
+            AssetStub(symbol="AAPL", fractionable=True),
+            AssetStub(symbol="MSFT", fractionable=False),
+            AssetStub(symbol="SPY", fractionable=True),
+        ]
 
     def get_clock(self) -> ClockStub:
         return self.clock
@@ -125,6 +138,27 @@ class TradingClientStub:
 
     def get_account(self) -> AccountStub:
         return self.account
+
+    def get_all_assets(self, filter: object | None = None) -> list[AssetStub]:
+        if hasattr(filter, "status") and hasattr(filter, "asset_class"):
+            self.asset_filter = {
+                "status": filter.status.value if hasattr(filter.status, "value") else filter.status,
+                "asset_class": (
+                    filter.asset_class.value
+                    if hasattr(filter.asset_class, "value")
+                    else filter.asset_class
+                ),
+            }
+        else:
+            self.asset_filter = filter
+        return self.assets
+
+    def get_asset(self, symbol: str) -> AssetStub:
+        self.asset_calls.append(symbol)
+        for asset in self.assets:
+            if asset.symbol == symbol:
+                return asset
+        raise ValueError(f"missing asset {symbol}")
 
 
 def make_settings(**overrides: str) -> Settings:
@@ -313,6 +347,38 @@ def test_execution_adapter_exposes_account_snapshot() -> None:
     assert account.equity == 100000.0
     assert account.buying_power == 97500.5
     assert account.trading_blocked is False
+
+
+def test_get_fractionable_symbols_uses_bulk_asset_lookup() -> None:
+    trading_client = TradingClientStub()
+    trading_client.assets = [
+        AssetStub(symbol="AAPL", fractionable=True),
+        AssetStub(symbol="MSFT", fractionable=False),
+        AssetStub(symbol="TSLA", fractionable=True),
+    ]
+    broker = AlpacaExecutionAdapter(trading_client)
+
+    fractionable = broker.get_fractionable_symbols(["AAPL", "MSFT", "CLOV"])
+
+    assert fractionable == frozenset({"AAPL"})
+    assert trading_client.asset_filter == {
+        "status": "active",
+        "asset_class": "us_equity",
+    }
+    assert trading_client.asset_calls == []
+
+
+def test_get_fractionable_symbols_falls_back_to_per_symbol_lookup() -> None:
+    class PerSymbolTradingClient(TradingClientStub):
+        get_all_assets = None
+
+    trading_client = PerSymbolTradingClient()
+    broker = AlpacaExecutionAdapter(trading_client)
+
+    fractionable = broker.get_fractionable_symbols(["AAPL", "MSFT", "MISSING"])
+
+    assert fractionable == frozenset({"AAPL"})
+    assert trading_client.asset_calls == ["AAPL", "MSFT", "MISSING"]
 
 
 # ---------------------------------------------------------------------------
