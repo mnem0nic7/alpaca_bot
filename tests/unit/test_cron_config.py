@@ -63,6 +63,9 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "-e AUDIT_EXIT_CODE" in script
     assert "-e AUDIT_OUTPUT_TAIL" in script
     assert 'output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"' in script
+    assert 'paper readiness check skipped' in script
+    assert 'paper activity check skipped' in script
+    assert 'paper activity skipped:' in script
     assert 'status="skipped"' in script
     assert '43)' in script
     assert 'status="pending"' in script

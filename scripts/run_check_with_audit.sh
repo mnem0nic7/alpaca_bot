@@ -39,7 +39,7 @@ rc=$?
 status="failed"
 case "$rc" in
   0)
-    if grep -qi "skipped" "$output_file"; then
+    if grep -Eqi "^(paper readiness check skipped|paper activity check skipped|paper activity skipped:)" "$output_file"; then
       status="skipped"
     else
       status="passed"
