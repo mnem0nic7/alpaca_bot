@@ -3,6 +3,7 @@ from pathlib import Path
 
 def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     cron_text = Path("deploy/cron.d/alpaca-bot").read_text()
+    install_cron = Path("scripts/install_cron.sh").read_text()
 
     readiness = "20 13 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-readiness.lock"
     readiness_retry = "55 13 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-readiness.lock"
@@ -33,6 +34,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "/var/log/alpaca-bot-paper-activity.log" in cron_text
     assert "scripts/paper_profit_probe.sh" in cron_text
     assert "/var/log/alpaca-bot-profit-probe.log" in cron_text
+    assert 'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"' in install_cron
+    assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" /etc/cron.d/alpaca-bot' in install_cron
 
 
 def test_paper_readiness_auto_resume_is_guarded() -> None:
