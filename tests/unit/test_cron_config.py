@@ -27,20 +27,50 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(session_guard) < cron_text.index(profit_probe)
     assert cron_text.index(profit_probe) < cron_text.index(nightly)
     assert cron_text.count("scripts/run_if_ny_time.sh") == 7
+    assert cron_text.count("scripts/run_check_with_audit.sh") == 6
     assert "alpaca-bot-premarket" not in cron_text
     assert "scripts/paper_readiness_check.sh" in cron_text
     assert cron_text.count("scripts/paper_readiness_check.sh") == 2
+    assert "run_check_with_audit.sh paper_readiness" in cron_text
     assert "/var/log/alpaca-bot-paper-readiness.log" in cron_text
     assert "scripts/paper_activity_check.sh" in cron_text
     assert cron_text.count("scripts/paper_activity_check.sh") == 2
+    assert "run_check_with_audit.sh paper_activity" in cron_text
     assert "/var/log/alpaca-bot-paper-activity.log" in cron_text
     assert "scripts/paper_profit_probe.sh" in cron_text
+    assert "run_check_with_audit.sh paper_profit_probe" in cron_text
     assert "/var/log/alpaca-bot-profit-probe.log" in cron_text
+    assert "run_check_with_audit.sh session_guard" in cron_text
     assert 'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"' in install_cron
     assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" /etc/cron.d/alpaca-bot' in install_cron
     assert "Runs weekdays on New York wall time" in install_cron
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
     assert 'exec "$@"' in run_if_ny_time
+
+
+def test_run_check_with_audit_records_scheduled_check_result() -> None:
+    script_path = Path("scripts/run_check_with_audit.sh")
+    script = script_path.read_text()
+
+    assert script_path.stat().st_mode & 0o111
+    assert "scheduled_check_completed" in script
+    assert 'AUDIT_CHECK_NAME="$CHECK_NAME"' in script
+    assert 'AUDIT_STATUS="$status"' in script
+    assert 'AUDIT_EXIT_CODE="$rc"' in script
+    assert 'AUDIT_OUTPUT_TAIL="$output_tail"' in script
+    assert "-e AUDIT_CHECK_NAME" in script
+    assert "-e AUDIT_STATUS" in script
+    assert "-e AUDIT_EXIT_CODE" in script
+    assert "-e AUDIT_OUTPUT_TAIL" in script
+    assert 'output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"' in script
+    assert 'status="skipped"' in script
+    assert 'tee "$output_file"' in script
+    assert 'tee -a "$output_file" >&2' in script
+    assert 'docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm' in script
+    assert "AuditEventStore(conn).append" in script
+    assert '"trading_mode": settings.trading_mode.value' in script
+    assert '"strategy_version": settings.strategy_version' in script
+    assert 'exit "$rc"' in script
 
 
 def test_paper_readiness_auto_resume_is_guarded() -> None:
