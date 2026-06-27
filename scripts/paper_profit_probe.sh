@@ -6,6 +6,7 @@ PROFIT_PROBE_STRATEGY="${PROFIT_PROBE_STRATEGY:-bull_flag}"
 PROFIT_PROBE_MIN_TRADES="${PROFIT_PROBE_MIN_TRADES:-10}"
 PROFIT_PROBE_MIN_PNL="${PROFIT_PROBE_MIN_PNL:-0.01}"
 PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"
+PROFIT_PROBE_FAIL_ON_DIAGNOSTICS="${PROFIT_PROBE_FAIL_ON_DIAGNOSTICS:-true}"
 
 cd "$(dirname "$0")/.."
 
@@ -20,6 +21,14 @@ source "$ENV_FILE"
 set +a
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
+
+case "${PROFIT_PROBE_FAIL_ON_DIAGNOSTICS,,}" in
+  true|false) ;;
+  *)
+    echo "PROFIT_PROBE_FAIL_ON_DIAGNOSTICS must be true or false" >&2
+    exit 1
+    ;;
+esac
 
 fallback_session_date() {
   local dow
@@ -102,7 +111,7 @@ if [[ "$PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE" ]]; then
   exit 43
 fi
 
-"${compose[@]}" run -T --rm \
+session_eval_args=(
   --entrypoint alpaca-bot-session-eval admin \
   --start-date "$PROFIT_PROBE_START_DATE" \
   --end-date "$PROFIT_PROBE_DATE" \
@@ -113,6 +122,13 @@ fi
   --require-min-trades "$PROFIT_PROBE_MIN_TRADES" \
   --fail-below-pnl "$PROFIT_PROBE_MIN_PNL" \
   --min-trades-for-gate "$PROFIT_PROBE_MIN_TRADES"
+)
+
+if [[ "${PROFIT_PROBE_FAIL_ON_DIAGNOSTICS,,}" == "true" ]]; then
+  session_eval_args+=(--fail-on-diagnostics)
+fi
+
+"${compose[@]}" run -T --rm "${session_eval_args[@]}"
 rc=$?
 
 broker_flat_failed=false

@@ -317,6 +317,10 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "broker_flat_failed=true\n  rc=44" in session_guard
     assert "broker_flat_failed=true\n  rc=44" in profit_probe
     assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"' in profit_probe
+    assert 'PROFIT_PROBE_FAIL_ON_DIAGNOSTICS="${PROFIT_PROBE_FAIL_ON_DIAGNOSTICS:-true}"' in profit_probe
+    assert "PROFIT_PROBE_FAIL_ON_DIAGNOSTICS must be true or false" in profit_probe
+    assert "session_eval_args=(" in profit_probe
+    assert "session_eval_args+=(--fail-on-diagnostics)" in profit_probe
     assert "paper profit probe pending: latest completed session" in profit_probe
     assert "scheduled check context: session_date=$PROFIT_PROBE_DATE proof_start=$PROFIT_PROBE_START_DATE" in profit_probe
     assert 'PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE' in profit_probe
