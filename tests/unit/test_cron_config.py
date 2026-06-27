@@ -171,6 +171,8 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "decision_log" in script
     assert "strategy_decision_log_cycles" in script
     assert "strategy_decision_log_records" in script
+    assert "strategy_evidence_records" in script
+    assert "decision_evidence_records" in script
     assert "payload->>'strategy_name' = :'paper_activity_strategy'" in script
     assert "strategy_decision_cycles" in script
     assert "strategy_decision_records" in script
@@ -187,7 +189,7 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "no supervisor cycles" in script
     assert "no decision cycles" in script
     assert "no $PAPER_ACTIVITY_STRATEGY decision cycles" in script
-    assert "$PAPER_ACTIVITY_STRATEGY decision_log_records" in script
+    assert "$PAPER_ACTIVITY_STRATEGY decision_evidence_records" in script
 
 
 def test_post_close_checks_fail_on_open_positions() -> None:

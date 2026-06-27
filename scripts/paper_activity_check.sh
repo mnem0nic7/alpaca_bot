@@ -188,6 +188,18 @@ IFS='|' read -r supervisor_cycles disabled_cycles decision_cycles decision_recor
   strategy_decision_log_cycles strategy_decision_log_records latest_decision_log \
   active_strategy_names disabled_reasons strategy_disabled_reasons <<< "$stats"
 
+strategy_evidence_cycles="${strategy_decision_cycles:-0}"
+if [[ "${strategy_decision_log_cycles:-0}" -gt "$strategy_evidence_cycles" ]]; then
+  strategy_evidence_cycles="$strategy_decision_log_cycles"
+fi
+
+strategy_evidence_records="${strategy_decision_records:-0}"
+strategy_evidence_source="audit"
+if [[ "${strategy_decision_log_records:-0}" -gt "$strategy_evidence_records" ]]; then
+  strategy_evidence_records="$strategy_decision_log_records"
+  strategy_evidence_source="decision_log"
+fi
+
 if [[ "${supervisor_cycles:-0}" -eq 0 && "${market_closed_idles:-0}" -gt 0 ]]; then
   if market_clock="$(load_market_clock_status)"; then
     IFS='|' read -r market_clock_status market_clock_detail <<< "$market_clock"
@@ -228,19 +240,19 @@ if [[ "${strategy_blocked_cycles:-0}" -gt 0 ]]; then
   exit 1
 fi
 
-if [[ "${decision_cycles:-0}" -eq 0 && "${strategy_decision_log_cycles:-0}" -eq 0 ]]; then
+if [[ "${decision_cycles:-0}" -eq 0 && "${strategy_evidence_cycles:-0}" -eq 0 ]]; then
   echo "paper activity failed: no decision cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes" >&2
   exit 1
 fi
 
-if [[ "${strategy_decision_cycles:-0}" -eq 0 && "${strategy_decision_log_cycles:-0}" -eq 0 ]]; then
+if [[ "${strategy_evidence_cycles:-0}" -eq 0 ]]; then
   echo "paper activity failed: no $PAPER_ACTIVITY_STRATEGY decision cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes" >&2
   exit 1
 fi
 
-if [[ "${strategy_decision_log_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" ]]; then
-  echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY decision_log_records=$strategy_decision_log_records below $PAPER_ACTIVITY_MIN_DECISION_RECORDS" >&2
+if [[ "${strategy_evidence_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" ]]; then
+  echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY decision_evidence_records=$strategy_evidence_records below $PAPER_ACTIVITY_MIN_DECISION_RECORDS audit_records=${strategy_decision_records:-0} decision_log_records=${strategy_decision_log_records:-0}" >&2
   exit 1
 fi
 
-echo "paper activity ok: supervisor_cycles=$supervisor_cycles decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
+echo "paper activity ok: supervisor_cycles=$supervisor_cycles decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
