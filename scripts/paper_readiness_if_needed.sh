@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
+PAPER_READINESS_CHECK_SCRIPT="${PAPER_READINESS_CHECK_SCRIPT:-./scripts/paper_readiness_check.sh}"
 
 cd "$(dirname "$0")/.."
 
@@ -57,7 +58,9 @@ try:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT payload->>'status'
+            SELECT
+              payload->>'status',
+              to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
             FROM audit_events
             WHERE event_type = 'scheduled_check_completed'
               AND payload->>'check_name' = 'paper_readiness'
@@ -74,10 +77,24 @@ try:
             ),
         )
         row = cur.fetchone()
+        cur.execute(
+            """
+            SELECT to_char(MAX(created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+            FROM audit_events
+            WHERE event_type = 'supervisor_started'
+            """
+        )
+        supervisor_row = cur.fetchone()
 finally:
     conn.close()
 
-print(f"paper_readiness_latest_status={session_date.isoformat()}|{row[0] if row else ''}")
+status = row[0] if row else ""
+readiness_created_at = row[1] if row else ""
+supervisor_started_at = supervisor_row[0] if supervisor_row and supervisor_row[0] else ""
+print(
+    "paper_readiness_latest_status="
+    f"{session_date.isoformat()}|{status}|{readiness_created_at}|{supervisor_started_at}"
+)
 PY
 )"
 latest_readiness="$(
@@ -88,13 +105,26 @@ latest_readiness="$(
 
 session_date=""
 latest_status=""
-IFS='|' read -r session_date latest_status <<< "$latest_readiness"
+readiness_created_at=""
+supervisor_started_at=""
+IFS='|' read -r session_date latest_status readiness_created_at supervisor_started_at <<< "$latest_readiness"
 
-if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "passed" ]]; then
+readiness_is_current=true
+if [[ -n "$readiness_created_at" && -n "$supervisor_started_at" && "$readiness_created_at" < "$supervisor_started_at" ]]; then
+  readiness_is_current=false
+fi
+
+if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "passed" && "$readiness_is_current" == "true" ]]; then
   proof_start="${PROFIT_PROBE_START_DATE:-2026-06-29}"
   echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=already_passed"
   echo "paper readiness already passed for session $session_date; final retry not rerun"
   exit 0
 fi
 
-exec ./scripts/paper_readiness_check.sh "$ENV_FILE"
+if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "passed" && "$readiness_is_current" == "false" ]]; then
+  proof_start="${PROFIT_PROBE_START_DATE:-2026-06-29}"
+  echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=stale_after_supervisor_start"
+  echo "paper readiness prior pass is older than latest supervisor start; rerunning final check"
+fi
+
+exec "$PAPER_READINESS_CHECK_SCRIPT" "$ENV_FILE"

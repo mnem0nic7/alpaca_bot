@@ -106,7 +106,7 @@ def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -
     fake_docker = fake_bin / "docker"
     fake_docker.write_text(
         "#!/usr/bin/env bash\n"
-        "printf 'paper_readiness_latest_status=2026-06-29|passed\\n'\n"
+        "printf 'paper_readiness_latest_status=2026-06-29|passed|2026-06-27T18:07:44.000000Z|2026-06-27T18:07:43.000000Z\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -125,6 +125,50 @@ def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -
     ) in result.stdout
     assert "paper readiness already passed for session 2026-06-29" in result.stdout
     assert "paper readiness check skipped" not in result.stdout
+
+
+def test_paper_readiness_final_retry_reruns_after_supervisor_restart(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_latest_status=2026-06-29|passed|2026-06-27T17:25:41.000000Z|2026-06-27T18:07:43.000000Z\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+    fake_readiness = tmp_path / "paper_readiness_check.sh"
+    fake_readiness.write_text("#!/usr/bin/env bash\nprintf 'fresh readiness ran\\n'\n")
+    fake_readiness.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_readiness_if_needed.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_READINESS_CHECK_SCRIPT": str(fake_readiness),
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 reason=stale_after_supervisor_start"
+    ) in result.stdout
+    assert "paper readiness prior pass is older than latest supervisor start" in result.stdout
+    assert "fresh readiness ran" in result.stdout
+    assert "paper readiness already passed for session 2026-06-29" not in result.stdout
 
 
 def test_paper_readiness_lock_skip_does_not_block_after_pass(tmp_path: Path) -> None:
@@ -147,7 +191,7 @@ def test_paper_readiness_lock_skip_does_not_block_after_pass(tmp_path: Path) -> 
     fake_docker.write_text(
         "#!/usr/bin/env bash\n"
         "printf 'paper_readiness_session_date=2026-07-06\\n'\n"
-        "printf 'paper_readiness_latest_status=passed\\n'\n"
+        "printf 'paper_readiness_latest_status=passed|2026-06-27T18:07:44.000000Z|2026-06-27T18:07:43.000000Z\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -171,6 +215,51 @@ def test_paper_readiness_lock_skip_does_not_block_after_pass(tmp_path: Path) -> 
     ) in result.stdout
     assert "paper readiness lock busy after prior pass for session 2026-07-06" in result.stdout
     assert "paper readiness check skipped" not in result.stdout
+
+
+def test_paper_readiness_lock_skip_blocks_stale_pass_after_restart(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-07-04\\n'\n")
+    fake_date.chmod(0o755)
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_session_date=2026-07-06\\n'\n"
+        "printf 'paper_readiness_latest_status=passed|2026-06-27T17:25:41.000000Z|2026-06-27T18:07:43.000000Z\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_readiness",
+            str(tmp_path / "readiness.lock"),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 48
+    assert (
+        "scheduled check context: session_date=2026-07-06 "
+        "proof_start=2026-06-29 reason=lock_busy_stale_pass"
+    ) in result.stdout
+    assert "paper readiness prior pass is older than latest supervisor start" in result.stderr
 
 
 def test_paper_readiness_lock_skip_blocks_without_pass(tmp_path: Path) -> None:
