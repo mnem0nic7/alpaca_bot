@@ -30,11 +30,37 @@ Chronological 80/20 split:
 | candidate: `RELATIVE_VOLUME_THRESHOLD=3.0`, `MAX_OPEN_POSITIONS=1` | IS | 31 | 80.6% | 2.39 | 508.84 | 16.4143 | [-3.0968, 33.5473] | 0.0475 | no-evidence |
 | candidate: `RELATIVE_VOLUME_THRESHOLD=3.0`, `MAX_OPEN_POSITIONS=1` | OOS | 12 | 91.7% | 5.50 | 238.37 | 19.8644 | [0.6821, 39.1871] | 0.0215 | positive-edge |
 
+Full nightly scenario validation:
+
+After deployment, the stricter posture was also checked against the full
+nightly 252-day scenario set using floor-sized paper equity. Live paper has no
+closed `bull_flag` history yet, so the supervisor sizes entries at the
+confidence floor: `$68,991.18 * 0.25 = $17,247.79`.
+
+Command:
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+alpaca-bot-backtest portfolio-audit \
+  --scenario-dir /var/lib/alpaca-bot/nightly/scenarios \
+  --strategy bull_flag \
+  --slippage-bps 2 \
+  --max-open-positions 1 \
+  --starting-equity 17247.795
+```
+
+Result:
+
+| scenarios | trades | win rate | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(edge>0) | verdict |
+|---:|---:|---:|---:|---:|---:|---|---:|---|
+| 999 | 326 | 73.6% | 1.71 | 919.53 | 2.8206 | [1.0461, 4.4724] | 0.0000 | positive-edge |
+
 Decision:
 
 Use `RELATIVE_VOLUME_THRESHOLD=3.0` and `MAX_OPEN_POSITIONS=1` for the current
 paper proof. The stricter posture gives up turnover, but recent OOS evidence is
-better: the current K=2 posture loses money OOS on this sample, while the
-stricter K=1 posture remains positive-edge after 2 bps slippage. This change is
+better: the current K=2 posture loses money OOS on the recent sample, while the
+stricter K=1 posture remains positive-edge after 2 bps slippage. The full
+999-symbol, floor-sized validation also remains positive-edge. This change is
 scoped to paper proof readiness and should be revisited after closed paper
 trades accumulate.
