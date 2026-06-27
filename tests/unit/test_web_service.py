@@ -216,7 +216,7 @@ def test_load_dashboard_snapshot_loads_recent_scheduled_checks() -> None:
     assert snapshot.scheduled_checks == [check_event]
     assert calls == [{
         "event_types": ["scheduled_check_completed"],
-        "limit": 8,
+        "limit": 20,
         "trading_mode": make_settings().trading_mode,
         "strategy_version": "v1-breakout",
     }]

@@ -240,7 +240,7 @@ def load_dashboard_snapshot(
     scheduled_checks = (
         scheduled_check_loader(
             event_types=["scheduled_check_completed"],
-            limit=8,
+            limit=20,
             trading_mode=settings.trading_mode,
             strategy_version=settings.strategy_version,
         )
