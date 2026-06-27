@@ -8,12 +8,14 @@ from alpaca_bot.storage.repositories import DecisionLogStore
 class _FakeCursor:
     """Cursor that returns predefined rows from fetchall() and records SQL."""
 
-    def __init__(self, rows: list[tuple], log: list[str]) -> None:
+    def __init__(self, rows: list[tuple], log: list[str], params_log: list[tuple]) -> None:
         self._rows = rows
         self._log = log
+        self._params_log = params_log
 
     def execute(self, sql: str, params) -> None:
         self._log.append(sql)
+        self._params_log.append(tuple(params))
 
     def fetchall(self) -> list[tuple]:
         return self._rows
@@ -23,9 +25,10 @@ class _FakeConn:
     def __init__(self, rows: list[tuple]) -> None:
         self._rows = rows
         self.executed_sql: list[str] = []
+        self.executed_params: list[tuple] = []
 
     def cursor(self) -> _FakeCursor:
-        return _FakeCursor(self._rows, self.executed_sql)
+        return _FakeCursor(self._rows, self.executed_sql, self.executed_params)
 
 
 def _make_rows() -> list[tuple]:
@@ -87,6 +90,21 @@ def test_funnel_by_strategy_empty_result() -> None:
     assert result == []
 
 
+def test_funnel_by_strategy_can_filter_to_one_strategy() -> None:
+    conn = _FakeConn(_make_rows())
+    store = DecisionLogStore(conn)
+
+    store.funnel_by_strategy(
+        start_date=date(2026, 5, 1),
+        end_date=date(2026, 5, 7),
+        trading_mode="paper",
+        strategy_name="bull_flag",
+    )
+
+    assert "strategy_name = %s" in conn.executed_sql[0]
+    assert conn.executed_params[0][-2:] == ("bull_flag", "bull_flag")
+
+
 def test_funnel_cli_prints_header_and_rows(monkeypatch, capsys) -> None:
     """main() prints strategy funnel table to stdout."""
     from types import SimpleNamespace
@@ -130,4 +148,39 @@ def test_funnel_cli_prints_header_and_rows(monkeypatch, capsys) -> None:
     assert "Strategy" in output  # header
     assert "100" in output        # evaluated count
     assert "15" in output         # accepted count
+    assert exit_code == 0
+
+
+def test_funnel_cli_passes_strategy_filter(monkeypatch, capsys) -> None:
+    """--strategy is forwarded to DecisionLogStore.funnel_by_strategy()."""
+    from types import SimpleNamespace
+    import alpaca_bot.admin.funnel_report_cli as cli_module
+
+    captured_kwargs = {}
+
+    class _FakeSettings:
+        database_url = "postgresql://x:x@localhost/x"
+        market_timezone = SimpleNamespace(key="America/New_York")
+
+    class _FakeStore:
+        def __init__(self, conn):
+            pass
+
+        def funnel_by_strategy(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return []
+
+    monkeypatch.setattr(cli_module, "Settings", SimpleNamespace(from_env=lambda: _FakeSettings()))
+    monkeypatch.setattr(cli_module, "connect_postgres", lambda url: None)
+    monkeypatch.setattr(cli_module, "DecisionLogStore", _FakeStore)
+
+    exit_code = cli_module.main([
+        "--start", "2026-05-01",
+        "--end", "2026-05-07",
+        "--strategy", "bull_flag",
+    ])
+
+    output = capsys.readouterr().out
+    assert captured_kwargs["strategy_name"] == "bull_flag"
+    assert "strategy=bull_flag" in output
     assert exit_code == 0

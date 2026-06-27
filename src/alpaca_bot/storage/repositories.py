@@ -2450,6 +2450,7 @@ class DecisionLogStore:
         end_date: date,
         trading_mode: str,
         market_timezone: str = "America/New_York",
+        strategy_name: str | None = None,
     ) -> list[dict]:
         """Per-strategy funnel counts for a date range.
 
@@ -2517,11 +2518,19 @@ class DecisionLogStore:
                 FROM decision_log
                 WHERE DATE(cycle_at AT TIME ZONE %s) BETWEEN %s AND %s
                   AND trading_mode = %s
+                  AND (%s IS NULL OR strategy_name = %s)
             ) weighted
             GROUP BY strategy_name
             ORDER BY strategy_name
             """,
-            (market_timezone, start_date, end_date, trading_mode),
+            (
+                market_timezone,
+                start_date,
+                end_date,
+                trading_mode,
+                strategy_name,
+                strategy_name,
+            ),
         )
         return [dict(zip(_cols, row)) for row in rows]
 

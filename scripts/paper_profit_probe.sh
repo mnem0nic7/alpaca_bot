@@ -43,6 +43,7 @@ if [[ "$rc" -eq 43 ]]; then
     --entrypoint alpaca-bot-funnel-report admin \
     --start "$PROFIT_PROBE_START_DATE" \
     --end "$PROFIT_PROBE_DATE" \
+    --strategy "$PROFIT_PROBE_STRATEGY" \
     --mode "${TRADING_MODE:-paper}"; then
     echo "paper profit probe warning: funnel diagnostic failed" >&2
   fi

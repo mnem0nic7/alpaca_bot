@@ -107,6 +107,7 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "close-only" in profit_probe
     assert '"$rc" -eq 43' in profit_probe
     assert "alpaca-bot-funnel-report" in profit_probe
+    assert '--strategy "$PROFIT_PROBE_STRATEGY"' in profit_probe
     assert "paper profit probe warning: funnel diagnostic failed" in profit_probe
     assert "paper profit probe failed: could not apply close-only guard" in profit_probe
     assert "exit 45" in profit_probe

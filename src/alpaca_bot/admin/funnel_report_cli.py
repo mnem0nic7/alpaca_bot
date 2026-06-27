@@ -23,6 +23,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="End date (default: today; requires --start)")
     parser.add_argument("--mode", default="paper", choices=["paper", "live"],
                         help="Trading mode filter (default: paper)")
+    parser.add_argument("--strategy", metavar="NAME",
+                        help="Limit output to a single strategy name")
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
 
     end_date = date.fromisoformat(args.end) if args.end else date.today()
@@ -40,24 +42,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             end_date=end_date,
             trading_mode=args.mode,
             market_timezone=settings.market_timezone.key,
+            strategy_name=args.strategy,
         )
     finally:
         close_fn = getattr(conn, "close", None)
         if callable(close_fn):
             close_fn()
 
-    _print_table(rows, start_date, end_date)
+    _print_table(rows, start_date, end_date, strategy_name=args.strategy)
     return 0
 
 
-def _print_table(rows: list[dict], start_date: date, end_date: date) -> None:
+def _print_table(
+    rows: list[dict],
+    start_date: date,
+    end_date: date,
+    *,
+    strategy_name: str | None = None,
+) -> None:
     header = f" Signal Funnel  {start_date} → {end_date}"
+    if strategy_name:
+        header = f"{header}  strategy={strategy_name}"
     print()
     print(header)
     print(" " + "─" * (len(header) - 1))
 
     if not rows:
-        print(" (no decision_log rows in period)")
+        suffix = f" for strategy={strategy_name}" if strategy_name else ""
+        print(f" (no decision_log rows in period{suffix})")
         print()
         return
 
