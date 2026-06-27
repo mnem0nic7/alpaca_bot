@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, timezone
 from importlib import import_module
 from types import SimpleNamespace
@@ -8,10 +9,13 @@ from alpaca_bot.config import TradingMode
 from alpaca_bot.storage.models import OptionOrderRecord
 
 
-def _settings():
+def _settings(*, enable_options_trading: bool = True):
     from tests.unit.helpers import _base_env
     from alpaca_bot.config import Settings
-    return Settings.from_env(_base_env())
+    return replace(
+        Settings.from_env(_base_env()),
+        enable_options_trading=enable_options_trading,
+    )
 
 
 def _short_put(timestamp: datetime) -> OptionOrderRecord:
@@ -72,10 +76,15 @@ class _FakeConn:
     def rollback(self): pass
 
 
-def _make_supervisor(option_order_store, option_broker=None):
+def _make_supervisor(
+    option_order_store,
+    option_broker=None,
+    *,
+    enable_options_trading: bool = True,
+):
     module = import_module("alpaca_bot.runtime.supervisor")
     RuntimeSupervisor = module.RuntimeSupervisor
-    settings = _settings()
+    settings = _settings(enable_options_trading=enable_options_trading)
 
     class _FakeRuntime:
         connection = _FakeConn()
@@ -135,7 +144,7 @@ def _make_supervisor(option_order_store, option_broker=None):
             canceled_stop_count=0,
         ),
         order_dispatcher=lambda **k: {"submitted_count": 0},
-        option_broker=_broker,
+        option_broker=_broker if enable_options_trading else None,
     )
 
 
@@ -170,3 +179,13 @@ def test_eod_flatten_creates_close_for_side_buy_positions():
     assert len(pending_submit) == 1
     assert pending_submit[0].side == "sell"
     assert pending_submit[0].occ_symbol == "AAPL240701C00100000"
+
+
+def test_eod_flatten_skips_option_work_when_options_disabled():
+    entry_ts = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
+    store = _FakeOptionOrderStore([_long_call(entry_ts)])
+    supervisor = _make_supervisor(store, enable_options_trading=False)
+
+    supervisor.run_cycle_once(now=lambda: _PAST_FLATTEN)
+
+    assert store.saved == []

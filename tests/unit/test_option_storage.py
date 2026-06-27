@@ -11,8 +11,10 @@ from alpaca_bot.storage.db import ConnectionProtocol
 
 class _FakeConnection:
     def __init__(self):
-        self._rows: list[dict] = []
+        self._rows: list[tuple] = []
         self.committed = False
+        self.last_query: str = ""
+        self.last_params: tuple = ()
 
     def commit(self) -> None:
         self.committed = True
@@ -21,12 +23,12 @@ class _FakeConnection:
         pass
 
     def cursor(self):
-        return _FakeCursor(self._rows)
+        return _FakeCursor(self)
 
 
 class _FakeCursor:
-    def __init__(self, rows):
-        self._rows = rows
+    def __init__(self, conn: _FakeConnection):
+        self._conn = conn
         self.lastrowid = None
         self._query = None
         self._params = None
@@ -34,12 +36,14 @@ class _FakeCursor:
     def execute(self, query, params=None):
         self._query = query
         self._params = params
+        self._conn.last_query = query
+        self._conn.last_params = params or ()
 
     def fetchone(self):
         return None
 
     def fetchall(self):
-        return []
+        return list(self._conn._rows)
 
     def __enter__(self):
         return self
@@ -136,9 +140,35 @@ def test_option_order_repository_list_by_status():
 
 def test_option_order_repository_list_open_option_positions():
     conn = _FakeConnection()
+    conn._rows = [(
+        "option:v1:2024-06-01:AAPL240701C00100000:buy:2024-06-01T14:00:00+00:00",
+        "AAPL240701C00100000",
+        "AAPL",
+        "call",
+        100.0,
+        date(2024, 7, 1),
+        "buy",
+        "filled",
+        1,
+        "paper",
+        "v1",
+        "breakout_calls",
+        3.0,
+        "broker-1",
+        3.1,
+        1,
+        _now(),
+        _now(),
+    )]
     repo = OptionOrderRepository(conn)
     result = repo.list_open_option_positions(
         trading_mode=TradingMode.PAPER,
         strategy_version="v1",
     )
     assert isinstance(result, list)
+    assert result[0].occ_symbol == "AAPL240701C00100000"
+    assert result[0].quantity == 1
+    assert "SUM(CASE WHEN side = 'buy'" in conn.last_query
+    assert "HAVING SUM" in conn.last_query
+    assert "DISTINCT ON" in conn.last_query
+    assert conn.last_params == ("paper", "v1")

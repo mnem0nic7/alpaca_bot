@@ -223,6 +223,45 @@ fi
 
 echo "paper readiness confidence floor ok: floor=$confidence_floor_value"
 
+open_option_positions="$("${compose[@]}" exec -T postgres psql \
+  -U "$POSTGRES_USER" \
+  -d "$POSTGRES_DB" \
+  -tA \
+  -v strategy_version="$STRATEGY_VERSION" <<'SQL'
+WITH filled AS (
+  SELECT
+    strategy_name,
+    occ_symbol,
+    COALESCE(filled_quantity, quantity) AS fill_qty,
+    side
+  FROM option_orders
+  WHERE trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+    AND status = 'filled'
+),
+net AS (
+  SELECT
+    strategy_name,
+    occ_symbol,
+    SUM(CASE WHEN side = 'buy' THEN fill_qty ELSE -fill_qty END) AS net_qty
+  FROM filled
+  GROUP BY strategy_name, occ_symbol
+  HAVING SUM(CASE WHEN side = 'buy' THEN fill_qty ELSE -fill_qty END) <> 0
+)
+SELECT COUNT(*)::int FROM net;
+SQL
+)"
+open_option_positions="$(echo "$open_option_positions" | tr -d '[:space:]')"
+
+if [[ "${open_option_positions:-0}" != "0" ]]; then
+  echo \
+    "paper readiness failed: stock-only proof has $open_option_positions net-open option positions" \
+    >&2
+  exit 1
+fi
+
+echo "paper readiness option positions ok: net_open=0"
+
 if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
   status_line="$("${compose[@]}" run -T --rm admin status \
     --mode paper \

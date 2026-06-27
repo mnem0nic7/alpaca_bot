@@ -1083,7 +1083,12 @@ class RuntimeSupervisor:
 
         option_broker = getattr(self, "_option_broker", None)
         option_dispatch_report = None
-        if option_broker is not None and option_order_store is not None and session_type is SessionType.REGULAR:
+        if (
+            self.settings.enable_options_trading
+            and option_broker is not None
+            and option_order_store is not None
+            and session_type is SessionType.REGULAR
+        ):
             option_dispatch_report = dispatch_pending_option_orders(
                 settings=self.settings,
                 runtime=self.runtime,
@@ -1092,7 +1097,11 @@ class RuntimeSupervisor:
 
         # EOD option flatten: create sell records for all open option positions and dispatch.
         option_dispatch_eod_report = None
-        if is_past_flatten_time(timestamp, self.settings) and option_order_store is not None:
+        if (
+            self.settings.enable_options_trading
+            and is_past_flatten_time(timestamp, self.settings)
+            and option_order_store is not None
+        ):
             open_option_positions = option_order_store.list_open_option_positions(
                 trading_mode=self.settings.trading_mode,
                 strategy_version=self.settings.strategy_version,
@@ -2414,4 +2423,3 @@ def _resolve_now(now: Callable[[], datetime] | None) -> datetime:
 
 def _session_date(timestamp: datetime, settings: Settings) -> date:
     return timestamp.astimezone(settings.market_timezone).date()
-

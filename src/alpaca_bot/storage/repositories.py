@@ -2019,11 +2019,71 @@ class OptionOrderRepository:
         trading_mode: TradingMode,
         strategy_version: str,
     ) -> list[OptionOrderRecord]:
-        return self.list_by_status(
-            trading_mode=trading_mode,
-            strategy_version=strategy_version,
-            statuses=["filled"],
+        rows = fetch_all(
+            self._connection,
+            """
+            WITH filled AS (
+                SELECT
+                    client_order_id, occ_symbol, underlying_symbol, option_type,
+                    strike, expiry, side, status, quantity, trading_mode,
+                    strategy_version, strategy_name, limit_price, broker_order_id,
+                    fill_price, filled_quantity, created_at, updated_at,
+                    COALESCE(filled_quantity, quantity) AS fill_qty
+                FROM option_orders
+                WHERE trading_mode = %s
+                  AND strategy_version = %s
+                  AND status = 'filled'
+            ),
+            net AS (
+                SELECT
+                    trading_mode,
+                    strategy_version,
+                    strategy_name,
+                    occ_symbol,
+                    SUM(CASE WHEN side = 'buy' THEN fill_qty ELSE -fill_qty END) AS net_qty
+                FROM filled
+                GROUP BY trading_mode, strategy_version, strategy_name, occ_symbol
+                HAVING SUM(CASE WHEN side = 'buy' THEN fill_qty ELSE -fill_qty END) <> 0
+            )
+            SELECT DISTINCT ON (
+                f.trading_mode, f.strategy_version, f.strategy_name, f.occ_symbol
+            )
+                f.client_order_id,
+                f.occ_symbol,
+                f.underlying_symbol,
+                f.option_type,
+                f.strike,
+                f.expiry,
+                f.side,
+                f.status,
+                ABS(n.net_qty)::int AS quantity,
+                f.trading_mode,
+                f.strategy_version,
+                f.strategy_name,
+                f.limit_price,
+                f.broker_order_id,
+                f.fill_price,
+                ABS(n.net_qty)::int AS filled_quantity,
+                f.created_at,
+                f.updated_at
+            FROM net n
+            JOIN filled f
+              ON f.trading_mode = n.trading_mode
+             AND f.strategy_version = n.strategy_version
+             AND f.strategy_name IS NOT DISTINCT FROM n.strategy_name
+             AND f.occ_symbol = n.occ_symbol
+             AND f.side = CASE WHEN n.net_qty > 0 THEN 'buy' ELSE 'sell' END
+            ORDER BY
+                f.trading_mode,
+                f.strategy_version,
+                f.strategy_name,
+                f.occ_symbol,
+                f.updated_at DESC,
+                f.client_order_id DESC
+            """,
+            (trading_mode.value, strategy_version),
         )
+        return [_row_to_option_order_record(row) for row in rows]
 
     def list_trade_pnl_by_strategy(
         self,

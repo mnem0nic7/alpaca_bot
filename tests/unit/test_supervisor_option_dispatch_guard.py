@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from importlib import import_module
 from types import SimpleNamespace
@@ -9,17 +10,20 @@ from tests.unit.helpers import _base_env
 from alpaca_bot.config import Settings
 
 
-def _make_settings() -> Settings:
-    return Settings.from_env(_base_env())
+def _make_settings(*, enable_options_trading: bool = True) -> Settings:
+    return replace(
+        Settings.from_env(_base_env()),
+        enable_options_trading=enable_options_trading,
+    )
 
 
-def _make_supervisor_with_option_broker():
+def _make_supervisor_with_option_broker(*, enable_options_trading: bool = True):
     """Build a supervisor wired with a fake _option_broker and option_order_store.
     Monkeypatching of dispatch_pending_option_orders must be done by the caller
     after construction using monkeypatch."""
     module = import_module("alpaca_bot.runtime.supervisor")
     RuntimeSupervisor = module.RuntimeSupervisor
-    settings = _make_settings()
+    settings = _make_settings(enable_options_trading=enable_options_trading)
 
     class _FakeConn:
         def commit(self): pass
@@ -136,3 +140,25 @@ def test_option_dispatch_called_during_regular_session(monkeypatch):
     assert len(dispatch_calls) >= 1, (
         "dispatch_pending_option_orders must be called once per cycle during REGULAR session"
     )
+
+
+def test_option_dispatch_skipped_when_options_disabled(monkeypatch):
+    dispatch_calls: list = []
+    supervisor, module = _make_supervisor_with_option_broker(enable_options_trading=False)
+
+    monkeypatch.setattr(
+        module, "recover_startup_state",
+        lambda **kw: module.StartupRecoveryReport(
+            mismatches=(), synced_position_count=0, synced_order_count=0,
+            cleared_position_count=0, cleared_order_count=0,
+        ),
+    )
+    monkeypatch.setattr(
+        module, "dispatch_pending_option_orders",
+        lambda **kw: dispatch_calls.append(kw),
+    )
+
+    ts = datetime(2026, 5, 27, 14, 0, tzinfo=timezone.utc)
+    supervisor.run_cycle_once(now=lambda: ts, session_type=SessionType.REGULAR)
+
+    assert dispatch_calls == []
