@@ -537,23 +537,32 @@ class _FakeOrderStore:
 
 
 class _FakeAuditStore:
+    def __init__(self):
+        self.events = []
+
     def append(self, event, *, commit=True):
-        pass
+        self.events.append(event)
 
 
 class _FakeConnection:
+    def __init__(self):
+        self.commit_count = 0
+        self.rollback_count = 0
+
     def commit(self):
-        pass
+        self.commit_count += 1
 
     def rollback(self):
-        pass
+        self.rollback_count += 1
 
 
 def _make_runtime(*, decision_log_store=None):
+    audit_event_store = _FakeAuditStore()
+    connection = _FakeConnection()
     return SimpleNamespace(
         order_store=_FakeOrderStore(),
-        audit_event_store=_FakeAuditStore(),
-        connection=_FakeConnection(),
+        audit_event_store=audit_event_store,
+        connection=connection,
         store_lock=threading.Lock(),
         decision_log_store=decision_log_store,
     )
@@ -593,6 +602,12 @@ def test_run_cycle_calls_bulk_insert_when_store_present() -> None:
     )
 
     assert inserted == records
+    assert runtime.connection.commit_count == 2
+    assert runtime.connection.rollback_count == 0
+    cycle_event = runtime.audit_event_store.events[-1]
+    assert cycle_event.event_type == "decision_cycle_completed"
+    assert cycle_event.payload["strategy_name"] == "breakout"
+    assert cycle_event.payload["decision_record_count"] == 1
 
 
 def test_run_cycle_skips_bulk_insert_when_no_store() -> None:
@@ -639,6 +654,7 @@ def test_run_cycle_decision_log_failure_does_not_raise(caplog) -> None:
 
     assert result is fake_result
     assert any("decision" in rec.message.lower() for rec in caplog.records)
+    assert runtime.connection.rollback_count == 1
 
 
 # ── RuntimeContext has decision_log_store field ──────────────────────────────

@@ -163,8 +163,10 @@ def run_cycle(
                     payload={
                         "trading_mode": settings.trading_mode.value,
                         "strategy_version": settings.strategy_version,
+                        "strategy_name": strategy_name,
                         "intent_count": len(result.intents),
                         "intent_types": [intent.intent_type.value for intent in result.intents],
+                        "decision_record_count": len(result.decision_records),
                         "cycle_timestamp": now.isoformat(),
                         "regime_blocked": getattr(result, "regime_blocked", False),
                         "news_blocked_count": len(getattr(result, "news_blocked_symbols", ())),
@@ -188,7 +190,12 @@ def run_cycle(
         if decision_log_store is not None and result.decision_records:
             try:
                 decision_log_store.bulk_insert(result.decision_records, runtime.connection)
+                runtime.connection.commit()
             except Exception as exc:
+                try:
+                    runtime.connection.rollback()
+                except Exception:
+                    pass
                 logger.warning("decision log write failed: %s", exc)
 
     return result
