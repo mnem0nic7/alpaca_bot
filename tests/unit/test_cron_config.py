@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 
@@ -51,6 +52,12 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in install_cron
     assert "Runs weekdays on New York wall time" in install_cron
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
+    assert "expected HHMM must be a valid 24-hour time" in run_if_ny_time
+    assert "date returned invalid HHMM" in run_if_ny_time
+    assert 'RUN_IF_NY_TIME_GRACE_MINUTES="${RUN_IF_NY_TIME_GRACE_MINUTES:-2}"' in run_if_ny_time
+    assert "RUN_IF_NY_TIME_GRACE_MINUTES must be a non-negative integer" in run_if_ny_time
+    assert "RUN_IF_NY_TIME_GRACE_MINUTES must be at most 10" in run_if_ny_time
+    assert "delay_minutes=$((actual_minutes - expected_minutes))" in run_if_ny_time
     assert 'exec "$@"' in run_if_ny_time
     assert 'EXPECTED_CRON="$ROOT_DIR/deploy/cron.d/alpaca-bot"' in cron_health
     assert 'INSTALLED_CRON="${ALPACA_BOT_CRON_FILE:-/etc/cron.d/alpaca-bot}"' in cron_health
@@ -65,6 +72,100 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "session_guard.sh" in cron_health
     assert "paper_profit_probe.sh" in cron_health
     assert "cron health ok" in cron_health
+
+
+def test_run_if_ny_time_allows_short_cron_delay(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$FAKE_HHMM\"\n")
+    fake_date.chmod(0o755)
+
+    marker = tmp_path / "ran"
+    env = {
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+        "FAKE_HHMM": "0922",
+        "MARKER": str(marker),
+    }
+
+    result = subprocess.run(
+        [
+            "scripts/run_if_ny_time.sh",
+            "0920",
+            "bash",
+            "-c",
+            "printf ran > \"$MARKER\"",
+        ],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert marker.read_text() == "ran"
+
+
+def test_run_if_ny_time_skips_outside_grace_window(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$FAKE_HHMM\"\n")
+    fake_date.chmod(0o755)
+
+    for actual_hhmm in ("0919", "0923", "1020"):
+        marker = tmp_path / f"ran-{actual_hhmm}"
+        env = {
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "FAKE_HHMM": actual_hhmm,
+            "MARKER": str(marker),
+        }
+
+        result = subprocess.run(
+            [
+                "scripts/run_if_ny_time.sh",
+                "0920",
+                "bash",
+                "-c",
+                "printf ran > \"$MARKER\"",
+            ],
+            cwd=Path.cwd(),
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+
+        assert result.returncode == 0
+        assert not marker.exists()
+
+
+def test_run_if_ny_time_rejects_unsafe_grace_window() -> None:
+    result = subprocess.run(
+        ["scripts/run_if_ny_time.sh", "0920", "true"],
+        cwd=Path.cwd(),
+        env={
+            "PATH": "/usr/bin:/bin",
+            "RUN_IF_NY_TIME_GRACE_MINUTES": "60",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "RUN_IF_NY_TIME_GRACE_MINUTES must be at most 10" in result.stderr
+
+
+def test_run_if_ny_time_rejects_invalid_hhmm() -> None:
+    result = subprocess.run(
+        ["scripts/run_if_ny_time.sh", "2460", "true"],
+        cwd=Path.cwd(),
+        env={"PATH": "/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "expected HHMM must be a valid 24-hour time" in result.stderr
 
 
 def test_locked_check_wrapper_audits_lock_skips() -> None:
