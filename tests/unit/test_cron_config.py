@@ -616,6 +616,8 @@ def test_post_close_checks_fail_on_open_positions() -> None:
 
     assert "--fail-on-open-positions" in session_guard
     assert "--fail-on-open-positions" in profit_probe
+    assert 'if [[ ! -f "$ENV_FILE" ]]' in session_guard
+    assert "missing env file: $ENV_FILE" in session_guard
     assert 'SESSION_GUARD_FAIL_ON_DIAGNOSTICS="${SESSION_GUARD_FAIL_ON_DIAGNOSTICS:-true}"' in session_guard
     assert "SESSION_GUARD_FAIL_ON_DIAGNOSTICS must be true or false" in session_guard
     assert "session_eval_args+=(--fail-on-diagnostics)" in session_guard
