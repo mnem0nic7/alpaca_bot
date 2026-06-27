@@ -281,6 +281,40 @@ def test_session_eval_cli_reports_entries_disabled_cycles(monkeypatch, capsys):
     assert "No operational issues" not in out
 
 
+def test_session_eval_cli_reports_strategy_disabled_cycles(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    _patch_cli_deps(monkeypatch, rows=[])
+    monkeypatch.setattr(
+        cli_module,
+        "_load_entries_disabled_cycle_stats",
+        lambda *_args, **_kwargs: (10, 0, {}),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_load_strategy_disabled_cycle_stats",
+        lambda *_args, **_kwargs: (
+            8,
+            {"confidence_score_absent": 5, "strategy_session_state_entries_disabled": 3},
+        ),
+    )
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+    ])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "No closed trades" in out
+    assert "bull_flag entries blocked cycles: 8/10" in out
+    assert "confidence_score_absent=5" in out
+    assert "strategy_session_state_entries_disabled=3" in out
+    assert "No operational issues" not in out
+
+
 def test_load_entries_disabled_cycle_stats_parses_colon_reasons(monkeypatch):
     import alpaca_bot.admin.session_eval_cli as cli_module
 
@@ -306,6 +340,36 @@ def test_load_entries_disabled_cycle_stats_parses_colon_reasons(monkeypatch):
         "runtime_reconciliation_mismatch": 2,
         "trading_status:close_only": 10,
     }
+
+
+def test_load_strategy_disabled_cycle_stats_parses_reasons(monkeypatch):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    calls: list[tuple] = []
+
+    def fake_fetch_one(*args, **kwargs):
+        calls.append(args)
+        return (
+            9,
+            "confidence_score_absent:6,strategy_session_state_entries_disabled:3",
+        )
+
+    monkeypatch.setattr(cli_module, "fetch_one", fake_fetch_one)
+
+    disabled, reasons = cli_module._load_strategy_disabled_cycle_stats(
+        object(),
+        session_start=datetime(2026, 5, 4, tzinfo=timezone.utc),
+        session_end=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        strategy_name="bull_flag",
+    )
+
+    assert disabled == 9
+    assert reasons == {
+        "confidence_score_absent": 6,
+        "strategy_session_state_entries_disabled": 3,
+    }
+    assert calls
+    assert "bull_flag" in calls[0][2]
 
 
 def test_session_eval_cli_require_min_trades_fails_when_no_trades(monkeypatch, capsys):

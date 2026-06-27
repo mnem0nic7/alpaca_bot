@@ -116,6 +116,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             strategy_version=strategy_version,
             eval_date=eval_end_date,
             market_timezone=market_timezone,
+            strategy_name=args.strategy,
         )
     finally:
         close = getattr(conn, "close", None)
@@ -247,6 +248,9 @@ class SessionDiagnostics:
     total_supervisor_cycles: int = 0
     entries_disabled_cycles: int = 0
     entries_disabled_reasons: dict[str, int] = field(default_factory=dict)
+    strategy_name: str | None = None
+    strategy_disabled_cycles: int = 0
+    strategy_disabled_reasons: dict[str, int] = field(default_factory=dict)
 
     @property
     def has_issues(self) -> bool:
@@ -258,6 +262,7 @@ class SessionDiagnostics:
             self.open_positions,
             self.reconciliation_issues,
             self.entries_disabled_cycles,
+            self.strategy_disabled_cycles,
         ])
 
 
@@ -268,6 +273,7 @@ def _build_session_diagnostics(
     strategy_version: str,
     eval_date: date,
     market_timezone: str,
+    strategy_name: str | None = None,
 ) -> SessionDiagnostics:
     tz = ZoneInfo(market_timezone)
     session_start = datetime.combine(eval_date, time(0, 0), tzinfo=tz).astimezone(timezone.utc)
@@ -280,6 +286,12 @@ def _build_session_diagnostics(
         conn,
         session_start=session_start,
         session_end=session_end,
+    )
+    strategy_disabled_cycles, strategy_disabled_reasons = _load_strategy_disabled_cycle_stats(
+        conn,
+        session_start=session_start,
+        session_end=session_end,
+        strategy_name=strategy_name,
     )
 
     return SessionDiagnostics(
@@ -320,6 +332,9 @@ def _build_session_diagnostics(
         total_supervisor_cycles=total_cycles,
         entries_disabled_cycles=disabled_cycles,
         entries_disabled_reasons=disabled_reasons,
+        strategy_name=strategy_name,
+        strategy_disabled_cycles=strategy_disabled_cycles,
+        strategy_disabled_reasons=strategy_disabled_reasons,
     )
 
 
@@ -375,6 +390,70 @@ def _load_entries_disabled_cycle_stats(
     return (int(row[0] or 0), int(row[1] or 0), reasons)
 
 
+def _load_strategy_disabled_cycle_stats(
+    conn: ConnectionProtocol,
+    *,
+    session_start: datetime,
+    session_end: datetime,
+    strategy_name: str | None,
+) -> tuple[int, dict[str, int]]:
+    if not strategy_name:
+        return (0, {})
+    try:
+        row = fetch_one(
+            conn,
+            """
+            WITH recent AS (
+              SELECT event_type, payload
+              FROM audit_events
+              WHERE event_type = 'supervisor_cycle'
+                AND created_at >= %s
+                AND created_at < %s
+            )
+            SELECT
+                COUNT(*) FILTER (
+                    WHERE COALESCE(payload->'blocked_strategy_names', '[]'::jsonb) ? %s
+                )::int,
+                COALESCE((
+                    SELECT string_agg(reason || ':' || reason_count::text, ',' ORDER BY reason)
+                    FROM (
+                        SELECT reason, COUNT(*)::int AS reason_count
+                        FROM recent r
+                        CROSS JOIN LATERAL jsonb_array_elements_text(
+                            COALESCE(
+                                r.payload->'strategy_entries_disabled_reasons'->%s,
+                                '[]'::jsonb
+                            )
+                        ) AS reason
+                        WHERE COALESCE(r.payload->'blocked_strategy_names', '[]'::jsonb) ? %s
+                        GROUP BY reason
+                    ) reason_counts
+                ), '') AS reason_summary
+            FROM recent
+            """,
+            (
+                session_start,
+                session_end,
+                strategy_name,
+                strategy_name,
+                strategy_name,
+            ),
+        )
+    except Exception:
+        return (0, {})
+    if row is None:
+        return (0, {})
+    reason_summary = str(row[1] or "")
+    reasons: dict[str, int] = {}
+    for part in (p for p in reason_summary.split(",") if p):
+        reason, _, raw_count = part.rpartition(":")
+        try:
+            reasons[reason] = int(raw_count)
+        except ValueError:
+            continue
+    return (int(row[0] or 0), reasons)
+
+
 def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
     print()
     print(" Diagnostics")
@@ -427,6 +506,19 @@ def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
             rendered = ", ".join(
                 f"{reason}={count}"
                 for reason, count in sorted(diagnostics.entries_disabled_reasons.items())
+            )
+            print(f"     Reasons: {rendered}")
+
+    if diagnostics.strategy_disabled_cycles:
+        label = diagnostics.strategy_name or "strategy"
+        print(
+            f" ⚠ {label} entries blocked cycles: "
+            f"{diagnostics.strategy_disabled_cycles}/{diagnostics.total_supervisor_cycles}"
+        )
+        if diagnostics.strategy_disabled_reasons:
+            rendered = ", ".join(
+                f"{reason}={count}"
+                for reason, count in sorted(diagnostics.strategy_disabled_reasons.items())
             )
             print(f"     Reasons: {rendered}")
 
