@@ -115,6 +115,22 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
         broker_order_id="broker-entry",
         signal_timestamp=now,
     )
+    scheduled_check = SimpleNamespace(
+        event_type="scheduled_check_completed",
+        symbol=None,
+        payload={
+            "check_name": "session_guard",
+            "status": "failed",
+            "exit_code": 46,
+        },
+        created_at=now,
+    )
+
+    def list_audit_by_event_types(**kwargs):
+        if kwargs.get("event_types") == ["scheduled_check_completed"]:
+            return [scheduled_check]
+        return []
+
     app = create_app(
         settings=settings,
         connect_postgres_fn=ConnectionFactory([connection]),
@@ -174,7 +190,7 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
                 payload={"entries_disabled": False},
                 created_at=now,
             ),
-            list_by_event_types=lambda **_kwargs: [],
+            list_by_event_types=list_audit_by_event_types,
         ),
     )
 
@@ -189,6 +205,10 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "fresh" in response.text
     assert "AAPL" in response.text
     assert "supervisor_cycle" in response.text
+    assert "Scheduled Checks" in response.text
+    assert "session_guard" in response.text
+    assert "failed" in response.text
+    assert "46" in response.text
     assert connection.closed is True
 
 

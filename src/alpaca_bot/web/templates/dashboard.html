@@ -310,6 +310,37 @@
         </div>
       </section>
 
+      {% if snapshot.scheduled_checks %}
+      <div class="panel" style="margin-bottom: 1rem;">
+        <h2>Scheduled Checks</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Check</th>
+                <th>Status</th>
+                <th>Exit</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for event in snapshot.scheduled_checks %}
+                {% set check_status = event.payload.get("status", "unknown") %}
+                <tr>
+                  <td class="mono">{{ event.payload.get("check_name", "unknown") }}</td>
+                  <td class="{{ 'warn' if check_status == 'failed' else 'muted' }}">
+                    {{ check_status }}
+                  </td>
+                  <td class="mono muted">{{ event.payload.get("exit_code", "") }}</td>
+                  <td class="mono muted">{{ format_timestamp(event.created_at) }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
       <div class="panel" style="margin-bottom: 1rem;">
         <h2>Operator Controls</h2>
         <form method="post" style="margin-top: 0.8rem;">

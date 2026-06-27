@@ -177,6 +177,46 @@ def test_load_dashboard_snapshot_requests_12_recent_events() -> None:
     assert limits == [12]
 
 
+def test_load_dashboard_snapshot_loads_recent_scheduled_checks() -> None:
+    calls: list[dict[str, object]] = []
+    check_event = make_event(
+        "scheduled_check_completed",
+        datetime(2026, 6, 29, 21, 10, tzinfo=timezone.utc),
+    )
+    check_event.payload = {
+        "check_name": "session_guard",
+        "status": "failed",
+        "exit_code": 46,
+    }
+
+    def recording_list_by_event_types(**kwargs: object) -> list:
+        calls.append(kwargs)
+        return [check_event]
+
+    snapshot = load_dashboard_snapshot(
+        settings=make_settings(),
+        connection=SimpleNamespace(),
+        trading_status_store=SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store=SimpleNamespace(load=lambda **_: None),
+        position_store=SimpleNamespace(list_all=lambda **_: []),
+        order_store=SimpleNamespace(list_by_status=lambda **_: [], list_recent=lambda **_: []),
+        audit_event_store=SimpleNamespace(
+            list_recent=lambda **_: [],
+            load_latest=lambda **_: None,
+            list_by_event_types=recording_list_by_event_types,
+        ),
+        strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
+    )
+
+    assert snapshot.scheduled_checks == [check_event]
+    assert calls == [{
+        "event_types": ["scheduled_check_completed"],
+        "limit": 8,
+        "trading_mode": make_settings().trading_mode,
+        "strategy_version": "v1-breakout",
+    }]
+
+
 def test_load_dashboard_snapshot_requests_10_recent_orders() -> None:
     limits: list[int] = []
 

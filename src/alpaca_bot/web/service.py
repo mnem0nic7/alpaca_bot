@@ -57,6 +57,7 @@ ALL_AUDIT_EVENT_TYPES = [
     "stale_exit_canceled_for_resubmission",
     "startup_recovery_completed",
     "startup_recovery_skipped",
+    "scheduled_check_completed",
     "stop_update_skipped_extended_hours",
     "stream_heartbeat_stale",
     "stream_restart_failed",
@@ -178,6 +179,7 @@ class DashboardSnapshot:
     recent_events: list[AuditEvent]
     worker_health: WorkerHealth
     strategy_flags: list[tuple[str, StrategyFlag | None]]
+    scheduled_checks: list[AuditEvent] = dc_field(default_factory=list)
     strategy_entries_disabled: dict[str, bool] = dc_field(default_factory=dict)
     latest_prices: dict[str, float] = dc_field(default_factory=dict)
     realized_pnl: float | None = None
@@ -234,6 +236,17 @@ def load_dashboard_snapshot(
     audit_event_store = audit_event_store or AuditEventStore(connection)
     strategy_flag_store = strategy_flag_store or StrategyFlagStore(connection)
     recent_events = audit_event_store.list_recent(limit=12)
+    scheduled_check_loader = getattr(audit_event_store, "list_by_event_types", None)
+    scheduled_checks = (
+        scheduled_check_loader(
+            event_types=["scheduled_check_completed"],
+            limit=8,
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+        )
+        if callable(scheduled_check_loader)
+        else []
+    )
 
     flags_by_name = {
         f.strategy_name: f
@@ -336,6 +349,7 @@ def load_dashboard_snapshot(
             limit=10,
         ),
         recent_events=recent_events,
+        scheduled_checks=scheduled_checks,
         worker_health=_load_worker_health(
             audit_event_store=audit_event_store,
             recent_events=recent_events,
