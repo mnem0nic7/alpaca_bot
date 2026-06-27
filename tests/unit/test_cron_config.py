@@ -104,7 +104,10 @@ def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_docker = fake_bin / "docker"
-    fake_docker.write_text("#!/usr/bin/env bash\nprintf '2026-06-29|passed\\n'\n")
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_latest_status=2026-06-29|passed\\n'\n"
+    )
     fake_docker.chmod(0o755)
 
     result = subprocess.run(
@@ -122,6 +125,95 @@ def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -
     ) in result.stdout
     assert "paper readiness already passed for session 2026-06-29" in result.stdout
     assert "paper readiness check skipped" not in result.stdout
+
+
+def test_paper_readiness_lock_skip_does_not_block_after_pass(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_latest_status=passed\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_readiness",
+            str(tmp_path / "readiness.lock"),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 reason=lock_busy_already_passed"
+    ) in result.stdout
+    assert "paper readiness lock busy after prior pass" in result.stdout
+    assert "paper readiness check skipped" not in result.stdout
+
+
+def test_paper_readiness_lock_skip_blocks_without_pass(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_latest_status=\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_readiness",
+            str(tmp_path / "readiness.lock"),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 48
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 reason=lock_busy"
+    ) in result.stdout
+    assert "scheduled check lock busy: check=paper_readiness" in result.stderr
 
 
 def test_run_if_ny_time_allows_short_cron_delay(tmp_path: Path) -> None:
@@ -230,6 +322,8 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "scheduled check lock busy" in lock_skip
     assert "scheduled check context:" in lock_skip
     assert "reason=lock_busy" in lock_skip
+    assert "reason=lock_busy_already_passed" in lock_skip
+    assert "paper_readiness_latest_status=" in lock_skip
     assert "paper_readiness)" in lock_skip
     assert "paper_activity)" in lock_skip
     assert "session_guard)" in lock_skip

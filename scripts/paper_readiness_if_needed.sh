@@ -77,10 +77,14 @@ try:
 finally:
     conn.close()
 
-print(f"{session_date.isoformat()}|{row[0] if row else ''}")
+print(f"paper_readiness_latest_status={session_date.isoformat()}|{row[0] if row else ''}")
 PY
 )"
-latest_readiness="$(printf '%s\n' "$latest_readiness" | tail -n 1)"
+latest_readiness="$(
+  printf '%s\n' "$latest_readiness" \
+    | sed -n 's/^paper_readiness_latest_status=//p' \
+    | tail -n 1
+)"
 
 session_date=""
 latest_status=""
