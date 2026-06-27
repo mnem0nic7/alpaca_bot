@@ -442,6 +442,67 @@ def test_evaluate_cycle_accepted_entry_emits_accepted_record() -> None:
     assert rec.quantity is not None and rec.quantity > 0
 
 
+def test_evaluate_cycle_rejects_prior_session_signal_before_intent() -> None:
+    settings = make_settings(SYMBOLS="AAPL")
+    now = datetime(2026, 5, 7, 14, 30, tzinfo=timezone.utc)
+    daily_bars = make_daily_bars("AAPL", count=22)
+    current_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 5, 7, 14, 15, tzinfo=timezone.utc),
+        open=149.0,
+        high=156.0,
+        low=148.0,
+        close=155.0,
+        volume=2_000_000,
+    )
+    stale_signal_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 5, 6, 20, 45, tzinfo=timezone.utc),
+        open=149.0,
+        high=156.0,
+        low=148.0,
+        close=155.0,
+        volume=2_000_000,
+    )
+
+    def fake_signal(*, symbol, intraday_bars, signal_index, daily_bars, settings):
+        return EntrySignal(
+            symbol=symbol,
+            signal_bar=stale_signal_bar,
+            entry_level=150.0,
+            relative_volume=2.5,
+            stop_price=148.0,
+            limit_price=151.0,
+            initial_stop_price=148.0,
+        )
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": [current_bar]},
+        daily_bars_by_symbol={"AAPL": daily_bars},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=fake_signal,
+    )
+
+    assert result.intents == []
+    stale_records = [
+        r
+        for r in result.decision_records
+        if r.reject_stage == "stale_data" and r.reject_reason == "stale_signal"
+    ]
+    assert len(stale_records) == 1
+    assert stale_records[0].decision == "rejected"
+    assert stale_records[0].filter_results == {
+        "signal_date": "2026-05-06",
+        "session_date": "2026-05-07",
+    }
+
+
 # ── DecisionLogStore ─────────────────────────────────────────────────────────
 
 from alpaca_bot.storage.repositories import DecisionLogStore
