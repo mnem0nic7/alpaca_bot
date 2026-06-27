@@ -217,6 +217,12 @@ alpaca-bot-backtest portfolio-audit \
 |---:|---:|---:|---:|---:|---:|---:|---|---:|---|
 | 980 | 1050 | 71.6% | 1.42 | 1837.51 | 1.7500 | 3.66 | [0.8379, 2.6633] | 0.0000 | positive-edge |
 
+Current-code confirmation: the exact 980-symbol full-window replay was rerun
+after deploying commit `a06c465` on 2026-06-27 using a symlinked scenario
+directory rebuilt directly from the live enabled, non-ignored watchlist. The
+rerun completed successfully with the same 1050 trades, $1837.51 total P&L,
+1.42 profit factor, and positive-edge verdict.
+
 Exact 980-symbol latest-120-day replay:
 
 ```bash
