@@ -259,6 +259,14 @@ Decision: keep the same deployed proof posture after the data-quality cleanup.
 Removing stale/sparse active symbols did not weaken the full-window or recent
 active-universe evidence.
 
+Current-code confirmation after post-open activity-gate hardening: the exact
+980-symbol latest-120-day replay was rerun from commit `fa53f2c` on 2026-06-27
+using the existing scenario directory validated against the live enabled,
+non-ignored watchlist. The rerun again completed with 424 trades, 74.8% win
+rate, 1.75 profit factor, $1070.09 total P&L, $2.5238 mean/trade, 5.82
+annualized Sharpe, 95% CI mean/trade [1.1901, 3.8148], $224.82 cost drag at 2
+bps/side, and a positive-edge verdict.
+
 Proof gate calibration:
 
 The latest-120-day exact 980-symbol replay was also aggregated by close date to
