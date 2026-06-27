@@ -506,6 +506,29 @@ SQL
 )"
 open_option_positions="$(echo "$open_option_positions" | tr -d '[:space:]')"
 
+active_option_orders="$("${compose[@]}" exec -T postgres psql \
+  -U "$POSTGRES_USER" \
+  -d "$POSTGRES_DB" \
+  -tA \
+  -v strategy_version="$STRATEGY_VERSION" <<'SQL'
+SELECT COUNT(*)::int
+FROM option_orders
+WHERE trading_mode = 'paper'
+  AND strategy_version = :'strategy_version'
+  AND status IN (
+    'pending_submit',
+    'submitting',
+    'new',
+    'accepted',
+    'submitted',
+    'partially_filled',
+    'held',
+    'pending_new'
+  );
+SQL
+)"
+active_option_orders="$(echo "$active_option_orders" | tr -d '[:space:]')"
+
 if [[ "${open_option_positions:-0}" != "0" ]]; then
   echo \
     "paper readiness failed: stock-only proof has $open_option_positions net-open option positions" \
@@ -513,7 +536,14 @@ if [[ "${open_option_positions:-0}" != "0" ]]; then
   exit 1
 fi
 
-echo "paper readiness option positions ok: net_open=0"
+if [[ "${active_option_orders:-0}" != "0" ]]; then
+  echo \
+    "paper readiness failed: stock-only proof has $active_option_orders active option orders" \
+    >&2
+  exit 1
+fi
+
+echo "paper readiness option positions ok: net_open=0 active_orders=0"
 
 if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
   status_line="$("${compose[@]}" run -T --rm admin status \

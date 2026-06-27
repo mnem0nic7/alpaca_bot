@@ -107,7 +107,8 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness failed: market data daily-bars smoke returned no bars" in script
     assert "paper readiness market data ok" in script
     assert "paper readiness market data check skipped" in script
-    assert "paper readiness option positions ok: net_open=0" in script
+    assert "active option orders" in script
+    assert "paper readiness option positions ok: net_open=0 active_orders=0" in script
     assert "stock-only proof has $open_option_positions net-open option positions" in script
     assert "paper readiness refusing auto-resume after failed proof guard" in script
     assert "paper proof failed" in script
