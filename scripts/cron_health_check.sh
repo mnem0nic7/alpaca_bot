@@ -58,6 +58,9 @@ do
   if [[ ! -x "$path" ]]; then
     fail "required scheduled script is not executable: $path"
   fi
+  if ! bash -n "$path"; then
+    fail "required scheduled script has syntax errors: $path"
+  fi
 done
 
 echo "cron health ok: installed schedule matches repo and cron daemon is active"

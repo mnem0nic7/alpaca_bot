@@ -65,6 +65,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "systemctl is-active --quiet cron" in cron_health
     assert "ps -eo comm=" in cron_health
     assert "run_locked_check_with_audit.sh" in cron_health
+    assert 'bash -n "$path"' in cron_health
+    assert "required scheduled script has syntax errors" in cron_health
     assert "run_check_with_audit.sh" in cron_health
     assert "scheduled_check_lock_skipped.sh" in cron_health
     assert "paper_readiness_check.sh" in cron_health
