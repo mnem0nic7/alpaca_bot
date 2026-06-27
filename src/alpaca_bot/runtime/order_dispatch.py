@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
@@ -74,6 +74,12 @@ class OrderDispatchReport:
         if key != "submitted_count":
             raise KeyError(key)
         return self.submitted_count
+
+
+@dataclass(frozen=True)
+class PartialFillCancelResult:
+    safe_to_proceed: bool
+    filled_quantity: float | None = None
 
 
 def dispatch_pending_orders(
@@ -244,16 +250,30 @@ def dispatch_pending_orders(
                             raise
                     continue
         if order.intent_type == "stop":
-            if not _cancel_partial_fill_entry(
+            partial_cancel = _cancel_partial_fill_entry(
                 order=order,
                 runtime=runtime,
                 broker=broker,
                 settings=settings,
                 now=timestamp,
                 lock_ctx=lock_ctx,
-            ):
+            )
+            if not partial_cancel.safe_to_proceed:
                 # Cancel failed — leave stop as pending_submit for next cycle retry.
                 continue
+            if (
+                order.side == "sell"
+                and partial_cancel.filled_quantity is not None
+                and partial_cancel.filled_quantity > 0
+                and order.quantity != partial_cancel.filled_quantity
+            ):
+                logger.info(
+                    "order_dispatch: adjusting stop quantity for %s from %g to partial fill %g",
+                    order.symbol,
+                    order.quantity,
+                    partial_cancel.filled_quantity,
+                )
+                order = replace(order, quantity=partial_cancel.filled_quantity)
         if order.intent_type == "stop" and session_type is not None:
             from alpaca_bot.strategy.session import SessionType as _ST
             if session_type in (_ST.PRE_MARKET, _ST.AFTER_HOURS):
@@ -542,12 +562,12 @@ def _cancel_partial_fill_entry(
     settings: "Settings",
     now: datetime,
     lock_ctx: Any,
-) -> bool:
+) -> PartialFillCancelResult:
     """Cancel the open buy-limit for a partially-filled entry of the same symbol.
 
-    Returns True if safe to proceed (no partial entry found, or cancel succeeded/already gone).
-    Returns False if cancel raised an unrecognized error — caller should skip the sell-side
-    order to avoid wash trade rejection, leaving it pending_submit for next cycle retry.
+    Returns safe_to_proceed=False if cancel raised an unrecognized error or if the
+    partial fill quantity is missing — caller should skip the sell-side order to avoid
+    wash trade or oversell rejection, leaving it pending_submit for next cycle retry.
     """
     if lock_ctx is None:
         lock_ctx = contextlib.nullcontext()
@@ -560,10 +580,41 @@ def _cancel_partial_fill_entry(
         )
     partial_entries = [
         o for o in all_partial
-        if o.intent_type == "entry" and o.symbol == order.symbol
+        if (
+            o.intent_type == "entry"
+            and o.symbol == order.symbol
+            and o.strategy_name == order.strategy_name
+        )
     ]
     if not partial_entries:
-        return True
+        return PartialFillCancelResult(safe_to_proceed=True)
+
+    filled_quantity = sum(
+        entry.filled_quantity
+        for entry in partial_entries
+        if entry.filled_quantity is not None and entry.filled_quantity > 0
+    )
+    if filled_quantity <= 0:
+        with lock_ctx:
+            try:
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="partial_fill_quantity_missing",
+                        symbol=order.symbol,
+                        payload={
+                            "stop_client_order_id": order.client_order_id,
+                            "entry_client_order_ids": [
+                                entry.client_order_id for entry in partial_entries
+                            ],
+                            "context": "stop_dispatch",
+                        },
+                        created_at=now,
+                    ),
+                    commit=True,
+                )
+            except Exception:
+                pass
+        return PartialFillCancelResult(safe_to_proceed=False)
 
     for entry in partial_entries:
         if not entry.broker_order_id:
@@ -602,7 +653,7 @@ def _cancel_partial_fill_entry(
                         )
                     except Exception:
                         pass
-                return False
+                return PartialFillCancelResult(safe_to_proceed=False)
         canceled_record = OrderRecord(
             client_order_id=entry.client_order_id,
             symbol=entry.symbol,
@@ -647,7 +698,10 @@ def _cancel_partial_fill_entry(
                     pass
                 raise
 
-    return True
+    return PartialFillCancelResult(
+        safe_to_proceed=True,
+        filled_quantity=filled_quantity,
+    )
 
 
 def _resolve_now(now: datetime | Callable[[], datetime] | None) -> datetime:
