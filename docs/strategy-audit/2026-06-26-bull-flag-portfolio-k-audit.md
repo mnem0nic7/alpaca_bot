@@ -22,11 +22,14 @@ Effective paper proof posture: `MAX_OPEN_POSITIONS=2`, `REPLAY_SLIPPAGE_BPS=2`,
 `ENABLE_SECTOR_FILTER=false`. The portfolio replay validates regular-session
 entries only, so `EXTENDED_HOURS_ENABLED` must stay false for this paper proof
 until pre-market and after-hours trading are included in a separate positive-edge
-portfolio audit. The portfolio replay uses the engine's symbol and VWAP inputs,
-but does not pass VIX/sector `market_context`; those gates must stay off for this
-paper proof until they are included in a separate positive-edge portfolio audit.
-Replay carries the engine-selected entry quantity into the simulated fill,
-matching live paper's submitted order quantity.
+portfolio audit. `INTRADAY_CONSECUTIVE_LOSS_GATE` must stay `0` because that
+supervisor-only gate is not part of the replayed edge and can stop new entries
+before the paper proof reaches its required trade count. The portfolio replay
+uses the engine's symbol and VWAP inputs, but does not pass VIX/sector
+`market_context`; those gates must stay off for this paper proof until they are
+included in a separate positive-edge portfolio audit. Replay carries the
+engine-selected entry quantity into the simulated fill, matching live paper's
+submitted order quantity.
 
 | K | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(edge>0) | verdict |
 |---|---:|---:|---:|---:|---:|---:|---|---:|---|
