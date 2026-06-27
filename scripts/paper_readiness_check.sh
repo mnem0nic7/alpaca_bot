@@ -941,7 +941,7 @@ invalid AS (
   FROM latest_checks
   WHERE NOT (
     (check_name = 'session_guard' AND status = 'passed')
-    OR (check_name = 'paper_profit_probe' AND status IN ('passed', 'pending'))
+    OR (check_name = 'paper_profit_probe' AND status = 'passed')
   )
 )
 SELECT

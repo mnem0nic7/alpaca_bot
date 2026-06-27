@@ -604,7 +604,8 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "missing AS" in script
     assert "invalid AS" in script
     assert "check_name = 'session_guard' AND status = 'passed'" in script
-    assert "check_name = 'paper_profit_probe' AND status IN ('passed', 'pending')" in script
+    assert "check_name = 'paper_profit_probe' AND status = 'passed'" in script
+    assert "check_name = 'paper_profit_probe' AND status IN ('passed', 'pending')" not in script
     assert "session $PAPER_READINESS_SESSION_DATE has entry-blocking state" in script
     assert "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
     assert "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED" in script
@@ -752,8 +753,9 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "session guard failed ${SESSION_GUARD_DATE}: operational diagnostics contain proof-blocking issues" in session_guard
     assert "session guard failed: could not apply close-only guard" in session_guard
     assert "exit 45" in session_guard
-    assert '"$rc" -eq 42 || "$rc" -eq 44 || "$rc" -eq 46' in profit_probe
+    assert '"$rc" -eq 42 || "$rc" -eq 43 || "$rc" -eq 44 || "$rc" -eq 46' in profit_probe
     assert "paper proof failed" in profit_probe
+    assert "paper proof incomplete ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: fewer than ${PROFIT_PROBE_MIN_TRADES} closed trades" in profit_probe
     assert "paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: operational diagnostics contain proof-blocking issues" in profit_probe
     assert "close-only" in profit_probe
     assert '"$rc" -eq 42 || "$rc" -eq 43' in profit_probe
