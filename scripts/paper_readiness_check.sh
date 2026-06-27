@@ -339,7 +339,7 @@ WITH active AS (
     AND enabled = TRUE
 ),
 weights AS (
-  SELECT strategy_name, weight
+  SELECT strategy_name, weight, sharpe
   FROM strategy_weights
   WHERE trading_mode = 'paper'
     AND strategy_version = :'strategy_version'
@@ -349,55 +349,58 @@ summary AS (
     (SELECT COALESCE(array_agg(strategy_name ORDER BY strategy_name), ARRAY[]::text[]) FROM active) AS active_names,
     (SELECT COALESCE(array_agg(strategy_name ORDER BY strategy_name), ARRAY[]::text[]) FROM weights) AS weight_names,
     (SELECT COALESCE(SUM(weight), 0) FROM weights) AS weight_sum,
-    (SELECT COUNT(*) FROM weights WHERE weight <= 0) AS nonpositive_weights
+    (SELECT COUNT(*) FROM weights WHERE weight <= 0) AS nonpositive_weights,
+    (SELECT COUNT(*) FROM weights WHERE sharpe IS NULL) AS null_sharpes
 )
 SELECT
   CASE
     WHEN cardinality(active_names) > 0
      AND active_names = weight_names
      AND nonpositive_weights = 0
+     AND null_sharpes = 0
      AND ABS(weight_sum - 1.0) < 0.0001
     THEN 'ok'
     ELSE 'mismatch'
   END,
   array_to_string(active_names, ','),
   array_to_string(weight_names, ','),
-  ROUND(weight_sum::numeric, 6)
+  ROUND(weight_sum::numeric, 6),
+  null_sharpes
 FROM summary;
 SQL
 }
 
 weight_alignment="$(load_weight_alignment)"
-IFS='|' read -r weight_status active_weight_names stored_weight_names stored_weight_sum \
+IFS='|' read -r weight_status active_weight_names stored_weight_names stored_weight_sum null_sharpes \
   <<< "$weight_alignment"
 
 if [[ "$weight_status" != "ok" ]]; then
   if [[ "$PAPER_READINESS_AUTO_RESET_WEIGHTS" != "true" ]]; then
     echo \
-      "paper readiness failed: strategy weights mismatch active=[$active_weight_names] stored=[$stored_weight_names] sum=${stored_weight_sum:-0}" \
+      "paper readiness failed: strategy weights mismatch active=[$active_weight_names] stored=[$stored_weight_names] sum=${stored_weight_sum:-0} null_sharpes=${null_sharpes:-0}" \
       >&2
     exit 1
   fi
 
   echo \
-    "paper readiness resetting stale strategy weights: active=[$active_weight_names] stored=[$stored_weight_names] sum=${stored_weight_sum:-0}"
+    "paper readiness resetting stale strategy weights: active=[$active_weight_names] stored=[$stored_weight_names] sum=${stored_weight_sum:-0} null_sharpes=${null_sharpes:-0}"
   "${compose[@]}" run -T --rm admin reset-weights \
     --mode paper \
     --strategy-version "$STRATEGY_VERSION"
 
   weight_alignment="$(load_weight_alignment)"
-  IFS='|' read -r weight_status active_weight_names stored_weight_names stored_weight_sum \
+  IFS='|' read -r weight_status active_weight_names stored_weight_names stored_weight_sum null_sharpes \
     <<< "$weight_alignment"
   if [[ "$weight_status" != "ok" ]]; then
     echo \
-      "paper readiness failed after weight reset: active=[$active_weight_names] stored=[$stored_weight_names] sum=${stored_weight_sum:-0}" \
+      "paper readiness failed after weight reset: active=[$active_weight_names] stored=[$stored_weight_names] sum=${stored_weight_sum:-0} null_sharpes=${null_sharpes:-0}" \
       >&2
     exit 1
   fi
 fi
 
 echo \
-  "paper readiness weights ok: active=[$active_weight_names] stored=[$stored_weight_names] sum=$stored_weight_sum"
+  "paper readiness weights ok: active=[$active_weight_names] stored=[$stored_weight_names] sum=$stored_weight_sum null_sharpes=$null_sharpes"
 
 confidence_floor_check="$("${compose[@]}" exec -T postgres psql \
   -U "$POSTGRES_USER" \

@@ -74,6 +74,8 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "entry watchlist has" in script
     assert "paper readiness watchlist ok" in script
     assert "strategy weights mismatch" in script
+    assert "sharpe IS NULL" in script
+    assert "null_sharpes=${null_sharpes:-0}" in script
     assert "paper readiness resetting stale strategy weights" in script
     assert "admin reset-weights" in script
     assert "paper readiness weights ok" in script
