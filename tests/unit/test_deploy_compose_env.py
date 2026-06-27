@@ -18,6 +18,7 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "OPTION_CHAIN_MIN_TOTAL_VOLUME",
         "OPTION_STRATEGY_MAX_ROLLING_LOSS_USD",
         "OPTION_STRATEGY_ROLLING_LOSS_DAYS",
+        "PAPER_PROOF_FREEZE",
         "REPLAY_SLIPPAGE_BPS",
     }
 
@@ -40,9 +41,11 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "RELATIVE_VOLUME_THRESHOLD=2.0" in env_text
     assert "MAX_OPEN_POSITIONS=3" in env_text
     assert "REPLAY_SLIPPAGE_BPS=2.0" in env_text
+    assert "PAPER_PROOF_FREEZE=true" in env_text
     assert "RISK_PER_TRADE_PCT=0.01" in env_text
     assert "MAX_POSITION_PCT=0.05" in env_text
     assert "MAX_PORTFOLIO_EXPOSURE_PCT=0.30" in env_text
+    assert "INTRADAY_CONSECUTIVE_LOSS_GATE=0" in env_text
     assert "ENABLE_VIX_FILTER=false" in env_text
     assert "ENABLE_SECTOR_FILTER=false" in env_text
     assert "ENABLE_VWAP_ENTRY_FILTER=true" in env_text
@@ -57,6 +60,8 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert 'MAX_OPEN_POSITIONS="3"' in script
     assert 'RELATIVE_VOLUME_THRESHOLD="2.0"' in script
     assert 'REPLAY_SLIPPAGE_BPS="2.0"' in script
+    assert 'PAPER_PROOF_FREEZE="true"' in script
+    assert "INTRADAY_CONSECUTIVE_LOSS_GATE=0" in script
     assert 'ENABLE_VIX_FILTER="false"' in script
     assert 'ENABLE_SECTOR_FILTER="false"' in script
     assert 'ENABLE_VWAP_ENTRY_FILTER="true"' in script

@@ -41,23 +41,29 @@ SYMBOLS=AAPL,MSFT,SPY
 DAILY_SMA_PERIOD=20
 BREAKOUT_LOOKBACK_BARS=20
 RELATIVE_VOLUME_LOOKBACK_BARS=20
-RELATIVE_VOLUME_THRESHOLD=1.5
+RELATIVE_VOLUME_THRESHOLD=2.0
 ENTRY_TIMEFRAME_MINUTES=15
-RISK_PER_TRADE_PCT=0.0025
+RISK_PER_TRADE_PCT=0.01
 # Per-trade dollar loss cap: limit how much a single stopped-out trade can lose in absolute
 # dollar terms. When set, position size is reduced so that a clean stop-out loses at most
 # this amount. Composable with RISK_PER_TRADE_PCT — the tighter constraint wins.
 # (unset = disabled; recommended starting value for a ~$10K account: 12)
 # MAX_LOSS_PER_TRADE_DOLLARS=12
-MAX_POSITION_PCT=0.015
-MAX_OPEN_POSITIONS=20
+MAX_POSITION_PCT=0.05
+MAX_OPEN_POSITIONS=3
 MAX_PORTFOLIO_EXPOSURE_PCT=0.30
 DAILY_LOSS_LIMIT_PCT=0.01
+REPLAY_SLIPPAGE_BPS=2.0
+PAPER_PROOF_FREEZE=true
 # Intra-day review: send a performance digest every N REGULAR cycles (0 = disabled)
 # At the default 60s poll, INTRADAY_DIGEST_INTERVAL_CYCLES=60 sends roughly hourly.
 INTRADAY_DIGEST_INTERVAL_CYCLES=0
 # Disable entries after N consecutive losing trades (0 = disabled, safe default)
 INTRADAY_CONSECUTIVE_LOSS_GATE=0
+ENABLE_VIX_FILTER=false
+ENABLE_SECTOR_FILTER=false
+ENABLE_VWAP_ENTRY_FILTER=true
+ENABLE_REGIME_FILTER=false
 # Extended-hours trading (pre-market 4am–9:20am ET and after-hours 4:05pm–7:30pm ET)
 # EXTENDED_HOURS_ENABLED=false
 # PRE_MARKET_ENTRY_WINDOW_START=04:00
