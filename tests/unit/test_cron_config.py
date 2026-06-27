@@ -338,12 +338,14 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert '6) TZ=America/New_York date -d "1 day ago" +%F ;;' in profit_probe
     assert '7) TZ=America/New_York date -d "2 days ago" +%F ;;' in profit_probe
     assert '*) TZ=America/New_York date -d "1 day ago" +%F ;;' in profit_probe
-    assert '"$rc" -eq 44' in session_guard
+    assert '"$rc" -eq 42 || "$rc" -eq 44 || "$rc" -eq 46' in session_guard
     assert "open positions remain after close" in session_guard
+    assert "session guard failed ${SESSION_GUARD_DATE}: operational diagnostics contain proof-blocking issues" in session_guard
     assert "session guard failed: could not apply close-only guard" in session_guard
     assert "exit 45" in session_guard
-    assert '"$rc" -eq 42 || "$rc" -eq 44' in profit_probe
+    assert '"$rc" -eq 42 || "$rc" -eq 44 || "$rc" -eq 46' in profit_probe
     assert "paper proof failed" in profit_probe
+    assert "paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: operational diagnostics contain proof-blocking issues" in profit_probe
     assert "close-only" in profit_probe
     assert '"$rc" -eq 42 || "$rc" -eq 43' in profit_probe
     assert "alpaca-bot-funnel-report" in profit_probe

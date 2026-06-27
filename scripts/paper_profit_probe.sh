@@ -149,14 +149,22 @@ if [[ "$rc" -eq 42 || "$rc" -eq 43 ]]; then
   fi
 fi
 
-if [[ "$rc" -eq 42 || "$rc" -eq 44 ]]; then
-  reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: pnl below ${PROFIT_PROBE_MIN_PNL} after ${PROFIT_PROBE_MIN_TRADES}+ trades"
-  if [[ "$rc" -eq 44 ]]; then
-    reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: open positions remain after close"
-    if [[ "$broker_flat_failed" == "true" ]]; then
-      reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: broker exposure remains after close"
-    fi
-  fi
+if [[ "$rc" -eq 42 || "$rc" -eq 44 || "$rc" -eq 46 ]]; then
+  case "$rc" in
+    42)
+      reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: pnl below ${PROFIT_PROBE_MIN_PNL} after ${PROFIT_PROBE_MIN_TRADES}+ trades"
+      ;;
+    44)
+      reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: open positions remain after close"
+      if [[ "$broker_flat_failed" == "true" ]]; then
+        reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: broker exposure remains after close"
+      fi
+      ;;
+    46)
+      reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: operational diagnostics contain proof-blocking issues"
+      ;;
+  esac
+
   if ! "${compose[@]}" run -T --rm admin \
     close-only \
     --mode "${TRADING_MODE:-paper}" \

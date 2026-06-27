@@ -50,14 +50,22 @@ if ! BROKER_FLAT_CONTEXT="${SESSION_GUARD_STRATEGY} session guard ${SESSION_GUAR
   rc=44
 fi
 
-if [[ "$rc" -eq 42 || "$rc" -eq 44 ]]; then
-  reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: pnl below ${SESSION_GUARD_FAIL_BELOW_PNL} after ${SESSION_GUARD_MIN_TRADES}+ trades"
-  if [[ "$rc" -eq 44 ]]; then
-    reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: open positions remain after close"
-    if [[ "$broker_flat_failed" == "true" ]]; then
-      reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: broker exposure remains after close"
-    fi
-  fi
+if [[ "$rc" -eq 42 || "$rc" -eq 44 || "$rc" -eq 46 ]]; then
+  case "$rc" in
+    42)
+      reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: pnl below ${SESSION_GUARD_FAIL_BELOW_PNL} after ${SESSION_GUARD_MIN_TRADES}+ trades"
+      ;;
+    44)
+      reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: open positions remain after close"
+      if [[ "$broker_flat_failed" == "true" ]]; then
+        reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: broker exposure remains after close"
+      fi
+      ;;
+    46)
+      reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: operational diagnostics contain proof-blocking issues"
+      ;;
+  esac
+
   if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm admin \
     close-only \
     --mode "${TRADING_MODE:-paper}" \
