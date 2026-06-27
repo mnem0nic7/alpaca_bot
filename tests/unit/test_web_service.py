@@ -185,6 +185,7 @@ def test_load_dashboard_snapshot_loads_recent_scheduled_checks() -> None:
     )
     check_event.payload = {
         "check_name": "session_guard",
+        "session_date": "2026-06-29",
         "status": "failed",
         "exit_code": 46,
     }

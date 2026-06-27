@@ -36,6 +36,8 @@ if [[ "${SESSION_GUARD_FAIL_ON_DIAGNOSTICS,,}" == "true" ]]; then
   session_eval_args+=(--fail-on-diagnostics)
 fi
 
+echo "scheduled check context: session_date=$SESSION_GUARD_DATE strategy=$SESSION_GUARD_STRATEGY"
+
 docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
   --entrypoint alpaca-bot-session-eval admin \
   "${session_eval_args[@]}"

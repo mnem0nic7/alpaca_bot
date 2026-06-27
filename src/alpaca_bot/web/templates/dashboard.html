@@ -318,6 +318,7 @@
             <thead>
               <tr>
                 <th>Check</th>
+                <th>Session</th>
                 <th>Status</th>
                 <th>Exit</th>
                 <th>Time</th>
@@ -328,6 +329,7 @@
                 {% set check_status = event.payload.get("status", "unknown") %}
                 <tr>
                   <td class="mono">{{ event.payload.get("check_name", "unknown") }}</td>
+                  <td class="mono muted">{{ event.payload.get("session_date", "") }}</td>
                   <td class="{{ 'warn' if check_status == 'failed' else 'muted' }}">
                     {{ check_status }}
                   </td>

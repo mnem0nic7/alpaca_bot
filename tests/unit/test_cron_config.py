@@ -58,11 +58,20 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'AUDIT_STATUS="$status"' in script
     assert 'AUDIT_EXIT_CODE="$rc"' in script
     assert 'AUDIT_OUTPUT_TAIL="$output_tail"' in script
+    assert 'AUDIT_CONTEXT_LINE="$context_line"' in script
     assert "-e AUDIT_CHECK_NAME" in script
     assert "-e AUDIT_STATUS" in script
     assert "-e AUDIT_EXIT_CODE" in script
     assert "-e AUDIT_OUTPUT_TAIL" in script
+    assert "-e AUDIT_CONTEXT_LINE" in script
     assert 'output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"' in script
+    assert 'context_line="$(grep -E' in script
+    assert "scheduled check context: " in script
+    assert "CONTEXT_KEYS" in script
+    assert '"session_date"' in script
+    assert '"previous_session_date"' in script
+    assert '"proof_start"' in script
+    assert "payload.update(parse_context" in script
     assert 'paper readiness check skipped' in script
     assert 'paper activity check skipped' in script
     assert 'paper activity skipped:' in script
@@ -192,7 +201,11 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness prior proof checks ok" in script
     assert "PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS" in script
     assert "PAPER_READINESS_PREVIOUS_SESSION_DATE\" < \"$PAPER_READINESS_PRIOR_PROOF_START_DATE" in script
+    assert "scheduled check context: session_date=$PAPER_READINESS_SESSION_DATE" in script
+    assert "previous_session_date=$PAPER_READINESS_PREVIOUS_SESSION_DATE" in script
     assert "scheduled_check_completed" in script
+    assert "payload->>'session_date' = :'previous_session_date'" in script
+    assert "NOT (payload ? 'session_date')" in script
     assert "payload->>'check_name' IN ('session_guard', 'paper_profit_probe')" in script
     assert "latest_checks AS" in script
     assert "missing AS" in script
@@ -255,6 +268,7 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert 'PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
     assert "PAPER_READINESS_AUTO_RESUME=false" in script
     assert "PAPER_READINESS_REQUIRE_FLAT=false" in script
+    assert "scheduled check context: session_date=$(TZ=America/New_York date +%F) strategy=$PAPER_ACTIVITY_STRATEGY" in script
     assert "decision_record_count" in script
     assert "decision_log" in script
     assert "strategy_decision_log_cycles" in script
@@ -295,6 +309,7 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert 'SESSION_GUARD_FAIL_ON_DIAGNOSTICS="${SESSION_GUARD_FAIL_ON_DIAGNOSTICS:-true}"' in session_guard
     assert "SESSION_GUARD_FAIL_ON_DIAGNOSTICS must be true or false" in session_guard
     assert "session_eval_args+=(--fail-on-diagnostics)" in session_guard
+    assert "scheduled check context: session_date=$SESSION_GUARD_DATE strategy=$SESSION_GUARD_STRATEGY" in session_guard
     assert "./scripts/broker_flat_check.sh" in session_guard
     assert "./scripts/broker_flat_check.sh" in profit_probe
     assert "broker exposure remains after close" in session_guard
@@ -303,6 +318,7 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "broker_flat_failed=true\n  rc=44" in profit_probe
     assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"' in profit_probe
     assert "paper profit probe pending: latest completed session" in profit_probe
+    assert "scheduled check context: session_date=$PROFIT_PROBE_DATE proof_start=$PROFIT_PROBE_START_DATE" in profit_probe
     assert 'PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE' in profit_probe
     assert "paper proof pending" in profit_probe
     assert "load_latest_completed_session_date" in profit_probe

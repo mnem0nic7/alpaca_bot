@@ -52,6 +52,8 @@ fi
 PAPER_READINESS_AUTO_RESUME=false PAPER_READINESS_REQUIRE_FLAT=false \
   ./scripts/paper_readiness_check.sh "$ENV_FILE"
 
+echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) strategy=$PAPER_ACTIVITY_STRATEGY"
+
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
 load_market_clock_status() {

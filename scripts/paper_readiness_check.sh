@@ -419,6 +419,8 @@ if [[ ! "$PAPER_READINESS_PREVIOUS_SESSION_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$
   exit 1
 fi
 
+echo "scheduled check context: session_date=$PAPER_READINESS_SESSION_DATE previous_session_date=$PAPER_READINESS_PREVIOUS_SESSION_DATE proof_start=$PAPER_READINESS_PRIOR_PROOF_START_DATE"
+
 watchlist_counts="$("${compose[@]}" exec -T postgres psql \
   -U "$POSTGRES_USER" \
   -d "$POSTGRES_DB" \
@@ -880,8 +882,14 @@ latest_checks AS (
     created_at
   FROM audit_events
   WHERE event_type = 'scheduled_check_completed'
-    AND created_at >= ((:'previous_session_date')::date::timestamp AT TIME ZONE 'America/New_York')
-    AND created_at < (((:'previous_session_date')::date + 1)::timestamp AT TIME ZONE 'America/New_York')
+    AND (
+      payload->>'session_date' = :'previous_session_date'
+      OR (
+        NOT (payload ? 'session_date')
+        AND created_at >= ((:'previous_session_date')::date::timestamp AT TIME ZONE 'America/New_York')
+        AND created_at < (((:'previous_session_date')::date + 1)::timestamp AT TIME ZONE 'America/New_York')
+      )
+    )
     AND payload->>'trading_mode' = 'paper'
     AND payload->>'strategy_version' = :'strategy_version'
     AND payload->>'check_name' IN ('session_guard', 'paper_profit_probe')

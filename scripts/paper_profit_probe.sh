@@ -92,6 +92,8 @@ default_session_date() {
 
 PROFIT_PROBE_DATE="${PROFIT_PROBE_DATE:-$(default_session_date)}"
 
+echo "scheduled check context: session_date=$PROFIT_PROBE_DATE proof_start=$PROFIT_PROBE_START_DATE strategy=$PROFIT_PROBE_STRATEGY min_trades=$PROFIT_PROBE_MIN_TRADES min_pnl=$PROFIT_PROBE_MIN_PNL"
+
 if [[ "$PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE" ]]; then
   echo \
     "paper profit probe pending: latest completed session $PROFIT_PROBE_DATE is before proof start $PROFIT_PROBE_START_DATE"
