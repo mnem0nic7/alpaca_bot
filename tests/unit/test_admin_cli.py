@@ -8,7 +8,16 @@ import pytest
 
 from alpaca_bot.admin.cli import main
 from alpaca_bot.config import TradingMode
-from alpaca_bot.storage import AuditEvent, OrderRecord, PositionRecord, StrategyFlag, TradingStatus, TradingStatusValue
+from alpaca_bot.storage import (
+    AuditEvent,
+    DailySessionState,
+    GLOBAL_SESSION_STATE_STRATEGY_NAME,
+    OrderRecord,
+    PositionRecord,
+    StrategyFlag,
+    TradingStatus,
+    TradingStatusValue,
+)
 
 
 class StoreFactoryStub:
@@ -46,6 +55,14 @@ class RecordingAuditEventStore:
 
     def append(self, event: AuditEvent, *, commit: bool = True) -> None:
         self.appended.append(event)
+
+
+class RecordingDailySessionStateStore:
+    def __init__(self) -> None:
+        self.saved: list[DailySessionState] = []
+
+    def save(self, state: DailySessionState, *, commit: bool = True) -> None:
+        self.saved.append(state)
 
 
 def test_halt_command_saves_halted_status_and_appends_audit_event() -> None:
@@ -137,6 +154,7 @@ def test_resume_command_restores_enabled_status_for_requested_target() -> None:
     connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
     status_store = RecordingTradingStatusStore()
     audit_store = RecordingAuditEventStore()
+    session_store = RecordingDailySessionStateStore()
 
     exit_code = main(
         [
@@ -149,6 +167,7 @@ def test_resume_command_restores_enabled_status_for_requested_target() -> None:
         connect=lambda: connection,
         trading_status_store_factory=StoreFactoryStub(status_store),
         audit_event_store_factory=StoreFactoryStub(audit_store),
+        daily_session_state_store_factory=StoreFactoryStub(session_store),
         now=lambda: now,
         stdout=io.StringIO(),
     )
@@ -161,6 +180,19 @@ def test_resume_command_restores_enabled_status_for_requested_target() -> None:
             status=TradingStatusValue.ENABLED,
             kill_switch_enabled=False,
             status_reason=None,
+            updated_at=now,
+        )
+    ]
+    assert session_store.saved == [
+        DailySessionState(
+            session_date=now.date(),
+            trading_mode=TradingMode.LIVE,
+            strategy_version="breakout-v2026-04",
+            strategy_name=GLOBAL_SESSION_STATE_STRATEGY_NAME,
+            entries_disabled=False,
+            flatten_complete=False,
+            last_reconciled_at=now,
+            notes="resume cleared global entry block",
             updated_at=now,
         )
     ]

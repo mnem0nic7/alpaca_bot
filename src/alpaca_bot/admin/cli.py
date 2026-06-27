@@ -14,7 +14,10 @@ from alpaca_bot.storage import (
     AuditEventStore,
     ConfidenceFloor,
     ConfidenceFloorStore,
+    DailySessionState,
+    DailySessionStateStore,
     DecisionLogStore,
+    GLOBAL_SESSION_STATE_STRATEGY_NAME,
     OrderRecord,
     OrderStore,
     PositionRecord,
@@ -124,6 +127,9 @@ def run_admin_command(
     connection: ConnectionProtocol,
     now: datetime | None = None,
     notifier: Notifier | None = None,
+    daily_session_state_store_factory: Callable[
+        [ConnectionProtocol], DailySessionStateStore
+    ] = DailySessionStateStore,
 ) -> str:
     args = build_parser(settings).parse_args(list(argv))
     timestamp = now or datetime.now(timezone.utc)
@@ -157,6 +163,7 @@ def run_admin_command(
             settings=settings,
             status_store=status_store,
             event_store=event_store,
+            daily_session_state_store=daily_session_state_store_factory(connection),
             new_status=TradingStatusValue.HALTED,
             command_name="halt",
             trading_mode=trading_mode,
@@ -178,6 +185,7 @@ def run_admin_command(
             settings=settings,
             status_store=status_store,
             event_store=event_store,
+            daily_session_state_store=daily_session_state_store_factory(connection),
             new_status=TradingStatusValue.CLOSE_ONLY,
             command_name="close-only",
             trading_mode=trading_mode,
@@ -199,6 +207,7 @@ def run_admin_command(
             settings=settings,
             status_store=status_store,
             event_store=event_store,
+            daily_session_state_store=daily_session_state_store_factory(connection),
             new_status=TradingStatusValue.ENABLED,
             command_name="resume",
             trading_mode=trading_mode,
@@ -277,6 +286,7 @@ def _write_status_change(
     settings: Settings,
     status_store: TradingStatusStore,
     event_store: AuditEventStore,
+    daily_session_state_store: DailySessionStateStore,
     new_status: TradingStatusValue,
     command_name: str,
     trading_mode: TradingMode,
@@ -285,7 +295,6 @@ def _write_status_change(
     now: datetime,
     kill_switch_enabled: bool,
 ) -> str:
-    del settings
     status = TradingStatus(
         trading_mode=trading_mode,
         strategy_version=strategy_version,
@@ -311,12 +320,44 @@ def _write_status_change(
         ),
         commit=False,
     )
+    if new_status is TradingStatusValue.ENABLED:
+        _clear_global_session_entry_block(
+            settings=settings,
+            store=daily_session_state_store,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            now=now,
+        )
     connection.commit()
     return (
         f"mode={trading_mode.value} "
         f"strategy={strategy_version} "
         f"status={new_status.value.upper()} "
         f"reason={reason or '-'}"
+    )
+
+
+def _clear_global_session_entry_block(
+    *,
+    settings: Settings,
+    store: DailySessionStateStore,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    now: datetime,
+) -> None:
+    store.save(
+        DailySessionState(
+            session_date=now.astimezone(settings.market_timezone).date(),
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            strategy_name=GLOBAL_SESSION_STATE_STRATEGY_NAME,
+            entries_disabled=False,
+            flatten_complete=False,
+            last_reconciled_at=now,
+            notes="resume cleared global entry block",
+            updated_at=now,
+        ),
+        commit=False,
     )
 
 
@@ -345,6 +386,9 @@ def main(
     connect: Callable[[], ConnectionProtocol] | None = None,
     trading_status_store_factory: Callable[[ConnectionProtocol], TradingStatusStore] = TradingStatusStore,
     audit_event_store_factory: Callable[[ConnectionProtocol], AuditEventStore] = AuditEventStore,
+    daily_session_state_store_factory: Callable[
+        [ConnectionProtocol], DailySessionStateStore
+    ] = DailySessionStateStore,
     now: Callable[[], datetime] | None = None,
     stdout: TextIO | None = None,
     settings: Settings | None = None,
@@ -509,6 +553,7 @@ def main(
                 settings=resolved_settings,
                 status_store=status_store,
                 event_store=audit_store,
+                daily_session_state_store=daily_session_state_store_factory(connection),
                 new_status=status_value,
                 command_name=args.command,
                 trading_mode=trading_mode,

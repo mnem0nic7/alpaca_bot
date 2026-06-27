@@ -1075,10 +1075,16 @@ def test_logout_redirects_with_valid_csrf_token() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_admin_app(*, saved_statuses: list | None = None, saved_events: list | None = None):
+def _make_admin_app(
+    *,
+    saved_statuses: list | None = None,
+    saved_events: list | None = None,
+    saved_states: list | None = None,
+):
     """App with write-capable stores for testing admin endpoints."""
     statuses = saved_statuses if saved_statuses is not None else []
     events = saved_events if saved_events is not None else []
+    states = saved_states if saved_states is not None else []
 
     def status_store_factory(_conn):
         return SimpleNamespace(
@@ -1094,11 +1100,17 @@ def _make_admin_app(*, saved_statuses: list | None = None, saved_events: list | 
             append=lambda event, *, commit=True: events.append(event),
         )
 
+    def state_store_factory(_conn):
+        return SimpleNamespace(
+            load=lambda **_: None,
+            save=lambda state, *, commit=True: states.append(state),
+        )
+
     return create_app(
         settings=make_settings(),
         connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
         trading_status_store_factory=status_store_factory,
-        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=state_store_factory,
         position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
         order_store_factory=lambda _c: SimpleNamespace(
             list_by_status=lambda **_: [],
@@ -1152,7 +1164,8 @@ def test_admin_halt_returns_403_for_bad_csrf() -> None:
 
 def test_admin_resume_writes_enabled_status() -> None:
     saved_statuses: list = []
-    app = _make_admin_app(saved_statuses=saved_statuses)
+    saved_states: list = []
+    app = _make_admin_app(saved_statuses=saved_statuses, saved_states=saved_states)
     client = TestClient(app, follow_redirects=False)
     token = _csrf_token(client, "admin")
 
@@ -1164,6 +1177,10 @@ def test_admin_resume_writes_enabled_status() -> None:
     assert response.status_code == 303
     assert saved_statuses[0].kill_switch_enabled is False
     assert saved_statuses[0].status.value == "enabled"
+    assert saved_states[0].entries_disabled is False
+    assert saved_states[0].flatten_complete is False
+    assert saved_states[0].strategy_name == "_global"
+    assert saved_states[0].notes == "resume cleared global entry block"
 
 
 def test_admin_close_only_writes_close_only_status() -> None:
@@ -1863,6 +1880,12 @@ class _RecordingNotifier:
 
 def _make_admin_app_with_notifier(notifier):
     """Admin app wired with an explicit notifier for testing."""
+    def state_store_factory(_conn):
+        return SimpleNamespace(
+            load=lambda **_: None,
+            save=lambda *_a, **_k: None,
+        )
+
     return create_app(
         settings=make_settings(),
         connect_postgres_fn=lambda _url: FakeConnection(responses=[]),
@@ -1870,7 +1893,7 @@ def _make_admin_app_with_notifier(notifier):
             load=lambda **_: None,
             save=lambda *_a, **_k: None,
         ),
-        daily_session_state_store_factory=lambda _c: SimpleNamespace(load=lambda **_: None),
+        daily_session_state_store_factory=state_store_factory,
         position_store_factory=lambda _c: SimpleNamespace(list_all=lambda **_: []),
         order_store_factory=lambda _c: SimpleNamespace(
             list_by_status=lambda **_: [],

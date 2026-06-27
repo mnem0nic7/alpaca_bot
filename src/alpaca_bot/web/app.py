@@ -22,6 +22,7 @@ from alpaca_bot.storage import (
     DailySessionState,
     DailySessionStateStore,
     DecisionLogStore,
+    GLOBAL_SESSION_STATE_STRATEGY_NAME,
     OrderStore,
     PositionStore,
     StrategyFlag,
@@ -882,6 +883,22 @@ def _execute_admin_status_change(
             ),
             commit=False,
         )
+        if new_status is TradingStatusValue.ENABLED:
+            state_store = _build_store(app.state.daily_session_state_store_factory, connection)
+            state_store.save(
+                DailySessionState(
+                    session_date=now.astimezone(app_settings.market_timezone).date(),
+                    trading_mode=app_settings.trading_mode,
+                    strategy_version=app_settings.strategy_version,
+                    strategy_name=GLOBAL_SESSION_STATE_STRATEGY_NAME,
+                    entries_disabled=False,
+                    flatten_complete=False,
+                    last_reconciled_at=now,
+                    notes="resume cleared global entry block",
+                    updated_at=now,
+                ),
+                commit=False,
+            )
         connection.commit()
         _subjects = {
             "halt": "Trading halted",
