@@ -65,7 +65,7 @@ require_env_false_or_unset() {
 
 require_env_value STRATEGY_VERSION v1-breakout
 require_env_value RELATIVE_VOLUME_THRESHOLD 3.0
-require_env_value MAX_OPEN_POSITIONS 1
+require_env_value MAX_OPEN_POSITIONS 2
 require_env_value REPLAY_SLIPPAGE_BPS 2.0
 require_env_value RISK_PER_TRADE_PCT 0.01
 require_env_value MAX_POSITION_PCT 0.05

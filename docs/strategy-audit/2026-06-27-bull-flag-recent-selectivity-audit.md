@@ -51,21 +51,37 @@ alpaca-bot-backtest portfolio-audit \
   --strategy bull_flag \
   --slippage-bps 2 \
   --max-open-positions 1 \
+  --max-open-positions 2 \
+  --max-open-positions 3 \
   --starting-equity 17247.795
 ```
 
-Result:
+Full 252-day refreshed result:
 
-| scenarios | trades | win rate | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(edge>0) | verdict |
-|---:|---:|---:|---:|---:|---:|---|---:|---|
-| 999 | 326 | 73.6% | 1.68 | 891.50 | 2.7347 | [0.9796, 4.4462] | 0.0015 | positive-edge |
+| max open | scenarios | trades | win rate | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(edge>0) | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---|
+| 1 | 999 | 326 | 73.6% | 1.68 | 891.50 | 2.7347 | [0.9796, 4.4462] | 0.0015 | positive-edge |
+| 2 | 999 | 524 | 73.1% | 1.60 | 1314.00 | 2.5076 | [1.1327, 3.8851] | 0.0000 | positive-edge |
+| 3 | 999 | 630 | 71.0% | 1.32 | 958.09 | 1.5208 | [0.2547, 2.8169] | 0.0070 | positive-edge |
+
+All-symbol recent-window K recheck:
+
+To make sure the K increase is not only a 252-day artifact, the refreshed
+`999` scenario files were temporarily trimmed to their latest 120 daily bars
+plus matching intraday bars and replayed with the same floor-sized equity.
+
+| max open | scenarios | trades | win rate | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(edge>0) | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---|
+| 1 | 999 | 124 | 79.8% | 2.01 | 431.08 | 3.4765 | [0.7756, 6.2071] | 0.0060 | positive-edge |
+| 2 | 999 | 208 | 76.9% | 1.89 | 645.97 | 3.1056 | [1.1314, 5.0978] | 0.0005 | positive-edge |
+| 3 | 999 | 255 | 74.1% | 1.41 | 466.20 | 1.8282 | [-0.2096, 3.8150] | 0.0360 | no-evidence |
 
 Decision:
 
-Use `RELATIVE_VOLUME_THRESHOLD=3.0` and `MAX_OPEN_POSITIONS=1` for the current
-paper proof. The stricter posture gives up turnover, but recent OOS evidence is
-better: the current K=2 posture loses money OOS on the recent sample, while the
-stricter K=1 posture remains positive-edge after 2 bps slippage. The full
-999-symbol, floor-sized validation also remains positive-edge. This change is
-scoped to paper proof readiness and should be revisited after closed paper
-trades accumulate.
+Use `RELATIVE_VOLUME_THRESHOLD=3.0` and `MAX_OPEN_POSITIONS=2` for the current
+paper proof. K=2 increases expected proof turnover versus K=1 while improving
+the all-symbol recent-window and full-252-day confidence lower bounds. K=3 is
+not promoted because the all-symbol 120-day window falls back to no-evidence.
+The old recent OOS losing K=2 row was the prior `RELATIVE_VOLUME_THRESHOLD=1.5`
+posture, not this stricter relvol `3.0` posture. This change is scoped to paper
+proof readiness and should be revisited after closed paper trades accumulate.
