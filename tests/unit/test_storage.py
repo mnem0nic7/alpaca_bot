@@ -243,6 +243,34 @@ def test_order_store_upserts_and_loads_record() -> None:
     assert connection.commit_count == 1
 
 
+def test_order_store_status_update_preserves_existing_fill_columns() -> None:
+    now = datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc)
+    connection = FakeConnection()
+    store = OrderStore(connection)
+
+    store.save(
+        OrderRecord(
+            client_order_id="paper:v1:AAPL:2026-04-24T19:00:00Z:entry",
+            symbol="AAPL",
+            side="buy",
+            intent_type="entry",
+            status="canceled",
+            quantity=45,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    sql = _last_sql(connection)
+    assert "fill_price = COALESCE(EXCLUDED.fill_price, orders.fill_price)" in sql
+    assert (
+        "filled_quantity = COALESCE(EXCLUDED.filled_quantity, orders.filled_quantity)"
+        in sql
+    )
+
+
 def test_order_store_lists_records_by_status() -> None:
     now = datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc)
     signal_timestamp = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)

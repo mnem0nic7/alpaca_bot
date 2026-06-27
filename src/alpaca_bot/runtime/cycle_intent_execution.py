@@ -842,6 +842,48 @@ def _execute_exit(
             )
             return (0, 0, 0)
 
+    exit_order_side = "buy" if is_short else "sell"
+    exit_order_qty = abs(position.quantity)
+    reserved_exit_order = OrderRecord(
+        client_order_id=client_order_id,
+        symbol=symbol,
+        side=exit_order_side,
+        intent_type="exit",
+        status="submitting",
+        quantity=exit_order_qty,
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        created_at=now,
+        updated_at=now,
+        limit_price=limit_price,
+        initial_stop_price=position.initial_stop_price,
+        signal_timestamp=intent_timestamp,
+        strategy_name=strategy_name,
+    )
+    with lock_ctx:
+        try:
+            runtime.order_store.save(reserved_exit_order, commit=False)
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="exit_order_reserved",
+                    symbol=symbol,
+                    payload={
+                        "client_order_id": client_order_id,
+                        "intent_type": "exit",
+                        "reason": reason,
+                    },
+                    created_at=now,
+                ),
+                commit=False,
+            )
+            runtime.connection.commit()
+        except Exception:
+            try:
+                runtime.connection.rollback()
+            except Exception:
+                pass
+            raise
+
     # Submit exit outside the lock.
     try:
         if is_short:
@@ -925,6 +967,14 @@ def _execute_exit(
                 )
                 with lock_ctx:
                     try:
+                        runtime.order_store.save(
+                            dataclass_replace(
+                                reserved_exit_order,
+                                status="error",
+                                updated_at=now,
+                            ),
+                            commit=False,
+                        )
                         for record in canceled_order_records:
                             runtime.order_store.save(record, commit=False)
                         runtime.audit_event_store.append(
@@ -1015,6 +1065,14 @@ def _execute_exit(
             )
             with lock_ctx:
                 try:
+                    runtime.order_store.save(
+                        dataclass_replace(
+                            reserved_exit_order,
+                            status="error",
+                            updated_at=now,
+                        ),
+                        commit=False,
+                    )
                     for record in canceled_order_records:
                         runtime.order_store.save(record, commit=False)
                     runtime.audit_event_store.append(
@@ -1110,8 +1168,6 @@ def _execute_exit(
                     symbol,
                     strategy_name,
                 )
-                exit_order_side = "buy" if is_short else "sell"
-                exit_order_qty = abs(position.quantity)
                 for record in canceled_order_records:
                     runtime.order_store.save(record, commit=False)
                 runtime.order_store.save(
@@ -1126,6 +1182,7 @@ def _execute_exit(
                         strategy_version=settings.strategy_version,
                         created_at=now,
                         updated_at=now,
+                        limit_price=limit_price,
                         initial_stop_price=position.initial_stop_price,
                         broker_order_id=broker_order.broker_order_id,
                         signal_timestamp=intent_timestamp,
@@ -1166,6 +1223,7 @@ def _execute_exit(
                     strategy_version=settings.strategy_version,
                     created_at=now,
                     updated_at=now,
+                    limit_price=limit_price,
                     initial_stop_price=position.initial_stop_price,
                     broker_order_id=broker_order.broker_order_id,
                     signal_timestamp=intent_timestamp,
@@ -1311,12 +1369,17 @@ def _cancel_partial_fill_entry(
             quantity=entry.quantity,
             trading_mode=entry.trading_mode,
             strategy_version=entry.strategy_version,
+            strategy_name=entry.strategy_name,
             created_at=entry.created_at,
             updated_at=now,
             stop_price=entry.stop_price,
             limit_price=entry.limit_price,
+            initial_stop_price=entry.initial_stop_price,
             broker_order_id=entry.broker_order_id,
             signal_timestamp=entry.signal_timestamp,
+            fill_price=entry.fill_price,
+            filled_quantity=entry.filled_quantity,
+            reconciliation_miss_count=entry.reconciliation_miss_count,
         )
         with lock_ctx:
             try:

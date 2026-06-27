@@ -397,53 +397,54 @@ def test_execute_cycle_intents_cancels_active_stops_and_submits_exit_order() -> 
             "client_order_id": "v1-breakout:breakout:2026-04-24:AAPL:exit:2026-04-24T19:45:00+00:00",
         }
     ]
-    assert runtime.order_store.saved == [
-        OrderRecord(
-            client_order_id=active_stop.client_order_id,
-            symbol="AAPL",
-            side="sell",
-            intent_type="stop",
-            status="canceled",
-            quantity=25,
-            trading_mode=TradingMode.PAPER,
-            strategy_version="v1-breakout",
-            created_at=now,
-            updated_at=now,
-            stop_price=109.89,
-            initial_stop_price=109.89,
-            broker_order_id="broker-stop-1",
-            signal_timestamp=now,
-        ),
-        OrderRecord(
-            client_order_id="v1-breakout:breakout:2026-04-24:AAPL:exit:2026-04-24T19:45:00+00:00",
-            symbol="AAPL",
-            side="sell",
-            intent_type="exit",
-            status="accepted",
-            quantity=25,
-            trading_mode=TradingMode.PAPER,
-            strategy_version="v1-breakout",
-            created_at=now,
-            updated_at=now,
-            initial_stop_price=109.89,
-            broker_order_id="broker-exit-1",
-            signal_timestamp=now,
-        ),
-    ]
-    assert runtime.audit_event_store.appended == [
-        AuditEvent(
-            event_type="cycle_intent_executed",
-            symbol="AAPL",
-            payload={
-                "intent_type": "exit",
-                "action": "submitted",
-                "reason": "eod_flatten",
-                "canceled_stop_count": 1,
-                "client_order_id": "v1-breakout:breakout:2026-04-24:AAPL:exit:2026-04-24T19:45:00+00:00",
-            },
-            created_at=now,
-        )
-    ]
+    canceled_stop = next(o for o in runtime.order_store.saved if o.intent_type == "stop")
+    assert canceled_stop == OrderRecord(
+        client_order_id=active_stop.client_order_id,
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="canceled",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="broker-stop-1",
+        signal_timestamp=now,
+    )
+    exit_writes = [o for o in runtime.order_store.saved if o.intent_type == "exit"]
+    assert [o.status for o in exit_writes] == ["submitting", "accepted"]
+    assert exit_writes[-1] == OrderRecord(
+        client_order_id="v1-breakout:breakout:2026-04-24:AAPL:exit:2026-04-24T19:45:00+00:00",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="accepted",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        initial_stop_price=109.89,
+        broker_order_id="broker-exit-1",
+        signal_timestamp=now,
+    )
+    event_types = [event.event_type for event in runtime.audit_event_store.appended]
+    assert event_types == ["exit_order_reserved", "cycle_intent_executed"]
+    assert runtime.audit_event_store.appended[-1] == AuditEvent(
+        event_type="cycle_intent_executed",
+        symbol="AAPL",
+        payload={
+            "intent_type": "exit",
+            "action": "submitted",
+            "reason": "eod_flatten",
+            "canceled_stop_count": 1,
+            "client_order_id": "v1-breakout:breakout:2026-04-24:AAPL:exit:2026-04-24T19:45:00+00:00",
+        },
+        created_at=now,
+    )
     assert report.canceled_stop_count == 1
     assert report.submitted_exit_count == 1
 
@@ -895,7 +896,10 @@ def test_canceled_stop_preserves_non_default_strategy_name() -> None:
     assert report.canceled_stop_count == 1
     assert report.submitted_exit_count == 1
     # The canceled stop record must carry strategy_name="momentum", not "breakout".
-    canceled_stop = runtime.order_store.saved[0]
+    canceled_stop = next(
+        order for order in runtime.order_store.saved
+        if order.intent_type == "stop" and order.status == "canceled"
+    )
     assert canceled_stop.intent_type == "stop"
     assert canceled_stop.status == "canceled"
     assert canceled_stop.strategy_name == "momentum", (
@@ -1225,7 +1229,7 @@ def test_execute_exit_aborts_when_cancel_order_raises_unrecognized_error() -> No
 
 def test_execute_exit_returns_without_db_write_when_submit_market_exit_raises() -> None:
     """When submit_market_exit raises after stops are already canceled, _execute_exit must:
-    - NOT write an exit OrderRecord (exit never submitted to broker)
+    - Mark the reserved exit OrderRecord as error so any delayed fill remains matchable
     - Queue a recovery stop immediately (position was left unprotected when stop was cancelled)
     - Emit a recovery_stop_queued_after_exit_failure audit event"""
     execute_cycle_intents = load_cycle_intent_execution_api()
@@ -1293,9 +1297,9 @@ def test_execute_exit_returns_without_db_write_when_submit_market_exit_raises() 
     assert broker.exit_calls == [], "submit_market_exit raised — no exit_calls recorded"
     # canceled_stop_count is returned (the stop WAS canceled), but submitted_exit_count = 0
     assert report.submitted_exit_count == 0
-    # No exit OrderRecord written to DB
     exit_writes = [o for o in order_store.saved if o.intent_type == "exit"]
-    assert exit_writes == [], "No exit record must be written when submit_market_exit raises"
+    assert [o.status for o in exit_writes] == ["submitting", "error"]
+    assert exit_writes[-1].broker_order_id is None
     # A recovery stop must be queued immediately — position was left unprotected
     recovery_stops = [
         o for o in order_store.saved
@@ -1401,10 +1405,10 @@ def test_execute_exit_saves_exit_record_when_position_disappears_after_submit() 
         "the position was cleaned up by the fill stream before the DB write"
     )
     exit_writes = [o for o in order_store.saved if o.intent_type == "exit"]
-    assert len(exit_writes) == 1, (
-        "Exit order record must be saved for fill-event matching and PnL tracking"
+    assert [o.status for o in exit_writes] == ["submitting", "accepted"], (
+        "Exit order record must be reserved before submit and finalized after broker acceptance"
     )
-    assert exit_writes[0].broker_order_id == "broker-exit-1", (
+    assert exit_writes[-1].broker_order_id == "broker-exit-1", (
         "Exit record must carry the broker_order_id returned by submit_market_exit"
     )
 
@@ -2706,8 +2710,11 @@ def test_execute_exit_cancels_partial_fill_entry_before_market_exit() -> None:
         updated_at=now,
         stop_price=14.88,
         limit_price=14.90,
+        initial_stop_price=14.00,
         broker_order_id="broker-entry-sono-1",
         signal_timestamp=now,
+        fill_price=14.88,
+        filled_quantity=187,
     )
     position = PositionRecord(
         symbol="SONO",
@@ -2755,6 +2762,14 @@ def test_execute_exit_cancels_partial_fill_entry_before_market_exit() -> None:
     # Audit trail includes partial_fill_entry_canceled
     event_types = [e.event_type for e in audit_store.appended]
     assert "partial_fill_entry_canceled" in event_types
+    canceled_entry = next(
+        order for order in order_store.saved
+        if order.client_order_id == partial_entry.client_order_id
+    )
+    assert canceled_entry.status == "canceled"
+    assert canceled_entry.fill_price == 14.88
+    assert canceled_entry.filled_quantity == 187
+    assert canceled_entry.initial_stop_price == 14.00
 
 
 def test_execute_update_stop_cancels_partial_fill_entry_before_submitting_new_stop() -> None:

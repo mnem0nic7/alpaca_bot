@@ -318,8 +318,8 @@ class OrderStore:
                 initial_stop_price = COALESCE(EXCLUDED.initial_stop_price, orders.initial_stop_price),
                 broker_order_id = EXCLUDED.broker_order_id,
                 signal_timestamp = EXCLUDED.signal_timestamp,
-                fill_price = EXCLUDED.fill_price,
-                filled_quantity = EXCLUDED.filled_quantity,
+                fill_price = COALESCE(EXCLUDED.fill_price, orders.fill_price),
+                filled_quantity = COALESCE(EXCLUDED.filled_quantity, orders.filled_quantity),
                 updated_at = EXCLUDED.updated_at,
                 reconciliation_miss_count = EXCLUDED.reconciliation_miss_count
             """,
