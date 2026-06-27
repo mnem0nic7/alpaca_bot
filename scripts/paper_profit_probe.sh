@@ -43,11 +43,14 @@ if [[ "$rc" -eq 42 || "$rc" -eq 44 ]]; then
   if [[ "$rc" -eq 44 ]]; then
     reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: open positions remain after close"
   fi
-  docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm admin \
+  if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm admin \
     close-only \
     --mode "${TRADING_MODE:-paper}" \
     --strategy-version "$STRATEGY_VERSION" \
-    --reason "$reason"
+    --reason "$reason"; then
+    echo "paper profit probe failed: could not apply close-only guard" >&2
+    exit 45
+  fi
 fi
 
 exit "$rc"

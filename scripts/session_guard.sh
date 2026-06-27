@@ -29,11 +29,14 @@ if [[ "$rc" -eq 42 || "$rc" -eq 44 ]]; then
   if [[ "$rc" -eq 44 ]]; then
     reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: open positions remain after close"
   fi
-  docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm admin \
+  if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm admin \
     close-only \
     --mode "${TRADING_MODE:-paper}" \
     --strategy-version "$STRATEGY_VERSION" \
-    --reason "$reason"
+    --reason "$reason"; then
+    echo "session guard failed: could not apply close-only guard" >&2
+    exit 45
+  fi
 fi
 
 exit "$rc"

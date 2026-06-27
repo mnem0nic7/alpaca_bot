@@ -100,6 +100,10 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert '7) TZ=America/New_York date -d "2 days ago" +%F ;;' in profit_probe
     assert '"$rc" -eq 44' in session_guard
     assert "open positions remain after close" in session_guard
+    assert "session guard failed: could not apply close-only guard" in session_guard
+    assert "exit 45" in session_guard
     assert '"$rc" -eq 42 || "$rc" -eq 44' in profit_probe
     assert "paper proof failed" in profit_probe
     assert "close-only" in profit_probe
+    assert "paper profit probe failed: could not apply close-only guard" in profit_probe
+    assert "exit 45" in profit_probe
