@@ -45,6 +45,29 @@ PAPER_READINESS_AUTO_RESUME=false PAPER_READINESS_REQUIRE_FLAT=false \
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
+load_market_clock_status() {
+  "${compose[@]}" run -T --rm \
+    --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+
+try:
+    settings = Settings.from_env()
+    clock = AlpacaExecutionAdapter.from_settings(settings).get_market_clock()
+except Exception as exc:
+    print(f"unknown|{exc}")
+else:
+    status = "open" if clock.is_open else "closed"
+    print(
+        f"{status}|timestamp={clock.timestamp.isoformat()} "
+        f"next_open={clock.next_open.isoformat()} "
+        f"next_close={clock.next_close.isoformat()}"
+    )
+PY
+}
+
 stats="$("${compose[@]}" exec -T postgres psql \
   -U "$POSTGRES_USER" \
   -d "$POSTGRES_DB" \
@@ -129,8 +152,20 @@ IFS='|' read -r supervisor_cycles disabled_cycles decision_cycles decision_recor
   strategy_disabled_reasons <<< "$stats"
 
 if [[ "${supervisor_cycles:-0}" -eq 0 && "${market_closed_idles:-0}" -gt 0 ]]; then
-  echo "paper activity skipped: market closed in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes"
-  exit 0
+  if market_clock="$(load_market_clock_status)"; then
+    IFS='|' read -r market_clock_status market_clock_detail <<< "$market_clock"
+  else
+    market_clock_status="unknown"
+    market_clock_detail="clock command failed"
+  fi
+
+  if [[ "$market_clock_status" == "closed" ]]; then
+    echo "paper activity skipped: market closed in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes clock=${market_clock_detail:-unknown}"
+    exit 0
+  fi
+
+  echo "paper activity failed: supervisor reported market_closed but Alpaca clock is ${market_clock_status:-unknown} (${market_clock_detail:-no detail})" >&2
+  exit 1
 fi
 
 if [[ "${supervisor_cycles:-0}" -eq 0 ]]; then

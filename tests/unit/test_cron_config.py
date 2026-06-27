@@ -167,6 +167,10 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "strategy_entries_disabled_reasons" in script
     assert "$PAPER_ACTIVITY_STRATEGY entries blocked" in script
     assert "PAPER_ACTIVITY_STRATEGY contains unsupported characters" in script
+    assert "load_market_clock_status" in script
+    assert "AlpacaExecutionAdapter.from_settings" in script
+    assert "get_market_clock" in script
+    assert "supervisor reported market_closed but Alpaca clock is" in script
     assert "market_closed" in script
     assert "no supervisor cycles" in script
     assert "no decision cycles" in script
