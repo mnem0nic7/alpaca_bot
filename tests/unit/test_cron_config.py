@@ -197,6 +197,7 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     script = Path("scripts/paper_activity_check.sh").read_text()
 
     assert "PAPER_ACTIVITY_WINDOW_MINUTES" in script
+    assert 'PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"' in script
     assert 'PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
     assert "PAPER_READINESS_AUTO_RESUME=false" in script
     assert "PAPER_READINESS_REQUIRE_FLAT=false" in script
