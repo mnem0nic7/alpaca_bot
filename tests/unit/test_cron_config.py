@@ -35,6 +35,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"' in script
     assert 'PAPER_READINESS_AUTO_RESET_WEIGHTS="${PAPER_READINESS_AUTO_RESET_WEIGHTS:-true}"' in script
     assert 'PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"' in script
+    assert 'PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.01}"' in script
     assert 'status=close_only' in script
     assert 'kill_switch=false' in script
     assert 'open_positions" == "0"' in script
@@ -46,6 +47,9 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness resetting stale strategy weights" in script
     assert "admin reset-weights" in script
     assert "paper readiness weights ok" in script
+    assert "confidence_floor_store" in script
+    assert "paper readiness confidence floor ok" in script
+    assert "expected >= $PAPER_READINESS_MIN_CONFIDENCE_FLOOR and <= 1.0" in script
     assert "pre-open paper readiness auto-resume" in script
     assert "--expect-trading-status enabled" in script
     assert "--expect-only-enabled-strategy bull_flag" in script

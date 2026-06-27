@@ -5,6 +5,7 @@ ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"
 PAPER_READINESS_AUTO_RESET_WEIGHTS="${PAPER_READINESS_AUTO_RESET_WEIGHTS:-true}"
 PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
+PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.01}"
 
 cd "$(dirname "$0")/.."
 
@@ -26,6 +27,11 @@ fi
 if [[ ! "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" =~ ^[0-9]+$ ]] \
   || [[ "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" -lt 1 ]]; then
   echo "PAPER_READINESS_MIN_WATCHLIST_SYMBOLS must be a positive integer" >&2
+  exit 1
+fi
+
+if [[ ! "$PAPER_READINESS_MIN_CONFIDENCE_FLOOR" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
+  echo "PAPER_READINESS_MIN_CONFIDENCE_FLOOR must be a non-negative number" >&2
   exit 1
 fi
 
@@ -171,6 +177,48 @@ fi
 
 echo \
   "paper readiness weights ok: active=[$active_weight_names] stored=[$stored_weight_names] sum=$stored_weight_sum"
+
+confidence_floor_check="$("${compose[@]}" exec -T postgres psql \
+  -U "$POSTGRES_USER" \
+  -d "$POSTGRES_DB" \
+  -tA -F '|' \
+  -v strategy_version="$STRATEGY_VERSION" \
+  -v default_floor="${CONFIDENCE_FLOOR:-0.25}" \
+  -v min_floor="$PAPER_READINESS_MIN_CONFIDENCE_FLOOR" <<'SQL'
+WITH current_floor AS (
+  SELECT COALESCE(
+    (
+      SELECT floor_value
+      FROM confidence_floor_store
+      WHERE trading_mode = 'paper'
+        AND strategy_version = :'strategy_version'
+    ),
+    (:'default_floor')::double precision
+  ) AS floor_value
+)
+SELECT
+  CASE
+    WHEN floor_value >= (:'min_floor')::double precision
+     AND floor_value <= 1.0
+    THEN 'ok'
+    ELSE 'mismatch'
+  END,
+  ROUND(floor_value::numeric, 6)
+FROM current_floor;
+SQL
+)"
+
+IFS='|' read -r confidence_floor_status confidence_floor_value \
+  <<< "$confidence_floor_check"
+
+if [[ "$confidence_floor_status" != "ok" ]]; then
+  echo \
+    "paper readiness failed: confidence_floor=${confidence_floor_value:-unset} expected >= $PAPER_READINESS_MIN_CONFIDENCE_FLOOR and <= 1.0" \
+    >&2
+  exit 1
+fi
+
+echo "paper readiness confidence floor ok: floor=$confidence_floor_value"
 
 if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
   status_line="$("${compose[@]}" run -T --rm admin status \
