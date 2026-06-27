@@ -70,6 +70,7 @@ require_env_value RISK_PER_TRADE_PCT 0.01
 require_env_value MAX_POSITION_PCT 0.05
 require_env_value MAX_PORTFOLIO_EXPOSURE_PCT 0.30
 require_env_value DAILY_LOSS_LIMIT_PCT 0.01
+require_env_true PAPER_PROOF_FREEZE
 require_env_true ENABLE_VWAP_ENTRY_FILTER
 require_env_false_or_unset EXTENDED_HOURS_ENABLED
 require_env_false_or_unset ENABLE_VIX_FILTER

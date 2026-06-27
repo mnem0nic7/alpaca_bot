@@ -24,6 +24,12 @@ if [[ ! -f "$ENV_FILE" ]]; then
     exit 1
 fi
 
+PAPER_PROOF_FREEZE="$(grep "^PAPER_PROOF_FREEZE=" "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
+if [[ "${PAPER_PROOF_FREEZE,,}" == "true" ]]; then
+    echo "$LOG_PREFIX PAPER_PROOF_FREEZE=true — skipping candidate auto-apply."
+    exit 0
+fi
+
 # Extract non-comment, non-empty KEY=VALUE lines from candidate.env
 PARAMS=$(grep -E '^[A-Z_]+=' "$CANDIDATE_ENV") || true
 

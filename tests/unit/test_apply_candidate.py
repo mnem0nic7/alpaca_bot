@@ -74,6 +74,34 @@ def test_apply_updates_changed_params_and_calls_deploy(tmp_path):
     assert deploy_log.exists(), "deploy.sh must be called when params changed"
 
 
+def test_apply_skips_when_paper_proof_freeze_enabled(tmp_path):
+    """PAPER_PROOF_FREEZE=true freezes the audited paper proof posture."""
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "PAPER_PROOF_FREEZE=true\n"
+        "BREAKOUT_LOOKBACK_BARS=20\n"
+        "RELATIVE_VOLUME_THRESHOLD=1.5\n"
+    )
+    candidate_env = tmp_path / "candidate.env"
+    candidate_env.write_text(
+        "BREAKOUT_LOOKBACK_BARS=30\n"
+        "RELATIVE_VOLUME_THRESHOLD=2.0\n"
+    )
+    mock_deploy = _make_mock_deploy(tmp_path)
+
+    result = _run_apply(env_file, candidate_env, mock_deploy)
+
+    assert result.returncode == 0
+    assert "PAPER_PROOF_FREEZE=true" in result.stdout
+    assert env_file.read_text() == (
+        "PAPER_PROOF_FREEZE=true\n"
+        "BREAKOUT_LOOKBACK_BARS=20\n"
+        "RELATIVE_VOLUME_THRESHOLD=1.5\n"
+    )
+    deploy_log = Path(str(env_file) + ".deploy_log")
+    assert not deploy_log.exists(), "deploy.sh must not be called while paper proof is frozen"
+
+
 def test_apply_no_op_when_params_already_current(tmp_path):
     """Params in candidate match env file → no env change, deploy.sh NOT called."""
     env_file = tmp_path / "alpaca-bot.env"
