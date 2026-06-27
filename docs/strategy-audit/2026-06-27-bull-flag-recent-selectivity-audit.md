@@ -156,3 +156,31 @@ Decision: keep the deployed `RELATIVE_VOLUME_THRESHOLD=2.0`,
 `MAX_OPEN_POSITIONS=3`, floor-sized paper proof posture. Removing inactive
 scenario extras does not weaken the evidence; the exact live active universe
 still clears the positive-edge audit.
+
+Exact active-watchlist recent-window replay:
+
+The same 982 active symbols were also trimmed to their latest 120 daily bars
+plus matching intraday bars to verify that the active-universe evidence still
+holds in the recent regime.
+
+Command:
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+alpaca-bot-backtest portfolio-audit \
+  --scenario-dir /tmp/alpaca-active-120d-scenarios \
+  --strategy bull_flag \
+  --slippage-bps 2 \
+  --max-open-positions 3 \
+  --starting-equity 17247.795
+```
+
+Result:
+
+| scenarios | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(edge>0) | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---|
+| 982 | 424 | 74.8% | 1.75 | 1070.09 | 2.5238 | 5.82 | [1.1901, 3.8148] | 0.0000 | positive-edge |
+
+Decision: the latest-120-day active-universe replay strengthens the same paper
+proof posture. Keep `RELATIVE_VOLUME_THRESHOLD=2.0` and `MAX_OPEN_POSITIONS=3`
+for the 2026-06-29 proof start.
