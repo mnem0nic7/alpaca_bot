@@ -15,6 +15,8 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "ENABLE_VWAP_ENTRY_FILTER",
         "FLOOR_AUTO_RAISE_MAX_AGE_DAYS",
         "MAX_OPEN_POSITIONS",
+        "ATR_STOP_MULTIPLIER",
+        "TRAILING_STOP_ATR_MULTIPLIER",
         "OPTION_CHAIN_MIN_TOTAL_VOLUME",
         "OPTION_STRATEGY_MAX_ROLLING_LOSS_USD",
         "OPTION_STRATEGY_ROLLING_LOSS_DAYS",
@@ -23,6 +25,11 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
     }
 
     assert expected <= passed_vars
+    assert "ATR_STOP_MULTIPLIER: ${ATR_STOP_MULTIPLIER:-1.0}" in compose_text
+    assert (
+        "TRAILING_STOP_ATR_MULTIPLIER: ${TRAILING_STOP_ATR_MULTIPLIER:-0.0}"
+        in compose_text
+    )
 
 
 def test_deploy_ops_check_enforces_paper_readiness() -> None:
@@ -47,6 +54,10 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "MAX_POSITION_PCT=0.05" in env_text
     assert "MAX_PORTFOLIO_EXPOSURE_PCT=0.30" in env_text
     assert "INTRADAY_CONSECUTIVE_LOSS_GATE=0" in env_text
+    assert "ATR_PERIOD=14" in env_text
+    assert "ATR_STOP_MULTIPLIER=1.0" in env_text
+    assert "TRAILING_STOP_ATR_MULTIPLIER=1.5" in env_text
+    assert "TRAILING_STOP_PROFIT_TRIGGER_R=1.0" in env_text
     assert "ENABLE_VIX_FILTER=false" in env_text
     assert "ENABLE_SECTOR_FILTER=false" in env_text
     assert "ENABLE_VWAP_ENTRY_FILTER=true" in env_text
@@ -68,6 +79,10 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert 'REPLAY_SLIPPAGE_BPS="2.0"' in script
     assert 'PAPER_PROOF_FREEZE="true"' in script
     assert "INTRADAY_CONSECUTIVE_LOSS_GATE=0" in script
+    assert "ATR_PERIOD=14" in script
+    assert "ATR_STOP_MULTIPLIER=1.0" in script
+    assert "TRAILING_STOP_ATR_MULTIPLIER=1.5" in script
+    assert "TRAILING_STOP_PROFIT_TRIGGER_R=1.0" in script
     assert 'ENABLE_VIX_FILTER="false"' in script
     assert 'ENABLE_SECTOR_FILTER="false"' in script
     assert 'ENABLE_VWAP_ENTRY_FILTER="true"' in script

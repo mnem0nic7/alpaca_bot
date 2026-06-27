@@ -115,6 +115,10 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_value MAX_OPEN_POSITIONS 3" in script
     assert "require_env_value REPLAY_SLIPPAGE_BPS 2.0" in script
     assert "require_env_value RISK_PER_TRADE_PCT 0.01" in script
+    assert "require_env_value_or_unset ATR_PERIOD 14" in script
+    assert "require_env_value_or_unset ATR_STOP_MULTIPLIER 1.0" in script
+    assert "require_env_value TRAILING_STOP_ATR_MULTIPLIER 1.5" in script
+    assert "require_env_value_or_unset TRAILING_STOP_PROFIT_TRIGGER_R 1.0" in script
     assert "require_env_value INTRADAY_CONSECUTIVE_LOSS_GATE 0" in script
     assert "require_env_value ENTRY_WINDOW_START 10:00" in script
     assert "require_env_value ENTRY_WINDOW_END 15:30" in script
