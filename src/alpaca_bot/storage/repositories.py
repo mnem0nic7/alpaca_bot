@@ -1672,6 +1672,30 @@ class StrategyWeightStore:
                     ),
                     commit=False,
                 )
+            if weights:
+                placeholders = ", ".join(["%s"] * len(weights))
+                execute(
+                    self._connection,
+                    f"""
+                    DELETE FROM strategy_weights
+                     WHERE trading_mode = %s
+                       AND strategy_version = %s
+                       AND strategy_name NOT IN ({placeholders})
+                    """,
+                    (trading_mode.value, strategy_version, *weights.keys()),
+                    commit=False,
+                )
+            else:
+                execute(
+                    self._connection,
+                    """
+                    DELETE FROM strategy_weights
+                     WHERE trading_mode = %s
+                       AND strategy_version = %s
+                    """,
+                    (trading_mode.value, strategy_version),
+                    commit=False,
+                )
             if commit:
                 self._connection.commit()
         except Exception:

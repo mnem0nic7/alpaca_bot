@@ -3,6 +3,7 @@ set -euo pipefail
 
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"
+PAPER_READINESS_AUTO_RESET_WEIGHTS="${PAPER_READINESS_AUTO_RESET_WEIGHTS:-true}"
 PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
 
 cd "$(dirname "$0")/.."
@@ -96,6 +97,80 @@ fi
 
 echo \
   "paper readiness watchlist ok: active=$entry_watchlist_symbols enabled=$enabled_watchlist_symbols ignored=$ignored_watchlist_symbols"
+
+load_weight_alignment() {
+  "${compose[@]}" exec -T postgres psql \
+    -U "$POSTGRES_USER" \
+    -d "$POSTGRES_DB" \
+    -tA -F '|' \
+    -v strategy_version="$STRATEGY_VERSION" <<'SQL'
+WITH active AS (
+  SELECT strategy_name
+  FROM strategy_flags
+  WHERE trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+    AND enabled = TRUE
+),
+weights AS (
+  SELECT strategy_name, weight
+  FROM strategy_weights
+  WHERE trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+),
+summary AS (
+  SELECT
+    (SELECT COALESCE(array_agg(strategy_name ORDER BY strategy_name), ARRAY[]::text[]) FROM active) AS active_names,
+    (SELECT COALESCE(array_agg(strategy_name ORDER BY strategy_name), ARRAY[]::text[]) FROM weights) AS weight_names,
+    (SELECT COALESCE(SUM(weight), 0) FROM weights) AS weight_sum,
+    (SELECT COUNT(*) FROM weights WHERE weight <= 0) AS nonpositive_weights
+)
+SELECT
+  CASE
+    WHEN cardinality(active_names) > 0
+     AND active_names = weight_names
+     AND nonpositive_weights = 0
+     AND ABS(weight_sum - 1.0) < 0.0001
+    THEN 'ok'
+    ELSE 'mismatch'
+  END,
+  array_to_string(active_names, ','),
+  array_to_string(weight_names, ','),
+  ROUND(weight_sum::numeric, 6)
+FROM summary;
+SQL
+}
+
+weight_alignment="$(load_weight_alignment)"
+IFS='|' read -r weight_status active_weight_names stored_weight_names stored_weight_sum \
+  <<< "$weight_alignment"
+
+if [[ "$weight_status" != "ok" ]]; then
+  if [[ "$PAPER_READINESS_AUTO_RESET_WEIGHTS" != "true" ]]; then
+    echo \
+      "paper readiness failed: strategy weights mismatch active=[$active_weight_names] stored=[$stored_weight_names] sum=${stored_weight_sum:-0}" \
+      >&2
+    exit 1
+  fi
+
+  echo \
+    "paper readiness resetting stale strategy weights: active=[$active_weight_names] stored=[$stored_weight_names] sum=${stored_weight_sum:-0}"
+  "${compose[@]}" run -T --rm admin reset-weights \
+    --mode paper \
+    --strategy-version "$STRATEGY_VERSION"
+
+  weight_alignment="$(load_weight_alignment)"
+  IFS='|' read -r weight_status active_weight_names stored_weight_names stored_weight_sum \
+    <<< "$weight_alignment"
+  if [[ "$weight_status" != "ok" ]]; then
+    echo \
+      "paper readiness failed after weight reset: active=[$active_weight_names] stored=[$stored_weight_names] sum=${stored_weight_sum:-0}" \
+      >&2
+    exit 1
+  fi
+fi
+
+echo \
+  "paper readiness weights ok: active=[$active_weight_names] stored=[$stored_weight_names] sum=$stored_weight_sum"
 
 if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
   status_line="$("${compose[@]}" run -T --rm admin status \

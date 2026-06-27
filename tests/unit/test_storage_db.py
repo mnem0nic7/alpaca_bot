@@ -827,7 +827,7 @@ class TestStrategyWeightStore:
         assert w.computed_at == now
 
     def test_upsert_many_calls_execute_for_each_strategy(self) -> None:
-        executed: list[tuple] = []
+        executed: list[tuple[str, tuple]] = []
 
         class _TrackingConn:
             def cursor(self):
@@ -835,7 +835,7 @@ class TestStrategyWeightStore:
 
             def execute(self, sql, params=None):
                 if params:
-                    executed.append(params)
+                    executed.append((sql, params))
 
             def fetchone(self):
                 return None
@@ -861,9 +861,14 @@ class TestStrategyWeightStore:
             strategy_version="v1",
             computed_at=now,
         )
-        assert len(executed) == 2
-        names_stored = {p[0] for p in executed}
+        assert len(executed) == 3
+        upserts = [stmt for stmt in executed if "INSERT INTO strategy_weights" in stmt[0]]
+        deletes = [stmt for stmt in executed if "DELETE FROM strategy_weights" in stmt[0]]
+        assert len(upserts) == 2
+        assert len(deletes) == 1
+        names_stored = {p[1][0] for p in upserts}
         assert names_stored == {"breakout", "momentum"}
+        assert deletes[0][1] == ("paper", "v1", "breakout", "momentum")
 
 
 # ── test_lifetime_pnl_by_strategy ─────────────────────────────────────────────
