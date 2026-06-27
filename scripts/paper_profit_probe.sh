@@ -31,6 +31,7 @@ docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
   --mode "${TRADING_MODE:-paper}" \
   --strategy-version "$STRATEGY_VERSION" \
   --strategy "$PROFIT_PROBE_STRATEGY" \
+  --fail-on-open-positions \
   --require-min-trades "$PROFIT_PROBE_MIN_TRADES" \
   --fail-below-pnl "$PROFIT_PROBE_MIN_PNL" \
   --min-trades-for-gate "$PROFIT_PROBE_MIN_TRADES"

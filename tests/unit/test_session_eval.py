@@ -202,7 +202,13 @@ def test_list_closed_trades_includes_intent_type():
 # ---------------------------------------------------------------------------
 
 
-def _patch_cli_deps(monkeypatch, rows, *, equity_baseline: float | None = 100_000.0):
+def _patch_cli_deps(
+    monkeypatch,
+    rows,
+    *,
+    equity_baseline: float | None = 100_000.0,
+    open_positions: list | None = None,
+):
     """Stub all I/O dependencies for session_eval_cli.main()."""
     import alpaca_bot.admin.session_eval_cli as cli_module
     from types import SimpleNamespace
@@ -225,7 +231,7 @@ def _patch_cli_deps(monkeypatch, rows, *, equity_baseline: float | None = 100_00
         list_failed_entries=lambda **kwargs: [],
     )
     fake_audit_store = SimpleNamespace(list_by_event_types=lambda **kwargs: [])
-    fake_position_store = SimpleNamespace(list_all=lambda **kwargs: [])
+    fake_position_store = SimpleNamespace(list_all=lambda **kwargs: list(open_positions or []))
 
     monkeypatch.setattr(cli_module, "DailySessionStateStore", lambda conn: fake_session_store)
     monkeypatch.setattr(cli_module, "OrderStore", lambda conn: fake_order_store)
@@ -284,6 +290,37 @@ def test_session_eval_cli_require_min_trades_fails_when_no_trades(monkeypatch, c
     out = capsys.readouterr().out
     assert "No closed trades" in out
     assert "Proof incomplete" in out
+
+
+def test_session_eval_cli_fail_on_open_positions_with_no_trades(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+    from alpaca_bot.config import TradingMode
+    from alpaca_bot.storage.models import PositionRecord
+
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        quantity=10.0,
+        entry_price=100.0,
+        stop_price=95.0,
+        initial_stop_price=95.0,
+        opened_at=datetime(2026, 5, 4, 10, 0, tzinfo=timezone.utc),
+    )
+    _patch_cli_deps(monkeypatch, rows=[], open_positions=[position])
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+        "--fail-on-open-positions",
+    ])
+
+    assert rc == 44
+    out = capsys.readouterr().out
+    assert "Open positions at EOD: AAPL" in out
+    assert "Guard failed: 1 open position(s) remain after session: AAPL" in out
 
 
 def test_session_eval_cli_produces_report(monkeypatch, capsys):
@@ -391,3 +428,41 @@ def test_session_eval_cli_require_min_trades_fails_below_required_count(monkeypa
 
     assert rc == 43
     assert "Proof incomplete: 1 closed trades below required 2" in capsys.readouterr().out
+
+
+def test_session_eval_cli_fail_on_open_positions_with_closed_trades(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+    from alpaca_bot.config import TradingMode
+    from alpaca_bot.storage.models import PositionRecord
+
+    position = PositionRecord(
+        symbol="MSFT",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        quantity=5.0,
+        entry_price=200.0,
+        stop_price=190.0,
+        initial_stop_price=190.0,
+        opened_at=datetime(2026, 5, 4, 10, 0, tzinfo=timezone.utc),
+    )
+    _patch_cli_deps(
+        monkeypatch,
+        rows=[_make_trade_row(symbol="AAPL", strategy_name="bull_flag")],
+        open_positions=[position],
+    )
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+        "--fail-on-open-positions",
+        "--require-min-trades", "1",
+        "--fail-below-pnl", "0",
+    ])
+
+    assert rc == 44
+    out = capsys.readouterr().out
+    assert "Session Evaluation" in out
+    assert "Open positions at EOD: MSFT" in out
+    assert "Guard failed: 1 open position(s) remain after session: MSFT" in out

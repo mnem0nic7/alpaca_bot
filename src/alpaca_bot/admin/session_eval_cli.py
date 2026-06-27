@@ -55,6 +55,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="N",
         help="Exit non-zero unless at least N closed trades are present.",
     )
+    parser.add_argument(
+        "--fail-on-open-positions",
+        action="store_true",
+        help="Exit non-zero when positions remain open after the evaluated session.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
 
     eval_date: date = date.fromisoformat(args.date) if args.date else date.today()
@@ -103,6 +108,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         strategy_label = f" (strategy={args.strategy})" if args.strategy else ""
         print(f"No closed trades for {eval_date}{strategy_label}.")
         _print_session_diagnostics(diagnostics)
+        if args.fail_on_open_positions and diagnostics.open_positions:
+            _print_open_position_guard_failure(diagnostics)
+            return 44
         if args.require_min_trades > 0:
             print(
                 f"Proof incomplete: 0 closed trades below required "
@@ -120,6 +128,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     _print_session_report(report, eval_date=eval_date, trading_mode=args.mode,
                           strategy_version=strategy_version)
     _print_session_diagnostics(diagnostics)
+    if args.fail_on_open_positions and diagnostics.open_positions:
+        _print_open_position_guard_failure(diagnostics)
+        return 44
     if report.total_trades < args.require_min_trades:
         print(
             f"Proof incomplete: {report.total_trades} closed trades below "
@@ -135,6 +146,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 42
     return 0
+
+
+def _print_open_position_guard_failure(diagnostics: SessionDiagnostics) -> None:
+    symbols = ", ".join(position.symbol for position in diagnostics.open_positions)
+    print(
+        f"Guard failed: {len(diagnostics.open_positions)} open "
+        f"position(s) remain after session: {symbols}."
+    )
 
 
 def _row_to_trade_record(row: dict) -> ReplayTradeRecord:

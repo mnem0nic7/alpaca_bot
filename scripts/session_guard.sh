@@ -19,16 +19,21 @@ docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
   --mode "${TRADING_MODE:-paper}" \
   --strategy-version "$STRATEGY_VERSION" \
   --strategy "$SESSION_GUARD_STRATEGY" \
+  --fail-on-open-positions \
   --fail-below-pnl "$SESSION_GUARD_FAIL_BELOW_PNL" \
   --min-trades-for-gate "$SESSION_GUARD_MIN_TRADES"
 rc=$?
 
-if [[ "$rc" -eq 42 ]]; then
+if [[ "$rc" -eq 42 || "$rc" -eq 44 ]]; then
+  reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: pnl below ${SESSION_GUARD_FAIL_BELOW_PNL} after ${SESSION_GUARD_MIN_TRADES}+ trades"
+  if [[ "$rc" -eq 44 ]]; then
+    reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: open positions remain after close"
+  fi
   docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm admin \
     close-only \
     --mode "${TRADING_MODE:-paper}" \
     --strategy-version "$STRATEGY_VERSION" \
-    --reason "${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: pnl below ${SESSION_GUARD_FAIL_BELOW_PNL} after ${SESSION_GUARD_MIN_TRADES}+ trades"
+    --reason "$reason"
 fi
 
 exit "$rc"

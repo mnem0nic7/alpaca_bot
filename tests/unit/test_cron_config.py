@@ -59,3 +59,13 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "market_closed" in script
     assert "no supervisor cycles" in script
     assert "no decision cycles" in script
+
+
+def test_post_close_checks_fail_on_open_positions() -> None:
+    session_guard = Path("scripts/session_guard.sh").read_text()
+    profit_probe = Path("scripts/paper_profit_probe.sh").read_text()
+
+    assert "--fail-on-open-positions" in session_guard
+    assert "--fail-on-open-positions" in profit_probe
+    assert '"$rc" -eq 44' in session_guard
+    assert "open positions remain after close" in session_guard
