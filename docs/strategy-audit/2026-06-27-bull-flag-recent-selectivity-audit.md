@@ -236,3 +236,18 @@ alpaca-bot-backtest portfolio-audit \
 Decision: keep the same deployed proof posture after the data-quality cleanup.
 Removing stale/sparse active symbols did not weaken the full-window or recent
 active-universe evidence.
+
+Proof gate calibration:
+
+The latest-120-day exact 980-symbol replay was also aggregated by close date to
+check that the live paper proof gates match the deployed trade cadence. It
+closed 424 trades over 96 trade days, averaging 3.53 trades per calendar day and
+4.42 trades per trade day. Starting from the first trade date in that replay,
+the cumulative proof probe's 10-trade threshold was reached on the third trade
+day. Single-day trade counts were usually below 10; only one replay day reached
+10 trades and one reached 12.
+
+Decision: keep `PROFIT_PROBE_MIN_TRADES=10` as a cumulative proof threshold
+from `2026-06-29`, and keep the daily `SESSION_GUARD_MIN_TRADES=10` as the
+minimum sample before enforcing the same-day P&L gate. Requiring 10 trades for
+every individual session would be noisier than the replay cadence supports.
