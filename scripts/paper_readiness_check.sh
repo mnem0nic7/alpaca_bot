@@ -282,14 +282,22 @@ if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
       -tAc "select count(*) from positions where trading_mode = 'paper' and strategy_version = '$STRATEGY_VERSION';" \
       | tr -d '[:space:]')"
 
-    if [[ "$open_positions" == "0" ]]; then
+    active_orders="$("${compose[@]}" exec -T postgres psql \
+      -U "$POSTGRES_USER" \
+      -d "$POSTGRES_DB" \
+      -tAc "select count(*) from orders where trading_mode = 'paper' and strategy_version = '$STRATEGY_VERSION' and status in ('pending_submit','submitting','new','accepted','submitted','partially_filled','held','pending_new');" \
+      | tr -d '[:space:]')"
+
+    if [[ "$open_positions" == "0" && "$active_orders" == "0" ]]; then
       echo "paper readiness auto-resuming stale close_only state"
       "${compose[@]}" run -T --rm admin resume \
         --mode paper \
         --strategy-version "$STRATEGY_VERSION" \
         --reason "pre-open paper readiness auto-resume"
-    else
+    elif [[ "$open_positions" != "0" ]]; then
       echo "paper readiness found close_only with $open_positions open positions; refusing auto-resume" >&2
+    else
+      echo "paper readiness found close_only with $active_orders active orders; refusing auto-resume" >&2
     fi
   fi
 fi
