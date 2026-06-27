@@ -33,9 +33,14 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     script = Path("scripts/paper_readiness_check.sh").read_text()
 
     assert 'PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"' in script
+    assert 'PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"' in script
     assert 'status=close_only' in script
     assert 'kill_switch=false' in script
     assert 'open_positions" == "0"' in script
+    assert "symbol_watchlist" in script
+    assert "COALESCE(ignored, FALSE) = FALSE" in script
+    assert "entry watchlist has" in script
+    assert "paper readiness watchlist ok" in script
     assert "pre-open paper readiness auto-resume" in script
     assert "--expect-trading-status enabled" in script
     assert "--expect-only-enabled-strategy bull_flag" in script

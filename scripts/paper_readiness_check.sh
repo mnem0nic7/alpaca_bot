@@ -3,6 +3,7 @@ set -euo pipefail
 
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"
+PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
 
 cd "$(dirname "$0")/.."
 
@@ -19,6 +20,12 @@ set +a
 if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
   echo "paper readiness check skipped for TRADING_MODE=${TRADING_MODE:-unset}"
   exit 0
+fi
+
+if [[ ! "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" =~ ^[0-9]+$ ]] \
+  || [[ "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" -lt 1 ]]; then
+  echo "PAPER_READINESS_MIN_WATCHLIST_SYMBOLS must be a positive integer" >&2
+  exit 1
 fi
 
 require_env_value() {
@@ -63,6 +70,32 @@ require_env_false_or_unset ENABLE_REGIME_FILTER
 require_env_false_or_unset ENABLE_OPTIONS_TRADING
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
+
+watchlist_counts="$("${compose[@]}" exec -T postgres psql \
+  -U "$POSTGRES_USER" \
+  -d "$POSTGRES_DB" \
+  -tA -F '|' <<'SQL'
+SELECT
+  COUNT(*) FILTER (WHERE enabled = TRUE AND COALESCE(ignored, FALSE) = FALSE)::int,
+  COUNT(*) FILTER (WHERE enabled = TRUE)::int,
+  COUNT(*) FILTER (WHERE enabled = TRUE AND COALESCE(ignored, FALSE) = TRUE)::int
+FROM symbol_watchlist
+WHERE trading_mode = 'paper';
+SQL
+)"
+
+IFS='|' read -r entry_watchlist_symbols enabled_watchlist_symbols ignored_watchlist_symbols \
+  <<< "$watchlist_counts"
+
+if [[ "${entry_watchlist_symbols:-0}" -lt "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" ]]; then
+  echo \
+    "paper readiness failed: entry watchlist has ${entry_watchlist_symbols:-0} active symbols; expected at least $PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" \
+    >&2
+  exit 1
+fi
+
+echo \
+  "paper readiness watchlist ok: active=$entry_watchlist_symbols enabled=$enabled_watchlist_symbols ignored=$ignored_watchlist_symbols"
 
 if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
   status_line="$("${compose[@]}" run -T --rm admin status \
