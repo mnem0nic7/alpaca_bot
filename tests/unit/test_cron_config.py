@@ -57,6 +57,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_value REPLAY_SLIPPAGE_BPS 2.0" in script
     assert "require_env_value RISK_PER_TRADE_PCT 0.01" in script
     assert "require_env_true ENABLE_VWAP_ENTRY_FILTER" in script
+    assert "require_env_false_or_unset EXTENDED_HOURS_ENABLED" in script
     assert "require_env_false_or_unset ENABLE_VIX_FILTER" in script
     assert "require_env_false_or_unset ENABLE_SECTOR_FILTER" in script
     assert "require_env_false_or_unset ENABLE_REGIME_FILTER" in script
