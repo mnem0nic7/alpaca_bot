@@ -181,6 +181,9 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "payload->>'strategy_name' = :'paper_activity_strategy'" in script
     assert "strategy_decision_cycles" in script
     assert "strategy_decision_records" in script
+    assert "-v trading_mode=" in script
+    assert "payload ? 'trading_mode'" in script
+    assert "payload ? 'strategy_version'" in script
     assert "entries_disabled" in script
     assert "blocked_strategy_names" in script
     assert "strategy_entries_disabled_reasons" in script

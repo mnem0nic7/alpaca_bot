@@ -1387,6 +1387,8 @@ class RuntimeSupervisor:
                         AuditEvent(
                             event_type="supervisor_cycle",
                             payload={
+                                "trading_mode": self.settings.trading_mode.value,
+                                "strategy_version": self.settings.strategy_version,
                                 "entries_disabled": cycle_report.entries_disabled,
                                 "entries_disabled_reasons": list(entries_disabled_reasons),
                                 "blocked_strategy_names": list(blocked_strategy_names),
@@ -1414,6 +1416,8 @@ class RuntimeSupervisor:
                         AuditEvent(
                             event_type="supervisor_idle",
                             payload={
+                                "trading_mode": self.settings.trading_mode.value,
+                                "strategy_version": self.settings.strategy_version,
                                 "reason": "market_closed",
                                 "timestamp": timestamp.isoformat(),
                             },

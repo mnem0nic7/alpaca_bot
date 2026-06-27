@@ -299,11 +299,15 @@ def _build_session_diagnostics(
         conn,
         session_start=session_start,
         session_end=session_end,
+        trading_mode=trading_mode,
+        strategy_version=strategy_version,
     )
     strategy_disabled_cycles, strategy_disabled_reasons = _load_strategy_disabled_cycle_stats(
         conn,
         session_start=session_start,
         session_end=session_end,
+        trading_mode=trading_mode,
+        strategy_version=strategy_version,
         strategy_name=strategy_name,
     )
 
@@ -351,7 +355,10 @@ def _load_entries_disabled_cycle_stats(
     *,
     session_start: datetime,
     session_end: datetime,
+    trading_mode: TradingMode | str,
+    strategy_version: str,
 ) -> tuple[int, int, dict[str, int]]:
+    trading_mode_value = trading_mode.value if isinstance(trading_mode, TradingMode) else str(trading_mode)
     try:
         row = fetch_one(
             conn,
@@ -372,6 +379,8 @@ def _load_entries_disabled_cycle_stats(
                         WHERE e.event_type = 'supervisor_cycle'
                           AND e.created_at >= %s
                           AND e.created_at < %s
+                          AND (NOT (e.payload ? 'trading_mode') OR e.payload->>'trading_mode' = %s)
+                          AND (NOT (e.payload ? 'strategy_version') OR e.payload->>'strategy_version' = %s)
                           AND (e.payload->>'entries_disabled')::boolean IS TRUE
                         GROUP BY reason
                     ) reason_counts
@@ -380,8 +389,19 @@ def _load_entries_disabled_cycle_stats(
             WHERE event_type = 'supervisor_cycle'
               AND created_at >= %s
               AND created_at < %s
+              AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)
+              AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)
             """,
-            (session_start, session_end, session_start, session_end),
+            (
+                session_start,
+                session_end,
+                trading_mode_value,
+                strategy_version,
+                session_start,
+                session_end,
+                trading_mode_value,
+                strategy_version,
+            ),
         )
     except Exception:
         return (0, 0, {})
@@ -403,10 +423,13 @@ def _load_strategy_disabled_cycle_stats(
     *,
     session_start: datetime,
     session_end: datetime,
+    trading_mode: TradingMode | str,
+    strategy_version: str,
     strategy_name: str | None,
 ) -> tuple[int, dict[str, int]]:
     if not strategy_name:
         return (0, {})
+    trading_mode_value = trading_mode.value if isinstance(trading_mode, TradingMode) else str(trading_mode)
     try:
         row = fetch_one(
             conn,
@@ -417,6 +440,8 @@ def _load_strategy_disabled_cycle_stats(
               WHERE event_type = 'supervisor_cycle'
                 AND created_at >= %s
                 AND created_at < %s
+                AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)
+                AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)
             )
             SELECT
                 COUNT(*) FILTER (
@@ -442,6 +467,8 @@ def _load_strategy_disabled_cycle_stats(
             (
                 session_start,
                 session_end,
+                trading_mode_value,
+                strategy_version,
                 strategy_name,
                 strategy_name,
                 strategy_name,

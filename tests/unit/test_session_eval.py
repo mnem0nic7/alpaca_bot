@@ -334,6 +334,8 @@ def test_load_entries_disabled_cycle_stats_parses_colon_reasons(monkeypatch):
         object(),
         session_start=datetime(2026, 5, 4, tzinfo=timezone.utc),
         session_end=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        trading_mode="paper",
+        strategy_version="v1",
     )
 
     assert total == 14
@@ -362,6 +364,8 @@ def test_load_strategy_disabled_cycle_stats_parses_reasons(monkeypatch):
         object(),
         session_start=datetime(2026, 5, 4, tzinfo=timezone.utc),
         session_end=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        trading_mode="paper",
+        strategy_version="v1",
         strategy_name="bull_flag",
     )
 
@@ -472,7 +476,7 @@ def test_session_eval_cli_aggregates_date_range(monkeypatch, capsys):
     monkeypatch.setattr(
         cli_module,
         "_load_entries_disabled_cycle_stats",
-        lambda _conn, *, session_start, session_end: (
+        lambda _conn, *, session_start, session_end, **_scope: (
             diagnostic_windows.append((session_start, session_end)) or (0, 0, {})
         ),
     )

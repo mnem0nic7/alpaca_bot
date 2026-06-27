@@ -72,12 +72,15 @@ stats="$("${compose[@]}" exec -T postgres psql \
   -U "$POSTGRES_USER" \
   -d "$POSTGRES_DB" \
   -tA -F '|' \
+  -v trading_mode="${TRADING_MODE:-paper}" \
   -v strategy_version="$STRATEGY_VERSION" \
   -v paper_activity_strategy="$PAPER_ACTIVITY_STRATEGY" <<SQL
 WITH recent AS (
   SELECT event_type, payload, created_at
   FROM audit_events
   WHERE created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+    AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = :'trading_mode')
+    AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = :'strategy_version')
 ),
 recent_decisions AS (
   SELECT cycle_at, strategy_name

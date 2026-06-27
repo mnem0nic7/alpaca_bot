@@ -1198,6 +1198,8 @@ def test_runtime_supervisor_run_forever_skips_cycle_when_market_is_closed_and_au
     assert runtime.audit_event_store.appended[-2] == AuditEvent(
         event_type="supervisor_idle",
         payload={
+            "trading_mode": "paper",
+            "strategy_version": "v1-breakout",
             "reason": "market_closed",
             "timestamp": "2026-04-24T19:00:00+00:00",
         },
@@ -1253,6 +1255,8 @@ def test_runtime_supervisor_run_forever_runs_cycle_when_market_is_open_and_audit
     assert report.active_iterations == 1
     assert report.idle_iterations == 0
     assert runtime.audit_event_store.appended[-2].event_type == "supervisor_cycle"
+    assert runtime.audit_event_store.appended[-2].payload["trading_mode"] == "paper"
+    assert runtime.audit_event_store.appended[-2].payload["strategy_version"] == "v1-breakout"
     assert runtime.audit_event_store.appended[-2].payload["entries_disabled"] is True
     assert runtime.audit_event_store.appended[-2].payload["entries_disabled_reasons"] == [
         "test_reason"
