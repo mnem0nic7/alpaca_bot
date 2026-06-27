@@ -9,6 +9,7 @@ from alpaca_bot.storage import (
     AuditEventStore,
     DailySessionState,
     DailySessionStateStore,
+    OptionOrderRepository,
     OrderRecord,
     OrderStore,
     PositionRecord,
@@ -54,6 +55,15 @@ class FakeConnection:
 
     def commit(self) -> None:
         self.commit_count += 1
+
+
+def _last_sql(connection: FakeConnection) -> str:
+    return " ".join(connection.executed[-1][0].split())
+
+
+def _assert_executed_fill_predicate(sql: str, alias: str) -> None:
+    assert f"{alias}.status = 'filled'" in sql
+    assert f"COALESCE({alias}.filled_quantity, 0) > 0" in sql
 
 
 def test_advisory_lock_reports_success_and_release() -> None:
@@ -296,6 +306,34 @@ def test_order_store_lists_records_by_status() -> None:
         "paper:v1:AAPL:2026-04-24T19:00:00Z:entry",
         "paper:v1:AAPL:2026-04-24T19:15:00Z:stop",
     ]
+
+
+def test_order_store_closed_trades_count_positive_filled_quantity_orders() -> None:
+    connection = FakeConnection()
+    store = OrderStore(connection)
+
+    store.list_closed_trades(
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        session_date=date(2026, 4, 24),
+    )
+
+    sql = _last_sql(connection)
+    _assert_executed_fill_predicate(sql, "e")
+    _assert_executed_fill_predicate(sql, "x")
+
+
+def test_option_open_positions_count_positive_filled_quantity_orders() -> None:
+    connection = FakeConnection()
+    repo = OptionOrderRepository(connection)
+
+    repo.list_open_option_positions(
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+    )
+
+    sql = _last_sql(connection)
+    _assert_executed_fill_predicate(sql, "option_orders")
 
 
 def test_order_store_lists_recent_records() -> None:

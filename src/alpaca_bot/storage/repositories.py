@@ -248,6 +248,10 @@ def _contract_multiplier(strategy_name: str | None) -> int:
     return 100 if strategy_name in ("option", "short_option") else 1
 
 
+def _executed_order_predicate(alias: str) -> str:
+    return f"({alias}.status = 'filled' OR COALESCE({alias}.filled_quantity, 0) > 0)"
+
+
 class OrderStore:
     def __init__(self, connection: ConnectionProtocol) -> None:
         self._connection = connection
@@ -463,7 +467,7 @@ class OrderStore:
                       AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
-                      AND e.status = 'filled'
+                      AND {_executed_order_predicate("e")}
                       AND e.updated_at <= x.updated_at
                     ORDER BY e.updated_at DESC
                     LIMIT 1
@@ -476,7 +480,7 @@ class OrderStore:
               AND x.strategy_version = %s
               AND x.intent_type IN ('stop', 'exit')
               AND x.fill_price IS NOT NULL
-              AND x.status = 'filled'
+              AND {_executed_order_predicate("x")}
               AND DATE(x.updated_at AT TIME ZONE %s) = %s
               {strategy_clause}
             """,
@@ -541,7 +545,7 @@ class OrderStore:
                       AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
-                      AND e.status = 'filled'
+                      AND {_executed_order_predicate("e")}
                       AND e.updated_at <= x.updated_at
                     ORDER BY e.updated_at DESC
                     LIMIT 1
@@ -554,7 +558,7 @@ class OrderStore:
               AND x.strategy_version = %s
               AND x.intent_type IN ('stop', 'exit')
               AND x.fill_price IS NOT NULL
-              AND x.status = 'filled'
+              AND {_executed_order_predicate("x")}
               AND DATE(x.updated_at AT TIME ZONE %s) = %s
               {strategy_clause}
             """,
@@ -624,7 +628,7 @@ class OrderStore:
                       AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
-                      AND e.status = 'filled'
+                      AND {_executed_order_predicate("e")}
                       AND e.updated_at <= x.updated_at
                       AND DATE(e.updated_at AT TIME ZONE %s)
                           = DATE(x.updated_at AT TIME ZONE %s)
@@ -639,7 +643,7 @@ class OrderStore:
                       AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
-                      AND e.status = 'filled'
+                      AND {_executed_order_predicate("e")}
                       AND e.updated_at <= x.updated_at
                       AND DATE(e.updated_at AT TIME ZONE %s)
                           = DATE(x.updated_at AT TIME ZONE %s)
@@ -654,7 +658,7 @@ class OrderStore:
                       AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                       AND e.intent_type = 'entry'
                       AND e.fill_price IS NOT NULL
-                      AND e.status = 'filled'
+                      AND {_executed_order_predicate("e")}
                       AND e.updated_at <= x.updated_at
                       AND DATE(e.updated_at AT TIME ZONE %s)
                           = DATE(x.updated_at AT TIME ZONE %s)
@@ -668,7 +672,7 @@ class OrderStore:
               AND x.strategy_version = %s
               AND x.intent_type IN ('stop', 'exit')
               AND x.fill_price IS NOT NULL
-              AND x.status = 'filled'
+              AND {_executed_order_predicate("x")}
               AND DATE(x.updated_at AT TIME ZONE %s) = %s
               {strategy_clause}
             ORDER BY x.updated_at
@@ -720,7 +724,7 @@ class OrderStore:
         """
         rows = fetch_all(
             self._connection,
-            """
+            f"""
             SELECT x.updated_at AS exit_time,
                    COALESCE(x.filled_quantity, x.quantity) AS qty,
                    x.fill_price AS exit_fill,
@@ -732,7 +736,7 @@ class OrderStore:
                        AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                        AND e.intent_type = 'entry'
                        AND e.fill_price IS NOT NULL
-                       AND e.status = 'filled'
+                       AND {_executed_order_predicate("e")}
                        AND e.updated_at <= x.updated_at
                      ORDER BY e.updated_at DESC
                      LIMIT 1) AS entry_fill
@@ -741,7 +745,7 @@ class OrderStore:
                AND x.strategy_version = %s
                AND x.intent_type IN ('stop', 'exit')
                AND x.fill_price IS NOT NULL
-               AND x.status = 'filled'
+               AND {_executed_order_predicate("x")}
                AND DATE(x.updated_at AT TIME ZONE %s) >= %s
                AND DATE(x.updated_at AT TIME ZONE %s) <= %s
              ORDER BY x.updated_at
@@ -779,7 +783,7 @@ class OrderStore:
         """
         rows = fetch_all(
             self._connection,
-            """
+            f"""
             SELECT x.strategy_name,
                    DATE(x.updated_at AT TIME ZONE %s) AS exit_date,
                    COALESCE(x.filled_quantity, x.quantity) AS qty,
@@ -792,7 +796,7 @@ class OrderStore:
                        AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                        AND e.intent_type = 'entry'
                        AND e.fill_price IS NOT NULL
-                       AND e.status = 'filled'
+                       AND {_executed_order_predicate("e")}
                        AND e.updated_at <= x.updated_at
                        AND DATE(e.updated_at AT TIME ZONE %s)
                            = DATE(x.updated_at AT TIME ZONE %s)
@@ -803,7 +807,7 @@ class OrderStore:
                AND x.strategy_version = %s
                AND x.intent_type IN ('stop', 'exit')
                AND x.fill_price IS NOT NULL
-               AND x.status = 'filled'
+               AND {_executed_order_predicate("x")}
                AND DATE(x.updated_at AT TIME ZONE %s) >= %s
                AND DATE(x.updated_at AT TIME ZONE %s) <= %s
              ORDER BY x.updated_at
@@ -848,7 +852,7 @@ class OrderStore:
         """
         rows = fetch_all(
             self._connection,
-            """
+            f"""
             SELECT
                 x.symbol,
                 x.strategy_name,
@@ -863,7 +867,7 @@ class OrderStore:
                     AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                     AND e.intent_type = 'entry'
                     AND e.fill_price IS NOT NULL
-                    AND e.status = 'filled'
+                    AND {_executed_order_predicate("e")}
                     AND e.updated_at <= x.updated_at
                     AND DATE(e.updated_at AT TIME ZONE %s)
                         = DATE(x.updated_at AT TIME ZONE %s)
@@ -876,7 +880,7 @@ class OrderStore:
                     AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                     AND e.intent_type = 'entry'
                     AND e.fill_price IS NOT NULL
-                    AND e.status = 'filled'
+                    AND {_executed_order_predicate("e")}
                     AND e.updated_at <= x.updated_at
                     AND DATE(e.updated_at AT TIME ZONE %s)
                         = DATE(x.updated_at AT TIME ZONE %s)
@@ -887,7 +891,7 @@ class OrderStore:
               AND x.strategy_version = %s
               AND x.intent_type IN ('stop', 'exit')
               AND x.fill_price IS NOT NULL
-              AND x.status = 'filled'
+              AND {_executed_order_predicate("x")}
               AND DATE(x.updated_at AT TIME ZONE %s) >= %s
               AND DATE(x.updated_at AT TIME ZONE %s) <= %s
             ORDER BY x.updated_at
@@ -937,7 +941,7 @@ class OrderStore:
     ) -> dict[str, tuple[int, int]]:
         rows = fetch_all(
             self._connection,
-            """
+            f"""
             WITH trade_pnl AS (
                 SELECT x.strategy_name,
                        (x.fill_price - e.fill_price)
@@ -952,7 +956,7 @@ class OrderStore:
                          AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                          AND e.intent_type = 'entry'
                          AND e.fill_price IS NOT NULL
-                         AND e.status = 'filled'
+                         AND {_executed_order_predicate("e")}
                          AND e.updated_at <= x.updated_at
                        ORDER BY e.updated_at DESC
                        LIMIT 1
@@ -961,7 +965,7 @@ class OrderStore:
                    AND x.strategy_version = %s
                    AND x.intent_type IN ('stop', 'exit')
                    AND x.fill_price IS NOT NULL
-                   AND x.status = 'filled'
+                   AND {_executed_order_predicate("x")}
             )
             SELECT strategy_name,
                    COUNT(*) FILTER (WHERE pnl > 0)  AS wins,
@@ -981,7 +985,7 @@ class OrderStore:
     ) -> dict[str, float]:
         rows = fetch_all(
             self._connection,
-            """
+            f"""
             WITH trade_pnl AS (
                 SELECT x.strategy_name,
                        (x.fill_price - e.fill_price)
@@ -997,7 +1001,7 @@ class OrderStore:
                          AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                          AND e.intent_type = 'entry'
                          AND e.fill_price IS NOT NULL
-                         AND e.status = 'filled'
+                         AND {_executed_order_predicate("e")}
                          AND e.updated_at <= x.updated_at
                        ORDER BY e.updated_at DESC
                        LIMIT 1
@@ -1006,7 +1010,7 @@ class OrderStore:
                    AND x.strategy_version = %s
                    AND x.intent_type IN ('stop', 'exit')
                    AND x.fill_price IS NOT NULL
-                   AND x.status = 'filled'
+                   AND {_executed_order_predicate("x")}
             )
             SELECT strategy_name,
                    SUM(pnl) AS total_pnl
@@ -2022,7 +2026,7 @@ class OptionOrderRepository:
     ) -> list[OptionOrderRecord]:
         rows = fetch_all(
             self._connection,
-            """
+            f"""
             WITH filled AS (
                 SELECT
                     client_order_id, occ_symbol, underlying_symbol, option_type,
@@ -2033,7 +2037,7 @@ class OptionOrderRepository:
                 FROM option_orders
                 WHERE trading_mode = %s
                   AND strategy_version = %s
-                  AND status = 'filled'
+                  AND {_executed_order_predicate("option_orders")}
             ),
             net AS (
                 SELECT
@@ -2103,7 +2107,7 @@ class OptionOrderRepository:
         """
         rows = fetch_all(
             self._connection,
-            """
+            f"""
             SELECT x.strategy_name,
                    DATE(x.updated_at AT TIME ZONE %s) AS exit_date,
                    COALESCE(x.filled_quantity, x.quantity) AS qty,
@@ -2116,7 +2120,7 @@ class OptionOrderRepository:
                        AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
                        AND e.side = 'buy'
                        AND e.fill_price IS NOT NULL
-                       AND e.status = 'filled'
+                       AND {_executed_order_predicate("e")}
                        AND e.updated_at <= x.updated_at
                      ORDER BY e.updated_at DESC
                      LIMIT 1) AS entry_fill
@@ -2125,7 +2129,7 @@ class OptionOrderRepository:
                AND x.strategy_version = %s
                AND x.side = 'sell'
                AND x.fill_price IS NOT NULL
-               AND x.status = 'filled'
+               AND {_executed_order_predicate("x")}
                AND DATE(x.updated_at AT TIME ZONE %s) >= %s
                AND DATE(x.updated_at AT TIME ZONE %s) <= %s
              ORDER BY x.updated_at
@@ -2169,7 +2173,7 @@ class OptionOrderRepository:
         """
         rows = fetch_all(
             self._connection,
-            """
+            f"""
             SELECT x.occ_symbol,
                    x.underlying_symbol,
                    x.strategy_name,
@@ -2184,7 +2188,7 @@ class OptionOrderRepository:
                        AND s.strategy_name IS NOT DISTINCT FROM x.strategy_name
                        AND s.side = 'sell'
                        AND s.fill_price IS NOT NULL
-                       AND s.status = 'filled'
+                       AND {_executed_order_predicate("s")}
                        AND s.updated_at <= x.updated_at
                      ORDER BY s.updated_at DESC
                      LIMIT 1) AS sell_fill,
@@ -2196,7 +2200,7 @@ class OptionOrderRepository:
                        AND s.strategy_name IS NOT DISTINCT FROM x.strategy_name
                        AND s.side = 'sell'
                        AND s.fill_price IS NOT NULL
-                       AND s.status = 'filled'
+                       AND {_executed_order_predicate("s")}
                        AND s.updated_at <= x.updated_at
                      ORDER BY s.updated_at DESC
                      LIMIT 1) AS opened_at
@@ -2205,7 +2209,7 @@ class OptionOrderRepository:
                AND x.strategy_version = %s
                AND x.side = 'buy'
                AND x.fill_price IS NOT NULL
-               AND x.status = 'filled'
+               AND {_executed_order_predicate("x")}
                AND DATE(x.updated_at AT TIME ZONE %s) >= %s
                AND DATE(x.updated_at AT TIME ZONE %s) <= %s
              ORDER BY x.updated_at
