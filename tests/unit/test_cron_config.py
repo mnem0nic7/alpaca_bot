@@ -89,6 +89,11 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness weights ok" in script
     assert "confidence_floor_store" in script
     assert "paper readiness confidence floor ok" in script
+    assert "confidence watermark" in script
+    assert "drawdown=${confidence_watermark_drawdown:-unset} exceeds trigger" in script
+    assert "paper readiness confidence watermark ok" in script
+    assert "AlpacaExecutionAdapter.from_settings(settings).get_account()" in script
+    assert "settings.drawdown_raise_pct" in script
     assert "expected >= $PAPER_READINESS_MIN_CONFIDENCE_FLOOR and <= 1.0" in script
     assert "run_market_data_smoke_check" in script
     assert "run_container_settings_posture_check" in script

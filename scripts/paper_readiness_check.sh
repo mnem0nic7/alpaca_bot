@@ -444,6 +444,51 @@ fi
 
 echo "paper readiness confidence floor ok: floor=$confidence_floor_value"
 
+confidence_watermark_check="$("${compose[@]}" run -T --rm \
+  --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+from alpaca_bot.storage.db import connect_postgres
+from alpaca_bot.storage.repositories import ConfidenceFloorStore
+
+settings = Settings.from_env()
+account = AlpacaExecutionAdapter.from_settings(settings).get_account()
+equity = float(account.equity)
+conn = connect_postgres(settings.database_url)
+try:
+    rec = ConfidenceFloorStore(conn).load(
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+    )
+finally:
+    close = getattr(conn, "close", None)
+    if callable(close):
+        close()
+
+watermark = float(rec.equity_high_watermark) if rec is not None else 0.0
+threshold = float(settings.drawdown_raise_pct)
+drawdown = ((watermark - equity) / watermark) if watermark > 0 else 0.0
+status = "mismatch" if watermark > 0 and drawdown > threshold else "ok"
+print(f"{status}|{equity:.2f}|{watermark:.2f}|{drawdown:.6f}|{threshold:.6f}")
+PY
+)"
+
+IFS='|' read -r confidence_watermark_status broker_equity confidence_watermark_value \
+  confidence_watermark_drawdown confidence_watermark_threshold \
+  <<< "$confidence_watermark_check"
+
+if [[ "$confidence_watermark_status" != "ok" ]]; then
+  echo \
+    "paper readiness failed: confidence watermark=${confidence_watermark_value:-unset} broker_equity=${broker_equity:-unset} drawdown=${confidence_watermark_drawdown:-unset} exceeds trigger=${confidence_watermark_threshold:-unset}" \
+    >&2
+  exit 1
+fi
+
+echo \
+  "paper readiness confidence watermark ok: equity=$broker_equity watermark=$confidence_watermark_value drawdown=$confidence_watermark_drawdown threshold=$confidence_watermark_threshold"
+
 load_stock_exposure_counts() {
   "${compose[@]}" exec -T postgres psql \
     -U "$POSTGRES_USER" \
