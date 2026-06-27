@@ -108,10 +108,16 @@ def recover_startup_state(
     for position in local_positions:
         local_positions_by_symbol.setdefault(position.symbol, []).append(position)
     broker_positions_by_symbol = {position.symbol: position for position in broker_open_positions}
+    local_active_orders = runtime.order_store.list_by_status(
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        statuses=ACTIVE_ORDER_STATUSES,
+    )
 
     synced_positions: list[PositionRecord] = []
     # Tracks brand-new positions (no prior local record) that need a stop order queued.
     new_positions_needing_stop: list[tuple[str, int, float, str]] = []  # (symbol, qty, stop_price, strategy_name)
+    recovered_entry_fills: dict[str, OrderRecord] = {}
     for broker_position in broker_open_positions:
         if broker_position.quantity == 0:
             _log.warning(
@@ -212,10 +218,27 @@ def recover_startup_state(
         if not local_for_symbol:
             mismatches.append(f"broker position missing locally: {broker_position.symbol}")
             is_option = _is_option_symbol(broker_position.symbol)
-            resolved_strategy_name = "option" if is_option else default_strategy_name
+            recovered_entry = _latest_recoverable_entry_order(
+                local_active_orders, broker_position.symbol
+            )
+            resolved_strategy_name = (
+                recovered_entry.strategy_name
+                if recovered_entry is not None
+                else "option" if is_option else default_strategy_name
+            )
             buffer_pct = settings.option_stop_buffer_pct if is_option else settings.breakout_stop_buffer_pct
             resolved_entry_price = broker_position.entry_price
-            if resolved_entry_price is not None and resolved_entry_price != 0.0:
+            recovered_stop_price = (
+                recovered_entry.initial_stop_price
+                if recovered_entry is not None
+                and recovered_entry.initial_stop_price is not None
+                and recovered_entry.initial_stop_price > 0
+                else None
+            )
+            if recovered_stop_price is not None:
+                stop_price = recovered_stop_price
+                initial_stop_price = recovered_stop_price
+            elif resolved_entry_price is not None and resolved_entry_price != 0.0:
                 stop_price = round(resolved_entry_price * (1 - buffer_pct), 2)
                 if stop_price >= resolved_entry_price:
                     stop_price = 0.0
@@ -242,6 +265,32 @@ def recover_startup_state(
             if stop_price > 0.0:
                 new_positions_needing_stop.append(
                     (broker_position.symbol, broker_position.quantity, stop_price, resolved_strategy_name)
+                )
+            if (
+                recovered_entry is not None
+                and resolved_entry_price is not None
+                and resolved_entry_price != 0.0
+            ):
+                recovered_entry_fills[recovered_entry.client_order_id] = OrderRecord(
+                    client_order_id=recovered_entry.client_order_id,
+                    symbol=recovered_entry.symbol,
+                    side=recovered_entry.side,
+                    intent_type=recovered_entry.intent_type,
+                    status="filled",
+                    quantity=broker_position.quantity,
+                    trading_mode=recovered_entry.trading_mode,
+                    strategy_version=recovered_entry.strategy_version,
+                    strategy_name=recovered_entry.strategy_name,
+                    created_at=recovered_entry.created_at,
+                    updated_at=timestamp,
+                    stop_price=recovered_entry.stop_price,
+                    limit_price=recovered_entry.limit_price,
+                    initial_stop_price=recovered_entry.initial_stop_price,
+                    broker_order_id=recovered_entry.broker_order_id,
+                    signal_timestamp=recovered_entry.signal_timestamp,
+                    fill_price=resolved_entry_price,
+                    filled_quantity=broker_position.quantity,
+                    reconciliation_miss_count=recovered_entry.reconciliation_miss_count,
                 )
         elif len(local_for_symbol) == 1:
             existing = local_for_symbol[0]
@@ -295,11 +344,6 @@ def recover_startup_state(
                 seen_symbols_with_mismatch.add(position.symbol)
             cleared_position_count += 1
 
-    local_active_orders = runtime.order_store.list_by_status(
-        trading_mode=settings.trading_mode,
-        strategy_version=settings.strategy_version,
-        statuses=ACTIVE_ORDER_STATUSES,
-    )
     local_orders_by_broker_id = {
         order.broker_order_id: order for order in local_active_orders if order.broker_order_id
     }
@@ -383,6 +427,24 @@ def recover_startup_state(
             strategy_version=settings.strategy_version,
             commit=False,
         )
+        for recovered_entry in recovered_entry_fills.values():
+            runtime.order_store.save(recovered_entry, commit=False)
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="startup_recovery_entry_fill_recovered",
+                    symbol=recovered_entry.symbol,
+                    payload={
+                        "client_order_id": recovered_entry.client_order_id,
+                        "broker_order_id": recovered_entry.broker_order_id,
+                        "strategy_name": recovered_entry.strategy_name,
+                        "fill_price": recovered_entry.fill_price,
+                        "filled_quantity": recovered_entry.filled_quantity,
+                        "initial_stop_price": recovered_entry.initial_stop_price,
+                    },
+                    created_at=timestamp,
+                ),
+                commit=False,
+            )
         # For brand-new synthesized positions, queue a conservative stop order if none exists.
         for sym, qty, stop_price, strategy_name_sr in new_positions_needing_stop:
             if sym in pending_entry_symbols:
@@ -661,6 +723,8 @@ def recover_startup_state(
         for order in local_active_orders:
             if order.client_order_id in matched_local_client_ids:
                 continue
+            if order.client_order_id in recovered_entry_fills:
+                continue
             # Never-submitted orders (pending_submit or submitting with no broker ID) are
             # absent from the broker because dispatch hadn't completed when we crashed.
             # submitting orders need an explicit reset to pending_submit so
@@ -823,6 +887,30 @@ def compose_startup_mismatch_detector(
         return tuple(dict.fromkeys(combined))
 
     return detector
+
+
+def _latest_recoverable_entry_order(
+    local_active_orders: Sequence[OrderRecord], symbol: str
+) -> OrderRecord | None:
+    candidates = [
+        order
+        for order in local_active_orders
+        if order.symbol == symbol
+        and order.intent_type == "entry"
+        and order.side == "buy"
+        and order.status != "pending_submit"
+    ]
+    if not candidates:
+        return None
+    return max(
+        candidates,
+        key=lambda order: (
+            order.broker_order_id is not None,
+            order.updated_at,
+            order.created_at,
+            order.client_order_id,
+        ),
+    )
 
 
 def _infer_strategy_name_from_client_order_id(client_order_id: str) -> str:
