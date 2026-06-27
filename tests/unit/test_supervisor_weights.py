@@ -745,7 +745,7 @@ class _FakeOptionChainAdapter:
 
 def _make_supervisor_with_option_adapter(adapter):
     """Build a supervisor with an injected option chain adapter for audit event tests."""
-    s = _make_settings(OPTION_CHAIN_SYMBOLS="AAPL,MSFT")
+    s = _make_settings(ENABLE_OPTIONS_TRADING="true", OPTION_CHAIN_SYMBOLS="AAPL,MSFT")
     module = import_module("alpaca_bot.runtime.supervisor")
     RuntimeSupervisor = module.RuntimeSupervisor
 

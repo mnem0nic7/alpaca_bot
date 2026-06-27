@@ -134,6 +134,24 @@ def test_option_chain_fetch_uses_option_chain_symbols_not_full_watchlist():
     assert "SLS" not in adapter.fetched, "SLS not in OPTION_CHAIN_SYMBOLS — must not be fetched"
 
 
+def test_option_chain_fetch_skipped_when_options_trading_disabled():
+    """Stock-only paper proof must not fetch option chains even if an adapter is injected."""
+    audit_store = RecordingAuditStore()
+    adapter = RecordingOptionChainAdapter()
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        audit_store=audit_store,
+        extra_env={"ENABLE_OPTIONS_TRADING": "false"},
+    )
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert adapter.fetched == []
+    assert not [
+        e for e in audit_store.events
+        if e.event_type == "option_chains_fetched"
+    ]
+
+
 def test_option_chain_fetch_symbol_not_in_bars_is_skipped():
     """A symbol in OPTION_CHAIN_SYMBOLS that has no intraday bars must not be fetched."""
     # Bars only cover ACHR and METC — SLS is configured but absent from bars.

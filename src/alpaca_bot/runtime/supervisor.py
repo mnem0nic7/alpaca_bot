@@ -817,7 +817,7 @@ class RuntimeSupervisor:
         option_chains_by_symbol: dict = {}
         option_order_store = getattr(self.runtime, "option_order_store", None)
         self._check_option_strategy_circuit_breakers(session_date=session_date, now=timestamp)
-        if self._option_chain_adapter is not None:
+        if self.settings.enable_options_trading and self._option_chain_adapter is not None:
             def _fetch_one(sym: str) -> tuple[str, list]:
                 return sym, self._option_chain_adapter.get_option_chain(sym, self.settings)
 
