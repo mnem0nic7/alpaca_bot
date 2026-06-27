@@ -84,6 +84,9 @@ require_env_value MAX_POSITION_PCT 0.05
 require_env_value MAX_PORTFOLIO_EXPOSURE_PCT 0.30
 require_env_value DAILY_LOSS_LIMIT_PCT 0.01
 require_env_value INTRADAY_CONSECUTIVE_LOSS_GATE 0
+require_env_value ENTRY_WINDOW_START 10:00
+require_env_value ENTRY_WINDOW_END 15:30
+require_env_value FLATTEN_TIME 15:45
 require_env_true PAPER_PROOF_FREEZE
 require_env_true ENABLE_VWAP_ENTRY_FILTER
 require_env_false_or_unset EXTENDED_HOURS_ENABLED
