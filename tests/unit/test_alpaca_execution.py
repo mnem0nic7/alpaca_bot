@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -249,6 +250,41 @@ def test_execution_adapter_exposes_clock_calendar_orders_and_positions() -> None
         "end": date(2026, 4, 24),
     }
     assert trading_client.order_filter == {"status": "open", "limit": 500}
+
+
+def test_market_calendar_attaches_market_timezone_to_naive_session_times() -> None:
+    trading_client = TradingClientStub()
+    trading_client.calendar = [
+        CalendarStub(
+            date=date(2026, 6, 29),
+            open=datetime(2026, 6, 29, 9, 30),
+            close=datetime(2026, 6, 29, 16, 0),
+        )
+    ]
+    broker = AlpacaExecutionAdapter(trading_client)
+
+    calendar = broker.get_market_calendar(start=date(2026, 6, 29), end=date(2026, 6, 29))
+
+    market_tz = ZoneInfo("America/New_York")
+    assert calendar[0].open_at == datetime(2026, 6, 29, 9, 30, tzinfo=market_tz)
+    assert calendar[0].close_at == datetime(2026, 6, 29, 16, 0, tzinfo=market_tz)
+
+
+def test_market_calendar_preserves_aware_session_times() -> None:
+    trading_client = TradingClientStub()
+    trading_client.calendar = [
+        CalendarStub(
+            date=date(2026, 6, 29),
+            open=datetime(2026, 6, 29, 13, 30, tzinfo=timezone.utc),
+            close=datetime(2026, 6, 29, 20, 0, tzinfo=timezone.utc),
+        )
+    ]
+    broker = AlpacaExecutionAdapter(trading_client)
+
+    calendar = broker.get_market_calendar(start=date(2026, 6, 29), end=date(2026, 6, 29))
+
+    assert calendar[0].open_at == datetime(2026, 6, 29, 13, 30, tzinfo=timezone.utc)
+    assert calendar[0].close_at == datetime(2026, 6, 29, 20, 0, tzinfo=timezone.utc)
 
 
 def test_list_open_orders_requests_limit_500() -> None:

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as time_type
 from typing import Any, Callable, Mapping, Protocol, Sequence, TypeVar
+from zoneinfo import ZoneInfo
 
 _logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ _T = TypeVar("_T")
 _RETRY_WAIT_SECONDS = [1, 2]  # wait before attempt 2, then attempt 3
 _MAX_ATTEMPTS = 3
 _SYMBOL_CHUNK_SIZE = 200
+_MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
 
 def _is_transient_error(exc: BaseException) -> bool:
@@ -617,17 +619,23 @@ def _as_date(value: Any) -> date:
 
 def _calendar_time(raw_date: Any, raw_time: Any) -> datetime:
     if isinstance(raw_time, datetime):
-        return raw_time
+        return _with_market_timezone(raw_time)
     if isinstance(raw_time, time_type):
-        return datetime.combine(_as_date(raw_date), raw_time)
+        return _with_market_timezone(datetime.combine(_as_date(raw_date), raw_time))
     if isinstance(raw_time, str):
         value = raw_time.strip()
         try:
             parsed_time = time_type.fromisoformat(value)
-            return datetime.combine(_as_date(raw_date), parsed_time)
+            return _with_market_timezone(datetime.combine(_as_date(raw_date), parsed_time))
         except ValueError:
-            return _as_datetime(value)
+            return _with_market_timezone(_as_datetime(value))
     raise TypeError(f"Unsupported calendar time value: {raw_time!r}")
+
+
+def _with_market_timezone(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=_MARKET_TIMEZONE)
+    return value
 
 
 class AlpacaBroker(AlpacaExecutionAdapter):
