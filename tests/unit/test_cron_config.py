@@ -57,7 +57,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "pre-open paper readiness auto-resume" in script
     assert "--expect-trading-status enabled" in script
     assert "--expect-only-enabled-strategy bull_flag" in script
-    assert "require_env_value RELATIVE_VOLUME_THRESHOLD 3.0" in script
+    assert "require_env_value RELATIVE_VOLUME_THRESHOLD 2.0" in script
     assert "require_env_value MAX_OPEN_POSITIONS 2" in script
     assert "require_env_value REPLAY_SLIPPAGE_BPS 2.0" in script
     assert "require_env_value RISK_PER_TRADE_PCT 0.01" in script
