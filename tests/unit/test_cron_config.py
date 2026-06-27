@@ -673,6 +673,8 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert 'PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"' in script
     assert 'PAPER_ACTIVITY_REQUIRE_DECISION_LOG="${PAPER_ACTIVITY_REQUIRE_DECISION_LOG:-true}"' in script
     assert 'PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE="${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE:-true}"' in script
+    assert 'PAPER_ACTIVITY_READINESS_RUNNER="${PAPER_ACTIVITY_READINESS_RUNNER:-./scripts/run_locked_check_with_audit.sh}"' in script
+    assert 'PAPER_ACTIVITY_READINESS_SCRIPT="${PAPER_ACTIVITY_READINESS_SCRIPT:-./scripts/paper_readiness_if_needed.sh}"' in script
     assert "PAPER_ACTIVITY_REQUIRE_DECISION_LOG must be true or false" in script
     assert "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE must be true or false" in script
     assert 'PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
@@ -683,11 +685,13 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "paper activity warning: failed to apply close-only after activity failure" in script
     assert "PAPER_READINESS_AUTO_RESUME=false" in script
     assert "PAPER_READINESS_REQUIRE_FLAT=false" in script
-    assert "./scripts/run_locked_check_with_audit.sh" in script
+    assert '"$PAPER_ACTIVITY_READINESS_RUNNER"' in script
     assert "paper_readiness" in script
     assert "/var/lock/alpaca-bot-paper-readiness.lock" in script
-    assert "./scripts/paper_readiness_if_needed.sh" in script
+    assert '"$PAPER_ACTIVITY_READINESS_SCRIPT"' in script
     assert "./scripts/paper_readiness_check.sh" not in script
+    assert "readiness repair lock busy" in script
+    assert 'if [[ "$rc" -eq 43 ]]' in script
     assert "scheduled check context: session_date=$(TZ=America/New_York date +%F) strategy=$PAPER_ACTIVITY_STRATEGY" in script
     assert "decision_record_count" in script
     assert "decision_log" in script
@@ -725,6 +729,61 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "$PAPER_ACTIVITY_STRATEGY decision_log_records" in script
     assert "$PAPER_ACTIVITY_STRATEGY decision_evidence_records" in script
     assert "require_decision_log" in script
+
+
+def test_paper_activity_readiness_lock_busy_is_pending_without_close_only(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=lock_busy_stale_pass\\n'\n"
+        "printf 'paper readiness prior pass is older than latest supervisor start; lock busy remains blocking\\n' >&2\n"
+        "exit 48\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_marker = tmp_path / "docker_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        f"touch {docker_marker}\n"
+        "printf 'docker should not be called for pending readiness lock\\n' >&2\n"
+        "exit 99\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 reason=lock_busy_stale_pass"
+    ) in result.stdout
+    assert "scheduled check context: session_date=" in result.stdout
+    assert "strategy=bull_flag" in result.stdout
+    assert "paper activity pending: readiness repair lock busy" in result.stdout
+    assert not docker_marker.exists()
+    assert "docker should not be called" not in result.stderr
 
 
 def test_post_close_checks_fail_on_open_positions() -> None:

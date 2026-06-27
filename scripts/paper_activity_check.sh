@@ -6,6 +6,8 @@ PAPER_ACTIVITY_WINDOW_MINUTES="${PAPER_ACTIVITY_WINDOW_MINUTES:-90}"
 PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"
 PAPER_ACTIVITY_REQUIRE_DECISION_LOG="${PAPER_ACTIVITY_REQUIRE_DECISION_LOG:-true}"
 PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE="${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE:-true}"
+PAPER_ACTIVITY_READINESS_RUNNER="${PAPER_ACTIVITY_READINESS_RUNNER:-./scripts/run_locked_check_with_audit.sh}"
+PAPER_ACTIVITY_READINESS_SCRIPT="${PAPER_ACTIVITY_READINESS_SCRIPT:-./scripts/paper_readiness_if_needed.sh}"
 
 cd "$(dirname "$0")/.."
 
@@ -52,6 +54,9 @@ close_only_on_activity_failure() {
   if [[ "$rc" -eq 0 ]]; then
     exit 0
   fi
+  if [[ "$rc" -eq 43 ]]; then
+    exit 43
+  fi
 
   emit_scheduled_context
 
@@ -94,13 +99,24 @@ case "${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,}" in
     ;;
 esac
 
+set +e
 PAPER_READINESS_AUTO_RESUME=false PAPER_READINESS_REQUIRE_FLAT=false \
-  ./scripts/run_locked_check_with_audit.sh \
-    paper_readiness \
-    /var/lock/alpaca-bot-paper-readiness.lock \
-    "$ENV_FILE" \
-    ./scripts/paper_readiness_if_needed.sh \
-    "$ENV_FILE"
+  "$PAPER_ACTIVITY_READINESS_RUNNER" \
+  paper_readiness \
+  /var/lock/alpaca-bot-paper-readiness.lock \
+  "$ENV_FILE" \
+  "$PAPER_ACTIVITY_READINESS_SCRIPT" \
+  "$ENV_FILE"
+readiness_rc="$?"
+set -e
+if [[ "$readiness_rc" -eq 48 ]]; then
+  emit_scheduled_context
+  echo "paper activity pending: readiness repair lock busy; waiting for audited readiness"
+  exit 43
+fi
+if [[ "$readiness_rc" -ne 0 ]]; then
+  exit "$readiness_rc"
+fi
 
 emit_scheduled_context
 
