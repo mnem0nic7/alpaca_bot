@@ -6,6 +6,8 @@ PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"
 PAPER_READINESS_AUTO_RESET_WEIGHTS="${PAPER_READINESS_AUTO_RESET_WEIGHTS:-true}"
 PAPER_READINESS_REQUIRE_FLAT="${PAPER_READINESS_REQUIRE_FLAT:-true}"
 PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED="${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED:-true}"
+PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR:-true}"
+PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"
 PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
 PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"
 
@@ -21,6 +23,8 @@ set -a
 source "$ENV_FILE"
 set +a
 
+PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-${LOSING_STREAK_N:-3}}"
+
 if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
   echo "paper readiness check skipped for TRADING_MODE=${TRADING_MODE:-unset}"
   exit 0
@@ -34,6 +38,12 @@ fi
 
 if [[ ! "$PAPER_READINESS_MIN_CONFIDENCE_FLOOR" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
   echo "PAPER_READINESS_MIN_CONFIDENCE_FLOOR must be a non-negative number" >&2
+  exit 1
+fi
+
+if [[ ! "$PAPER_READINESS_LOSING_STREAK_N" =~ ^[0-9]+$ ]] \
+  || [[ "$PAPER_READINESS_LOSING_STREAK_N" -lt 1 ]]; then
+  echo "LOSING_STREAK_N must be a positive integer" >&2
   exit 1
 fi
 
@@ -370,6 +380,106 @@ SQL
   echo "paper readiness session entry blocks ok: blocked=0"
 else
   echo "paper readiness session entry block check skipped"
+fi
+
+if [[ "${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR,,}" == "true" ]]; then
+  losing_streak_blocks="$("${compose[@]}" exec -T postgres psql \
+    -U "$POSTGRES_USER" \
+    -d "$POSTGRES_DB" \
+    -tA -F '|' \
+    -v strategy_version="$STRATEGY_VERSION" \
+    -v losing_streak_n="$PAPER_READINESS_LOSING_STREAK_N" <<'SQL'
+WITH active AS (
+  SELECT strategy_name
+  FROM strategy_flags
+  WHERE trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+    AND enabled = TRUE
+),
+trade_pnl AS (
+  SELECT
+    x.strategy_name,
+    DATE(x.updated_at AT TIME ZONE 'America/New_York') AS exit_date,
+    (x.fill_price - e.entry_fill)
+      * COALESCE(x.filled_quantity, x.quantity) AS pnl
+  FROM orders x
+  JOIN LATERAL (
+    SELECT e.fill_price AS entry_fill
+    FROM orders e
+    WHERE e.symbol = x.symbol
+      AND e.trading_mode = x.trading_mode
+      AND e.strategy_version = x.strategy_version
+      AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
+      AND e.intent_type = 'entry'
+      AND e.fill_price IS NOT NULL
+      AND e.status = 'filled'
+      AND e.updated_at <= x.updated_at
+      AND DATE(e.updated_at AT TIME ZONE 'America/New_York')
+        = DATE(x.updated_at AT TIME ZONE 'America/New_York')
+    ORDER BY e.updated_at DESC
+    LIMIT 1
+  ) e ON TRUE
+  WHERE x.trading_mode = 'paper'
+    AND x.strategy_version = :'strategy_version'
+    AND x.strategy_name IN (SELECT strategy_name FROM active)
+    AND x.intent_type IN ('stop', 'exit')
+    AND x.fill_price IS NOT NULL
+    AND x.status = 'filled'
+    AND DATE(x.updated_at AT TIME ZONE 'America/New_York')
+      <= ((CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York')::date - 1)
+),
+daily_pnl AS (
+  SELECT strategy_name, exit_date, SUM(pnl) AS day_pnl
+  FROM trade_pnl
+  GROUP BY strategy_name, exit_date
+),
+ranked AS (
+  SELECT
+    strategy_name,
+    exit_date,
+    day_pnl,
+    COUNT(*) FILTER (WHERE day_pnl >= 0) OVER (
+      PARTITION BY strategy_name
+      ORDER BY exit_date DESC
+      ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+    ) AS non_loss_days_newer
+  FROM daily_pnl
+),
+streaks AS (
+  SELECT
+    a.strategy_name,
+    COUNT(r.*) FILTER (
+      WHERE r.day_pnl < 0
+        AND COALESCE(r.non_loss_days_newer, 0) = 0
+    )::int AS losing_streak
+  FROM active a
+  LEFT JOIN ranked r ON r.strategy_name = a.strategy_name
+  GROUP BY a.strategy_name
+),
+blocked AS (
+  SELECT strategy_name, losing_streak
+  FROM streaks
+  WHERE losing_streak >= (:'losing_streak_n')::int
+)
+SELECT
+  COUNT(*)::int,
+  COALESCE(string_agg(strategy_name || ':' || losing_streak::text, ',' ORDER BY strategy_name), '')
+FROM blocked;
+SQL
+)"
+  IFS='|' read -r losing_streak_block_count losing_streak_block_names \
+    <<< "$losing_streak_blocks"
+
+  if [[ "${losing_streak_block_count:-0}" != "0" ]]; then
+    echo \
+      "paper readiness failed: active strategies at losing-streak gate [$losing_streak_block_names] threshold=$PAPER_READINESS_LOSING_STREAK_N" \
+      >&2
+    exit 1
+  fi
+
+  echo "paper readiness losing streak gate ok: blocked=0 threshold=$PAPER_READINESS_LOSING_STREAK_N"
+else
+  echo "paper readiness losing streak gate check skipped"
 fi
 
 if [[ "${PAPER_READINESS_REQUIRE_FLAT,,}" == "true" ]]; then
