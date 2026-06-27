@@ -106,8 +106,19 @@ echo "scheduled check context: session_date=$PROFIT_PROBE_DATE proof_start=$PROF
 if [[ "$PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE" ]]; then
   echo \
     "paper profit probe pending: latest completed session $PROFIT_PROBE_DATE is before proof start $PROFIT_PROBE_START_DATE"
-  BROKER_FLAT_CONTEXT="${PROFIT_PROBE_STRATEGY} paper proof pending ${PROFIT_PROBE_START_DATE}" \
-    ./scripts/broker_flat_check.sh "$ENV_FILE"
+  if ! BROKER_FLAT_CONTEXT="${PROFIT_PROBE_STRATEGY} paper proof pending ${PROFIT_PROBE_START_DATE}" \
+    ./scripts/broker_flat_check.sh "$ENV_FILE"; then
+    reason="${PROFIT_PROBE_STRATEGY} paper proof pending ${PROFIT_PROBE_START_DATE}: broker exposure remains before proof start"
+    if ! "${compose[@]}" run -T --rm admin \
+      close-only \
+      --mode "${TRADING_MODE:-paper}" \
+      --strategy-version "$STRATEGY_VERSION" \
+      --reason "$reason"; then
+      echo "paper profit probe failed: could not apply close-only guard" >&2
+      exit 45
+    fi
+    exit 44
+  fi
   exit 43
 fi
 

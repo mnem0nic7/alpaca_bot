@@ -737,6 +737,7 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "scheduled check context: session_date=$PROFIT_PROBE_DATE proof_start=$PROFIT_PROBE_START_DATE" in profit_probe
     assert 'PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE' in profit_probe
     assert "paper proof pending" in profit_probe
+    assert "paper proof pending ${PROFIT_PROBE_START_DATE}: broker exposure remains before proof start" in profit_probe
     assert "load_latest_completed_session_date" in profit_probe
     assert "AlpacaExecutionAdapter.from_settings" in profit_probe
     assert "get_market_calendar" in profit_probe
