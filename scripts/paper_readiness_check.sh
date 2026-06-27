@@ -9,6 +9,7 @@ PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED="${PAPER_READINESS_REQUIRE_SESSION_UNB
 PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR:-true}"
 PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"
 PAPER_READINESS_REQUIRE_SCENARIOS="${PAPER_READINESS_REQUIRE_SCENARIOS:-true}"
+PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS="${PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS:-true}"
 PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"
 PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
 PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"
@@ -848,6 +849,54 @@ if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
       echo "paper readiness found close_only with $active_orders active orders; refusing auto-resume" >&2
     fi
   fi
+fi
+
+if [[ "${PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS,,}" == "true" ]]; then
+  prior_proof_failures="$("${compose[@]}" exec -T postgres psql \
+    -U "$POSTGRES_USER" \
+    -d "$POSTGRES_DB" \
+    -tA -F '|' \
+    -v strategy_version="$STRATEGY_VERSION" \
+    -v previous_session_date="$PAPER_READINESS_PREVIOUS_SESSION_DATE" <<'SQL'
+WITH prior_checks AS (
+  SELECT payload, created_at
+  FROM audit_events
+  WHERE event_type = 'scheduled_check_completed'
+    AND created_at >= ((:'previous_session_date')::date::timestamp AT TIME ZONE 'America/New_York')
+    AND created_at < (((:'previous_session_date')::date + 1)::timestamp AT TIME ZONE 'America/New_York')
+    AND payload->>'trading_mode' = 'paper'
+    AND payload->>'strategy_version' = :'strategy_version'
+    AND payload->>'check_name' IN ('session_guard', 'paper_profit_probe')
+    AND payload->>'status' = 'failed'
+)
+SELECT
+  COUNT(*)::int,
+  COALESCE(
+    string_agg(
+      payload->>'check_name'
+        || ':rc=' || COALESCE(payload->>'exit_code', '')
+        || ':at=' || to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+      ','
+      ORDER BY created_at
+    ),
+    ''
+  )
+FROM prior_checks;
+SQL
+)"
+  IFS='|' read -r prior_proof_failure_count prior_proof_failure_names \
+    <<< "$prior_proof_failures"
+
+  if [[ "${prior_proof_failure_count:-0}" != "0" ]]; then
+    echo \
+      "paper readiness failed: prior proof scheduled checks failed for session $PAPER_READINESS_PREVIOUS_SESSION_DATE [$prior_proof_failure_names]" \
+      >&2
+    exit 1
+  fi
+
+  echo "paper readiness prior proof checks ok: session=$PAPER_READINESS_PREVIOUS_SESSION_DATE failed=0"
+else
+  echo "paper readiness prior proof check gate skipped"
 fi
 
 if [[ "${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED,,}" == "true" ]]; then

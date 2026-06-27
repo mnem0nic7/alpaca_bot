@@ -89,6 +89,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_SCENARIOS="${PAPER_READINESS_REQUIRE_SCENARIOS:-true}"' in script
+    assert 'PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS="${PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS:-true}"' in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"' in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-${LOSING_STREAK_N:-3}}"' in script
     assert 'PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"' in script
@@ -182,6 +183,12 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness refusing auto-resume after failed proof guard" in script
     assert "paper proof failed" in script
     assert "session guard failed" in script
+    assert "prior proof scheduled checks failed" in script
+    assert "paper readiness prior proof checks ok" in script
+    assert "PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS" in script
+    assert "scheduled_check_completed" in script
+    assert "payload->>'check_name' IN ('session_guard', 'paper_profit_probe')" in script
+    assert "payload->>'status' = 'failed'" in script
     assert "session $PAPER_READINESS_SESSION_DATE has entry-blocking state" in script
     assert "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
     assert "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED" in script
