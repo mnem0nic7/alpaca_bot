@@ -179,8 +179,18 @@ class RuntimeSupervisor:
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
         broker = AlpacaBroker.from_settings(settings)
-        fractionable = broker.get_fractionable_symbols(settings.symbols)
+        runtime = bootstrap_runtime(settings)
+        fractionable_source = settings.symbols
+        watchlist_store = getattr(runtime, "watchlist_store", None)
+        if watchlist_store is not None:
+            watchlist_symbols = tuple(watchlist_store.list_enabled(settings.trading_mode.value))
+            ignored_symbols = set(watchlist_store.list_ignored(settings.trading_mode.value))
+            entry_symbols = tuple(symbol for symbol in watchlist_symbols if symbol not in ignored_symbols)
+            if entry_symbols:
+                fractionable_source = entry_symbols
+        fractionable = broker.get_fractionable_symbols(fractionable_source)
         settings = replace(settings, fractionable_symbols=fractionable)
+        runtime.settings = settings
         option_chain_adapter = None
         option_broker = None
         if settings.enable_options_trading:
@@ -193,7 +203,7 @@ class RuntimeSupervisor:
                 )
         return cls(
             settings=settings,
-            runtime=bootstrap_runtime(settings),
+            runtime=runtime,
             broker=broker,
             market_data=AlpacaMarketDataAdapter.from_settings(settings),
             stream=AlpacaTradingStreamAdapter.from_settings(settings),

@@ -269,6 +269,7 @@ def make_runtime_context(
     position_store: RecordingPositionStore | None = None,
     order_store: RecordingOrderStore | None = None,
     daily_session_state_store: RecordingDailySessionStateStore | None = None,
+    watchlist_store: object | None = None,
 ) -> RuntimeContext:
     class _FakeConn:
         def commit(self) -> None:
@@ -283,6 +284,7 @@ def make_runtime_context(
         order_store=order_store or RecordingOrderStore(),  # type: ignore[arg-type]
         position_store=position_store or RecordingPositionStore(),  # type: ignore[arg-type]
         daily_session_state_store=daily_session_state_store or RecordingDailySessionStateStore(),  # type: ignore[arg-type]
+        watchlist_store=watchlist_store,  # type: ignore[arg-type]
     )
 
 
@@ -307,6 +309,7 @@ class FakeBroker:
         self.open_order_calls = 0
         self.open_position_calls = 0
         self.clock_calls = 0
+        self.fractionable_symbol_calls: list[tuple[str, ...]] = []
 
     def get_account(self) -> BrokerAccount:
         self.account_calls += 1
@@ -321,6 +324,7 @@ class FakeBroker:
         return list(self.open_positions)
 
     def get_fractionable_symbols(self, symbols) -> frozenset:
+        self.fractionable_symbol_calls.append(tuple(symbols))
         return frozenset()
 
     def get_clock(self):
@@ -529,6 +533,7 @@ def test_runtime_supervisor_from_settings_bootstraps_runtime_and_builds_adapters
     supervisor = RuntimeSupervisor.from_settings(settings)
 
     assert supervisor.settings == settings
+    assert runtime.settings == supervisor.settings
     assert supervisor.runtime is runtime
     assert supervisor.broker is broker
     assert supervisor.market_data is market_data
@@ -541,6 +546,53 @@ def test_runtime_supervisor_from_settings_bootstraps_runtime_and_builds_adapters
     }
     assert supervisor._option_chain_adapter is None
     assert supervisor._option_broker is None
+
+
+def test_runtime_supervisor_from_settings_uses_watchlist_for_fractionability(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings({"SYMBOLS": "AAPL,MSFT"})
+
+    class Watchlist:
+        def list_enabled(self, _mode):
+            return ["AAPL", "CLOV", "RR"]
+
+        def list_ignored(self, _mode):
+            return ["RR"]
+
+    class Broker(FakeBroker):
+        def get_fractionable_symbols(self, symbols) -> frozenset:
+            self.fractionable_symbol_calls.append(tuple(symbols))
+            return frozenset({"CLOV"})
+
+    runtime = make_runtime_context(settings, watchlist_store=Watchlist())
+    broker = Broker()
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream()
+    resolved: dict[str, Settings] = {}
+
+    monkeypatch.setattr(module, "bootstrap_runtime", lambda s: runtime)
+    monkeypatch.setattr(module.AlpacaBroker, "from_settings", lambda s: broker)
+
+    def record_market_data(resolved_settings):
+        resolved["market_data"] = resolved_settings
+        return market_data
+
+    def record_stream(resolved_settings):
+        resolved["stream"] = resolved_settings
+        return stream
+
+    monkeypatch.setattr(module.AlpacaMarketDataAdapter, "from_settings", record_market_data)
+    monkeypatch.setattr(module.AlpacaTradingStreamAdapter, "from_settings", record_stream)
+
+    supervisor = RuntimeSupervisor.from_settings(settings)
+
+    assert broker.fractionable_symbol_calls == [("AAPL", "CLOV")]
+    assert supervisor.settings.fractionable_symbols == frozenset({"CLOV"})
+    assert runtime.settings is supervisor.settings
+    assert resolved["market_data"].fractionable_symbols == frozenset({"CLOV"})
+    assert resolved["stream"].fractionable_symbols == frozenset({"CLOV"})
 
 
 def test_runtime_supervisor_from_settings_wires_option_adapters_when_enabled(monkeypatch) -> None:
