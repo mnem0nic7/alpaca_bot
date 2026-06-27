@@ -1,14 +1,16 @@
 SHELL=/bin/bash
-# Nightly evolve pipeline — runs 30 min after NYSE close (22:30 UTC = 5:30 PM ET year-round)
+# Commands are scheduled at both possible UTC hours and gated on New York wall time
+# by run_if_ny_time.sh. This keeps paper proof checks aligned through DST changes.
+# Nightly evolve pipeline — runs after NYSE close at 17:30 ET.
 # apply_candidate.sh chains after nightly (&&) and restarts the supervisor if params changed.
 # The env file must be sourced first: deploy/compose.yaml interpolates ${TRADING_MODE} etc.
 # from the calling shell, exactly like scripts/deploy.sh does.
-10 22 * * 1-5 root flock -n /var/lock/alpaca-bot-session-guard.lock /workspace/alpaca_bot/scripts/session_guard.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-session-guard.log 2>&1
-20 22 * * 1-5 root flock -n /var/lock/alpaca-bot-profit-probe.lock /workspace/alpaca_bot/scripts/paper_profit_probe.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-profit-probe.log 2>&1
-30 22 * * 1-5 root flock -n /var/lock/alpaca-bot-nightly.lock bash -lc 'mkdir -p /var/lib/alpaca-bot/nightly && cd /workspace/alpaca_bot && set -a && source /etc/alpaca_bot/alpaca-bot.env && set +a && docker compose -f deploy/compose.yaml run --rm nightly >> /var/log/alpaca-bot-nightly.log 2>&1 && ./scripts/apply_candidate.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-nightly.log 2>&1'
+10 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1710 flock -n /var/lock/alpaca-bot-session-guard.lock /workspace/alpaca_bot/scripts/session_guard.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-session-guard.log 2>&1
+20 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1720 flock -n /var/lock/alpaca-bot-profit-probe.lock /workspace/alpaca_bot/scripts/paper_profit_probe.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-profit-probe.log 2>&1
+30 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1730 flock -n /var/lock/alpaca-bot-nightly.lock bash -lc 'mkdir -p /var/lib/alpaca-bot/nightly && cd /workspace/alpaca_bot && set -a && source /etc/alpaca_bot/alpaca-bot.env && set +a && docker compose -f deploy/compose.yaml run --rm nightly >> /var/log/alpaca-bot-nightly.log 2>&1 && ./scripts/apply_candidate.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-nightly.log 2>&1'
 # Pre-open paper readiness — primary run before NYSE open, retry before the 10:00 ET entry window
-20 13 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-readiness.lock /workspace/alpaca_bot/scripts/paper_readiness_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-readiness.log 2>&1
-55 13 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-readiness.lock /workspace/alpaca_bot/scripts/paper_readiness_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-readiness.log 2>&1
+20 13,14 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 0920 flock -n /var/lock/alpaca-bot-paper-readiness.lock /workspace/alpaca_bot/scripts/paper_readiness_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-readiness.log 2>&1
+55 13,14 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 0955 flock -n /var/lock/alpaca-bot-paper-readiness.lock /workspace/alpaca_bot/scripts/paper_readiness_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-readiness.log 2>&1
 # Post-open paper activity — first pass after the 10:00 ET entry window starts, second pass mid-session
-15 14 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-activity.lock /workspace/alpaca_bot/scripts/paper_activity_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-activity.log 2>&1
-0 16 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-activity.lock /workspace/alpaca_bot/scripts/paper_activity_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-activity.log 2>&1
+15 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1015 flock -n /var/lock/alpaca-bot-paper-activity.lock /workspace/alpaca_bot/scripts/paper_activity_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-activity.log 2>&1
+0 16,17 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1200 flock -n /var/lock/alpaca-bot-paper-activity.lock /workspace/alpaca_bot/scripts/paper_activity_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-activity.log 2>&1
