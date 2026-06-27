@@ -2518,7 +2518,7 @@ class DecisionLogStore:
                 FROM decision_log
                 WHERE DATE(cycle_at AT TIME ZONE %s) BETWEEN %s AND %s
                   AND trading_mode = %s
-                  AND (%s IS NULL OR strategy_name = %s)
+                  AND (%s::text IS NULL OR strategy_name = %s)
             ) weighted
             GROUP BY strategy_name
             ORDER BY strategy_name

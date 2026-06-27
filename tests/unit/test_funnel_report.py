@@ -101,6 +101,7 @@ def test_funnel_by_strategy_can_filter_to_one_strategy() -> None:
         strategy_name="bull_flag",
     )
 
+    assert "%s::text IS NULL" in conn.executed_sql[0]
     assert "strategy_name = %s" in conn.executed_sql[0]
     assert conn.executed_params[0][-2:] == ("bull_flag", "bull_flag")
 
