@@ -170,6 +170,13 @@ enabled_strategies AS (
   WHERE trading_mode = 'paper'
     AND strategy_version = :'strategy_version'
     AND enabled = TRUE
+),
+latest_supervisor AS (
+  SELECT payload, created_at
+  FROM recent
+  WHERE event_type = 'supervisor_cycle'
+  ORDER BY created_at DESC
+  LIMIT 1
 )
 SELECT
   COUNT(*) FILTER (WHERE event_type = 'supervisor_cycle')::int,
@@ -190,6 +197,40 @@ SELECT
       AND payload->>'reason' = 'market_closed'
   )::int,
   COALESCE(MAX(created_at) FILTER (WHERE event_type = 'supervisor_cycle')::text, ''),
+  COALESCE((
+    SELECT CASE
+      WHEN (payload->>'entries_disabled')::boolean IS TRUE THEN 'true'
+      ELSE 'false'
+    END
+    FROM latest_supervisor
+  ), 'false'),
+  COALESCE((
+    SELECT array_to_string(ARRAY(
+      SELECT jsonb_array_elements_text(
+        COALESCE(payload->'entries_disabled_reasons', '[]'::jsonb)
+      )
+    ), ',')
+    FROM latest_supervisor
+  ), ''),
+  COALESCE((
+    SELECT CASE
+      WHEN COALESCE(payload->'blocked_strategy_names', '[]'::jsonb) ? :'paper_activity_strategy'
+      THEN 'true'
+      ELSE 'false'
+    END
+    FROM latest_supervisor
+  ), 'false'),
+  COALESCE((
+    SELECT array_to_string(ARRAY(
+      SELECT jsonb_array_elements_text(
+        COALESCE(
+          payload->'strategy_entries_disabled_reasons'->'${PAPER_ACTIVITY_STRATEGY}',
+          '[]'::jsonb
+        )
+      )
+    ), ',')
+    FROM latest_supervisor
+  ), ''),
   COALESCE(MAX(created_at) FILTER (WHERE event_type = 'decision_cycle_completed')::text, ''),
   COUNT(*) FILTER (
     WHERE event_type = 'supervisor_cycle'
@@ -283,7 +324,9 @@ SQL
 )"
 
 IFS='|' read -r supervisor_cycles disabled_cycles decision_cycles decision_records \
-  market_closed_idles latest_cycle latest_decision strategy_blocked_cycles \
+  market_closed_idles latest_cycle latest_cycle_entries_disabled \
+  latest_cycle_disabled_reasons latest_cycle_strategy_blocked \
+  latest_cycle_strategy_disabled_reasons latest_decision strategy_blocked_cycles \
   strategy_decision_cycles strategy_decision_records legacy_decision_cycles \
   strategy_decision_log_cycles strategy_decision_log_records latest_decision_log \
   active_strategy_names disabled_reasons strategy_disabled_reasons \
@@ -328,21 +371,21 @@ if [[ "${supervisor_cycles:-0}" -eq 0 ]]; then
   exit 1
 fi
 
-if [[ "${disabled_cycles:-0}" -gt 0 ]]; then
+if [[ "${latest_cycle_entries_disabled:-false}" == "true" ]]; then
   reason_suffix=""
-  if [[ -n "${disabled_reasons:-}" ]]; then
-    reason_suffix=" reasons=$disabled_reasons"
+  if [[ -n "${latest_cycle_disabled_reasons:-}" ]]; then
+    reason_suffix=" reasons=$latest_cycle_disabled_reasons"
   fi
-  echo "paper activity failed: $disabled_cycles/$supervisor_cycles supervisor cycles had entries disabled$reason_suffix" >&2
+  echo "paper activity failed: latest supervisor cycle had entries disabled$reason_suffix disabled_cycles=$disabled_cycles/$supervisor_cycles" >&2
   exit 1
 fi
 
-if [[ "${strategy_blocked_cycles:-0}" -gt 0 ]]; then
+if [[ "${latest_cycle_strategy_blocked:-false}" == "true" ]]; then
   reason_suffix=""
-  if [[ -n "${strategy_disabled_reasons:-}" ]]; then
-    reason_suffix=" reasons=$strategy_disabled_reasons"
+  if [[ -n "${latest_cycle_strategy_disabled_reasons:-}" ]]; then
+    reason_suffix=" reasons=$latest_cycle_strategy_disabled_reasons"
   fi
-  echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY entries blocked in $strategy_blocked_cycles/$supervisor_cycles supervisor cycles$reason_suffix" >&2
+  echo "paper activity failed: latest $PAPER_ACTIVITY_STRATEGY entries blocked$reason_suffix blocked_cycles=$strategy_blocked_cycles/$supervisor_cycles" >&2
   exit 1
 fi
 
@@ -373,4 +416,4 @@ if [[ "${strategy_evidence_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORD
   exit 1
 fi
 
-echo "paper activity ok: supervisor_cycles=$supervisor_cycles decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source require_decision_log=${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
+echo "paper activity ok: supervisor_cycles=$supervisor_cycles disabled_cycles=${disabled_cycles:-0} latest_cycle_entries_disabled=${latest_cycle_entries_disabled:-false} decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_blocked_cycles=${strategy_blocked_cycles:-0} latest_${PAPER_ACTIVITY_STRATEGY}_blocked=${latest_cycle_strategy_blocked:-false} ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source require_decision_log=${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
