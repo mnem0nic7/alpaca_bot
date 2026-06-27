@@ -231,6 +231,14 @@ from the live enabled, non-ignored watchlist. The rerun again completed with
 mean/trade, 3.66 annualized Sharpe, 95% CI mean/trade [0.8379, 2.6633], and a
 positive-edge verdict.
 
+Current-code confirmation after post-open activity-gate hardening: the same
+exact 980-symbol full-window replay was rerun from commit `d5337ae` on
+2026-06-27 after rebuilding a symlinked scenario directory directly from the
+live enabled, non-ignored watchlist. The rerun again completed with 1050
+trades, 71.6% win rate, 1.42 profit factor, $1837.51 total P&L, $1.7500
+mean/trade, 3.66 annualized Sharpe, 95% CI mean/trade [0.8379, 2.6633],
+$412.05 cost drag at 2 bps/side, and a positive-edge verdict.
+
 Exact 980-symbol latest-120-day replay:
 
 ```bash
