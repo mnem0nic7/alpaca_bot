@@ -61,7 +61,12 @@ if credentials_ready; then
   docker compose -f "$COMPOSE_FILE" run --rm --entrypoint alpaca-bot-ops-check admin \
     --url http://web:8080/healthz \
     --expect-worker \
-    --wait-seconds 60
+    --wait-seconds 60 \
+    --expect-trading-mode "${TRADING_MODE}" \
+    --expect-strategy-version "${STRATEGY_VERSION}" \
+    --expect-trading-status enabled \
+    --expect-kill-switch false \
+    --expect-only-enabled-strategy bull_flag
 else
   docker compose -f "$COMPOSE_FILE" rm -sf supervisor >/dev/null 2>&1 || true
   docker compose -f "$COMPOSE_FILE" run --rm --entrypoint alpaca-bot-ops-check admin \

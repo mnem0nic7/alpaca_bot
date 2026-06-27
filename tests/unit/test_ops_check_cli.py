@@ -87,6 +87,77 @@ def test_run_ops_check_fails_when_worker_is_not_fresh_and_expected() -> None:
         raise AssertionError("expected run_ops_check to fail")
 
 
+def test_run_ops_check_accepts_expected_paper_readiness_state() -> None:
+    payload = {
+        "status": "ok",
+        "db": "ok",
+        "trading_mode": "paper",
+        "strategy_version": "v1-breakout",
+        "trading_status": "enabled",
+        "kill_switch_enabled": False,
+        "worker_status": "fresh",
+        "strategy_flags": [
+            {"name": "breakout", "enabled": False},
+            {"name": "bull_flag", "enabled": True},
+            {"name": "momentum", "enabled": False},
+        ],
+    }
+
+    result = run_ops_check(
+        url="http://web:8080/healthz",
+        expect_worker=True,
+        wait_seconds=0.0,
+        retry_interval_seconds=0.01,
+        timeout_seconds=5.0,
+        expect_trading_mode="paper",
+        expect_strategy_version="v1-breakout",
+        expect_trading_status="enabled",
+        expect_kill_switch=False,
+        expect_only_enabled_strategies=["bull_flag"],
+        urlopen_fn=lambda *_args, **_kwargs: FakeResponse(payload),
+        sleep_fn=lambda _seconds: None,
+    )
+
+    assert result == payload
+
+
+def test_run_ops_check_fails_when_unexpected_strategy_is_enabled() -> None:
+    payload = {
+        "status": "ok",
+        "db": "ok",
+        "trading_mode": "paper",
+        "strategy_version": "v1-breakout",
+        "trading_status": "enabled",
+        "kill_switch_enabled": False,
+        "worker_status": "fresh",
+        "strategy_flags": [
+            {"name": "breakout", "enabled": False},
+            {"name": "bull_flag", "enabled": True},
+            {"name": "momentum", "enabled": True},
+        ],
+    }
+
+    try:
+        run_ops_check(
+            url="http://web:8080/healthz",
+            expect_worker=True,
+            wait_seconds=0.0,
+            retry_interval_seconds=0.01,
+            timeout_seconds=5.0,
+            expect_trading_mode="paper",
+            expect_strategy_version="v1-breakout",
+            expect_trading_status="enabled",
+            expect_kill_switch=False,
+            expect_only_enabled_strategies=["bull_flag"],
+            urlopen_fn=lambda *_args, **_kwargs: FakeResponse(payload),
+            sleep_fn=lambda _seconds: None,
+        )
+    except RuntimeError as exc:
+        assert "unexpected_enabled=momentum" in str(exc)
+    else:  # pragma: no cover - defensive
+        raise AssertionError("expected run_ops_check to fail")
+
+
 def test_main_prints_summary_on_success() -> None:
     payload = {
         "status": "ok",
@@ -94,7 +165,12 @@ def test_main_prints_summary_on_success() -> None:
         "trading_mode": "paper",
         "strategy_version": "v1-breakout",
         "trading_status": "enabled",
+        "kill_switch_enabled": False,
         "worker_status": "fresh",
+        "strategy_flags": [
+            {"name": "breakout", "enabled": False},
+            {"name": "bull_flag", "enabled": True},
+        ],
     }
     stdout = io.StringIO()
 
@@ -103,6 +179,16 @@ def test_main_prints_summary_on_success() -> None:
             "--url",
             "http://web:8080/healthz",
             "--expect-worker",
+            "--expect-trading-mode",
+            "paper",
+            "--expect-strategy-version",
+            "v1-breakout",
+            "--expect-trading-status",
+            "enabled",
+            "--expect-kill-switch",
+            "false",
+            "--expect-only-enabled-strategy",
+            "bull_flag",
         ],
         urlopen_fn=lambda *_args, **_kwargs: FakeResponse(payload),
         sleep_fn=lambda _seconds: None,
@@ -114,6 +200,8 @@ def test_main_prints_summary_on_success() -> None:
     rendered = stdout.getvalue().strip()
     assert "status=ok" in rendered
     assert "db=ok" in rendered
+    assert "kill_switch_enabled=False" in rendered
+    assert "enabled_strategies=bull_flag" in rendered
     assert "worker_status=fresh" in rendered
 
 

@@ -22,3 +22,13 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
     }
 
     assert expected <= passed_vars
+
+
+def test_deploy_ops_check_enforces_paper_readiness() -> None:
+    deploy_text = Path("scripts/deploy.sh").read_text()
+
+    assert '--expect-trading-mode "${TRADING_MODE}"' in deploy_text
+    assert '--expect-strategy-version "${STRATEGY_VERSION}"' in deploy_text
+    assert "--expect-trading-status enabled" in deploy_text
+    assert "--expect-kill-switch false" in deploy_text
+    assert "--expect-only-enabled-strategy bull_flag" in deploy_text
