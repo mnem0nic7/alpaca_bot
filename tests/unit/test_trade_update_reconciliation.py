@@ -196,6 +196,63 @@ def test_apply_trade_update_updates_entry_order_and_creates_position() -> None:
     )
 
 
+def test_apply_trade_update_preserves_non_default_strategy_context() -> None:
+    apply_trade_update = load_trade_update_api()
+    settings = make_settings()
+    timestamp = datetime(2026, 6, 29, 14, 15, tzinfo=timezone.utc)
+    signal_timestamp = datetime(2026, 6, 29, 14, 0, tzinfo=timezone.utc)
+    existing_order = OrderRecord(
+        client_order_id="bull_flag:v1-breakout:2026-06-29:AAPL:entry:2026-06-29T14:00:00+00:00",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="accepted",
+        quantity=12.5,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=signal_timestamp,
+        updated_at=signal_timestamp,
+        stop_price=203.25,
+        limit_price=203.45,
+        initial_stop_price=198.75,
+        broker_order_id="broker-entry-aapl",
+        signal_timestamp=signal_timestamp,
+    )
+    runtime = SimpleNamespace(
+        connection=SimpleNamespace(commit=lambda: None),
+        order_store=RecordingOrderStore(existing_order),
+        position_store=RecordingPositionStore(),
+        audit_event_store=RecordingAuditEventStore(),
+    )
+
+    report = apply_trade_update(
+        settings=settings,
+        runtime=runtime,  # type: ignore[arg-type]
+        update={
+            "event": "fill",
+            "client_order_id": existing_order.client_order_id,
+            "broker_order_id": "broker-entry-aapl",
+            "symbol": "AAPL",
+            "side": "buy",
+            "status": "FILLED",
+            "qty": 12.5,
+            "filled_qty": 12.5,
+            "filled_avg_price": 203.31,
+            "timestamp": timestamp.isoformat(),
+        },
+        now=timestamp,
+    )
+
+    saved_entry = runtime.order_store.saved[0]
+    saved_stop = runtime.order_store.saved[1]
+    saved_position = runtime.position_store.saved[0]
+    assert saved_entry.strategy_name == "bull_flag"
+    assert saved_stop.strategy_name == "bull_flag"
+    assert saved_position.strategy_name == "bull_flag"
+    assert report["protective_stop_queued"] is True
+
+
 def test_apply_trade_update_falls_back_to_broker_order_id_for_partial_fill() -> None:
     apply_trade_update = load_trade_update_api()
     settings = make_settings()

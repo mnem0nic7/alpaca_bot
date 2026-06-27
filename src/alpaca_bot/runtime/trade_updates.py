@@ -165,6 +165,7 @@ def _apply_trade_update_locked(
         quantity=normalized.quantity or matched_order.quantity,
         trading_mode=matched_order.trading_mode,
         strategy_version=matched_order.strategy_version,
+        strategy_name=matched_order.strategy_name,
         created_at=matched_order.created_at,
         updated_at=timestamp,
         stop_price=matched_order.stop_price,
