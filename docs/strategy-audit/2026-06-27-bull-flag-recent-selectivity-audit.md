@@ -184,3 +184,55 @@ Result:
 Decision: the latest-120-day active-universe replay strengthens the same paper
 proof posture. Keep `RELATIVE_VOLUME_THRESHOLD=2.0` and `MAX_OPEN_POSITIONS=3`
 for the 2026-06-29 proof start.
+
+Data freshness cleanup:
+
+The active scenario set was checked for stale daily and intraday coverage after
+the exact-active audit. Two enabled symbols were stale or too sparse for the
+intraday bull-flag proof:
+
+- `ALX`: refreshed daily bars reached `2026-06-26`, but intraday bars still
+  stopped at `2026-06-25`; it was also the sparsest active intraday scenario
+  (`394` bars across the 252-day lookback).
+- `CWAN`: Alpaca returned no daily or intraday bars after `2026-06-24`.
+
+Both symbols were marked ignored for paper entries with `WATCHLIST_IGNORE` audit
+events. The live proof universe became 980 enabled, non-ignored symbols with 6
+ignored symbols. Every active symbol still had a scenario file. The `ALX` and
+`CWAN` scenario files were refreshed before rerunning the active-universe audit.
+
+Exact 980-symbol full-window replay:
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+alpaca-bot-backtest portfolio-audit \
+  --scenario-dir /tmp/alpaca-active-scenarios \
+  --strategy bull_flag \
+  --slippage-bps 2 \
+  --max-open-positions 3 \
+  --starting-equity 17247.795
+```
+
+| scenarios | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(edge>0) | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---|
+| 980 | 1050 | 71.6% | 1.42 | 1837.51 | 1.7500 | 3.66 | [0.8379, 2.6633] | 0.0000 | positive-edge |
+
+Exact 980-symbol latest-120-day replay:
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+alpaca-bot-backtest portfolio-audit \
+  --scenario-dir /tmp/alpaca-active-120d-scenarios \
+  --strategy bull_flag \
+  --slippage-bps 2 \
+  --max-open-positions 3 \
+  --starting-equity 17247.795
+```
+
+| scenarios | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(edge>0) | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---|
+| 980 | 424 | 74.8% | 1.75 | 1070.09 | 2.5238 | 5.82 | [1.1901, 3.8148] | 0.0000 | positive-edge |
+
+Decision: keep the same deployed proof posture after the data-quality cleanup.
+Removing stale/sparse active symbols did not weaken the full-window or recent
+active-universe evidence.
