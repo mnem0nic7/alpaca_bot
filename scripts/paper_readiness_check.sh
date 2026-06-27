@@ -7,9 +7,12 @@ PAPER_READINESS_AUTO_RESET_WEIGHTS="${PAPER_READINESS_AUTO_RESET_WEIGHTS:-true}"
 PAPER_READINESS_REQUIRE_FLAT="${PAPER_READINESS_REQUIRE_FLAT:-true}"
 PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED="${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED:-true}"
 PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR:-true}"
+PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"
 PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"
 PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
 PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"
+PAPER_READINESS_DATA_SMOKE_SYMBOLS="${PAPER_READINESS_DATA_SMOKE_SYMBOLS:-SPY,AAPL}"
+PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS="${PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS:-10}"
 
 cd "$(dirname "$0")/.."
 
@@ -38,6 +41,12 @@ fi
 
 if [[ ! "$PAPER_READINESS_MIN_CONFIDENCE_FLOOR" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
   echo "PAPER_READINESS_MIN_CONFIDENCE_FLOOR must be a non-negative number" >&2
+  exit 1
+fi
+
+if [[ ! "$PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS" =~ ^[0-9]+$ ]] \
+  || [[ "$PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS" -lt 1 ]]; then
+  echo "PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS must be a positive integer" >&2
   exit 1
 fi
 
@@ -100,6 +109,77 @@ require_env_false_or_unset ENABLE_REGIME_FILTER
 require_env_false_or_unset ENABLE_OPTIONS_TRADING
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
+
+run_market_data_smoke_check() {
+  "${compose[@]}" run -T --rm \
+    -e PAPER_READINESS_DATA_SMOKE_SYMBOLS="$PAPER_READINESS_DATA_SMOKE_SYMBOLS" \
+    -e PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS="$PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS" \
+    --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import os
+import sys
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaMarketDataAdapter
+
+symbols: list[str] = []
+for raw_symbol in os.environ.get("PAPER_READINESS_DATA_SMOKE_SYMBOLS", "").split(","):
+    symbol = raw_symbol.strip().upper()
+    if symbol and symbol not in symbols:
+        symbols.append(symbol)
+
+if not symbols:
+    print(
+        "paper readiness failed: PAPER_READINESS_DATA_SMOKE_SYMBOLS produced no symbols",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+lookback_days = int(os.environ["PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS"])
+settings = Settings.from_env()
+adapter = AlpacaMarketDataAdapter.from_settings(settings)
+end = datetime.now(timezone.utc)
+start = end - timedelta(days=lookback_days)
+
+try:
+    bars_by_symbol = adapter.get_daily_bars(symbols=symbols, start=start, end=end)
+except Exception as exc:
+    print(
+        "paper readiness failed: market data daily-bars smoke failed "
+        f"for {','.join(symbols)}: {exc}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from exc
+
+bar_counts = {
+    symbol: len(bars_by_symbol.get(symbol, []))
+    for symbol in symbols
+}
+
+if not any(bar_counts.values()):
+    print(
+        "paper readiness failed: market data daily-bars smoke returned no bars "
+        f"for {','.join(symbols)} over {lookback_days} days",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+summary = ",".join(f"{symbol}:{bar_counts[symbol]}" for symbol in symbols)
+print(
+    "paper readiness market data ok: "
+    f"daily_bars={summary} feed={settings.market_data_feed.value} "
+    f"lookback_days={lookback_days}"
+)
+PY
+}
+
+if [[ "${PAPER_READINESS_REQUIRE_MARKET_DATA,,}" == "true" ]]; then
+  run_market_data_smoke_check
+else
+  echo "paper readiness market data check skipped"
+fi
 
 watchlist_counts="$("${compose[@]}" exec -T postgres psql \
   -U "$POSTGRES_USER" \

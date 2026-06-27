@@ -44,10 +44,14 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_REQUIRE_FLAT="${PAPER_READINESS_REQUIRE_FLAT:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED="${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR:-true}"' in script
+    assert 'PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"' in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"' in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-${LOSING_STREAK_N:-3}}"' in script
     assert 'PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"' in script
     assert 'PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"' in script
+    assert 'PAPER_READINESS_DATA_SMOKE_SYMBOLS="${PAPER_READINESS_DATA_SMOKE_SYMBOLS:-SPY,AAPL}"' in script
+    assert 'PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS="${PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS:-10}"' in script
+    assert "PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS must be a positive integer" in script
     assert 'status=close_only' in script
     assert 'kill_switch=false' in script
     assert 'open_positions" == "0"' in script
@@ -76,6 +80,13 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "confidence_floor_store" in script
     assert "paper readiness confidence floor ok" in script
     assert "expected >= $PAPER_READINESS_MIN_CONFIDENCE_FLOOR and <= 1.0" in script
+    assert "run_market_data_smoke_check" in script
+    assert "AlpacaMarketDataAdapter.from_settings" in script
+    assert "adapter.get_daily_bars" in script
+    assert "paper readiness failed: market data daily-bars smoke failed" in script
+    assert "paper readiness failed: market data daily-bars smoke returned no bars" in script
+    assert "paper readiness market data ok" in script
+    assert "paper readiness market data check skipped" in script
     assert "paper readiness option positions ok: net_open=0" in script
     assert "stock-only proof has $open_option_positions net-open option positions" in script
     assert "paper readiness refusing auto-resume after failed proof guard" in script
