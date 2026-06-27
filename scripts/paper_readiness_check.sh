@@ -85,6 +85,7 @@ require_env_false_or_unset() {
 }
 
 require_env_value STRATEGY_VERSION v1-breakout
+require_env_value MARKET_DATA_FEED iex
 require_env_value DAILY_SMA_PERIOD 20
 require_env_value BREAKOUT_LOOKBACK_BARS 20
 require_env_value RELATIVE_VOLUME_LOOKBACK_BARS 20

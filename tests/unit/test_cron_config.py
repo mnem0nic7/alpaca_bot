@@ -106,6 +106,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "pre-open paper readiness auto-resume" in script
     assert "--expect-trading-status enabled" in script
     assert "--expect-only-enabled-strategy bull_flag" in script
+    assert "require_env_value MARKET_DATA_FEED iex" in script
     assert "require_env_value DAILY_SMA_PERIOD 20" in script
     assert "require_env_value BREAKOUT_LOOKBACK_BARS 20" in script
     assert "require_env_value RELATIVE_VOLUME_LOOKBACK_BARS 20" in script
