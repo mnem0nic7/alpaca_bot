@@ -5,6 +5,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     cron_text = Path("deploy/cron.d/alpaca-bot").read_text()
     install_cron = Path("scripts/install_cron.sh").read_text()
     run_if_ny_time = Path("scripts/run_if_ny_time.sh").read_text()
+    cron_health = Path("scripts/cron_health_check.sh").read_text()
 
     readiness = "20 13,14 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 0920"
     readiness_retry = "55 13,14 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 0955"
@@ -43,9 +44,21 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "run_check_with_audit.sh session_guard" in cron_text
     assert 'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"' in install_cron
     assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" /etc/cron.d/alpaca-bot' in install_cron
+    assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in install_cron
     assert "Runs weekdays on New York wall time" in install_cron
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
     assert 'exec "$@"' in run_if_ny_time
+    assert 'EXPECTED_CRON="$ROOT_DIR/deploy/cron.d/alpaca-bot"' in cron_health
+    assert 'INSTALLED_CRON="${ALPACA_BOT_CRON_FILE:-/etc/cron.d/alpaca-bot}"' in cron_health
+    assert 'cmp -s "$EXPECTED_CRON" "$INSTALLED_CRON"' in cron_health
+    assert "systemctl is-active --quiet cron" in cron_health
+    assert "ps -eo comm=" in cron_health
+    assert "run_check_with_audit.sh" in cron_health
+    assert "paper_readiness_check.sh" in cron_health
+    assert "paper_activity_check.sh" in cron_health
+    assert "session_guard.sh" in cron_health
+    assert "paper_profit_probe.sh" in cron_health
+    assert "cron health ok" in cron_health
 
 
 def test_run_check_with_audit_records_scheduled_check_result() -> None:

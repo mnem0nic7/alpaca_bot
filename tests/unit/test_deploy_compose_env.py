@@ -35,6 +35,10 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
 def test_deploy_ops_check_enforces_paper_readiness() -> None:
     deploy_text = Path("scripts/deploy.sh").read_text()
 
+    assert 'REQUIRE_CRON_HEALTH="${REQUIRE_CRON_HEALTH:-true}"' in deploy_text
+    assert "REQUIRE_CRON_HEALTH must be true or false" in deploy_text
+    assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in deploy_text
+    assert "Cron health check skipped because REQUIRE_CRON_HEALTH=false" in deploy_text
     assert '--expect-trading-mode "${TRADING_MODE}"' in deploy_text
     assert '--expect-strategy-version "${STRATEGY_VERSION}"' in deploy_text
     assert "--expect-trading-status enabled" in deploy_text

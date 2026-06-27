@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/deploy/compose.yaml"
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
+REQUIRE_CRON_HEALTH="${REQUIRE_CRON_HEALTH:-true}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file: $ENV_FILE" >&2
@@ -51,6 +52,14 @@ require_var DATABASE_URL
 require_var TRADING_MODE
 require_var STRATEGY_VERSION
 
+case "${REQUIRE_CRON_HEALTH,,}" in
+  true|false) ;;
+  *)
+    echo "REQUIRE_CRON_HEALTH must be true or false" >&2
+    exit 1
+    ;;
+esac
+
 docker compose -f "$COMPOSE_FILE" build supervisor web migrate admin
 docker compose -f "$COMPOSE_FILE" up -d postgres
 docker compose -f "$COMPOSE_FILE" run --rm migrate
@@ -74,6 +83,12 @@ else
     --no-expect-worker \
     --wait-seconds 30
   echo "Postgres is up and migrations are applied, but supervisor was not started because Alpaca credentials are missing or placeholders." >&2
+fi
+
+if [[ "${REQUIRE_CRON_HEALTH,,}" == "true" ]]; then
+  "$ROOT_DIR/scripts/cron_health_check.sh"
+else
+  echo "Cron health check skipped because REQUIRE_CRON_HEALTH=false" >&2
 fi
 
 docker compose -f "$COMPOSE_FILE" ps
