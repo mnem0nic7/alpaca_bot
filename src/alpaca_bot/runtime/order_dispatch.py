@@ -616,9 +616,32 @@ def _cancel_partial_fill_entry(
                 pass
         return PartialFillCancelResult(safe_to_proceed=False)
 
+    missing_broker_ids = [
+        entry for entry in partial_entries if not entry.broker_order_id
+    ]
+    if missing_broker_ids:
+        with lock_ctx:
+            try:
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="partial_fill_cancel_missing_broker_order_id",
+                        symbol=order.symbol,
+                        payload={
+                            "stop_client_order_id": order.client_order_id,
+                            "entry_client_order_ids": [
+                                entry.client_order_id for entry in missing_broker_ids
+                            ],
+                            "context": "stop_dispatch",
+                        },
+                        created_at=now,
+                    ),
+                    commit=True,
+                )
+            except Exception:
+                pass
+        return PartialFillCancelResult(safe_to_proceed=False)
+
     for entry in partial_entries:
-        if not entry.broker_order_id:
-            continue
         try:
             broker.cancel_order(entry.broker_order_id)
         except Exception as exc:
