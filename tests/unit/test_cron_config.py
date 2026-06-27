@@ -54,6 +54,9 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "expected >= $PAPER_READINESS_MIN_CONFIDENCE_FLOOR and <= 1.0" in script
     assert "paper readiness option positions ok: net_open=0" in script
     assert "stock-only proof has $open_option_positions net-open option positions" in script
+    assert "paper readiness refusing auto-resume after failed proof guard" in script
+    assert "paper proof failed" in script
+    assert "session guard failed" in script
     assert "pre-open paper readiness auto-resume" in script
     assert "--expect-trading-status enabled" in script
     assert "--expect-only-enabled-strategy bull_flag" in script

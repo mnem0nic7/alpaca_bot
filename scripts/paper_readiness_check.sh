@@ -270,6 +270,12 @@ if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
 
   if [[ "$status_line" == *"status=close_only"* ]] \
     && [[ "$status_line" == *"kill_switch=false"* ]]; then
+    if [[ "$status_line" == *"paper proof failed"* ]] \
+      || [[ "$status_line" == *"session guard failed"* ]]; then
+      echo "paper readiness refusing auto-resume after failed proof guard: $status_line" >&2
+      exit 1
+    fi
+
     open_positions="$("${compose[@]}" exec -T postgres psql \
       -U "$POSTGRES_USER" \
       -d "$POSTGRES_DB" \
