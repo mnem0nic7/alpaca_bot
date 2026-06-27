@@ -17,6 +17,7 @@ from alpaca_bot.storage.models import (
     ConfidenceFloor,
     DailySessionState,
     EQUITY_SESSION_STATE_STRATEGY_NAME,
+    GLOBAL_SESSION_STATE_STRATEGY_NAME,
     OptionOrderRecord,
     OrderRecord,
     PositionRecord,
@@ -1071,7 +1072,7 @@ class DailySessionStateStore:
         session_date: Any,
         trading_mode: TradingMode,
         strategy_version: str,
-        strategy_name: str = "breakout",
+        strategy_name: str = GLOBAL_SESSION_STATE_STRATEGY_NAME,
     ) -> DailySessionState | None:
         row = fetch_one(
             self._connection,

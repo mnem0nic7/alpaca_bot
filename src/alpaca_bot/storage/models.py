@@ -82,7 +82,7 @@ class DailySessionState:
     strategy_version: str
     entries_disabled: bool
     flatten_complete: bool
-    strategy_name: str = "breakout"
+    strategy_name: str = GLOBAL_SESSION_STATE_STRATEGY_NAME
     last_reconciled_at: datetime | None = None
     notes: str | None = None
     equity_baseline: float | None = None

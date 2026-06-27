@@ -14,6 +14,7 @@ from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.execution import BrokerOrder, BrokerPosition, MarketCalendarDay, MarketClock
 from alpaca_bot.runtime import RuntimeContext
 from alpaca_bot.storage import AuditEvent, DailySessionState, OrderRecord, PositionRecord
+from alpaca_bot.storage.models import GLOBAL_SESSION_STATE_STRATEGY_NAME
 
 
 def _make_healthy_connection_stub():
@@ -69,6 +70,7 @@ class RecordingTradingStatusStore:
 class RecordingDailySessionStateStore:
     def __init__(self, loaded_state: DailySessionState | None = None) -> None:
         self.loaded_state = loaded_state
+        self.load_calls: list[dict[str, object]] = []
         self.saved: list[DailySessionState] = []
 
     def load(
@@ -77,10 +79,19 @@ class RecordingDailySessionStateStore:
         session_date: date,
         trading_mode: TradingMode,
         strategy_version: str,
+        strategy_name: str = GLOBAL_SESSION_STATE_STRATEGY_NAME,
     ) -> DailySessionState | None:
         assert session_date == date(2026, 4, 24)
         assert trading_mode is TradingMode.PAPER
         assert strategy_version == "v1-breakout"
+        self.load_calls.append(
+            {
+                "session_date": session_date,
+                "trading_mode": trading_mode,
+                "strategy_version": strategy_version,
+                "strategy_name": strategy_name,
+            }
+        )
         return self.loaded_state
 
     def save(self, state: DailySessionState) -> None:
@@ -418,3 +429,6 @@ def test_main_renders_mismatch_summary_from_startup_reconciliation() -> None:
         "mismatch_detected": True,
         "session_date": "2026-04-24",
     }
+    assert daily_session_state_store.load_calls[-1]["strategy_name"] == (
+        GLOBAL_SESSION_STATE_STRATEGY_NAME
+    )

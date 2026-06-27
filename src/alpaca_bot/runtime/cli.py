@@ -14,6 +14,7 @@ from alpaca_bot.runtime.startup_recovery import (
 )
 from alpaca_bot.runtime.trader import TraderStartupStatus, start_trader
 from alpaca_bot.storage import AuditEvent
+from alpaca_bot.storage.models import GLOBAL_SESSION_STATE_STRATEGY_NAME
 
 
 def main(
@@ -109,6 +110,7 @@ def _detect_startup_mismatches(
         session_date=session_date,
         trading_mode=runtime.settings.trading_mode,
         strategy_version=runtime.settings.strategy_version,
+        strategy_name=GLOBAL_SESSION_STATE_STRATEGY_NAME,
     )
     if previous_state is not None and previous_state.flatten_complete and open_positions:
         return ["broker position mismatch"]

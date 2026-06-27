@@ -19,6 +19,7 @@ from alpaca_bot.storage import (
     TradingStatusValue,
     advisory_lock_key,
 )
+from alpaca_bot.storage.models import GLOBAL_SESSION_STATE_STRATEGY_NAME
 
 
 class FakeCursor:
@@ -380,7 +381,7 @@ def test_daily_session_state_store_round_trip() -> None:
                 date(2026, 4, 24),
                 "paper",
                 "v1-breakout",
-                "breakout",
+                GLOBAL_SESSION_STATE_STRATEGY_NAME,
                 True,
                 False,
                 now,
