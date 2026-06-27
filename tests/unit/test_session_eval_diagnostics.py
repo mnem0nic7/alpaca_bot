@@ -75,6 +75,22 @@ def test_list_by_event_types_accepts_none_since_until():
     assert result[0].event_type == "supervisor_cycle_error"
 
 
+def test_list_by_event_types_accepts_scope_filters():
+    conn = _RecordingAuditConn([])
+    store = AuditEventStore(conn)
+
+    store.list_by_event_types(
+        event_types=["supervisor_cycle_error"],
+        trading_mode="paper",
+        strategy_version="v1",
+        limit=100,
+    )
+
+    assert conn.last_params is not None
+    assert "paper" in conn.last_params
+    assert "v1" in conn.last_params
+
+
 # ---------------------------------------------------------------------------
 # Task 2 — OrderStore.list_failed_entries
 # ---------------------------------------------------------------------------
@@ -254,6 +270,8 @@ def test_build_session_diagnostics_cycle_errors(monkeypatch):
     assert diag.cycle_errors[0].event_type == "supervisor_cycle_error"
     # since/until must be passed to the audit store
     assert any("since" in call for call in call_log)
+    assert all(call["trading_mode"] is TradingMode.PAPER for call in call_log)
+    assert all(call["strategy_version"] == "v1" for call in call_log)
 
 
 def test_build_session_diagnostics_open_positions(monkeypatch):

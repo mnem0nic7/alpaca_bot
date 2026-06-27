@@ -164,14 +164,31 @@ class AuditEventStore:
         offset: int = 0,
         since: datetime | None = None,
         until: datetime | None = None,
+        trading_mode: TradingMode | str | None = None,
+        strategy_version: str | None = None,
     ) -> list[AuditEvent]:
         if not event_types:
             return []
         placeholders = ", ".join(["%s"] * len(event_types))
         since_clause = "AND created_at >= %s" if since is not None else ""
         until_clause = "AND created_at < %s" if until is not None else ""
+        mode_clause = (
+            "AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)"
+            if trading_mode is not None
+            else ""
+        )
+        version_clause = (
+            "AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)"
+            if strategy_version is not None
+            else ""
+        )
         since_params = (since,) if since is not None else ()
         until_params = (until,) if until is not None else ()
+        mode_value = (
+            trading_mode.value if isinstance(trading_mode, TradingMode) else trading_mode
+        )
+        mode_params = (mode_value,) if trading_mode is not None else ()
+        version_params = (strategy_version,) if strategy_version is not None else ()
         rows = fetch_all(
             self._connection,
             f"""
@@ -180,11 +197,21 @@ class AuditEventStore:
             WHERE event_type IN ({placeholders})
               {since_clause}
               {until_clause}
+              {mode_clause}
+              {version_clause}
             ORDER BY created_at DESC, event_id DESC
             LIMIT %s
             OFFSET %s
             """,
-            (*event_types, *since_params, *until_params, limit, offset),
+            (
+                *event_types,
+                *since_params,
+                *until_params,
+                *mode_params,
+                *version_params,
+                limit,
+                offset,
+            ),
         )
         return [
             AuditEvent(
