@@ -620,6 +620,8 @@ def _cancel_partial_fill_entry(
             initial_stop_price=entry.initial_stop_price,
             broker_order_id=entry.broker_order_id,
             signal_timestamp=entry.signal_timestamp,
+            fill_price=entry.fill_price,
+            filled_quantity=entry.filled_quantity,
         )
         with lock_ctx:
             try:

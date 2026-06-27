@@ -1244,6 +1244,8 @@ def test_dispatch_stop_cancels_partial_fill_entry_first() -> None:
         limit_price=14.90,
         broker_order_id="broker-entry-sono-1",
         signal_timestamp=now,
+        fill_price=14.89,
+        filled_quantity=97,
     )
     stop_order = OrderRecord(
         client_order_id="paper:v1-breakout:SONO:stop:1",
@@ -1282,6 +1284,12 @@ def test_dispatch_stop_cancels_partial_fill_entry_first() -> None:
     assert ("paper:v1-breakout:SONO:entry:1", "canceled") in saved_statuses
     assert ("paper:v1-breakout:SONO:stop:1", "submitting") in saved_statuses
     assert ("paper:v1-breakout:SONO:stop:1", "new") in saved_statuses
+    canceled_entry = next(
+        o for o in order_store.saved
+        if o.client_order_id == partial_entry.client_order_id and o.status == "canceled"
+    )
+    assert canceled_entry.fill_price == 14.89
+    assert canceled_entry.filled_quantity == 97
 
     # Audit trail includes partial_fill_entry_canceled
     event_types = [e.event_type for e in audit_store.appended]
@@ -1589,4 +1597,3 @@ def test_sell_side_exit_routes_to_submit_market_exit():
     broker = RoutingBroker()
     _submit_order(order=_make_routing_exit_order("sell", symbol="AAPL"), broker=broker, settings=make_settings())
     assert broker.calls[0][0] == "submit_market_exit"
-
