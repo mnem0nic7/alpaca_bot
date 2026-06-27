@@ -561,6 +561,11 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "confidence watermark" in script
     assert "drawdown=${confidence_watermark_drawdown:-unset} exceeds trigger" in script
     assert "paper readiness confidence watermark ok" in script
+    assert "paper readiness broker account ok" in script
+    assert "broker account not tradable" in script
+    assert "minimum_required" in script
+    assert "trading_blocked" in script
+    assert "settings.max_position_pct" in script
     assert "AlpacaExecutionAdapter.from_settings(settings).get_account()" in script
     assert "settings.drawdown_raise_pct" in script
     assert "expected >= $PAPER_READINESS_MIN_CONFIDENCE_FLOOR and <= 1.0" in script

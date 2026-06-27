@@ -741,6 +741,9 @@ from alpaca_bot.storage.repositories import ConfidenceFloorStore
 settings = Settings.from_env()
 account = AlpacaExecutionAdapter.from_settings(settings).get_account()
 equity = float(account.equity)
+buying_power = float(account.buying_power)
+minimum_buying_power = equity * float(settings.max_position_pct)
+trading_blocked = bool(account.trading_blocked)
 conn = connect_postgres(settings.database_url)
 try:
     rec = ConfidenceFloorStore(conn).load(
@@ -755,14 +758,34 @@ finally:
 watermark = float(rec.equity_high_watermark) if rec is not None else 0.0
 threshold = float(settings.drawdown_raise_pct)
 drawdown = ((watermark - equity) / watermark) if watermark > 0 else 0.0
-status = "mismatch" if watermark > 0 and drawdown > threshold else "ok"
-print(f"{status}|{equity:.2f}|{watermark:.2f}|{drawdown:.6f}|{threshold:.6f}")
+watermark_status = "mismatch" if watermark > 0 and drawdown > threshold else "ok"
+account_status = (
+    "mismatch"
+    if trading_blocked or equity <= 0 or buying_power < minimum_buying_power
+    else "ok"
+)
+print(
+    f"{watermark_status}|{equity:.2f}|{watermark:.2f}|{drawdown:.6f}|"
+    f"{threshold:.6f}|{account_status}|{buying_power:.2f}|"
+    f"{minimum_buying_power:.2f}|{str(trading_blocked).lower()}"
+)
 PY
 )"
 
 IFS='|' read -r confidence_watermark_status broker_equity confidence_watermark_value \
-  confidence_watermark_drawdown confidence_watermark_threshold \
+  confidence_watermark_drawdown confidence_watermark_threshold broker_account_status \
+  broker_buying_power broker_minimum_buying_power broker_trading_blocked \
   <<< "$confidence_watermark_check"
+
+if [[ "$broker_account_status" != "ok" ]]; then
+  echo \
+    "paper readiness failed: broker account not tradable equity=${broker_equity:-unset} buying_power=${broker_buying_power:-unset} minimum_required=${broker_minimum_buying_power:-unset} trading_blocked=${broker_trading_blocked:-unset}" \
+    >&2
+  exit 1
+fi
+
+echo \
+  "paper readiness broker account ok: equity=$broker_equity buying_power=$broker_buying_power minimum_required=$broker_minimum_buying_power trading_blocked=$broker_trading_blocked"
 
 if [[ "$confidence_watermark_status" != "ok" ]]; then
   echo \
