@@ -141,6 +141,93 @@ require_env_false_or_unset ENABLE_OPTIONS_TRADING
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
+run_container_settings_posture_check() {
+  "${compose[@]}" run -T --rm \
+    --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from datetime import time
+from math import isclose
+import sys
+
+from alpaca_bot.config import Settings
+
+settings = Settings.from_env()
+errors: list[str] = []
+
+
+def check(name: str, actual: object, expected: object) -> None:
+    if isinstance(expected, float):
+        try:
+            ok = isclose(float(actual), expected, rel_tol=0.0, abs_tol=1e-9)
+        except (TypeError, ValueError):
+            ok = False
+    else:
+        ok = actual == expected
+    if not ok:
+        errors.append(f"{name}={actual!r} expected {expected!r}")
+
+
+def as_hhmm(value: time) -> str:
+    return value.strftime("%H:%M")
+
+
+check("strategy_version", settings.strategy_version, "v1-breakout")
+check("market_data_feed", settings.market_data_feed.value, "iex")
+check("daily_sma_period", settings.daily_sma_period, 20)
+check("breakout_lookback_bars", settings.breakout_lookback_bars, 20)
+check("relative_volume_lookback_bars", settings.relative_volume_lookback_bars, 20)
+check("relative_volume_threshold", settings.relative_volume_threshold, 2.0)
+check("entry_timeframe_minutes", settings.entry_timeframe_minutes, 15)
+check("risk_per_trade_pct", settings.risk_per_trade_pct, 0.01)
+check("max_position_pct", settings.max_position_pct, 0.05)
+check("max_open_positions", settings.max_open_positions, 3)
+check("max_portfolio_exposure_pct", settings.max_portfolio_exposure_pct, 0.30)
+check("daily_loss_limit_pct", settings.daily_loss_limit_pct, 0.01)
+check("atr_period", settings.atr_period, 14)
+check("atr_stop_multiplier", settings.atr_stop_multiplier, 1.0)
+check("trailing_stop_atr_multiplier", settings.trailing_stop_atr_multiplier, 1.5)
+check("trailing_stop_profit_trigger_r", settings.trailing_stop_profit_trigger_r, 1.0)
+check("entry_window_start", as_hhmm(settings.entry_window_start), "10:00")
+check("entry_window_end", as_hhmm(settings.entry_window_end), "15:30")
+check("flatten_time", as_hhmm(settings.flatten_time), "15:45")
+check("enable_profit_trail", settings.enable_profit_trail, True)
+check("profit_trail_pct", settings.profit_trail_pct, 0.95)
+check("enable_breakeven_stop", settings.enable_breakeven_stop, True)
+check("breakeven_trigger_pct", settings.breakeven_trigger_pct, 0.0025)
+check("breakeven_trail_pct", settings.breakeven_trail_pct, 0.002)
+check("enable_vwap_entry_filter", settings.enable_vwap_entry_filter, True)
+check("enable_vix_filter", settings.enable_vix_filter, False)
+check("enable_sector_filter", settings.enable_sector_filter, False)
+check("enable_regime_filter", settings.enable_regime_filter, False)
+check("enable_news_filter", settings.enable_news_filter, False)
+check("enable_spread_filter", settings.enable_spread_filter, False)
+check("enable_options_trading", settings.enable_options_trading, False)
+check("extended_hours_enabled", settings.extended_hours_enabled, False)
+check("enable_profit_target", settings.enable_profit_target, False)
+check("enable_trend_filter_exit", settings.enable_trend_filter_exit, False)
+check("enable_vwap_breakdown_exit", settings.enable_vwap_breakdown_exit, False)
+check("per_symbol_loss_limit_pct", settings.per_symbol_loss_limit_pct, 0.0)
+check("min_position_notional", settings.min_position_notional, 0.0)
+check("max_stop_pct", settings.max_stop_pct, 0.05)
+check("viability_daily_bar_max_age_days", settings.viability_daily_bar_max_age_days, 5)
+check("viability_min_hold_minutes", settings.viability_min_hold_minutes, 0)
+check("max_loss_per_trade_dollars", settings.max_loss_per_trade_dollars, None)
+check("intraday_consecutive_loss_gate", settings.intraday_consecutive_loss_gate, 0)
+check("replay_slippage_bps", settings.replay_slippage_bps, 2.0)
+
+if errors:
+    print("paper readiness failed: container Settings posture drift:", file=sys.stderr)
+    for error in errors:
+        print(f"  - {error}", file=sys.stderr)
+    raise SystemExit(1)
+
+print("paper readiness container Settings ok")
+PY
+}
+
+run_container_settings_posture_check
+
 run_market_data_smoke_check() {
   "${compose[@]}" run -T --rm \
     -e PAPER_READINESS_DATA_SMOKE_SYMBOLS="$PAPER_READINESS_DATA_SMOKE_SYMBOLS" \

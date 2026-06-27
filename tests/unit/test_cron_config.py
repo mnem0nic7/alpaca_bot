@@ -81,6 +81,16 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness confidence floor ok" in script
     assert "expected >= $PAPER_READINESS_MIN_CONFIDENCE_FLOOR and <= 1.0" in script
     assert "run_market_data_smoke_check" in script
+    assert "run_container_settings_posture_check" in script
+    assert "paper readiness container Settings ok" in script
+    assert "paper readiness failed: container Settings posture drift:" in script
+    assert 'check("market_data_feed", settings.market_data_feed.value, "iex")' in script
+    assert 'check("trailing_stop_atr_multiplier", settings.trailing_stop_atr_multiplier, 1.5)' in script
+    assert 'check("enable_profit_trail", settings.enable_profit_trail, True)' in script
+    assert 'check("enable_vwap_entry_filter", settings.enable_vwap_entry_filter, True)' in script
+    assert 'check("enable_news_filter", settings.enable_news_filter, False)' in script
+    assert 'check("max_loss_per_trade_dollars", settings.max_loss_per_trade_dollars, None)' in script
+    assert script.index("run_container_settings_posture_check") < script.index("run_market_data_smoke_check")
     assert "AlpacaMarketDataAdapter.from_settings" in script
     assert "adapter.get_daily_bars" in script
     assert "paper readiness failed: market data daily-bars smoke failed" in script
