@@ -62,6 +62,9 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert 'EXPECTED_CRON="$ROOT_DIR/deploy/cron.d/alpaca-bot"' in cron_health
     assert 'INSTALLED_CRON="${ALPACA_BOT_CRON_FILE:-/etc/cron.d/alpaca-bot}"' in cron_health
     assert 'cmp -s "$EXPECTED_CRON" "$INSTALLED_CRON"' in cron_health
+    assert "scheduled log target is not writable" in cron_health
+    assert "scheduled log directory is not writable" in cron_health
+    assert "grep -Eo '>>[[:space:]]+/[^[:space:]]+'" in cron_health
     assert "systemctl is-active --quiet cron" in cron_health
     assert "ps -eo comm=" in cron_health
     assert "run_locked_check_with_audit.sh" in cron_health

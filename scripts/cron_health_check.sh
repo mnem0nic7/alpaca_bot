@@ -24,6 +24,25 @@ if ! cmp -s "$EXPECTED_CRON" "$INSTALLED_CRON"; then
   exit 1
 fi
 
+while read -r log_file; do
+  [[ -n "$log_file" ]] || continue
+  if [[ -e "$log_file" ]]; then
+    if [[ ! -f "$log_file" || ! -w "$log_file" ]]; then
+      fail "scheduled log target is not writable: $log_file"
+    fi
+    continue
+  fi
+
+  log_dir="$(dirname "$log_file")"
+  if [[ ! -d "$log_dir" || ! -w "$log_dir" ]]; then
+    fail "scheduled log directory is not writable: $log_dir"
+  fi
+done < <(
+  grep -Eo '>>[[:space:]]+/[^[:space:]]+' "$EXPECTED_CRON" \
+    | awk '{print $2}' \
+    | sort -u
+)
+
 if command -v systemctl >/dev/null 2>&1; then
   if systemctl is-active --quiet cron 2>/dev/null \
     || systemctl is-active --quiet crond 2>/dev/null; then
