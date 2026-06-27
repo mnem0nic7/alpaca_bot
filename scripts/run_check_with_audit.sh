@@ -37,13 +37,18 @@ trap cleanup EXIT
 rc=$?
 
 status="failed"
-if [[ "$rc" -eq 0 ]]; then
-  if grep -qi "skipped" "$output_file"; then
-    status="skipped"
-  else
-    status="passed"
-  fi
-fi
+case "$rc" in
+  0)
+    if grep -qi "skipped" "$output_file"; then
+      status="skipped"
+    else
+      status="passed"
+    fi
+    ;;
+  43)
+    status="pending"
+    ;;
+esac
 
 output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"
 
