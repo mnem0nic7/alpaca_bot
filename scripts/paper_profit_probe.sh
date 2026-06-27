@@ -38,6 +38,15 @@ docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
   --min-trades-for-gate "$PROFIT_PROBE_MIN_TRADES"
 rc=$?
 
+broker_flat_failed=false
+if ! BROKER_FLAT_CONTEXT="${PROFIT_PROBE_STRATEGY} paper proof ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}" \
+  ./scripts/broker_flat_check.sh "$ENV_FILE"; then
+  broker_flat_failed=true
+  if [[ "$rc" -eq 0 || "$rc" -eq 43 ]]; then
+    rc=44
+  fi
+fi
+
 if [[ "$rc" -eq 42 || "$rc" -eq 43 ]]; then
   if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     --entrypoint alpaca-bot-funnel-report admin \
@@ -53,6 +62,9 @@ if [[ "$rc" -eq 42 || "$rc" -eq 44 ]]; then
   reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: pnl below ${PROFIT_PROBE_MIN_PNL} after ${PROFIT_PROBE_MIN_TRADES}+ trades"
   if [[ "$rc" -eq 44 ]]; then
     reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: open positions remain after close"
+    if [[ "$broker_flat_failed" == "true" ]]; then
+      reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: broker exposure remains after close"
+    fi
   fi
   if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm admin \
     close-only \

@@ -24,10 +24,22 @@ docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
   --min-trades-for-gate "$SESSION_GUARD_MIN_TRADES"
 rc=$?
 
+broker_flat_failed=false
+if ! BROKER_FLAT_CONTEXT="${SESSION_GUARD_STRATEGY} session guard ${SESSION_GUARD_DATE}" \
+  ./scripts/broker_flat_check.sh "$ENV_FILE"; then
+  broker_flat_failed=true
+  if [[ "$rc" -eq 0 ]]; then
+    rc=44
+  fi
+fi
+
 if [[ "$rc" -eq 42 || "$rc" -eq 44 ]]; then
   reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: pnl below ${SESSION_GUARD_FAIL_BELOW_PNL} after ${SESSION_GUARD_MIN_TRADES}+ trades"
   if [[ "$rc" -eq 44 ]]; then
     reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: open positions remain after close"
+    if [[ "$broker_flat_failed" == "true" ]]; then
+      reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: broker exposure remains after close"
+    fi
   fi
   if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm admin \
     close-only \

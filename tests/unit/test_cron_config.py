@@ -37,6 +37,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
 
 def test_paper_readiness_auto_resume_is_guarded() -> None:
     script = Path("scripts/paper_readiness_check.sh").read_text()
+    broker_flat = Path("scripts/broker_flat_check.sh").read_text()
 
     assert 'PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"' in script
     assert 'PAPER_READINESS_AUTO_RESET_WEIGHTS="${PAPER_READINESS_AUTO_RESET_WEIGHTS:-true}"' in script
@@ -52,11 +53,11 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness stock exposure ok: positions=0 active_orders=0" in script
     assert "stock-only proof has $open_positions open stock positions" in script
     assert "stock-only proof has $active_orders active stock orders" in script
-    assert "check_broker_flat" in script
-    assert "AlpacaExecutionAdapter.from_settings" in script
-    assert "paper readiness broker exposure ok: open_orders=0 open_positions=0" in script
-    assert "broker has {len(open_orders)} open stock orders" in script
-    assert "broker has {len(open_positions)} open stock positions" in script
+    assert 'BROKER_FLAT_CONTEXT="paper readiness" ./scripts/broker_flat_check.sh "$ENV_FILE"' in script
+    assert "AlpacaExecutionAdapter.from_settings" in broker_flat
+    assert "{context} broker exposure ok: open_orders=0 open_positions=0" in broker_flat
+    assert "broker has {len(open_orders)} open stock orders" in broker_flat
+    assert "broker has {len(open_positions)} open stock positions" in broker_flat
     assert "close_only with $active_orders active orders" in script
     assert "symbol_watchlist" in script
     assert "COALESCE(ignored, FALSE) = FALSE" in script
@@ -114,6 +115,12 @@ def test_post_close_checks_fail_on_open_positions() -> None:
 
     assert "--fail-on-open-positions" in session_guard
     assert "--fail-on-open-positions" in profit_probe
+    assert "./scripts/broker_flat_check.sh" in session_guard
+    assert "./scripts/broker_flat_check.sh" in profit_probe
+    assert "broker exposure remains after close" in session_guard
+    assert "broker exposure remains after close" in profit_probe
+    assert 'if [[ "$rc" -eq 0 ]]; then' in session_guard
+    assert 'if [[ "$rc" -eq 0 || "$rc" -eq 43 ]]; then' in profit_probe
     assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-26}"' in profit_probe
     assert "--start-date" in profit_probe
     assert "--end-date" in profit_probe
