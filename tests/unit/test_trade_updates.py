@@ -375,7 +375,7 @@ class TestProtectiveStopOnPartialFill:
 
 class TestCancellationCleanup:
     def test_apply_trade_update_clears_position_on_cancellation(self):
-        """Cancelling a partially-filled entry order must delete the PositionRecord."""
+        """Cancelling an unfilled entry order must delete any stale PositionRecord."""
         entry_order = _make_entry_order()
         runtime = _make_runtime(orders=[entry_order])
 
@@ -479,6 +479,125 @@ class TestCancellationCleanup:
         # No phantom stop to cancel — no stop order saves beyond the entry update
         stop_saves = [o for o in runtime.order_store.saved if o.intent_type == "stop"]
         assert stop_saves == []
+
+    def test_entry_cancellation_after_partial_fill_preserves_position_and_stop(self):
+        """Cancelling the unfilled remainder of a partial entry must not mark the filled shares flat."""
+        entry_order = _make_entry_order()
+        partially_filled_entry = OrderRecord(
+            client_order_id=entry_order.client_order_id,
+            symbol=entry_order.symbol,
+            side=entry_order.side,
+            intent_type=entry_order.intent_type,
+            status="partially_filled",
+            quantity=entry_order.quantity,
+            trading_mode=entry_order.trading_mode,
+            strategy_version=entry_order.strategy_version,
+            strategy_name=entry_order.strategy_name,
+            created_at=entry_order.created_at,
+            updated_at=entry_order.updated_at,
+            stop_price=entry_order.stop_price,
+            limit_price=entry_order.limit_price,
+            initial_stop_price=entry_order.initial_stop_price,
+            broker_order_id=entry_order.broker_order_id,
+            signal_timestamp=entry_order.signal_timestamp,
+            fill_price=112.00,
+            filled_quantity=5,
+        )
+        stop_id = _expected_stop_order_id(entry_order.client_order_id)
+        existing_stop = OrderRecord(
+            client_order_id=stop_id,
+            symbol="AAPL",
+            side="sell",
+            intent_type="stop",
+            status="pending_submit",
+            quantity=5,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            created_at=NOW,
+            updated_at=NOW,
+            stop_price=entry_order.initial_stop_price,
+            initial_stop_price=entry_order.initial_stop_price,
+            signal_timestamp=NOW,
+        )
+        position_store = RecordingPositionStore(positions=[
+            PositionRecord(
+                symbol="AAPL",
+                trading_mode=TradingMode.PAPER,
+                strategy_version="v1-breakout",
+                strategy_name="breakout",
+                quantity=5,
+                entry_price=112.00,
+                stop_price=109.50,
+                initial_stop_price=109.50,
+                opened_at=NOW,
+                updated_at=NOW,
+            )
+        ])
+        runtime = SimpleNamespace(
+            order_store=RecordingOrderStore(orders=[partially_filled_entry, existing_stop]),
+            position_store=position_store,
+            audit_event_store=RecordingAuditEventStore(),
+            connection=SimpleNamespace(commit=lambda: None),
+        )
+
+        update = _make_trade_update(
+            status="canceled",
+            qty=10,
+            filled_qty=5,
+            filled_avg_price=112.00,
+        )
+        result = _apply(runtime, update)
+
+        assert result["position_cleared"] is False
+        assert position_store.deleted == []
+        assert position_store.list_all(
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            strategy_name="breakout",
+        )[0].quantity == 5
+        stop_saves = [
+            o for o in runtime.order_store.saved
+            if o.client_order_id == stop_id
+        ]
+        assert stop_saves == []
+
+    def test_entry_cancellation_with_filled_quantity_creates_position_and_stop(self):
+        """A cancel update can be the first event carrying a partial entry fill."""
+        entry_order = _make_entry_order()
+        runtime = _make_runtime(orders=[entry_order])
+
+        update = _make_trade_update(
+            status="canceled",
+            qty=10,
+            filled_qty=5,
+            filled_avg_price=112.00,
+        )
+        result = _apply(runtime, update)
+
+        assert result["position_cleared"] is False
+        assert runtime.position_store.deleted == []
+        assert runtime.position_store.saved == [
+            PositionRecord(
+                symbol="AAPL",
+                trading_mode=TradingMode.PAPER,
+                strategy_version="v1-breakout",
+                strategy_name="breakout",
+                quantity=5,
+                entry_price=112.00,
+                stop_price=109.50,
+                initial_stop_price=109.50,
+                opened_at=NOW,
+                updated_at=NOW,
+            )
+        ]
+        stop_id = _expected_stop_order_id(entry_order.client_order_id)
+        stop_saves = [
+            o for o in runtime.order_store.saved
+            if o.client_order_id == stop_id
+        ]
+        assert len(stop_saves) == 1
+        assert stop_saves[0].status == "pending_submit"
+        assert stop_saves[0].quantity == 5
 
 
 # ---------------------------------------------------------------------------
