@@ -1226,6 +1226,75 @@ def test_runtime_supervisor_allows_paper_proof_entries_after_readiness_audit(
     assert "allowed_intent_types" not in dispatch_calls[0]
 
 
+def test_runtime_supervisor_allows_paper_proof_entries_after_early_readiness_audit(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings({"PAPER_PROOF_FREEZE": "true"})
+    now = datetime(2026, 6, 29, 14, 15, tzinfo=timezone.utc)
+    audit_store = RecordingAuditEventStore(
+        events=[
+            AuditEvent(
+                event_type="scheduled_check_completed",
+                payload={
+                    "check_name": "paper_readiness",
+                    "status": "passed",
+                    "session_date": "2026-06-29",
+                    "trading_mode": "paper",
+                    "strategy_version": "v1-breakout",
+                },
+                created_at=datetime(2026, 6, 27, 17, 25, tzinfo=timezone.utc),
+            )
+        ]
+    )
+    runtime = make_runtime_context(
+        settings,
+        audit_event_store=audit_store,
+        position_store=RecordingPositionStore(),
+    )
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    stream = FakeStream()
+    cycle_calls: list[dict[str, object]] = []
+    dispatch_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: cycle_calls.append(kwargs) or SimpleNamespace(intents=[]),
+    )
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0},
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    report = supervisor.run_cycle_once(
+        now=lambda: now,
+        session_type=module.SessionType.REGULAR,
+    )
+
+    assert report.entries_disabled is False
+    assert report.entries_disabled_reasons == ()
+    assert cycle_calls[0]["entries_disabled"] is False
+    assert report.blocked_strategy_names == ()
+    assert "allowed_intent_types" not in dispatch_calls[0]
+    assert audit_store.list_by_event_types_calls[-1]["since"] is None
+
+
 def test_runtime_supervisor_blocks_paper_proof_entries_when_latest_readiness_failed(
     monkeypatch,
 ) -> None:

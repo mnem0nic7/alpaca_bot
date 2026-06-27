@@ -2156,16 +2156,12 @@ class RuntimeSupervisor:
         if not callable(loader):
             return False
 
-        since = datetime.combine(session_date, datetime.min.time()).replace(
-            tzinfo=self.settings.market_timezone
-        )
         store_lock = getattr(self.runtime, "store_lock", None)
         try:
             with store_lock if store_lock is not None else contextlib.nullcontext():
                 events = loader(
                     event_types=["scheduled_check_completed"],
                     limit=100,
-                    since=since,
                     trading_mode=self.settings.trading_mode,
                     strategy_version=self.settings.strategy_version,
                 )
