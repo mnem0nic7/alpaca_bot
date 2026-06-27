@@ -67,6 +67,8 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
 
     assert script_path.stat().st_mode & 0o111
     assert "scheduled_check_completed" in script
+    assert 'RUN_CHECK_REQUIRE_AUDIT="${RUN_CHECK_REQUIRE_AUDIT:-true}"' in script
+    assert "RUN_CHECK_REQUIRE_AUDIT must be true or false" in script
     assert 'AUDIT_CHECK_NAME="$CHECK_NAME"' in script
     assert 'AUDIT_STATUS="$status"' in script
     assert 'AUDIT_EXIT_CODE="$rc"' in script
@@ -97,6 +99,10 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "AuditEventStore(conn).append" in script
     assert '"trading_mode": settings.trading_mode.value' in script
     assert '"strategy_version": settings.strategy_version' in script
+    assert "audit_failed=false" in script
+    assert "audit_failed=true" in script
+    assert "scheduled check audit failed" in script
+    assert "exit 47" in script
     assert 'exit "$rc"' in script
 
 

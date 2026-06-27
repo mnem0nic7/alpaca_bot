@@ -3,6 +3,7 @@ set -uo pipefail
 
 CHECK_NAME="${1:-}"
 ENV_FILE="${2:-}"
+RUN_CHECK_REQUIRE_AUDIT="${RUN_CHECK_REQUIRE_AUDIT:-true}"
 
 if [[ -z "$CHECK_NAME" || -z "$ENV_FILE" ]]; then
   echo "usage: run_check_with_audit.sh CHECK_NAME ENV_FILE COMMAND [ARGS...]" >&2
@@ -19,6 +20,14 @@ if [[ ! "$CHECK_NAME" =~ ^[A-Za-z0-9_:-]+$ ]]; then
   echo "CHECK_NAME contains unsupported characters" >&2
   exit 2
 fi
+
+case "${RUN_CHECK_REQUIRE_AUDIT,,}" in
+  true|false) ;;
+  *)
+    echo "RUN_CHECK_REQUIRE_AUDIT must be true or false" >&2
+    exit 2
+    ;;
+esac
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file: $ENV_FILE" >&2
@@ -59,6 +68,7 @@ export AUDIT_EXIT_CODE="$rc"
 export AUDIT_OUTPUT_TAIL="$output_tail"
 export AUDIT_CONTEXT_LINE="$context_line"
 
+audit_failed=false
 if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_CHECK_NAME \
     -e AUDIT_STATUS \
@@ -134,6 +144,12 @@ finally:
 PY
 then
   echo "scheduled check audit warning: failed to append audit event for $CHECK_NAME" >&2
+  audit_failed=true
+fi
+
+if [[ "$audit_failed" == "true" && "${RUN_CHECK_REQUIRE_AUDIT,,}" == "true" ]]; then
+  echo "scheduled check audit failed: refusing scheduled-check exit without audit evidence" >&2
+  exit 47
 fi
 
 exit "$rc"
