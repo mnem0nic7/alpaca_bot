@@ -10,6 +10,10 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
 
     readiness = "20 13,14 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 0920"
     readiness_retry = "55 13,14 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 0955"
+    readiness_final = (
+        "58 13,14 * * 1-5 root RUN_IF_NY_TIME_GRACE_MINUTES=1 "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 0958"
+    )
     early_activity = "15 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1015"
     activity = "0 16,17 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1200"
     session_guard = "10 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1710"
@@ -18,26 +22,29 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
 
     assert readiness in cron_text
     assert readiness_retry in cron_text
+    assert readiness_final in cron_text
     assert early_activity in cron_text
     assert activity in cron_text
     assert session_guard in cron_text
     assert profit_probe in cron_text
     assert nightly in cron_text
     assert cron_text.index(readiness) < cron_text.index(readiness_retry)
-    assert cron_text.index(readiness_retry) < cron_text.index(early_activity)
+    assert cron_text.index(readiness_retry) < cron_text.index(readiness_final)
+    assert cron_text.index(readiness_final) < cron_text.index(early_activity)
     assert cron_text.index(early_activity) < cron_text.index(activity)
     assert cron_text.index(session_guard) < cron_text.index(profit_probe)
     assert cron_text.index(profit_probe) < cron_text.index(nightly)
-    assert cron_text.count("scripts/run_if_ny_time.sh") == 7
-    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 6
+    assert cron_text.count("scripts/run_if_ny_time.sh") == 8
+    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 7
     assert "flock -n /var/lock/alpaca-bot-nightly.lock" in cron_text
     assert "flock -n /var/lock/alpaca-bot-paper" not in cron_text
     assert "flock -n /var/lock/alpaca-bot-session-guard.lock" not in cron_text
     assert "flock -n /var/lock/alpaca-bot-profit-probe.lock" not in cron_text
     assert "alpaca-bot-premarket" not in cron_text
     assert "scripts/paper_readiness_check.sh" in cron_text
-    assert cron_text.count("scripts/paper_readiness_check.sh") == 2
+    assert cron_text.count("scripts/paper_readiness_check.sh") == 3
     assert "run_locked_check_with_audit.sh paper_readiness" in cron_text
+    assert "RUN_IF_NY_TIME_GRACE_MINUTES=1" in cron_text
     assert "/var/log/alpaca-bot-paper-readiness.log" in cron_text
     assert "scripts/paper_activity_check.sh" in cron_text
     assert cron_text.count("scripts/paper_activity_check.sh") == 2
@@ -51,6 +58,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" /etc/cron.d/alpaca-bot' in install_cron
     assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in install_cron
     assert "Runs weekdays on New York wall time" in install_cron
+    assert "paper readiness 09:20/09:55/09:58" in install_cron
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
     assert "expected HHMM must be a valid 24-hour time" in run_if_ny_time
     assert "date returned invalid HHMM" in run_if_ny_time
