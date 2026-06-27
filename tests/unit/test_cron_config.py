@@ -53,19 +53,26 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED="${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"' in script
+    assert 'PAPER_READINESS_REQUIRE_SCENARIOS="${PAPER_READINESS_REQUIRE_SCENARIOS:-true}"' in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"' in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-${LOSING_STREAK_N:-3}}"' in script
     assert 'PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"' in script
     assert 'PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"' in script
     assert 'PAPER_READINESS_DATA_SMOKE_SYMBOLS="${PAPER_READINESS_DATA_SMOKE_SYMBOLS:-SPY,AAPL}"' in script
     assert 'PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS="${PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS:-10}"' in script
+    assert 'PAPER_READINESS_SCENARIO_DIR="${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}"' in script
     assert "PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS must be a positive integer" in script
     assert 'PAPER_READINESS_SESSION_DATE="${PAPER_READINESS_SESSION_DATE:-$(load_readiness_session_date)}"' in script
+    assert 'PAPER_READINESS_PREVIOUS_SESSION_DATE="${PAPER_READINESS_PREVIOUS_SESSION_DATE:-$(load_previous_session_date)}"' in script
     assert "load_readiness_session_date" in script
+    assert "load_previous_session_date" in script
     assert "fallback_readiness_session_date" in script
+    assert "fallback_previous_session_date" in script
     assert "get_market_calendar" in script
     assert "no upcoming market session found" in script
+    assert "no previous market session found" in script
     assert "market calendar lookup failed; using weekday fallback" in script
+    assert "previous market session lookup failed; using weekday fallback" in script
     assert "-v readiness_session_date=\"$PAPER_READINESS_SESSION_DATE\"" in script
     assert "session_date = (:'readiness_session_date')::date" in script
     assert "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
@@ -92,6 +99,16 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "COALESCE(ignored, FALSE) = FALSE" in script
     assert "entry watchlist has" in script
     assert "paper readiness watchlist ok" in script
+    assert "run_scenario_freshness_check" in script
+    assert "PAPER_READINESS_ACTIVE_SYMBOLS" in script
+    assert "PAPER_READINESS_EXPECTED_SCENARIO_DATE" in script
+    assert 'scenario_dir / f"{symbol}_252d.json"' in script
+    assert "paper readiness scenario freshness ok" in script
+    assert "paper readiness scenario freshness check skipped" in script
+    assert "scenario directory missing" in script
+    assert "active-symbol evidence" in script
+    assert "stale_daily" in script
+    assert "stale_intraday" in script
     assert "strategy weights mismatch" in script
     assert "sharpe IS NULL" in script
     assert "null_sharpes=${null_sharpes:-0}" in script

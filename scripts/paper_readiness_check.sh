@@ -8,11 +8,13 @@ PAPER_READINESS_REQUIRE_FLAT="${PAPER_READINESS_REQUIRE_FLAT:-true}"
 PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED="${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED:-true}"
 PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR:-true}"
 PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"
+PAPER_READINESS_REQUIRE_SCENARIOS="${PAPER_READINESS_REQUIRE_SCENARIOS:-true}"
 PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"
 PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
 PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"
 PAPER_READINESS_DATA_SMOKE_SYMBOLS="${PAPER_READINESS_DATA_SMOKE_SYMBOLS:-SPY,AAPL}"
 PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS="${PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS:-10}"
+PAPER_READINESS_SCENARIO_DIR="${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}"
 
 cd "$(dirname "$0")/.."
 
@@ -353,6 +355,62 @@ if [[ ! "$PAPER_READINESS_SESSION_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   exit 1
 fi
 
+fallback_previous_session_date() {
+  local target_date="$1"
+  local dow
+  dow="$(TZ=America/New_York date -d "$target_date" +%u)"
+  case "$dow" in
+    1) TZ=America/New_York date -d "$target_date - 3 days" +%F ;;
+    *) TZ=America/New_York date -d "$target_date - 1 day" +%F ;;
+  esac
+}
+
+load_previous_session_date() {
+  local previous_date
+  if previous_date="$(PAPER_READINESS_SESSION_DATE="$PAPER_READINESS_SESSION_DATE" \
+    "${compose[@]}" run -T --rm \
+    -e PAPER_READINESS_SESSION_DATE="$PAPER_READINESS_SESSION_DATE" \
+    --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from datetime import date, timedelta
+import os
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+
+target_date = date.fromisoformat(os.environ["PAPER_READINESS_SESSION_DATE"])
+settings = Settings.from_env()
+calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+    start=target_date - timedelta(days=14),
+    end=target_date,
+)
+previous = [
+    session.session_date
+    for session in calendar
+    if session.session_date < target_date
+]
+if not previous:
+    raise SystemExit("no previous market session found")
+print(max(previous).isoformat())
+PY
+  )" && [[ "$previous_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "$previous_date"
+    return
+  fi
+
+  echo \
+    "paper readiness warning: previous market session lookup failed; using weekday fallback" \
+    >&2
+  fallback_previous_session_date "$PAPER_READINESS_SESSION_DATE"
+}
+
+PAPER_READINESS_PREVIOUS_SESSION_DATE="${PAPER_READINESS_PREVIOUS_SESSION_DATE:-$(load_previous_session_date)}"
+if [[ ! "$PAPER_READINESS_PREVIOUS_SESSION_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "PAPER_READINESS_PREVIOUS_SESSION_DATE must use YYYY-MM-DD" >&2
+  exit 1
+fi
+
 watchlist_counts="$("${compose[@]}" exec -T postgres psql \
   -U "$POSTGRES_USER" \
   -d "$POSTGRES_DB" \
@@ -378,6 +436,123 @@ fi
 
 echo \
   "paper readiness watchlist ok: active=$entry_watchlist_symbols enabled=$enabled_watchlist_symbols ignored=$ignored_watchlist_symbols"
+
+run_scenario_freshness_check() {
+  if [[ ! -d "$PAPER_READINESS_SCENARIO_DIR" ]]; then
+    echo "paper readiness failed: scenario directory missing: $PAPER_READINESS_SCENARIO_DIR" >&2
+    exit 1
+  fi
+
+  local active_symbols
+  active_symbols="$("${compose[@]}" exec -T postgres psql \
+    -U "$POSTGRES_USER" \
+    -d "$POSTGRES_DB" \
+    -tA <<'SQL'
+SELECT symbol
+FROM symbol_watchlist
+WHERE trading_mode = 'paper'
+  AND enabled = TRUE
+  AND COALESCE(ignored, FALSE) = FALSE
+ORDER BY symbol;
+SQL
+)"
+
+  PAPER_READINESS_ACTIVE_SYMBOLS="$active_symbols" \
+  PAPER_READINESS_EXPECTED_SCENARIO_DATE="$PAPER_READINESS_PREVIOUS_SESSION_DATE" \
+  PAPER_READINESS_SCENARIO_DIR="$PAPER_READINESS_SCENARIO_DIR" \
+    python3 <<'PY'
+from __future__ import annotations
+
+from datetime import date, datetime
+import json
+import os
+from pathlib import Path
+import sys
+
+symbols = [
+    line.strip().upper()
+    for line in os.environ.get("PAPER_READINESS_ACTIVE_SYMBOLS", "").splitlines()
+    if line.strip()
+]
+scenario_dir = Path(os.environ["PAPER_READINESS_SCENARIO_DIR"])
+expected_date = date.fromisoformat(os.environ["PAPER_READINESS_EXPECTED_SCENARIO_DATE"])
+
+
+def parse_bar_date(raw: str) -> date:
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    return datetime.fromisoformat(raw).date()
+
+
+missing: list[str] = []
+empty_daily: list[str] = []
+empty_intraday: list[str] = []
+stale_daily: list[str] = []
+stale_intraday: list[str] = []
+
+for symbol in symbols:
+    path = scenario_dir / f"{symbol}_252d.json"
+    if not path.exists():
+        missing.append(symbol)
+        continue
+
+    try:
+        payload = json.loads(path.read_text())
+    except Exception as exc:
+        print(
+            f"paper readiness failed: could not read scenario {path}: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+
+    daily = payload.get("daily_bars") or []
+    intraday = payload.get("intraday_bars") or []
+    if not daily:
+        empty_daily.append(symbol)
+    else:
+        daily_max = max(parse_bar_date(bar["timestamp"]) for bar in daily)
+        if daily_max < expected_date:
+            stale_daily.append(f"{symbol}:{daily_max.isoformat()}")
+
+    if not intraday:
+        empty_intraday.append(symbol)
+    else:
+        intraday_max = max(parse_bar_date(bar["timestamp"]) for bar in intraday)
+        if intraday_max < expected_date:
+            stale_intraday.append(f"{symbol}:{intraday_max.isoformat()}")
+
+problems = {
+    "missing": missing,
+    "empty_daily": empty_daily,
+    "empty_intraday": empty_intraday,
+    "stale_daily": stale_daily,
+    "stale_intraday": stale_intraday,
+}
+if any(problems.values()):
+    print(
+        "paper readiness failed: scenario freshness check found stale or missing "
+        f"active-symbol evidence expected>={expected_date.isoformat()} "
+        f"dir={scenario_dir}",
+        file=sys.stderr,
+    )
+    for name, values in problems.items():
+        if values:
+            examples = ",".join(values[:20])
+            print(f"  {name}={len(values)} examples={examples}", file=sys.stderr)
+    raise SystemExit(1)
+
+print(
+    f"paper readiness scenario freshness ok: active={len(symbols)} "
+    f"expected_session={expected_date.isoformat()} dir={scenario_dir}"
+)
+PY
+}
+
+if [[ "${PAPER_READINESS_REQUIRE_SCENARIOS,,}" == "true" ]]; then
+  run_scenario_freshness_check
+else
+  echo "paper readiness scenario freshness check skipped"
+fi
 
 load_weight_alignment() {
   "${compose[@]}" exec -T postgres psql \
