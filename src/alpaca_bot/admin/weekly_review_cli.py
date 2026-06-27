@@ -83,6 +83,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             trading_mode=args.mode,
             market_timezone=market_timezone,
         )
+        operational_health_events = _load_operational_health_events(
+            audit_store,
+            since_dt,
+            until_dt,
+        )
     finally:
         close = getattr(conn, "close", None)
         if callable(close):
@@ -121,7 +126,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _render_symbol_attribution(symbol_rows)
     _render_trade_quality(quality)
     _render_funnel_summary(funnel_rows, since_date, until_date)
-    _render_operational_health(audit_store, since_dt, until_dt)
+    _render_operational_health_events(operational_health_events)
 
     if args.csv_dir:
         _export_csv(equity_records, option_records, daily_rows, args.csv_dir)
@@ -464,39 +469,59 @@ def _render_operational_health(
     since_dt: datetime,
     until_dt: datetime,
 ) -> None:
+    _render_operational_health_events(
+        _load_operational_health_events(audit_store, since_dt, until_dt)
+    )
+
+
+def _load_operational_health_events(
+    audit_store: AuditEventStore,
+    since_dt: datetime,
+    until_dt: datetime,
+) -> dict[str, list]:
+    return {
+        "cycles": audit_store.list_by_event_types(
+            event_types=["supervisor_cycle"],
+            since=since_dt,
+            until=until_dt,
+            limit=10000,
+        ),
+        "errors": audit_store.list_by_event_types(
+            event_types=["supervisor_cycle_error", "strategy_cycle_error"],
+            since=since_dt,
+            until=until_dt,
+            limit=10000,
+        ),
+        "dispatch_failures": audit_store.list_by_event_types(
+            event_types=["order_dispatch_failed", "option_order_dispatch_failed"],
+            since=since_dt,
+            until=until_dt,
+            limit=10000,
+        ),
+        "skipped_events": audit_store.list_by_event_types(
+            event_types=["cycle_intent_skipped"],
+            since=since_dt,
+            until=until_dt,
+            limit=10000,
+        ),
+        "circuit_breaker_fires": audit_store.list_by_event_types(
+            event_types=["option_strategy_circuit_breaker_triggered"],
+            since=since_dt,
+            until=until_dt,
+            limit=10000,
+        ),
+    }
+
+
+def _render_operational_health_events(events: dict[str, list]) -> None:
     print()
     print(" Operational Health")
     print(" " + "─" * 50)
-    cycles = audit_store.list_by_event_types(
-        event_types=["supervisor_cycle"],
-        since=since_dt,
-        until=until_dt,
-        limit=10000,
-    )
-    errors = audit_store.list_by_event_types(
-        event_types=["supervisor_cycle_error", "strategy_cycle_error"],
-        since=since_dt,
-        until=until_dt,
-        limit=10000,
-    )
-    dispatch_failures = audit_store.list_by_event_types(
-        event_types=["order_dispatch_failed", "option_order_dispatch_failed"],
-        since=since_dt,
-        until=until_dt,
-        limit=10000,
-    )
-    skipped_events = audit_store.list_by_event_types(
-        event_types=["cycle_intent_skipped"],
-        since=since_dt,
-        until=until_dt,
-        limit=10000,
-    )
-    circuit_breaker_fires = audit_store.list_by_event_types(
-        event_types=["option_strategy_circuit_breaker_triggered"],
-        since=since_dt,
-        until=until_dt,
-        limit=10000,
-    )
+    cycles = events["cycles"]
+    errors = events["errors"]
+    dispatch_failures = events["dispatch_failures"]
+    skipped_events = events["skipped_events"]
+    circuit_breaker_fires = events["circuit_breaker_fires"]
     options_skipped = sum(
         1 for e in skipped_events if e.payload.get("reason") == "options_market_closed"
     )

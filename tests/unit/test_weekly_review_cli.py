@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from types import SimpleNamespace
 
+import alpaca_bot.admin.weekly_review_cli as weekly_review_cli
 from alpaca_bot.admin.weekly_review_cli import (
     _group_by_date,
     _group_by_symbol,
@@ -159,3 +161,75 @@ def test_render_operational_health_shows_circuit_breaker_count(capsys):
     captured = capsys.readouterr()
     assert "Circuit breaker" in captured.out or "circuit breaker" in captured.out.lower()
     assert "1" in captured.out
+
+
+def test_weekly_review_main_loads_operational_health_before_closing_connection(
+    monkeypatch,
+    capsys,
+) -> None:
+    class FakeConnection:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    class FakeOrderStore:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def list_closed_trade_records(self, **kwargs):
+            assert not self.conn.closed
+            return []
+
+    class FakeOptionRepo:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def list_closed_option_trade_records(self, **kwargs):
+            assert not self.conn.closed
+            return []
+
+    class FakeDecisionLogStore:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def funnel_by_strategy(self, **kwargs):
+            assert not self.conn.closed
+            return []
+
+    class FakeAuditStore:
+        def __init__(self, conn):
+            self.conn = conn
+
+        def list_by_event_types(self, **kwargs):
+            assert not self.conn.closed
+            return []
+
+    fake_connection = FakeConnection()
+    fake_settings = SimpleNamespace(
+        database_url="postgresql://example",
+        market_timezone=ZoneInfo("America/New_York"),
+        strategy_version="v1-breakout",
+    )
+
+    monkeypatch.setattr(
+        weekly_review_cli.Settings,
+        "from_env",
+        staticmethod(lambda: fake_settings),
+    )
+    monkeypatch.setattr(weekly_review_cli, "connect_postgres", lambda url: fake_connection)
+    monkeypatch.setattr(weekly_review_cli, "OrderStore", FakeOrderStore)
+    monkeypatch.setattr(weekly_review_cli, "OptionOrderRepository", FakeOptionRepo)
+    monkeypatch.setattr(weekly_review_cli, "DecisionLogStore", FakeDecisionLogStore)
+    monkeypatch.setattr(weekly_review_cli, "AuditEventStore", FakeAuditStore)
+
+    rc = weekly_review_cli.main([
+        "--since", "2026-06-21",
+        "--until", "2026-06-27",
+        "--mode", "paper",
+        "--strategy-version", "v1-breakout",
+    ])
+
+    assert rc == 0
+    assert fake_connection.closed is True
+    assert "Operational Health" in capsys.readouterr().out
