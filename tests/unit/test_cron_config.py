@@ -5,6 +5,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     cron_text = Path("deploy/cron.d/alpaca-bot").read_text()
 
     readiness = "20 13 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-readiness.lock"
+    readiness_retry = "55 13 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-readiness.lock"
     early_activity = "15 14 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-activity.lock"
     activity = "0 16 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-activity.lock"
     session_guard = "10 22 * * 1-5 root flock -n /var/lock/alpaca-bot-session-guard.lock"
@@ -12,17 +13,20 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     nightly = "30 22 * * 1-5 root flock -n /var/lock/alpaca-bot-nightly.lock"
 
     assert readiness in cron_text
+    assert readiness_retry in cron_text
     assert early_activity in cron_text
     assert activity in cron_text
     assert session_guard in cron_text
     assert profit_probe in cron_text
     assert nightly in cron_text
-    assert cron_text.index(readiness) < cron_text.index(early_activity)
+    assert cron_text.index(readiness) < cron_text.index(readiness_retry)
+    assert cron_text.index(readiness_retry) < cron_text.index(early_activity)
     assert cron_text.index(early_activity) < cron_text.index(activity)
     assert cron_text.index(session_guard) < cron_text.index(profit_probe)
     assert cron_text.index(profit_probe) < cron_text.index(nightly)
     assert "alpaca-bot-premarket" not in cron_text
     assert "scripts/paper_readiness_check.sh" in cron_text
+    assert cron_text.count("scripts/paper_readiness_check.sh") == 2
     assert "/var/log/alpaca-bot-paper-readiness.log" in cron_text
     assert "scripts/paper_activity_check.sh" in cron_text
     assert cron_text.count("scripts/paper_activity_check.sh") == 2
