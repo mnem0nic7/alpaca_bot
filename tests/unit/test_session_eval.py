@@ -244,6 +244,30 @@ def test_session_eval_cli_no_trades_exits_zero(monkeypatch, capsys):
     assert "No closed trades" in out
 
 
+def test_session_eval_cli_reports_entries_disabled_cycles(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    _patch_cli_deps(monkeypatch, rows=[])
+    monkeypatch.setattr(
+        cli_module,
+        "_load_entries_disabled_cycle_stats",
+        lambda *_args, **_kwargs: (12, 12),
+    )
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+    ])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "No closed trades" in out
+    assert "Entries disabled cycles: 12/12" in out
+    assert "No operational issues" not in out
+
+
 def test_session_eval_cli_require_min_trades_fails_when_no_trades(monkeypatch, capsys):
     import alpaca_bot.admin.session_eval_cli as cli_module
 

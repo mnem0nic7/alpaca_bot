@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord, report_from_records
-from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres
+from alpaca_bot.storage.db import ConnectionProtocol, connect_postgres, fetch_one
 from alpaca_bot.storage.models import (
     EQUITY_SESSION_STATE_STRATEGY_NAME,
     AuditEvent,
@@ -168,6 +168,8 @@ class SessionDiagnostics:
     stream_issues: list[AuditEvent] = field(default_factory=list)
     open_positions: list[PositionRecord] = field(default_factory=list)
     reconciliation_issues: list[AuditEvent] = field(default_factory=list)
+    total_supervisor_cycles: int = 0
+    entries_disabled_cycles: int = 0
 
     @property
     def has_issues(self) -> bool:
@@ -178,6 +180,7 @@ class SessionDiagnostics:
             self.stream_issues,
             self.open_positions,
             self.reconciliation_issues,
+            self.entries_disabled_cycles,
         ])
 
 
@@ -196,6 +199,11 @@ def _build_session_diagnostics(
     audit_store = AuditEventStore(conn)
     order_store = OrderStore(conn)
     position_store = PositionStore(conn)
+    total_cycles, disabled_cycles = _load_entries_disabled_cycle_stats(
+        conn,
+        session_start=session_start,
+        session_end=session_end,
+    )
 
     return SessionDiagnostics(
         cycle_errors=audit_store.list_by_event_types(
@@ -232,7 +240,38 @@ def _build_session_diagnostics(
             until=session_end,
             limit=100,
         ),
+        total_supervisor_cycles=total_cycles,
+        entries_disabled_cycles=disabled_cycles,
     )
+
+
+def _load_entries_disabled_cycle_stats(
+    conn: ConnectionProtocol,
+    *,
+    session_start: datetime,
+    session_end: datetime,
+) -> tuple[int, int]:
+    try:
+        row = fetch_one(
+            conn,
+            """
+            SELECT
+                COUNT(*)::int,
+                COUNT(*) FILTER (
+                    WHERE (payload->>'entries_disabled')::boolean IS TRUE
+                )::int
+            FROM audit_events
+            WHERE event_type = 'supervisor_cycle'
+              AND created_at >= %s
+              AND created_at < %s
+            """,
+            (session_start, session_end),
+        )
+    except Exception:
+        return (0, 0)
+    if row is None:
+        return (0, 0)
+    return (int(row[0] or 0), int(row[1] or 0))
 
 
 def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
@@ -277,6 +316,12 @@ def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
 
     if diagnostics.reconciliation_issues:
         print(f" ⚠ Reconciliation issues: {len(diagnostics.reconciliation_issues)}")
+
+    if diagnostics.entries_disabled_cycles:
+        print(
+            " ⚠ Entries disabled cycles: "
+            f"{diagnostics.entries_disabled_cycles}/{diagnostics.total_supervisor_cycles}"
+        )
 
     print()
 
