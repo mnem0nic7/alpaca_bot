@@ -125,6 +125,7 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "strategy": "bull_flag",
             "min_trades": "10",
             "min_pnl": "0.01",
+            "reason": "lock_busy",
             "status": "failed",
             "exit_code": 46,
         },
@@ -215,6 +216,7 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "2026-06-29" in response.text
     assert "strategy=bull_flag" in response.text
     assert "proof=2026-06-29" in response.text
+    assert "reason=lock_busy" in response.text
     assert "trades&gt;=10" in response.text
     assert "pnl&gt;=0.01" in response.text
     assert "failed" in response.text

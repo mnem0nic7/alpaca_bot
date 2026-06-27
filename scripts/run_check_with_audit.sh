@@ -92,6 +92,7 @@ CONTEXT_KEYS = {
     "session_date",
     "previous_session_date",
     "proof_start",
+    "reason",
     "strategy",
     "min_trades",
     "min_pnl",

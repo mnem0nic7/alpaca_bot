@@ -78,6 +78,7 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert 'exit "$rc"' in wrapper
     assert "scheduled check lock busy" in lock_skip
     assert "scheduled check context:" in lock_skip
+    assert "reason=lock_busy" in lock_skip
     assert "paper_readiness)" in lock_skip
     assert "paper_activity)" in lock_skip
     assert "session_guard)" in lock_skip
@@ -110,6 +111,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"session_date"' in script
     assert '"previous_session_date"' in script
     assert '"proof_start"' in script
+    assert '"reason"' in script
     assert "payload.update(parse_context" in script
     assert 'paper readiness check skipped' in script
     assert 'paper activity check skipped' in script

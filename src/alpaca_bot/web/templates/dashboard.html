@@ -336,6 +336,7 @@
                     {% if event.payload.get("proof_start") %} proof={{ event.payload.get("proof_start") }}{% endif %}
                     {% if event.payload.get("min_trades") %} trades&gt;={{ event.payload.get("min_trades") }}{% endif %}
                     {% if event.payload.get("min_pnl") %} pnl&gt;={{ event.payload.get("min_pnl") }}{% endif %}
+                    {% if event.payload.get("reason") %} reason={{ event.payload.get("reason") }}{% endif %}
                   </td>
                   <td class="{{ 'warn' if check_status == 'failed' else 'muted' }}">
                     {{ check_status }}

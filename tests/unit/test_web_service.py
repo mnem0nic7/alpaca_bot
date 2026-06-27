@@ -190,6 +190,7 @@ def test_load_dashboard_snapshot_loads_recent_scheduled_checks() -> None:
         "strategy": "bull_flag",
         "min_trades": "10",
         "min_pnl": "0.01",
+        "reason": "lock_busy",
         "status": "failed",
         "exit_code": 46,
     }
