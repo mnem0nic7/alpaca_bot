@@ -5,7 +5,7 @@ ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 PROFIT_PROBE_STRATEGY="${PROFIT_PROBE_STRATEGY:-bull_flag}"
 PROFIT_PROBE_MIN_TRADES="${PROFIT_PROBE_MIN_TRADES:-10}"
 PROFIT_PROBE_MIN_PNL="${PROFIT_PROBE_MIN_PNL:-0.01}"
-PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-26}"
+PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"
 
 default_session_date() {
   local dow
@@ -24,6 +24,14 @@ cd "$(dirname "$0")/.."
 set -a
 source "$ENV_FILE"
 set +a
+
+if [[ "$PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE" ]]; then
+  echo \
+    "paper profit probe pending: latest completed session $PROFIT_PROBE_DATE is before proof start $PROFIT_PROBE_START_DATE"
+  BROKER_FLAT_CONTEXT="${PROFIT_PROBE_STRATEGY} paper proof pending ${PROFIT_PROBE_START_DATE}" \
+    ./scripts/broker_flat_check.sh "$ENV_FILE"
+  exit 43
+fi
 
 docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
   --entrypoint alpaca-bot-session-eval admin \

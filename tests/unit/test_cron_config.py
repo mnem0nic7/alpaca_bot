@@ -184,7 +184,10 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "broker exposure remains after close" in profit_probe
     assert 'if [[ "$rc" -eq 0 ]]; then' in session_guard
     assert 'if [[ "$rc" -eq 0 || "$rc" -eq 43 ]]; then' in profit_probe
-    assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-26}"' in profit_probe
+    assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"' in profit_probe
+    assert "paper profit probe pending: latest completed session" in profit_probe
+    assert 'PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE' in profit_probe
+    assert "paper proof pending" in profit_probe
     assert "--start-date" in profit_probe
     assert "--end-date" in profit_probe
     assert '1) TZ=America/New_York date -d "3 days ago" +%F ;;' not in profit_probe

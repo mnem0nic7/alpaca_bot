@@ -112,3 +112,12 @@ the risk-adjusted evidence versus K=3. The old recent OOS losing K=2 row was
 the prior `RELATIVE_VOLUME_THRESHOLD=1.5` posture, not this stricter relvol
 posture. This change is scoped to paper proof readiness and should be revisited
 after closed paper trades accumulate.
+
+Live proof window:
+
+The paper proof start is `2026-06-29`, the next regular market session after
+this posture was verified and paper trading was confirmed enabled. The
+`2026-06-26` session is excluded from the proof window because paper remained in
+`close_only` from the earlier `2026-06-15` guard until after the June 26 market
+close, producing 438/438 entries-disabled supervisor cycles and no valid
+`bull_flag` decision-log rows for that session.
