@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
@@ -22,6 +22,10 @@ class OrderStoreProtocol(Protocol):
 
 class PositionStoreProtocol(Protocol):
     def save(self, position: PositionRecord, *, commit: bool = True) -> None: ...
+
+    def list_all(
+        self, *, trading_mode, strategy_version: str, strategy_name: str | None = None
+    ) -> list[PositionRecord]: ...
 
     def delete(
         self, *, symbol: str, trading_mode, strategy_version: str, strategy_name: str, commit: bool = True
@@ -226,11 +230,16 @@ def _apply_trade_update_locked(
         and matched_order.status not in {"filled"}
     ):
         position_updated = True
-        position_cleared = True
+        position_cleared = normalized.status == "filled"
         exit_qty = normalized.filled_qty if normalized.filled_qty is not None else matched_order.quantity
         exit_price = normalized.filled_avg_price or matched_order.fill_price or "?"
+        exit_subject = (
+            f"Position closed: {matched_order.symbol}"
+            if position_cleared
+            else f"Position reduced: {matched_order.symbol}"
+        )
         pending_notifications.append((
-            f"Position closed: {matched_order.symbol}",
+            exit_subject,
             (
                 f"{matched_order.intent_type.upper()} fill on {matched_order.symbol}: "
                 f"{exit_qty} shares @ {exit_price}"
@@ -366,13 +375,25 @@ def _apply_trade_update_locked(
             and normalized.status in {"filled", "partially_filled"}
             and matched_order.status not in {"filled"}
         ):
-            runtime.position_store.delete(
-                symbol=matched_order.symbol,
-                trading_mode=matched_order.trading_mode,
-                strategy_version=matched_order.strategy_version,
-                strategy_name=matched_order.strategy_name or "breakout",
-                commit=False,
-            )
+            strategy_name = matched_order.strategy_name or "breakout"
+            if normalized.status == "filled":
+                runtime.position_store.delete(
+                    symbol=matched_order.symbol,
+                    trading_mode=matched_order.trading_mode,
+                    strategy_version=matched_order.strategy_version,
+                    strategy_name=strategy_name,
+                    commit=False,
+                )
+            else:
+                remaining_quantity = _reduce_position_for_partial_exit_fill(
+                    runtime.position_store,
+                    matched_order=matched_order,
+                    normalized=normalized,
+                    timestamp=timestamp,
+                    strategy_name=strategy_name,
+                )
+                if remaining_quantity is not None:
+                    audit_payload["position_remaining_quantity"] = remaining_quantity
         elif (
             matched_order.intent_type == "entry"
             and normalized.status in {"cancelled", "canceled", "expired"}
@@ -501,6 +522,65 @@ def _find_order(order_store: OrderStoreProtocol, update: TradeUpdate) -> OrderRe
     if order is None and update.broker_order_id:
         order = order_store.load_by_broker_order_id(update.broker_order_id)
     return order
+
+
+def _reduce_position_for_partial_exit_fill(
+    position_store: PositionStoreProtocol,
+    *,
+    matched_order: OrderRecord,
+    normalized: TradeUpdate,
+    timestamp: datetime,
+    strategy_name: str,
+) -> float | None:
+    if normalized.filled_qty is None:
+        logger.warning(
+            "trade_updates: partial %s fill for %s has no filled_qty; local position unchanged",
+            matched_order.intent_type,
+            matched_order.symbol,
+        )
+        return None
+    previously_filled = matched_order.filled_quantity or 0.0
+    fill_delta = normalized.filled_qty - previously_filled
+    if fill_delta <= 0:
+        return None
+
+    positions = position_store.list_all(
+        trading_mode=matched_order.trading_mode,
+        strategy_version=matched_order.strategy_version,
+        strategy_name=strategy_name,
+    )
+    current_position = next(
+        (position for position in positions if position.symbol == matched_order.symbol),
+        None,
+    )
+    if current_position is None:
+        logger.warning(
+            "trade_updates: partial %s fill for %s has no matching local position",
+            matched_order.intent_type,
+            matched_order.symbol,
+        )
+        return None
+
+    remaining_quantity = current_position.quantity - fill_delta
+    if remaining_quantity <= 0:
+        position_store.delete(
+            symbol=matched_order.symbol,
+            trading_mode=matched_order.trading_mode,
+            strategy_version=matched_order.strategy_version,
+            strategy_name=strategy_name,
+            commit=False,
+        )
+        return 0.0
+
+    position_store.save(
+        replace(
+            current_position,
+            quantity=remaining_quantity,
+            updated_at=timestamp,
+        ),
+        commit=False,
+    )
+    return remaining_quantity
 
 
 def _resolve_now(

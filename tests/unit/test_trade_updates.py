@@ -102,17 +102,51 @@ class RecordingOrderStore:
 class RecordingPositionStore:
     """In-memory position store that records saves and deletes."""
 
-    def __init__(self) -> None:
+    def __init__(self, positions: list[PositionRecord] | None = None) -> None:
+        self._positions: dict[tuple[str, TradingMode, str, str], PositionRecord] = {}
+        for position in positions or []:
+            self._positions[
+                (
+                    position.symbol,
+                    position.trading_mode,
+                    position.strategy_version,
+                    position.strategy_name,
+                )
+            ] = position
         self.saved: list[PositionRecord] = []
         self.deleted: list[dict] = []
 
     def save(self, position: PositionRecord, *, commit: bool = True) -> None:
+        self._positions[
+            (
+                position.symbol,
+                position.trading_mode,
+                position.strategy_version,
+                position.strategy_name,
+            )
+        ] = position
         self.saved.append(position)
 
     def delete(self, *, symbol: str, trading_mode, strategy_version: str, strategy_name: str = "breakout", commit: bool = True) -> None:
+        self._positions.pop((symbol, trading_mode, strategy_version, strategy_name), None)
         self.deleted.append(
             {"symbol": symbol, "trading_mode": trading_mode, "strategy_version": strategy_version, "strategy_name": strategy_name}
         )
+
+    def list_all(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        strategy_name: str | None = None,
+    ) -> list[PositionRecord]:
+        return [
+            position
+            for position in self._positions.values()
+            if position.trading_mode == trading_mode
+            and position.strategy_version == strategy_version
+            and (strategy_name is None or position.strategy_name == strategy_name)
+        ]
 
 
 class RecordingAuditEventStore:
@@ -1241,6 +1275,125 @@ def _make_stop_order(
         initial_stop_price=109.50,
         signal_timestamp=NOW,
     )
+
+
+def _make_position(*, quantity: float = 10) -> PositionRecord:
+    return PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        quantity=quantity,
+        entry_price=112.00,
+        stop_price=109.50,
+        initial_stop_price=109.50,
+        opened_at=NOW,
+        updated_at=NOW,
+        highest_price=114.25,
+        lowest_price=111.80,
+    )
+
+
+def test_partial_stop_fill_reduces_matching_position_without_deleting() -> None:
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    stop_order = _make_stop_order(quantity=10)
+    position_store = RecordingPositionStore(positions=[_make_position(quantity=10)])
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[stop_order]),
+        position_store=position_store,
+        audit_event_store=RecordingAuditEventStore(),
+        connection=RollbackTrackingConnection(),
+    )
+
+    partial_fill = _make_trade_update(
+        client_order_id=stop_order.client_order_id,
+        symbol="AAPL",
+        side="sell",
+        status="partially_filled",
+        qty=10,
+        filled_qty=4,
+        filled_avg_price=109.20,
+    )
+    report = apply_trade_update(
+        settings=make_settings(),
+        runtime=runtime,
+        update=partial_fill,
+        now=NOW,
+    )
+
+    assert position_store.deleted == []
+    assert position_store.saved == [
+        PositionRecord(
+            symbol="AAPL",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            strategy_name="breakout",
+            quantity=6,
+            entry_price=112.00,
+            stop_price=109.50,
+            initial_stop_price=109.50,
+            opened_at=NOW,
+            updated_at=NOW,
+            highest_price=114.25,
+            lowest_price=111.80,
+        )
+    ]
+    assert report["position_updated"] is True
+    assert report["position_cleared"] is False
+
+
+def test_replayed_partial_stop_fill_does_not_reduce_position_twice() -> None:
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    stop_order = OrderRecord(
+        client_order_id="v1-breakout:2026-04-25:AAPL:stop:2026-04-25T14:00:00+00:00",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="partially_filled",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=NOW,
+        updated_at=NOW,
+        stop_price=109.50,
+        initial_stop_price=109.50,
+        signal_timestamp=NOW,
+        filled_quantity=4,
+    )
+    position_store = RecordingPositionStore(positions=[_make_position(quantity=6)])
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[stop_order]),
+        position_store=position_store,
+        audit_event_store=RecordingAuditEventStore(),
+        connection=RollbackTrackingConnection(),
+    )
+
+    replayed_partial_fill = _make_trade_update(
+        client_order_id=stop_order.client_order_id,
+        symbol="AAPL",
+        side="sell",
+        status="partially_filled",
+        qty=10,
+        filled_qty=4,
+        filled_avg_price=109.20,
+    )
+    report = apply_trade_update(
+        settings=make_settings(),
+        runtime=runtime,
+        update=replayed_partial_fill,
+        now=NOW,
+    )
+
+    assert position_store.saved == []
+    assert position_store.deleted == []
+    assert position_store.list_all(
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+    )[0].quantity == 6
+    assert report["position_cleared"] is False
 
 
 def test_stop_fill_all_writes_use_commit_false() -> None:
