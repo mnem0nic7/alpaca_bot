@@ -52,6 +52,11 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness stock exposure ok: positions=0 active_orders=0" in script
     assert "stock-only proof has $open_positions open stock positions" in script
     assert "stock-only proof has $active_orders active stock orders" in script
+    assert "check_broker_flat" in script
+    assert "AlpacaExecutionAdapter.from_settings" in script
+    assert "paper readiness broker exposure ok: open_orders=0 open_positions=0" in script
+    assert "broker has {len(open_orders)} open stock orders" in script
+    assert "broker has {len(open_positions)} open stock positions" in script
     assert "close_only with $active_orders active orders" in script
     assert "symbol_watchlist" in script
     assert "COALESCE(ignored, FALSE) = FALSE" in script

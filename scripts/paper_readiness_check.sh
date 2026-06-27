@@ -256,6 +256,40 @@ SELECT
 SQL
 }
 
+check_broker_flat() {
+  "${compose[@]}" run -T --rm --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+import sys
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+
+settings = Settings.from_env()
+broker = AlpacaExecutionAdapter.from_settings(settings)
+open_orders = broker.list_open_orders()
+open_positions = broker.list_positions()
+
+if open_orders:
+    symbols = ",".join(sorted({order.symbol for order in open_orders}))
+    print(
+        f"paper readiness failed: broker has {len(open_orders)} open stock orders: {symbols}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+if open_positions:
+    symbols = ",".join(sorted({position.symbol for position in open_positions}))
+    print(
+        f"paper readiness failed: broker has {len(open_positions)} open stock positions: {symbols}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+print("paper readiness broker exposure ok: open_orders=0 open_positions=0")
+PY
+}
+
 open_option_positions="$("${compose[@]}" exec -T postgres psql \
   -U "$POSTGRES_USER" \
   -d "$POSTGRES_DB" \
@@ -312,6 +346,7 @@ if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
     IFS='|' read -r open_positions active_orders <<< "$stock_exposure_counts"
 
     if [[ "$open_positions" == "0" && "$active_orders" == "0" ]]; then
+      check_broker_flat
       echo "paper readiness auto-resuming stale close_only state"
       "${compose[@]}" run -T --rm admin resume \
         --mode paper \
@@ -339,6 +374,8 @@ if [[ "${active_orders:-0}" != "0" ]]; then
 fi
 
 echo "paper readiness stock exposure ok: positions=0 active_orders=0"
+
+check_broker_flat
 
 "${compose[@]}" run -T --rm \
   --entrypoint alpaca-bot-ops-check admin \
