@@ -36,3 +36,18 @@ docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
   --require-min-trades "$PROFIT_PROBE_MIN_TRADES" \
   --fail-below-pnl "$PROFIT_PROBE_MIN_PNL" \
   --min-trades-for-gate "$PROFIT_PROBE_MIN_TRADES"
+rc=$?
+
+if [[ "$rc" -eq 42 || "$rc" -eq 44 ]]; then
+  reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: pnl below ${PROFIT_PROBE_MIN_PNL} after ${PROFIT_PROBE_MIN_TRADES}+ trades"
+  if [[ "$rc" -eq 44 ]]; then
+    reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: open positions remain after close"
+  fi
+  docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm admin \
+    close-only \
+    --mode "${TRADING_MODE:-paper}" \
+    --strategy-version "$STRATEGY_VERSION" \
+    --reason "$reason"
+fi
+
+exit "$rc"
