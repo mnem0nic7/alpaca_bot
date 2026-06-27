@@ -121,10 +121,17 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_value FLATTEN_TIME 15:45" in script
     assert "require_env_true PAPER_PROOF_FREEZE" in script
     assert "require_env_true ENABLE_VWAP_ENTRY_FILTER" in script
+    assert "require_env_true ENABLE_PROFIT_TRAIL" in script
+    assert "require_env_value PROFIT_TRAIL_PCT 0.95" in script
+    assert "require_env_true_or_unset ENABLE_BREAKEVEN_STOP" in script
+    assert "require_env_value_or_unset BREAKEVEN_TRIGGER_PCT 0.0025" in script
+    assert "require_env_value_or_unset BREAKEVEN_TRAIL_PCT 0.002" in script
     assert "require_env_false_or_unset EXTENDED_HOURS_ENABLED" in script
     assert "require_env_false_or_unset ENABLE_VIX_FILTER" in script
     assert "require_env_false_or_unset ENABLE_SECTOR_FILTER" in script
     assert "require_env_false_or_unset ENABLE_REGIME_FILTER" in script
+    assert "require_env_false_or_unset ENABLE_NEWS_FILTER" in script
+    assert "require_env_false_or_unset ENABLE_SPREAD_FILTER" in script
     assert "require_env_false_or_unset ENABLE_OPTIONS_TRADING" in script
 
 

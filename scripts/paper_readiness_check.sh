@@ -75,6 +75,25 @@ require_env_true() {
   fi
 }
 
+require_env_true_or_unset() {
+  local name="$1"
+  local actual="${!name:-}"
+  if [[ -n "$actual" && "${actual,,}" != "true" ]]; then
+    echo "paper readiness failed: $name=$actual expected true or unset" >&2
+    exit 1
+  fi
+}
+
+require_env_value_or_unset() {
+  local name="$1"
+  local expected="$2"
+  local actual="${!name:-}"
+  if [[ -n "$actual" && "$actual" != "$expected" ]]; then
+    echo "paper readiness failed: $name=$actual expected $expected or unset" >&2
+    exit 1
+  fi
+}
+
 require_env_false_or_unset() {
   local name="$1"
   local actual="${!name:-}"
@@ -103,10 +122,17 @@ require_env_value ENTRY_WINDOW_END 15:30
 require_env_value FLATTEN_TIME 15:45
 require_env_true PAPER_PROOF_FREEZE
 require_env_true ENABLE_VWAP_ENTRY_FILTER
+require_env_true ENABLE_PROFIT_TRAIL
+require_env_value PROFIT_TRAIL_PCT 0.95
+require_env_true_or_unset ENABLE_BREAKEVEN_STOP
+require_env_value_or_unset BREAKEVEN_TRIGGER_PCT 0.0025
+require_env_value_or_unset BREAKEVEN_TRAIL_PCT 0.002
 require_env_false_or_unset EXTENDED_HOURS_ENABLED
 require_env_false_or_unset ENABLE_VIX_FILTER
 require_env_false_or_unset ENABLE_SECTOR_FILTER
 require_env_false_or_unset ENABLE_REGIME_FILTER
+require_env_false_or_unset ENABLE_NEWS_FILTER
+require_env_false_or_unset ENABLE_SPREAD_FILTER
 require_env_false_or_unset ENABLE_OPTIONS_TRADING
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
