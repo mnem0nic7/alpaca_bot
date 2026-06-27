@@ -65,13 +65,26 @@ SELECT
       AND payload->>'reason' = 'market_closed'
   )::int,
   COALESCE(MAX(created_at) FILTER (WHERE event_type = 'supervisor_cycle')::text, ''),
-  COALESCE(MAX(created_at) FILTER (WHERE event_type = 'decision_cycle_completed')::text, '')
+  COALESCE(MAX(created_at) FILTER (WHERE event_type = 'decision_cycle_completed')::text, ''),
+  COALESCE((
+    SELECT string_agg(reason || ':' || reason_count::text, ',' ORDER BY reason)
+    FROM (
+      SELECT reason, COUNT(*)::int AS reason_count
+      FROM recent r
+      CROSS JOIN LATERAL jsonb_array_elements_text(
+        COALESCE(r.payload->'entries_disabled_reasons', '[]'::jsonb)
+      ) AS reason
+      WHERE r.event_type = 'supervisor_cycle'
+        AND (r.payload->>'entries_disabled')::boolean IS TRUE
+      GROUP BY reason
+    ) reason_counts
+  ), '')
 FROM recent;
 SQL
 )"
 
 IFS='|' read -r supervisor_cycles disabled_cycles decision_cycles decision_records \
-  market_closed_idles latest_cycle latest_decision <<< "$stats"
+  market_closed_idles latest_cycle latest_decision disabled_reasons <<< "$stats"
 
 if [[ "${supervisor_cycles:-0}" -eq 0 && "${market_closed_idles:-0}" -gt 0 ]]; then
   echo "paper activity skipped: market closed in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes"
@@ -84,7 +97,11 @@ if [[ "${supervisor_cycles:-0}" -eq 0 ]]; then
 fi
 
 if [[ "${disabled_cycles:-0}" -gt 0 ]]; then
-  echo "paper activity failed: $disabled_cycles/$supervisor_cycles supervisor cycles had entries disabled" >&2
+  reason_suffix=""
+  if [[ -n "${disabled_reasons:-}" ]]; then
+    reason_suffix=" reasons=$disabled_reasons"
+  fi
+  echo "paper activity failed: $disabled_cycles/$supervisor_cycles supervisor cycles had entries disabled$reason_suffix" >&2
   exit 1
 fi
 

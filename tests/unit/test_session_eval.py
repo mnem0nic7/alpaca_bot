@@ -263,7 +263,7 @@ def test_session_eval_cli_reports_entries_disabled_cycles(monkeypatch, capsys):
     monkeypatch.setattr(
         cli_module,
         "_load_entries_disabled_cycle_stats",
-        lambda *_args, **_kwargs: (12, 12),
+        lambda *_args, **_kwargs: (12, 12, {"trading_status:close_only": 12}),
     )
 
     rc = cli_module.main([
@@ -277,7 +277,35 @@ def test_session_eval_cli_reports_entries_disabled_cycles(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "No closed trades" in out
     assert "Entries disabled cycles: 12/12" in out
+    assert "Reasons: trading_status:close_only=12" in out
     assert "No operational issues" not in out
+
+
+def test_load_entries_disabled_cycle_stats_parses_colon_reasons(monkeypatch):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    monkeypatch.setattr(
+        cli_module,
+        "fetch_one",
+        lambda *_args, **_kwargs: (
+            14,
+            12,
+            "runtime_reconciliation_mismatch:2,trading_status:close_only:10",
+        ),
+    )
+
+    total, disabled, reasons = cli_module._load_entries_disabled_cycle_stats(
+        object(),
+        session_start=datetime(2026, 5, 4, tzinfo=timezone.utc),
+        session_end=datetime(2026, 5, 5, tzinfo=timezone.utc),
+    )
+
+    assert total == 14
+    assert disabled == 12
+    assert reasons == {
+        "runtime_reconciliation_mismatch": 2,
+        "trading_status:close_only": 10,
+    }
 
 
 def test_session_eval_cli_require_min_trades_fails_when_no_trades(monkeypatch, capsys):

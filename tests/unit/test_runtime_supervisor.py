@@ -1037,10 +1037,14 @@ def test_runtime_supervisor_run_cycle_once_respects_trading_status_for_entries_d
         connection_checker=lambda _conn: True,
     )
 
-    supervisor.run_cycle_once(now=lambda: now)
+    report = supervisor.run_cycle_once(now=lambda: now)
 
     assert trading_status_store.load_calls == [(TradingMode.PAPER, "v1-breakout")]
     assert cycle_calls[0]["entries_disabled"] is expected_entries_disabled
+    if expected_entries_disabled:
+        assert report.entries_disabled_reasons == (f"trading_status:{status.value}",)
+    else:
+        assert report.entries_disabled_reasons == ()
 
 
 def test_runtime_supervisor_run_forever_starts_once_loops_until_stop_and_sleeps(
@@ -1233,6 +1237,9 @@ def test_runtime_supervisor_run_forever_runs_cycle_when_market_is_open_and_audit
             entries_disabled=True,
             cycle_result=SimpleNamespace(intents=[]),
             dispatch_report={"submitted_count": 0},
+            entries_disabled_reasons=("test_reason",),
+            blocked_strategy_names=("bull_flag",),
+            strategy_entries_disabled_reasons={"bull_flag": ("test_reason",)},
         ),
     )
 
@@ -1247,6 +1254,15 @@ def test_runtime_supervisor_run_forever_runs_cycle_when_market_is_open_and_audit
     assert report.idle_iterations == 0
     assert runtime.audit_event_store.appended[-2].event_type == "supervisor_cycle"
     assert runtime.audit_event_store.appended[-2].payload["entries_disabled"] is True
+    assert runtime.audit_event_store.appended[-2].payload["entries_disabled_reasons"] == [
+        "test_reason"
+    ]
+    assert runtime.audit_event_store.appended[-2].payload["blocked_strategy_names"] == [
+        "bull_flag"
+    ]
+    assert runtime.audit_event_store.appended[-2].payload["strategy_entries_disabled_reasons"] == {
+        "bull_flag": ["test_reason"]
+    }
     assert runtime.audit_event_store.appended[-1].event_type == "supervisor_exited"
 
 

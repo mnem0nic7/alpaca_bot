@@ -246,6 +246,7 @@ class SessionDiagnostics:
     reconciliation_issues: list[AuditEvent] = field(default_factory=list)
     total_supervisor_cycles: int = 0
     entries_disabled_cycles: int = 0
+    entries_disabled_reasons: dict[str, int] = field(default_factory=dict)
 
     @property
     def has_issues(self) -> bool:
@@ -275,7 +276,7 @@ def _build_session_diagnostics(
     audit_store = AuditEventStore(conn)
     order_store = OrderStore(conn)
     position_store = PositionStore(conn)
-    total_cycles, disabled_cycles = _load_entries_disabled_cycle_stats(
+    total_cycles, disabled_cycles, disabled_reasons = _load_entries_disabled_cycle_stats(
         conn,
         session_start=session_start,
         session_end=session_end,
@@ -318,6 +319,7 @@ def _build_session_diagnostics(
         ),
         total_supervisor_cycles=total_cycles,
         entries_disabled_cycles=disabled_cycles,
+        entries_disabled_reasons=disabled_reasons,
     )
 
 
@@ -326,7 +328,7 @@ def _load_entries_disabled_cycle_stats(
     *,
     session_start: datetime,
     session_end: datetime,
-) -> tuple[int, int]:
+) -> tuple[int, int, dict[str, int]]:
     try:
         row = fetch_one(
             conn,
@@ -335,19 +337,42 @@ def _load_entries_disabled_cycle_stats(
                 COUNT(*)::int,
                 COUNT(*) FILTER (
                     WHERE (payload->>'entries_disabled')::boolean IS TRUE
-                )::int
+                )::int,
+                COALESCE((
+                    SELECT string_agg(reason || ':' || reason_count::text, ',' ORDER BY reason)
+                    FROM (
+                        SELECT reason, COUNT(*)::int AS reason_count
+                        FROM audit_events e
+                        CROSS JOIN LATERAL jsonb_array_elements_text(
+                            COALESCE(e.payload->'entries_disabled_reasons', '[]'::jsonb)
+                        ) AS reason
+                        WHERE e.event_type = 'supervisor_cycle'
+                          AND e.created_at >= %s
+                          AND e.created_at < %s
+                          AND (e.payload->>'entries_disabled')::boolean IS TRUE
+                        GROUP BY reason
+                    ) reason_counts
+                ), '') AS reason_summary
             FROM audit_events
             WHERE event_type = 'supervisor_cycle'
               AND created_at >= %s
               AND created_at < %s
             """,
-            (session_start, session_end),
+            (session_start, session_end, session_start, session_end),
         )
     except Exception:
-        return (0, 0)
+        return (0, 0, {})
     if row is None:
-        return (0, 0)
-    return (int(row[0] or 0), int(row[1] or 0))
+        return (0, 0, {})
+    reason_summary = str(row[2] or "")
+    reasons: dict[str, int] = {}
+    for part in (p for p in reason_summary.split(",") if p):
+        reason, _, raw_count = part.rpartition(":")
+        try:
+            reasons[reason] = int(raw_count)
+        except ValueError:
+            continue
+    return (int(row[0] or 0), int(row[1] or 0), reasons)
 
 
 def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
@@ -398,6 +423,12 @@ def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
             " ⚠ Entries disabled cycles: "
             f"{diagnostics.entries_disabled_cycles}/{diagnostics.total_supervisor_cycles}"
         )
+        if diagnostics.entries_disabled_reasons:
+            rendered = ", ".join(
+                f"{reason}={count}"
+                for reason, count in sorted(diagnostics.entries_disabled_reasons.items())
+            )
+            print(f"     Reasons: {rendered}")
 
     print()
 

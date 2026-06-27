@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 import logging
 from pathlib import Path
@@ -82,6 +82,9 @@ class SupervisorCycleReport:
     cycle_result: object
     dispatch_report: object
     account_equity: float = 0.0
+    entries_disabled_reasons: tuple[str, ...] = ()
+    blocked_strategy_names: tuple[str, ...] = ()
+    strategy_entries_disabled_reasons: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -565,12 +568,16 @@ class RuntimeSupervisor:
         status = self._effective_trading_status(
             session_date=session_date, session_state=session_state, session_type=session_type
         )
-        entries_disabled = (
-            status in {TradingStatusValue.CLOSE_ONLY, TradingStatusValue.HALTED}
-            or bool(recovery_report.mismatches)
-            or daily_loss_limit_breached
-            or session_date in self._consecutive_loss_gate_fired
-        )
+        entries_disabled_reasons: list[str] = []
+        if status in {TradingStatusValue.CLOSE_ONLY, TradingStatusValue.HALTED}:
+            entries_disabled_reasons.append(f"trading_status:{status.value}")
+        if recovery_report.mismatches:
+            entries_disabled_reasons.append("runtime_reconciliation_mismatch")
+        if daily_loss_limit_breached:
+            entries_disabled_reasons.append("daily_loss_limit_breached")
+        if session_date in self._consecutive_loss_gate_fired:
+            entries_disabled_reasons.append("intraday_consecutive_loss_gate")
+        entries_disabled = bool(entries_disabled_reasons)
         open_positions = self._load_open_positions()
         self._close_stale_carryover_positions(
             session_date=session_date,
@@ -655,6 +662,7 @@ class RuntimeSupervisor:
                     cycle_result=_SN(intents=[]),
                     dispatch_report={"submitted_count": 0},
                     account_equity=account.equity,
+                    entries_disabled_reasons=tuple(entries_disabled_reasons),
                 )
             ignored_set = set(watchlist_store.list_ignored(self.settings.trading_mode.value))
             entry_symbols = tuple(s for s in watchlist_symbols if s not in ignored_set)
@@ -873,6 +881,7 @@ class RuntimeSupervisor:
 
         all_cycle_results: list[tuple[str, object]] = []
         entries_disabled_strategies: set[str] = set()
+        strategy_entries_disabled_reasons: dict[str, tuple[str, ...]] = {}
         # Track occupied slots globally across all strategies so no single
         # strategy can exceed the portfolio-wide max_open_positions cap.
         global_occupied_slots = len(
@@ -909,25 +918,28 @@ class RuntimeSupervisor:
                     strategy_session_state = None
 
                 _is_extended = session_type in {SessionType.PRE_MARKET, SessionType.AFTER_HOURS}
-                strategy_entries_disabled = (
-                    entries_disabled
-                    or (
-                        strategy_session_state is not None
-                        and strategy_session_state.entries_disabled
-                        and not _is_extended
-                    )
-                )
+                strategy_disabled_reasons = list(entries_disabled_reasons)
+                if (
+                    strategy_session_state is not None
+                    and strategy_session_state.entries_disabled
+                    and not _is_extended
+                ):
+                    strategy_disabled_reasons.append("strategy_session_state_entries_disabled")
+                strategy_entries_disabled = bool(strategy_disabled_reasons)
                 confidence_score = session_confidence_scores.get(strategy_name)
                 if confidence_score is None:
                     # Strategy's Sharpe rank is below the confidence floor — disable entries
                     strategy_entries_disabled = True
+                    strategy_disabled_reasons.append("confidence_score_absent")
                     confidence_score = confidence_floor  # used for sizing (entries disabled anyway)
 
                 if strategy_name in _losing_streak_excluded:
                     strategy_entries_disabled = True
+                    strategy_disabled_reasons.append("losing_streak_excluded")
 
                 if strategy_entries_disabled:
                     entries_disabled_strategies.add(strategy_name)
+                    strategy_entries_disabled_reasons[strategy_name] = tuple(strategy_disabled_reasons)
 
                 effective_equity = account.equity * confidence_score
                 cycle_result = self._cycle_runner(
@@ -1076,6 +1088,9 @@ class RuntimeSupervisor:
                 cycle_result=cycle_result,
                 dispatch_report={"submitted_count": 0},
                 account_equity=account.equity,
+                entries_disabled_reasons=tuple(entries_disabled_reasons),
+                blocked_strategy_names=tuple(sorted(entries_disabled_strategies)),
+                strategy_entries_disabled_reasons=strategy_entries_disabled_reasons,
             )
         if entries_disabled:
             dispatch_kwargs["allowed_intent_types"] = {"stop", "exit"}
@@ -1149,6 +1164,9 @@ class RuntimeSupervisor:
             cycle_result=cycle_result,
             dispatch_report=dispatch_report,
             account_equity=account.equity,
+            entries_disabled_reasons=tuple(entries_disabled_reasons),
+            blocked_strategy_names=tuple(sorted(entries_disabled_strategies)),
+            strategy_entries_disabled_reasons=strategy_entries_disabled_reasons,
         )
 
     def close(self) -> None:
@@ -1356,11 +1374,26 @@ class RuntimeSupervisor:
                         self._stream_heartbeat_alerted = False
 
                     active_iterations += 1
+                    entries_disabled_reasons = getattr(
+                        cycle_report, "entries_disabled_reasons", ()
+                    )
+                    blocked_strategy_names = getattr(
+                        cycle_report, "blocked_strategy_names", ()
+                    )
+                    strategy_disabled_reasons = getattr(
+                        cycle_report, "strategy_entries_disabled_reasons", {}
+                    )
                     self._append_audit(
                         AuditEvent(
                             event_type="supervisor_cycle",
                             payload={
                                 "entries_disabled": cycle_report.entries_disabled,
+                                "entries_disabled_reasons": list(entries_disabled_reasons),
+                                "blocked_strategy_names": list(blocked_strategy_names),
+                                "strategy_entries_disabled_reasons": {
+                                    name: list(reasons)
+                                    for name, reasons in strategy_disabled_reasons.items()
+                                },
                                 "timestamp": timestamp.isoformat(),
                                 "account_equity": cycle_report.account_equity,
                             },
