@@ -9,11 +9,20 @@ PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"
 
 default_session_date() {
   local dow
+  local hhmm
   dow="$(TZ=America/New_York date +%u)"
+  hhmm="$(TZ=America/New_York date +%H%M)"
+
+  if [[ "$dow" -ge 1 && "$dow" -le 5 && "$hhmm" -ge 1630 ]]; then
+    TZ=America/New_York date +%F
+    return
+  fi
+
   case "$dow" in
+    1) TZ=America/New_York date -d "3 days ago" +%F ;;
     6) TZ=America/New_York date -d "1 day ago" +%F ;;
     7) TZ=America/New_York date -d "2 days ago" +%F ;;
-    *) TZ=America/New_York date +%F ;;
+    *) TZ=America/New_York date -d "1 day ago" +%F ;;
   esac
 }
 

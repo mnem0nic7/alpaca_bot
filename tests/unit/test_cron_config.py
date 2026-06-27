@@ -190,9 +190,12 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "paper proof pending" in profit_probe
     assert "--start-date" in profit_probe
     assert "--end-date" in profit_probe
-    assert '1) TZ=America/New_York date -d "3 days ago" +%F ;;' not in profit_probe
+    assert 'hhmm="$(TZ=America/New_York date +%H%M)"' in profit_probe
+    assert '"$hhmm" -ge 1630' in profit_probe
+    assert '1) TZ=America/New_York date -d "3 days ago" +%F ;;' in profit_probe
     assert '6) TZ=America/New_York date -d "1 day ago" +%F ;;' in profit_probe
     assert '7) TZ=America/New_York date -d "2 days ago" +%F ;;' in profit_probe
+    assert '*) TZ=America/New_York date -d "1 day ago" +%F ;;' in profit_probe
     assert '"$rc" -eq 44' in session_guard
     assert "open positions remain after close" in session_guard
     assert "session guard failed: could not apply close-only guard" in session_guard

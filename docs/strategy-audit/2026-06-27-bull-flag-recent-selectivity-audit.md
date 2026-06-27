@@ -121,3 +121,6 @@ this posture was verified and paper trading was confirmed enabled. The
 `close_only` from the earlier `2026-06-15` guard until after the June 26 market
 close, producing 438/438 entries-disabled supervisor cycles and no valid
 `bull_flag` decision-log rows for that session.
+The proof probe evaluates only completed sessions by default; before the June
+29 close it reports the proof as pending rather than scoring an in-progress
+session.
