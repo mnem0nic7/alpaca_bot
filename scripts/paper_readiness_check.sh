@@ -21,6 +21,47 @@ if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
   exit 0
 fi
 
+require_env_value() {
+  local name="$1"
+  local expected="$2"
+  local actual="${!name:-}"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "paper readiness failed: $name=$actual expected $expected" >&2
+    exit 1
+  fi
+}
+
+require_env_true() {
+  local name="$1"
+  local actual="${!name:-}"
+  if [[ "${actual,,}" != "true" ]]; then
+    echo "paper readiness failed: $name=$actual expected true" >&2
+    exit 1
+  fi
+}
+
+require_env_false_or_unset() {
+  local name="$1"
+  local actual="${!name:-}"
+  if [[ -n "$actual" && "${actual,,}" != "false" ]]; then
+    echo "paper readiness failed: $name=$actual expected false or unset" >&2
+    exit 1
+  fi
+}
+
+require_env_value STRATEGY_VERSION v1-breakout
+require_env_value MAX_OPEN_POSITIONS 2
+require_env_value REPLAY_SLIPPAGE_BPS 2.0
+require_env_value RISK_PER_TRADE_PCT 0.01
+require_env_value MAX_POSITION_PCT 0.05
+require_env_value MAX_PORTFOLIO_EXPOSURE_PCT 0.30
+require_env_value DAILY_LOSS_LIMIT_PCT 0.01
+require_env_true ENABLE_VIX_FILTER
+require_env_true ENABLE_SECTOR_FILTER
+require_env_true ENABLE_VWAP_ENTRY_FILTER
+require_env_false_or_unset ENABLE_REGIME_FILTER
+require_env_false_or_unset ENABLE_OPTIONS_TRADING
+
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
 if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
