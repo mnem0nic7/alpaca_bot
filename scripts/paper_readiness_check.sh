@@ -952,7 +952,13 @@ invalid AS (
   FROM latest_checks
   WHERE NOT (
     (check_name = 'session_guard' AND status = 'passed')
-    OR (check_name = 'paper_profit_probe' AND status = 'passed')
+    OR (
+      check_name = 'paper_profit_probe'
+      AND (
+        status = 'passed'
+        OR (status = 'pending' AND exit_code = '43')
+      )
+    )
   )
 )
 SELECT

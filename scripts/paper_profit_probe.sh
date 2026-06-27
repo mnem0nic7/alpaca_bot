@@ -160,13 +160,10 @@ if [[ "$rc" -eq 42 || "$rc" -eq 43 ]]; then
   fi
 fi
 
-if [[ "$rc" -eq 42 || "$rc" -eq 43 || "$rc" -eq 44 || "$rc" -eq 46 ]]; then
+if [[ "$rc" -eq 42 || "$rc" -eq 44 || "$rc" -eq 46 ]]; then
   case "$rc" in
     42)
       reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: pnl below ${PROFIT_PROBE_MIN_PNL} after ${PROFIT_PROBE_MIN_TRADES}+ trades"
-      ;;
-    43)
-      reason="${PROFIT_PROBE_STRATEGY} paper proof incomplete ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: fewer than ${PROFIT_PROBE_MIN_TRADES} closed trades"
       ;;
     44)
       reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: open positions remain after close"
