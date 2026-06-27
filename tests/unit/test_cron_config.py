@@ -546,6 +546,17 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "COALESCE(ignored, FALSE) = FALSE" in script
     assert "entry watchlist has" in script
     assert "paper readiness watchlist ok" in script
+    assert "PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS" in script
+    assert "run_watchlist_asset_check" in script
+    assert "load_active_watchlist_symbols" in script
+    assert '-e PAPER_READINESS_ACTIVE_SYMBOLS="$active_symbols"' in script
+    assert "AlpacaExecutionAdapter.from_settings(settings)" in script
+    assert "get_all_assets(filter=asset_filter)" in script
+    assert "missing_active_asset" in script
+    assert "not_tradable" in script
+    assert "paper readiness Alpaca assets ok" in script
+    assert "paper readiness watchlist Alpaca asset check skipped" in script
+    assert "paper readiness Alpaca non-fractionable symbols" in script
     assert "run_scenario_freshness_check" in script
     assert "PAPER_READINESS_ACTIVE_SYMBOLS" in script
     assert "PAPER_READINESS_EXPECTED_SCENARIO_DATE" in script

@@ -8,6 +8,7 @@ PAPER_READINESS_REQUIRE_FLAT="${PAPER_READINESS_REQUIRE_FLAT:-true}"
 PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED="${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED:-true}"
 PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR:-true}"
 PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"
+PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS="${PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS:-true}"
 PAPER_READINESS_REQUIRE_SCENARIOS="${PAPER_READINESS_REQUIRE_SCENARIOS:-true}"
 PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS="${PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS:-true}"
 PAPER_READINESS_CLOSE_ONLY_ON_FAILURE="${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE:-true}"
@@ -493,14 +494,8 @@ fi
 echo \
   "paper readiness watchlist ok: active=$entry_watchlist_symbols enabled=$enabled_watchlist_symbols ignored=$ignored_watchlist_symbols"
 
-run_scenario_freshness_check() {
-  if [[ ! -d "$PAPER_READINESS_SCENARIO_DIR" ]]; then
-    echo "paper readiness failed: scenario directory missing: $PAPER_READINESS_SCENARIO_DIR" >&2
-    exit 1
-  fi
-
-  local active_symbols
-  active_symbols="$("${compose[@]}" exec -T postgres psql \
+load_active_watchlist_symbols() {
+  "${compose[@]}" exec -T postgres psql \
     -U "$POSTGRES_USER" \
     -d "$POSTGRES_DB" \
     -tA <<'SQL'
@@ -511,7 +506,138 @@ WHERE trading_mode = 'paper'
   AND COALESCE(ignored, FALSE) = FALSE
 ORDER BY symbol;
 SQL
-)"
+}
+
+run_watchlist_asset_check() {
+  local active_symbols
+  active_symbols="$(load_active_watchlist_symbols)"
+
+  "${compose[@]}" run -T --rm \
+      -e PAPER_READINESS_ACTIVE_SYMBOLS="$active_symbols" \
+      --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+import os
+import sys
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import (
+    AlpacaExecutionAdapter,
+    _asset_field,
+    _retry_with_backoff,
+)
+
+try:
+    from alpaca.trading.enums import AssetClass, AssetStatus
+    from alpaca.trading.requests import GetAssetsRequest
+except ModuleNotFoundError:
+    asset_filter = {"status": "active", "asset_class": "us_equity"}
+else:
+    asset_filter = GetAssetsRequest(
+        status=AssetStatus.ACTIVE,
+        asset_class=AssetClass.US_EQUITY,
+    )
+
+symbols = tuple(
+    dict.fromkeys(
+        symbol.strip().upper()
+        for symbol in os.environ.get("PAPER_READINESS_ACTIVE_SYMBOLS", "").splitlines()
+        if symbol.strip()
+    )
+)
+if not symbols:
+    print(
+        "paper readiness failed: active watchlist produced no symbols for Alpaca asset check",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+settings = Settings.from_env()
+adapter = AlpacaExecutionAdapter.from_settings(settings)
+try:
+    raw_assets = _retry_with_backoff(
+        lambda: adapter._trading.get_all_assets(filter=asset_filter)
+    )
+except Exception as exc:
+    print(
+        f"paper readiness failed: watchlist Alpaca asset lookup failed: {exc}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+assets_by_symbol = {
+    str(_asset_field(asset, "symbol") or "").upper(): asset
+    for asset in raw_assets
+}
+missing_active_asset = [
+    symbol for symbol in symbols if symbol not in assets_by_symbol
+]
+not_tradable = [
+    symbol
+    for symbol in symbols
+    if symbol in assets_by_symbol
+    and not bool(_asset_field(assets_by_symbol[symbol], "tradable"))
+]
+fractionable = [
+    symbol
+    for symbol in symbols
+    if symbol in assets_by_symbol
+    and bool(_asset_field(assets_by_symbol[symbol], "fractionable"))
+]
+non_fractionable = [
+    symbol
+    for symbol in symbols
+    if symbol in assets_by_symbol
+    and not bool(_asset_field(assets_by_symbol[symbol], "fractionable"))
+]
+
+if missing_active_asset or not_tradable:
+    print(
+        "paper readiness failed: watchlist contains Alpaca-ineligible symbols "
+        f"active={len(symbols)} "
+        f"missing_active_asset={len(missing_active_asset)} "
+        f"not_tradable={len(not_tradable)}",
+        file=sys.stderr,
+    )
+    if missing_active_asset:
+        print(
+            "  missing_active_asset: " + ",".join(missing_active_asset[:50]),
+            file=sys.stderr,
+        )
+    if not_tradable:
+        print(
+            "  not_tradable: " + ",".join(not_tradable[:50]),
+            file=sys.stderr,
+        )
+    raise SystemExit(1)
+
+print(
+    "paper readiness Alpaca assets ok: "
+    f"active={len(symbols)} tradable={len(symbols)} "
+    f"fractionable={len(fractionable)} non_fractionable={len(non_fractionable)}"
+)
+if non_fractionable:
+    print(
+        "paper readiness Alpaca non-fractionable symbols: "
+        + ",".join(non_fractionable[:50])
+    )
+PY
+}
+
+if [[ "${PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS,,}" == "true" ]]; then
+  run_watchlist_asset_check
+else
+  echo "paper readiness watchlist Alpaca asset check skipped"
+fi
+
+run_scenario_freshness_check() {
+  if [[ ! -d "$PAPER_READINESS_SCENARIO_DIR" ]]; then
+    echo "paper readiness failed: scenario directory missing: $PAPER_READINESS_SCENARIO_DIR" >&2
+    exit 1
+  fi
+
+  local active_symbols
+  active_symbols="$(load_active_watchlist_symbols)"
 
   PAPER_READINESS_ACTIVE_SYMBOLS="$active_symbols" \
   PAPER_READINESS_EXPECTED_SCENARIO_DATE="$PAPER_READINESS_PREVIOUS_SESSION_DATE" \
