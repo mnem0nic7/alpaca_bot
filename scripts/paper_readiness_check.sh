@@ -10,6 +10,7 @@ PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_ST
 PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"
 PAPER_READINESS_REQUIRE_SCENARIOS="${PAPER_READINESS_REQUIRE_SCENARIOS:-true}"
 PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS="${PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS:-true}"
+PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-}"
 PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"
 PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
 PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"
@@ -30,6 +31,7 @@ source "$ENV_FILE"
 set +a
 
 PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-${LOSING_STREAK_N:-3}}"
+PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"
 
 if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
   echo "paper readiness check skipped for TRADING_MODE=${TRADING_MODE:-unset}"
@@ -50,6 +52,11 @@ fi
 if [[ ! "$PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS" =~ ^[0-9]+$ ]] \
   || [[ "$PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS" -lt 1 ]]; then
   echo "PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS must be a positive integer" >&2
+  exit 1
+fi
+
+if [[ ! "$PAPER_READINESS_PRIOR_PROOF_START_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "PAPER_READINESS_PRIOR_PROOF_START_DATE must be YYYY-MM-DD" >&2
   exit 1
 fi
 
@@ -852,14 +859,25 @@ if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
 fi
 
 if [[ "${PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS,,}" == "true" ]]; then
-  prior_proof_failures="$("${compose[@]}" exec -T postgres psql \
-    -U "$POSTGRES_USER" \
-    -d "$POSTGRES_DB" \
-    -tA -F '|' \
-    -v strategy_version="$STRATEGY_VERSION" \
-    -v previous_session_date="$PAPER_READINESS_PREVIOUS_SESSION_DATE" <<'SQL'
-WITH prior_checks AS (
-  SELECT payload, created_at
+  if [[ "$PAPER_READINESS_PREVIOUS_SESSION_DATE" < "$PAPER_READINESS_PRIOR_PROOF_START_DATE" ]]; then
+    echo \
+      "paper readiness prior proof checks pending: session=$PAPER_READINESS_PREVIOUS_SESSION_DATE proof_start=$PAPER_READINESS_PRIOR_PROOF_START_DATE"
+  else
+    prior_proof_status="$("${compose[@]}" exec -T postgres psql \
+      -U "$POSTGRES_USER" \
+      -d "$POSTGRES_DB" \
+      -tA -F '|' \
+      -v strategy_version="$STRATEGY_VERSION" \
+      -v previous_session_date="$PAPER_READINESS_PREVIOUS_SESSION_DATE" <<'SQL'
+WITH expected(check_name) AS (
+  VALUES ('session_guard'), ('paper_profit_probe')
+),
+latest_checks AS (
+  SELECT DISTINCT ON (payload->>'check_name')
+    payload->>'check_name' AS check_name,
+    payload->>'status' AS status,
+    payload->>'exit_code' AS exit_code,
+    created_at
   FROM audit_events
   WHERE event_type = 'scheduled_check_completed'
     AND created_at >= ((:'previous_session_date')::date::timestamp AT TIME ZONE 'America/New_York')
@@ -867,34 +885,77 @@ WITH prior_checks AS (
     AND payload->>'trading_mode' = 'paper'
     AND payload->>'strategy_version' = :'strategy_version'
     AND payload->>'check_name' IN ('session_guard', 'paper_profit_probe')
-    AND payload->>'status' = 'failed'
+  ORDER BY payload->>'check_name', created_at DESC
+),
+missing AS (
+  SELECT expected.check_name
+  FROM expected
+  LEFT JOIN latest_checks USING (check_name)
+  WHERE latest_checks.check_name IS NULL
+),
+invalid AS (
+  SELECT check_name, status, exit_code, created_at
+  FROM latest_checks
+  WHERE NOT (
+    (check_name = 'session_guard' AND status = 'passed')
+    OR (check_name = 'paper_profit_probe' AND status IN ('passed', 'pending'))
+  )
 )
 SELECT
-  COUNT(*)::int,
+  (SELECT COUNT(*)::int FROM missing),
+  COALESCE((SELECT string_agg(check_name, ',' ORDER BY check_name) FROM missing), ''),
+  (SELECT COUNT(*)::int FROM invalid),
   COALESCE(
-    string_agg(
-      payload->>'check_name'
-        || ':rc=' || COALESCE(payload->>'exit_code', '')
-        || ':at=' || to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
-      ','
-      ORDER BY created_at
+    (
+      SELECT string_agg(
+        check_name
+          || ':status=' || COALESCE(status, '')
+          || ':rc=' || COALESCE(exit_code, '')
+          || ':at=' || to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+        ','
+        ORDER BY check_name
+      )
+      FROM invalid
     ),
     ''
-  )
-FROM prior_checks;
+  ),
+  COALESCE(
+    (
+      SELECT string_agg(
+        check_name || '=' || COALESCE(status, '') || ':rc=' || COALESCE(exit_code, ''),
+        ','
+        ORDER BY check_name
+      )
+      FROM latest_checks
+    ),
+    ''
+  );
 SQL
 )"
-  IFS='|' read -r prior_proof_failure_count prior_proof_failure_names \
-    <<< "$prior_proof_failures"
+    IFS='|' read -r \
+      prior_proof_missing_count \
+      prior_proof_missing_names \
+      prior_proof_invalid_count \
+      prior_proof_invalid_names \
+      prior_proof_status_names \
+      <<< "$prior_proof_status"
 
-  if [[ "${prior_proof_failure_count:-0}" != "0" ]]; then
-    echo \
-      "paper readiness failed: prior proof scheduled checks failed for session $PAPER_READINESS_PREVIOUS_SESSION_DATE [$prior_proof_failure_names]" \
-      >&2
-    exit 1
+    if [[ "${prior_proof_missing_count:-0}" != "0" ]]; then
+      echo \
+        "paper readiness failed: prior proof scheduled checks missing for session $PAPER_READINESS_PREVIOUS_SESSION_DATE [$prior_proof_missing_names]" \
+        >&2
+      exit 1
+    fi
+
+    if [[ "${prior_proof_invalid_count:-0}" != "0" ]]; then
+      echo \
+        "paper readiness failed: prior proof scheduled checks failed for session $PAPER_READINESS_PREVIOUS_SESSION_DATE [$prior_proof_invalid_names]" \
+        >&2
+      exit 1
+    fi
+
+    echo "paper readiness prior proof checks ok: session=$PAPER_READINESS_PREVIOUS_SESSION_DATE [$prior_proof_status_names]"
   fi
-
-  echo "paper readiness prior proof checks ok: session=$PAPER_READINESS_PREVIOUS_SESSION_DATE failed=0"
 else
   echo "paper readiness prior proof check gate skipped"
 fi

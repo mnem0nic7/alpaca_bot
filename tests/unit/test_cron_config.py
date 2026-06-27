@@ -90,6 +90,8 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_SCENARIOS="${PAPER_READINESS_REQUIRE_SCENARIOS:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS="${PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS:-true}"' in script
+    assert 'PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-}"' in script
+    assert 'PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"' in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"' in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-${LOSING_STREAK_N:-3}}"' in script
     assert 'PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"' in script
@@ -98,6 +100,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS="${PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS:-10}"' in script
     assert 'PAPER_READINESS_SCENARIO_DIR="${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}"' in script
     assert "PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS must be a positive integer" in script
+    assert "PAPER_READINESS_PRIOR_PROOF_START_DATE must be YYYY-MM-DD" in script
     assert 'PAPER_READINESS_SESSION_DATE="${PAPER_READINESS_SESSION_DATE:-$(load_readiness_session_date)}"' in script
     assert 'PAPER_READINESS_PREVIOUS_SESSION_DATE="${PAPER_READINESS_PREVIOUS_SESSION_DATE:-$(load_previous_session_date)}"' in script
     assert "load_readiness_session_date" in script
@@ -183,12 +186,19 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness refusing auto-resume after failed proof guard" in script
     assert "paper proof failed" in script
     assert "session guard failed" in script
+    assert "paper readiness prior proof checks pending" in script
+    assert "prior proof scheduled checks missing" in script
     assert "prior proof scheduled checks failed" in script
     assert "paper readiness prior proof checks ok" in script
     assert "PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS" in script
+    assert "PAPER_READINESS_PREVIOUS_SESSION_DATE\" < \"$PAPER_READINESS_PRIOR_PROOF_START_DATE" in script
     assert "scheduled_check_completed" in script
     assert "payload->>'check_name' IN ('session_guard', 'paper_profit_probe')" in script
-    assert "payload->>'status' = 'failed'" in script
+    assert "latest_checks AS" in script
+    assert "missing AS" in script
+    assert "invalid AS" in script
+    assert "check_name = 'session_guard' AND status = 'passed'" in script
+    assert "check_name = 'paper_profit_probe' AND status IN ('passed', 'pending')" in script
     assert "session $PAPER_READINESS_SESSION_DATE has entry-blocking state" in script
     assert "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
     assert "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED" in script
