@@ -42,8 +42,8 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "RISK_PER_TRADE_PCT=0.01" in env_text
     assert "MAX_POSITION_PCT=0.05" in env_text
     assert "MAX_PORTFOLIO_EXPOSURE_PCT=0.30" in env_text
-    assert "ENABLE_VIX_FILTER=true" in env_text
-    assert "ENABLE_SECTOR_FILTER=true" in env_text
+    assert "ENABLE_VIX_FILTER=false" in env_text
+    assert "ENABLE_SECTOR_FILTER=false" in env_text
     assert "ENABLE_VWAP_ENTRY_FILTER=true" in env_text
     assert "ENABLE_REGIME_FILTER=false" in env_text
     assert "ENABLE_OPTIONS_TRADING=false" in env_text
@@ -55,6 +55,6 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert 'RISK_PER_TRADE_PCT="0.01"' in script
     assert 'MAX_OPEN_POSITIONS="2"' in script
     assert 'REPLAY_SLIPPAGE_BPS="2.0"' in script
-    assert 'ENABLE_VIX_FILTER="true"' in script
-    assert 'ENABLE_SECTOR_FILTER="true"' in script
+    assert 'ENABLE_VIX_FILTER="false"' in script
+    assert 'ENABLE_SECTOR_FILTER="false"' in script
     assert 'ENABLE_VWAP_ENTRY_FILTER="true"' in script
