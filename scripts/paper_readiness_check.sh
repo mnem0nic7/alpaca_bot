@@ -76,7 +76,11 @@ require_env_false_or_unset() {
 }
 
 require_env_value STRATEGY_VERSION v1-breakout
+require_env_value DAILY_SMA_PERIOD 20
+require_env_value BREAKOUT_LOOKBACK_BARS 20
+require_env_value RELATIVE_VOLUME_LOOKBACK_BARS 20
 require_env_value RELATIVE_VOLUME_THRESHOLD 2.0
+require_env_value ENTRY_TIMEFRAME_MINUTES 15
 require_env_value MAX_OPEN_POSITIONS 3
 require_env_value REPLAY_SLIPPAGE_BPS 2.0
 require_env_value RISK_PER_TRADE_PCT 0.01
