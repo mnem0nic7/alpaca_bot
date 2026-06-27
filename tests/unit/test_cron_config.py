@@ -60,6 +60,17 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_DATA_SMOKE_SYMBOLS="${PAPER_READINESS_DATA_SMOKE_SYMBOLS:-SPY,AAPL}"' in script
     assert 'PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS="${PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS:-10}"' in script
     assert "PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS must be a positive integer" in script
+    assert 'PAPER_READINESS_SESSION_DATE="${PAPER_READINESS_SESSION_DATE:-$(load_readiness_session_date)}"' in script
+    assert "load_readiness_session_date" in script
+    assert "fallback_readiness_session_date" in script
+    assert "get_market_calendar" in script
+    assert "no upcoming market session found" in script
+    assert "market calendar lookup failed; using weekday fallback" in script
+    assert "-v readiness_session_date=\"$PAPER_READINESS_SESSION_DATE\"" in script
+    assert "session_date = (:'readiness_session_date')::date" in script
+    assert "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
+    assert "<= ((:'readiness_session_date')::date - 1)" in script
+    assert "paper readiness losing streak gate ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
     assert 'status=close_only' in script
     assert 'kill_switch=false' in script
     assert 'open_positions" == "0"' in script
@@ -118,14 +129,13 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness refusing auto-resume after failed proof guard" in script
     assert "paper proof failed" in script
     assert "session guard failed" in script
-    assert "current session has entry-blocking state" in script
-    assert "paper readiness session entry blocks ok: blocked=0" in script
+    assert "session $PAPER_READINESS_SESSION_DATE has entry-blocking state" in script
+    assert "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
     assert "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED" in script
-    assert "CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'" in script
     assert "IN ('_global', '_equity')" in script
     assert "LOSING_STREAK_N must be a positive integer" in script
     assert "paper readiness failed: active strategies at losing-streak gate" in script
-    assert "paper readiness losing streak gate ok: blocked=0" in script
+    assert "paper readiness losing streak gate ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
     assert "PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR" in script
     assert "non_loss_days_newer" in script
     assert "losing_streak >= (:'losing_streak_n')::int" in script

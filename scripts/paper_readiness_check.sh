@@ -299,6 +299,59 @@ else
   echo "paper readiness market data check skipped"
 fi
 
+fallback_readiness_session_date() {
+  local dow
+  dow="$(TZ=America/New_York date +%u)"
+  case "$dow" in
+    6) TZ=America/New_York date -d "2 days" +%F ;;
+    7) TZ=America/New_York date -d "1 day" +%F ;;
+    *) TZ=America/New_York date +%F ;;
+  esac
+}
+
+load_readiness_session_date() {
+  local calendar_date
+  if calendar_date="$("${compose[@]}" run -T --rm \
+    --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+
+settings = Settings.from_env()
+market_timezone = ZoneInfo(settings.market_timezone.key)
+today = datetime.now(market_timezone).date()
+calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+    start=today,
+    end=today + timedelta(days=10),
+)
+for session in calendar:
+    if session.session_date >= today:
+        print(session.session_date.isoformat())
+        break
+else:
+    raise SystemExit("no upcoming market session found")
+PY
+  )" && [[ "$calendar_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "$calendar_date"
+    return
+  fi
+
+  echo \
+    "paper readiness warning: market calendar lookup failed; using weekday fallback" \
+    >&2
+  fallback_readiness_session_date
+}
+
+PAPER_READINESS_SESSION_DATE="${PAPER_READINESS_SESSION_DATE:-$(load_readiness_session_date)}"
+if [[ ! "$PAPER_READINESS_SESSION_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "PAPER_READINESS_SESSION_DATE must use YYYY-MM-DD" >&2
+  exit 1
+fi
+
 watchlist_counts="$("${compose[@]}" exec -T postgres psql \
   -U "$POSTGRES_USER" \
   -d "$POSTGRES_DB" \
@@ -626,7 +679,8 @@ if [[ "${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED,,}" == "true" ]]; then
     -U "$POSTGRES_USER" \
     -d "$POSTGRES_DB" \
     -tA -F '|' \
-    -v strategy_version="$STRATEGY_VERSION" <<'SQL'
+    -v strategy_version="$STRATEGY_VERSION" \
+    -v readiness_session_date="$PAPER_READINESS_SESSION_DATE" <<'SQL'
 WITH active AS (
   SELECT strategy_name
   FROM strategy_flags
@@ -637,7 +691,7 @@ WITH active AS (
 blocked AS (
   SELECT COALESCE(strategy_name, '_global') AS strategy_name
   FROM daily_session_state
-  WHERE session_date = (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York')::date
+  WHERE session_date = (:'readiness_session_date')::date
     AND trading_mode = 'paper'
     AND strategy_version = :'strategy_version'
     AND entries_disabled = TRUE
@@ -655,12 +709,12 @@ SQL
 
   if [[ "${blocked_session_state_count:-0}" != "0" ]]; then
     echo \
-      "paper readiness failed: current session has entry-blocking state for [$blocked_session_state_names]" \
+      "paper readiness failed: session $PAPER_READINESS_SESSION_DATE has entry-blocking state for [$blocked_session_state_names]" \
       >&2
     exit 1
   fi
 
-  echo "paper readiness session entry blocks ok: blocked=0"
+  echo "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0"
 else
   echo "paper readiness session entry block check skipped"
 fi
@@ -671,6 +725,7 @@ if [[ "${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR,,}" == "true" ]]; then
     -d "$POSTGRES_DB" \
     -tA -F '|' \
     -v strategy_version="$STRATEGY_VERSION" \
+    -v readiness_session_date="$PAPER_READINESS_SESSION_DATE" \
     -v losing_streak_n="$PAPER_READINESS_LOSING_STREAK_N" <<'SQL'
 WITH active AS (
   SELECT strategy_name
@@ -709,7 +764,7 @@ trade_pnl AS (
     AND x.fill_price IS NOT NULL
     AND x.status = 'filled'
     AND DATE(x.updated_at AT TIME ZONE 'America/New_York')
-      <= ((CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York')::date - 1)
+      <= ((:'readiness_session_date')::date - 1)
 ),
 daily_pnl AS (
   SELECT strategy_name, exit_date, SUM(pnl) AS day_pnl
@@ -755,12 +810,12 @@ SQL
 
   if [[ "${losing_streak_block_count:-0}" != "0" ]]; then
     echo \
-      "paper readiness failed: active strategies at losing-streak gate [$losing_streak_block_names] threshold=$PAPER_READINESS_LOSING_STREAK_N" \
+      "paper readiness failed: active strategies at losing-streak gate for session $PAPER_READINESS_SESSION_DATE [$losing_streak_block_names] threshold=$PAPER_READINESS_LOSING_STREAK_N" \
       >&2
     exit 1
   fi
 
-  echo "paper readiness losing streak gate ok: blocked=0 threshold=$PAPER_READINESS_LOSING_STREAK_N"
+  echo "paper readiness losing streak gate ok: session=$PAPER_READINESS_SESSION_DATE blocked=0 threshold=$PAPER_READINESS_LOSING_STREAK_N"
 else
   echo "paper readiness losing streak gate check skipped"
 fi
