@@ -41,6 +41,10 @@ fi
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
+emit_scheduled_context() {
+  echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) strategy=$PAPER_ACTIVITY_STRATEGY"
+}
+
 close_only_on_activity_failure() {
   local rc="$?"
   trap - EXIT
@@ -48,6 +52,8 @@ close_only_on_activity_failure() {
   if [[ "$rc" -eq 0 ]]; then
     exit 0
   fi
+
+  emit_scheduled_context
 
   if [[ "${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE,,}" != "true" ]]; then
     exit "$rc"
@@ -91,7 +97,7 @@ esac
 PAPER_READINESS_AUTO_RESUME=false PAPER_READINESS_REQUIRE_FLAT=false \
   ./scripts/paper_readiness_check.sh "$ENV_FILE"
 
-echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) strategy=$PAPER_ACTIVITY_STRATEGY"
+emit_scheduled_context
 
 load_market_clock_status() {
   "${compose[@]}" run -T --rm \

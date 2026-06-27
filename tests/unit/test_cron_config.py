@@ -344,6 +344,13 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "strategy_entries_disabled_reasons" in script
     assert "$PAPER_ACTIVITY_STRATEGY entries blocked" in script
     assert "PAPER_ACTIVITY_STRATEGY contains unsupported characters" in script
+    assert "emit_scheduled_context()" in script
+    assert (
+        'echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) '
+        'strategy=$PAPER_ACTIVITY_STRATEGY"'
+    ) in script
+    assert "emit_scheduled_context\n\n  if [[ \"${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE,,}\"" in script
+    assert "emit_scheduled_context\n\nload_market_clock_status" in script
     assert "load_market_clock_status" in script
     assert "AlpacaExecutionAdapter.from_settings" in script
     assert "get_market_clock" in script
