@@ -5,6 +5,7 @@ ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 PAPER_ACTIVITY_WINDOW_MINUTES="${PAPER_ACTIVITY_WINDOW_MINUTES:-90}"
 PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"
 PAPER_ACTIVITY_REQUIRE_DECISION_LOG="${PAPER_ACTIVITY_REQUIRE_DECISION_LOG:-true}"
+PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE="${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE:-true}"
 
 cd "$(dirname "$0")/.."
 
@@ -17,6 +18,56 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+
+PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
+
+if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
+  echo "paper activity check skipped for TRADING_MODE=${TRADING_MODE:-unset}"
+  exit 0
+fi
+
+case "${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE,,}" in
+  true|false) ;;
+  *)
+    echo "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE must be true or false" >&2
+    exit 1
+    ;;
+esac
+
+if [[ ! "$PAPER_ACTIVITY_STRATEGY" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+  echo "PAPER_ACTIVITY_STRATEGY contains unsupported characters" >&2
+  exit 1
+fi
+
+compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
+
+close_only_on_activity_failure() {
+  local rc="$?"
+  trap - EXIT
+
+  if [[ "$rc" -eq 0 ]]; then
+    exit 0
+  fi
+
+  if [[ "${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE,,}" != "true" ]]; then
+    exit "$rc"
+  fi
+
+  local session_date
+  session_date="$(TZ=America/New_York date +%F)"
+  local reason="paper activity failed for session ${session_date}: post-open checks failed for strategy ${PAPER_ACTIVITY_STRATEGY:-unknown}"
+  if ! "${compose[@]}" run -T --rm admin \
+    close-only \
+    --mode paper \
+    --strategy-version "${STRATEGY_VERSION:-v1-breakout}" \
+    --reason "$reason"; then
+    echo "paper activity warning: failed to apply close-only after activity failure" >&2
+  fi
+
+  exit "$rc"
+}
+
+trap close_only_on_activity_failure EXIT
 
 if [[ ! "$PAPER_ACTIVITY_WINDOW_MINUTES" =~ ^[0-9]+$ ]] \
   || [[ "$PAPER_ACTIVITY_WINDOW_MINUTES" -lt 1 ]]; then
@@ -37,24 +88,10 @@ case "${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,}" in
     ;;
 esac
 
-PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
-
-if [[ ! "$PAPER_ACTIVITY_STRATEGY" =~ ^[A-Za-z0-9_:-]+$ ]]; then
-  echo "PAPER_ACTIVITY_STRATEGY contains unsupported characters" >&2
-  exit 1
-fi
-
-if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
-  echo "paper activity check skipped for TRADING_MODE=${TRADING_MODE:-unset}"
-  exit 0
-fi
-
 PAPER_READINESS_AUTO_RESUME=false PAPER_READINESS_REQUIRE_FLAT=false \
   ./scripts/paper_readiness_check.sh "$ENV_FILE"
 
 echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) strategy=$PAPER_ACTIVITY_STRATEGY"
-
-compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
 load_market_clock_status() {
   "${compose[@]}" run -T --rm \

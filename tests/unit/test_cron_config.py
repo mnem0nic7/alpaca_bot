@@ -270,8 +270,15 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "PAPER_ACTIVITY_WINDOW_MINUTES" in script
     assert 'PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"' in script
     assert 'PAPER_ACTIVITY_REQUIRE_DECISION_LOG="${PAPER_ACTIVITY_REQUIRE_DECISION_LOG:-true}"' in script
+    assert 'PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE="${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE:-true}"' in script
     assert "PAPER_ACTIVITY_REQUIRE_DECISION_LOG must be true or false" in script
+    assert "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE must be true or false" in script
     assert 'PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
+    assert "close_only_on_activity_failure" in script
+    assert "trap close_only_on_activity_failure EXIT" in script
+    assert "paper activity failed for session" in script
+    assert "post-open checks failed for strategy" in script
+    assert "paper activity warning: failed to apply close-only after activity failure" in script
     assert "PAPER_READINESS_AUTO_RESUME=false" in script
     assert "PAPER_READINESS_REQUIRE_FLAT=false" in script
     assert "scheduled check context: session_date=$(TZ=America/New_York date +%F) strategy=$PAPER_ACTIVITY_STRATEGY" in script
