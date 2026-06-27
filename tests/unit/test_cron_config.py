@@ -683,6 +683,11 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "paper activity warning: failed to apply close-only after activity failure" in script
     assert "PAPER_READINESS_AUTO_RESUME=false" in script
     assert "PAPER_READINESS_REQUIRE_FLAT=false" in script
+    assert "./scripts/run_locked_check_with_audit.sh" in script
+    assert "paper_readiness" in script
+    assert "/var/lock/alpaca-bot-paper-readiness.lock" in script
+    assert "./scripts/paper_readiness_if_needed.sh" in script
+    assert "./scripts/paper_readiness_check.sh" not in script
     assert "scheduled check context: session_date=$(TZ=America/New_York date +%F) strategy=$PAPER_ACTIVITY_STRATEGY" in script
     assert "decision_record_count" in script
     assert "decision_log" in script

@@ -95,7 +95,12 @@ case "${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,}" in
 esac
 
 PAPER_READINESS_AUTO_RESUME=false PAPER_READINESS_REQUIRE_FLAT=false \
-  ./scripts/paper_readiness_check.sh "$ENV_FILE"
+  ./scripts/run_locked_check_with_audit.sh \
+    paper_readiness \
+    /var/lock/alpaca-bot-paper-readiness.lock \
+    "$ENV_FILE" \
+    ./scripts/paper_readiness_if_needed.sh \
+    "$ENV_FILE"
 
 emit_scheduled_context
 
