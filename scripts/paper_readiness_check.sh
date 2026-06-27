@@ -5,6 +5,7 @@ ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"
 PAPER_READINESS_AUTO_RESET_WEIGHTS="${PAPER_READINESS_AUTO_RESET_WEIGHTS:-true}"
 PAPER_READINESS_REQUIRE_FLAT="${PAPER_READINESS_REQUIRE_FLAT:-true}"
+PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED="${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED:-true}"
 PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
 PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"
 
@@ -325,6 +326,50 @@ if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
       echo "paper readiness found close_only with $active_orders active orders; refusing auto-resume" >&2
     fi
   fi
+fi
+
+if [[ "${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED,,}" == "true" ]]; then
+  session_entry_blocks="$("${compose[@]}" exec -T postgres psql \
+    -U "$POSTGRES_USER" \
+    -d "$POSTGRES_DB" \
+    -tA -F '|' \
+    -v strategy_version="$STRATEGY_VERSION" <<'SQL'
+WITH active AS (
+  SELECT strategy_name
+  FROM strategy_flags
+  WHERE trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+    AND enabled = TRUE
+),
+blocked AS (
+  SELECT COALESCE(strategy_name, '_global') AS strategy_name
+  FROM daily_session_state
+  WHERE session_date = (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York')::date
+    AND trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+    AND entries_disabled = TRUE
+    AND (
+      COALESCE(strategy_name, '_global') = '_global'
+      OR strategy_name IN (SELECT strategy_name FROM active)
+    )
+)
+SELECT COUNT(*)::int, COALESCE(string_agg(strategy_name, ',' ORDER BY strategy_name), '')
+FROM blocked;
+SQL
+)"
+  IFS='|' read -r blocked_session_state_count blocked_session_state_names \
+    <<< "$session_entry_blocks"
+
+  if [[ "${blocked_session_state_count:-0}" != "0" ]]; then
+    echo \
+      "paper readiness failed: current session has entry blocks for [$blocked_session_state_names]" \
+      >&2
+    exit 1
+  fi
+
+  echo "paper readiness session entry blocks ok: blocked=0"
+else
+  echo "paper readiness session entry block check skipped"
 fi
 
 if [[ "${PAPER_READINESS_REQUIRE_FLAT,,}" == "true" ]]; then

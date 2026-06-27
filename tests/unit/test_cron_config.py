@@ -42,6 +42,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"' in script
     assert 'PAPER_READINESS_AUTO_RESET_WEIGHTS="${PAPER_READINESS_AUTO_RESET_WEIGHTS:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_FLAT="${PAPER_READINESS_REQUIRE_FLAT:-true}"' in script
+    assert 'PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED="${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED:-true}"' in script
     assert 'PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"' in script
     assert 'PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"' in script
     assert 'status=close_only' in script
@@ -77,6 +78,10 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness refusing auto-resume after failed proof guard" in script
     assert "paper proof failed" in script
     assert "session guard failed" in script
+    assert "current session has entry blocks" in script
+    assert "paper readiness session entry blocks ok: blocked=0" in script
+    assert "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED" in script
+    assert "CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'" in script
     assert "pre-open paper readiness auto-resume" in script
     assert "--expect-trading-status enabled" in script
     assert "--expect-only-enabled-strategy bull_flag" in script
