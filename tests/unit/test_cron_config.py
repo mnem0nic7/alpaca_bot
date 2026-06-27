@@ -42,7 +42,9 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "flock -n /var/lock/alpaca-bot-profit-probe.lock" not in cron_text
     assert "alpaca-bot-premarket" not in cron_text
     assert "scripts/paper_readiness_check.sh" in cron_text
-    assert cron_text.count("scripts/paper_readiness_check.sh") == 3
+    assert cron_text.count("scripts/paper_readiness_check.sh") == 2
+    assert "scripts/paper_readiness_if_needed.sh" in cron_text
+    assert cron_text.count("scripts/paper_readiness_if_needed.sh") == 1
     assert "run_locked_check_with_audit.sh paper_readiness" in cron_text
     assert "RUN_IF_NY_TIME_GRACE_MINUTES=1" in cron_text
     assert "/var/log/alpaca-bot-paper-readiness.log" in cron_text
@@ -81,10 +83,45 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "run_check_with_audit.sh" in cron_health
     assert "scheduled_check_lock_skipped.sh" in cron_health
     assert "paper_readiness_check.sh" in cron_health
+    assert "paper_readiness_if_needed.sh" in cron_health
     assert "paper_activity_check.sh" in cron_health
     assert "session_guard.sh" in cron_health
     assert "paper_profit_probe.sh" in cron_health
     assert "cron health ok" in cron_health
+
+
+def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text("#!/usr/bin/env bash\nprintf '2026-06-29|passed\\n'\n")
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_readiness_if_needed.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 reason=already_passed"
+    ) in result.stdout
+    assert "paper readiness already passed for session 2026-06-29" in result.stdout
+    assert "paper readiness check skipped" not in result.stdout
 
 
 def test_run_if_ny_time_allows_short_cron_delay(tmp_path: Path) -> None:

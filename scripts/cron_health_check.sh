@@ -69,6 +69,7 @@ for script in \
   run_check_with_audit.sh \
   scheduled_check_lock_skipped.sh \
   paper_readiness_check.sh \
+  paper_readiness_if_needed.sh \
   paper_activity_check.sh \
   session_guard.sh \
   paper_profit_probe.sh
