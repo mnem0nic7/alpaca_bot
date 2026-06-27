@@ -2182,15 +2182,13 @@ class RuntimeSupervisor:
             payload = getattr(event, "payload", {}) or {}
             if payload.get("check_name") != "paper_readiness":
                 continue
-            if payload.get("status") != "passed":
-                continue
             if payload.get("session_date") != expected_session:
                 continue
             if payload.get("trading_mode", expected_mode) != expected_mode:
                 continue
             if payload.get("strategy_version", expected_version) != expected_version:
                 continue
-            return True
+            return payload.get("status") == "passed"
         return False
 
     def _load_trading_status(self) -> TradingStatusValue | None:
