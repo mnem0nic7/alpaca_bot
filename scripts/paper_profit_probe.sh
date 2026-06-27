@@ -5,6 +5,7 @@ ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 PROFIT_PROBE_STRATEGY="${PROFIT_PROBE_STRATEGY:-bull_flag}"
 PROFIT_PROBE_MIN_TRADES="${PROFIT_PROBE_MIN_TRADES:-10}"
 PROFIT_PROBE_MIN_PNL="${PROFIT_PROBE_MIN_PNL:-0.01}"
+PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-26}"
 
 default_session_date() {
   local dow
@@ -27,7 +28,8 @@ set +a
 
 docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
   --entrypoint alpaca-bot-session-eval admin \
-  --date "$PROFIT_PROBE_DATE" \
+  --start-date "$PROFIT_PROBE_START_DATE" \
+  --end-date "$PROFIT_PROBE_DATE" \
   --mode "${TRADING_MODE:-paper}" \
   --strategy-version "$STRATEGY_VERSION" \
   --strategy "$PROFIT_PROBE_STRATEGY" \

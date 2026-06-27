@@ -72,5 +72,8 @@ def test_post_close_checks_fail_on_open_positions() -> None:
 
     assert "--fail-on-open-positions" in session_guard
     assert "--fail-on-open-positions" in profit_probe
+    assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-26}"' in profit_probe
+    assert "--start-date" in profit_probe
+    assert "--end-date" in profit_probe
     assert '"$rc" -eq 44' in session_guard
     assert "open positions remain after close" in session_guard

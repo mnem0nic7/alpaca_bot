@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -226,8 +226,14 @@ def _patch_cli_deps(
 
     state = SimpleNamespace(equity_baseline=equity_baseline) if equity_baseline is not None else None
     fake_session_store = SimpleNamespace(load=lambda **kwargs: state)
+
+    def list_closed_trades(**kwargs):
+        if callable(rows):
+            return rows(**kwargs)
+        return rows
+
     fake_order_store = SimpleNamespace(
-        list_closed_trades=lambda **kwargs: rows,
+        list_closed_trades=list_closed_trades,
         list_failed_entries=lambda **kwargs: [],
     )
     fake_audit_store = SimpleNamespace(list_by_event_types=lambda **kwargs: [])
@@ -343,6 +349,47 @@ def test_session_eval_cli_produces_report(monkeypatch, capsys):
     assert "Session Evaluation" in out
     assert "AAPL" in out
     assert "stop" in out
+
+
+def test_session_eval_cli_aggregates_date_range(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    dates_requested: list[date] = []
+    rows_by_date = {
+        date(2026, 6, 26): [_make_trade_row(
+            symbol="AAPL",
+            strategy_name="bull_flag",
+            exit_fill=101.0,
+        )],
+        date(2026, 6, 27): [_make_trade_row(
+            symbol="MSFT",
+            strategy_name="bull_flag",
+            exit_fill=102.0,
+        )],
+    }
+
+    def rows_for_date(**kwargs):
+        session_date = kwargs["session_date"]
+        dates_requested.append(session_date)
+        return rows_by_date.get(session_date, [])
+
+    _patch_cli_deps(monkeypatch, rows=rows_for_date)
+
+    rc = cli_module.main([
+        "--start-date", "2026-06-26",
+        "--end-date", "2026-06-27",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+        "--require-min-trades", "2",
+        "--fail-below-pnl", "0",
+    ])
+
+    assert rc == 0
+    assert dates_requested == [date(2026, 6, 26), date(2026, 6, 27)]
+    out = capsys.readouterr().out
+    assert "2026-06-26..2026-06-27" in out
+    assert "Trades:   2" in out
 
 
 def test_session_eval_cli_guard_fails_when_pnl_below_threshold(monkeypatch, capsys):

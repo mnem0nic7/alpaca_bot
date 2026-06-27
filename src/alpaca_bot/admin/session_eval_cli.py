@@ -4,7 +4,7 @@ import argparse
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Sequence
+from typing import Iterator, Sequence
 from zoneinfo import ZoneInfo
 
 from alpaca_bot.config import Settings, TradingMode
@@ -30,6 +30,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="Evaluate a live trading session from Postgres data",
     )
     parser.add_argument("--date", metavar="YYYY-MM-DD", help="Session date (default: today)")
+    parser.add_argument(
+        "--start-date",
+        metavar="YYYY-MM-DD",
+        help="First session date for a cumulative evaluation window.",
+    )
+    parser.add_argument(
+        "--end-date",
+        metavar="YYYY-MM-DD",
+        help="Last session date for a cumulative evaluation window.",
+    )
     parser.add_argument("--mode", default="paper", choices=["paper", "live"],
                         help="Trading mode (default: paper)")
     parser.add_argument("--strategy-version", metavar="VERSION",
@@ -62,7 +72,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
 
-    eval_date: date = date.fromisoformat(args.date) if args.date else date.today()
+    try:
+        eval_start_date, eval_end_date = _resolve_eval_window(args)
+    except ValueError as exc:
+        parser.error(str(exc))
+    eval_label = _date_label(eval_start_date, eval_end_date)
 
     settings = Settings.from_env()
     strategy_version = args.strategy_version or settings.strategy_version
@@ -75,28 +89,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         session_store = DailySessionStateStore(conn)
 
         state = session_store.load(
-            session_date=eval_date,
+            session_date=eval_start_date,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
             strategy_name=EQUITY_SESSION_STATE_STRATEGY_NAME,
         )
         if state is None or state.equity_baseline is None:
-            print(f"Warning: no equity baseline found for {eval_date}; using $100,000 as starting equity.")
+            print(f"Warning: no equity baseline found for {eval_start_date}; using $100,000 as starting equity.")
             starting_equity = 100_000.0
         else:
             starting_equity = state.equity_baseline
 
-        raw_trades = order_store.list_closed_trades(
-            trading_mode=trading_mode,
-            strategy_version=strategy_version,
-            session_date=eval_date,
-            strategy_name=args.strategy,
-        )
+        raw_trades = []
+        for session_date in _date_range(eval_start_date, eval_end_date):
+            raw_trades.extend(
+                order_store.list_closed_trades(
+                    trading_mode=trading_mode,
+                    strategy_version=strategy_version,
+                    session_date=session_date,
+                    strategy_name=args.strategy,
+                )
+            )
         diagnostics = _build_session_diagnostics(
             conn,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
-            eval_date=eval_date,
+            eval_date=eval_end_date,
             market_timezone=market_timezone,
         )
     finally:
@@ -106,7 +124,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if not raw_trades:
         strategy_label = f" (strategy={args.strategy})" if args.strategy else ""
-        print(f"No closed trades for {eval_date}{strategy_label}.")
+        print(f"No closed trades for {eval_label}{strategy_label}.")
         _print_session_diagnostics(diagnostics)
         if args.fail_on_open_positions and diagnostics.open_positions:
             _print_open_position_guard_failure(diagnostics)
@@ -125,7 +143,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         starting_equity=starting_equity,
         strategy_name=args.strategy or "all",
     )
-    _print_session_report(report, eval_date=eval_date, trading_mode=args.mode,
+    _print_session_report(report, eval_label=eval_label, trading_mode=args.mode,
                           strategy_version=strategy_version)
     _print_session_diagnostics(diagnostics)
     if args.fail_on_open_positions and diagnostics.open_positions:
@@ -146,6 +164,45 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 42
     return 0
+
+
+def _resolve_eval_window(args: argparse.Namespace) -> tuple[date, date]:
+    if args.end_date and not args.start_date:
+        raise ValueError("--end-date requires --start-date")
+    if not args.start_date:
+        eval_date = _parse_iso_date(args.date, "--date") if args.date else date.today()
+        return eval_date, eval_date
+
+    start_date = _parse_iso_date(args.start_date, "--start-date")
+    if args.end_date:
+        end_date = _parse_iso_date(args.end_date, "--end-date")
+    elif args.date:
+        end_date = _parse_iso_date(args.date, "--date")
+    else:
+        end_date = date.today()
+    if end_date < start_date:
+        raise ValueError("--end-date must be on or after --start-date")
+    return start_date, end_date
+
+
+def _parse_iso_date(value: str, option_name: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{option_name} must use YYYY-MM-DD") from exc
+
+
+def _date_range(start_date: date, end_date: date) -> Iterator[date]:
+    current = start_date
+    while current <= end_date:
+        yield current
+        current += timedelta(days=1)
+
+
+def _date_label(start_date: date, end_date: date) -> str:
+    if start_date == end_date:
+        return start_date.isoformat()
+    return f"{start_date.isoformat()}..{end_date.isoformat()}"
 
 
 def _print_open_position_guard_failure(diagnostics: SessionDiagnostics) -> None:
@@ -348,11 +405,11 @@ def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
 def _print_session_report(
     report: BacktestReport,
     *,
-    eval_date: date,
+    eval_label: str,
     trading_mode: str,
     strategy_version: str,
 ) -> None:
-    header = f"Session Evaluation — {eval_date}  [{trading_mode} / {strategy_version}]"
+    header = f"Session Evaluation — {eval_label}  [{trading_mode} / {strategy_version}]"
     bar = "═" * len(header)
     print(f"\n{header}")
     print(bar)
