@@ -2160,7 +2160,7 @@ class RuntimeSupervisor:
         try:
             with store_lock if store_lock is not None else contextlib.nullcontext():
                 events = loader(
-                    event_types=["scheduled_check_completed"],
+                    event_types=["scheduled_check_completed", "supervisor_started"],
                     limit=100,
                     trading_mode=self.settings.trading_mode,
                     strategy_version=self.settings.strategy_version,
@@ -2174,7 +2174,22 @@ class RuntimeSupervisor:
         expected_session = session_date.isoformat()
         expected_mode = self.settings.trading_mode.value
         expected_version = self.settings.strategy_version
+        latest_supervisor_started_at = max(
+            (
+                event.created_at
+                for event in events
+                if getattr(event, "event_type", "") == "supervisor_started"
+            ),
+            default=None,
+        )
         for event in events:
+            if getattr(event, "event_type", "") != "scheduled_check_completed":
+                continue
+            if (
+                latest_supervisor_started_at is not None
+                and event.created_at < latest_supervisor_started_at
+            ):
+                continue
             payload = getattr(event, "payload", {}) or {}
             if payload.get("check_name") != "paper_readiness":
                 continue
