@@ -117,9 +117,7 @@ broker_flat_failed=false
 if ! BROKER_FLAT_CONTEXT="${PROFIT_PROBE_STRATEGY} paper proof ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}" \
   ./scripts/broker_flat_check.sh "$ENV_FILE"; then
   broker_flat_failed=true
-  if [[ "$rc" -eq 0 || "$rc" -eq 43 ]]; then
-    rc=44
-  fi
+  rc=44
 fi
 
 if [[ "$rc" -eq 42 || "$rc" -eq 43 ]]; then

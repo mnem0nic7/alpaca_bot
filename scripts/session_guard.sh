@@ -28,9 +28,7 @@ broker_flat_failed=false
 if ! BROKER_FLAT_CONTEXT="${SESSION_GUARD_STRATEGY} session guard ${SESSION_GUARD_DATE}" \
   ./scripts/broker_flat_check.sh "$ENV_FILE"; then
   broker_flat_failed=true
-  if [[ "$rc" -eq 0 ]]; then
-    rc=44
-  fi
+  rc=44
 fi
 
 if [[ "$rc" -eq 42 || "$rc" -eq 44 ]]; then
