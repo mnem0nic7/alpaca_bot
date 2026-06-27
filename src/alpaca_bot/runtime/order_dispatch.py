@@ -578,7 +578,7 @@ def _cancel_partial_fill_entry(
             strategy_version=settings.strategy_version,
             statuses=["partially_filled"],
         )
-    partial_entries = [
+    partial_entry_candidates = [
         o for o in all_partial
         if (
             o.intent_type == "entry"
@@ -586,6 +586,38 @@ def _cancel_partial_fill_entry(
             and o.strategy_name == order.strategy_name
         )
     ]
+    paired_entry_id = _entry_client_order_id_for_stop(order.client_order_id)
+    if paired_entry_id is not None:
+        partial_entries = [
+            entry
+            for entry in partial_entry_candidates
+            if entry.client_order_id == paired_entry_id
+        ]
+        if not partial_entries and partial_entry_candidates:
+            with lock_ctx:
+                try:
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="partial_fill_pair_missing",
+                            symbol=order.symbol,
+                            payload={
+                                "stop_client_order_id": order.client_order_id,
+                                "expected_entry_client_order_id": paired_entry_id,
+                                "candidate_entry_client_order_ids": [
+                                    entry.client_order_id
+                                    for entry in partial_entry_candidates
+                                ],
+                                "context": "stop_dispatch",
+                            },
+                            created_at=now,
+                        ),
+                        commit=True,
+                    )
+                except Exception:
+                    pass
+            return PartialFillCancelResult(safe_to_proceed=False)
+    else:
+        partial_entries = partial_entry_candidates
     if not partial_entries:
         return PartialFillCancelResult(safe_to_proceed=True)
 
@@ -725,6 +757,14 @@ def _cancel_partial_fill_entry(
         safe_to_proceed=True,
         filled_quantity=filled_quantity,
     )
+
+
+def _entry_client_order_id_for_stop(stop_client_order_id: str) -> str | None:
+    if ":stop:" in stop_client_order_id:
+        return stop_client_order_id.replace(":stop:", ":entry:", 1)
+    if stop_client_order_id.endswith(":stop"):
+        return stop_client_order_id[: -len(":stop")]
+    return None
 
 
 def _resolve_now(now: datetime | Callable[[], datetime] | None) -> datetime:

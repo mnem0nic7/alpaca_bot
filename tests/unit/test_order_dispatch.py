@@ -1309,6 +1309,142 @@ def test_dispatch_stop_cancels_partial_fill_entry_first() -> None:
     assert "order_submitted" in event_types
 
 
+def test_dispatch_stop_only_cancels_its_paired_partial_entry() -> None:
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 4, 15, 30, tzinfo=timezone.utc)
+
+    paired_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:SONO:entry:1",
+        symbol="SONO",
+        side="buy",
+        intent_type="entry",
+        status="partially_filled",
+        quantity=187,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=14.88,
+        limit_price=14.90,
+        broker_order_id="broker-entry-sono-1",
+        signal_timestamp=now,
+        fill_price=14.89,
+        filled_quantity=97,
+    )
+    unrelated_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:SONO:entry:2",
+        symbol="SONO",
+        side="buy",
+        intent_type="entry",
+        status="partially_filled",
+        quantity=50,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=14.92,
+        limit_price=14.94,
+        broker_order_id="broker-entry-sono-2",
+        signal_timestamp=now,
+        fill_price=14.93,
+        filled_quantity=40,
+    )
+    stop_order = OrderRecord(
+        client_order_id="paper:v1-breakout:SONO:stop:1",
+        symbol="SONO",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=187,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=14.00,
+        signal_timestamp=now,
+    )
+    order_store = RecordingOrderStore(
+        [stop_order],
+        extra_orders=[paired_entry, unrelated_entry],
+    )
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    assert broker.cancel_calls == ["broker-entry-sono-1"]
+    assert broker.stop_calls[0]["quantity"] == 97
+    assert report.submitted_count == 1
+    canceled_entries = [
+        o.client_order_id
+        for o in order_store.saved
+        if o.intent_type == "entry" and o.status == "canceled"
+    ]
+    assert canceled_entries == [paired_entry.client_order_id]
+
+
+def test_dispatch_stop_skips_when_partial_fill_pair_is_missing() -> None:
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 4, 15, 30, tzinfo=timezone.utc)
+
+    unrelated_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:SONO:entry:2",
+        symbol="SONO",
+        side="buy",
+        intent_type="entry",
+        status="partially_filled",
+        quantity=50,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=14.92,
+        limit_price=14.94,
+        broker_order_id="broker-entry-sono-2",
+        signal_timestamp=now,
+        fill_price=14.93,
+        filled_quantity=40,
+    )
+    stop_order = OrderRecord(
+        client_order_id="paper:v1-breakout:SONO:stop:1",
+        symbol="SONO",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=187,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=14.00,
+        signal_timestamp=now,
+    )
+    order_store = RecordingOrderStore([stop_order], extra_orders=[unrelated_entry])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    assert broker.cancel_calls == []
+    assert broker.stop_calls == []
+    assert report.submitted_count == 0
+    assert [o.status for o in order_store.saved] == []
+    event_types = [e.event_type for e in audit_store.appended]
+    assert "partial_fill_pair_missing" in event_types
+
+
 def test_dispatch_stop_skips_when_partial_fill_cancel_fails() -> None:
     """When cancel_order raises an unrecognized error, the stop is skipped (not submitted)
     and remains pending_submit for next cycle retry."""
