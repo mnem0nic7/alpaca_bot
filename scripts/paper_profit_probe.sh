@@ -38,7 +38,7 @@ docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
   --min-trades-for-gate "$PROFIT_PROBE_MIN_TRADES"
 rc=$?
 
-if [[ "$rc" -eq 43 ]]; then
+if [[ "$rc" -eq 42 || "$rc" -eq 43 ]]; then
   if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     --entrypoint alpaca-bot-funnel-report admin \
     --start "$PROFIT_PROBE_START_DATE" \

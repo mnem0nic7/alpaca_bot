@@ -447,6 +447,7 @@ def test_session_eval_cli_aggregates_date_range(monkeypatch, capsys):
     import alpaca_bot.admin.session_eval_cli as cli_module
 
     dates_requested: list[date] = []
+    diagnostic_windows: list[tuple[datetime, datetime]] = []
     rows_by_date = {
         date(2026, 6, 26): [_make_trade_row(
             symbol="AAPL",
@@ -466,6 +467,13 @@ def test_session_eval_cli_aggregates_date_range(monkeypatch, capsys):
         return rows_by_date.get(session_date, [])
 
     _patch_cli_deps(monkeypatch, rows=rows_for_date)
+    monkeypatch.setattr(
+        cli_module,
+        "_load_entries_disabled_cycle_stats",
+        lambda _conn, *, session_start, session_end: (
+            diagnostic_windows.append((session_start, session_end)) or (0, 0, {})
+        ),
+    )
 
     rc = cli_module.main([
         "--start-date", "2026-06-26",
@@ -479,6 +487,10 @@ def test_session_eval_cli_aggregates_date_range(monkeypatch, capsys):
 
     assert rc == 0
     assert dates_requested == [date(2026, 6, 26), date(2026, 6, 27)]
+    assert diagnostic_windows == [(
+        datetime(2026, 6, 26, 4, 0, tzinfo=timezone.utc),
+        datetime(2026, 6, 28, 4, 0, tzinfo=timezone.utc),
+    )]
     out = capsys.readouterr().out
     assert "2026-06-26..2026-06-27" in out
     assert "Trades:   2" in out

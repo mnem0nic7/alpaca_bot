@@ -117,7 +117,7 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert '"$rc" -eq 42 || "$rc" -eq 44' in profit_probe
     assert "paper proof failed" in profit_probe
     assert "close-only" in profit_probe
-    assert '"$rc" -eq 43' in profit_probe
+    assert '"$rc" -eq 42 || "$rc" -eq 43' in profit_probe
     assert "alpaca-bot-funnel-report" in profit_probe
     assert '--strategy "$PROFIT_PROBE_STRATEGY"' in profit_probe
     assert "paper profit probe warning: funnel diagnostic failed" in profit_probe

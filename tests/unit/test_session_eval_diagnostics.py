@@ -196,7 +196,8 @@ def test_build_session_diagnostics_no_issues(monkeypatch):
         object(),  # conn — not used because stores are patched
         trading_mode=TradingMode.PAPER,
         strategy_version="v1",
-        eval_date=date(2026, 5, 11),
+        eval_start_date=date(2026, 5, 11),
+        eval_end_date=date(2026, 5, 11),
         market_timezone="America/New_York",
     )
     assert not diag.has_issues
@@ -239,7 +240,8 @@ def test_build_session_diagnostics_cycle_errors(monkeypatch):
         object(),
         trading_mode=TradingMode.PAPER,
         strategy_version="v1",
-        eval_date=date(2026, 5, 11),
+        eval_start_date=date(2026, 5, 11),
+        eval_end_date=date(2026, 5, 11),
         market_timezone="America/New_York",
     )
     assert diag.has_issues
@@ -275,7 +277,8 @@ def test_build_session_diagnostics_open_positions(monkeypatch):
         object(),
         trading_mode=TradingMode.PAPER,
         strategy_version="v1",
-        eval_date=date(2026, 5, 11),
+        eval_start_date=date(2026, 5, 11),
+        eval_end_date=date(2026, 5, 11),
         market_timezone="America/New_York",
     )
     assert diag.has_issues

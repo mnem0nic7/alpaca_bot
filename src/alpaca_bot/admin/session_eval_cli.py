@@ -114,7 +114,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             conn,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
-            eval_date=eval_end_date,
+            eval_start_date=eval_start_date,
+            eval_end_date=eval_end_date,
             market_timezone=market_timezone,
             strategy_name=args.strategy,
         )
@@ -271,17 +272,28 @@ def _build_session_diagnostics(
     *,
     trading_mode: TradingMode,
     strategy_version: str,
-    eval_date: date,
+    eval_start_date: date,
+    eval_end_date: date,
     market_timezone: str,
     strategy_name: str | None = None,
 ) -> SessionDiagnostics:
     tz = ZoneInfo(market_timezone)
-    session_start = datetime.combine(eval_date, time(0, 0), tzinfo=tz).astimezone(timezone.utc)
-    session_end = datetime.combine(eval_date + timedelta(days=1), time(0, 0), tzinfo=tz).astimezone(timezone.utc)
+    session_start = datetime.combine(eval_start_date, time(0, 0), tzinfo=tz).astimezone(timezone.utc)
+    session_end = datetime.combine(eval_end_date + timedelta(days=1), time(0, 0), tzinfo=tz).astimezone(timezone.utc)
 
     audit_store = AuditEventStore(conn)
     order_store = OrderStore(conn)
     position_store = PositionStore(conn)
+    failed_entries: list[OrderRecord] = []
+    for session_date in _date_range(eval_start_date, eval_end_date):
+        failed_entries.extend(
+            order_store.list_failed_entries(
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                session_date=session_date,
+                market_timezone=market_timezone,
+            )
+        )
     total_cycles, disabled_cycles, disabled_reasons = _load_entries_disabled_cycle_stats(
         conn,
         session_start=session_start,
@@ -307,12 +319,7 @@ def _build_session_diagnostics(
             until=session_end,
             limit=100,
         ),
-        failed_entries=order_store.list_failed_entries(
-            trading_mode=trading_mode,
-            strategy_version=strategy_version,
-            session_date=eval_date,
-            market_timezone=market_timezone,
-        ),
+        failed_entries=failed_entries,
         stream_issues=audit_store.list_by_event_types(
             event_types=["stream_heartbeat_stale", "stream_restart_failed", "trade_update_stream_failed"],
             since=session_start,
