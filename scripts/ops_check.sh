@@ -5,6 +5,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/deploy/compose.yaml"
 ENV_FILE="${ALPACA_BOT_ENV_FILE:-/etc/alpaca_bot/alpaca-bot.env}"
 
+if [[ $# -gt 0 && "${1}" != --* ]]; then
+  ENV_FILE="$1"
+  shift
+fi
+
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file: $ENV_FILE" >&2
   exit 1
