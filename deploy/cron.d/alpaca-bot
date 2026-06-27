@@ -9,3 +9,4 @@ SHELL=/bin/bash
 # Pre-market check — runs at 08:30 ET (13:30 UTC) on weekdays
 20 13 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-readiness.lock /workspace/alpaca_bot/scripts/paper_readiness_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-readiness.log 2>&1
 30 13 * * 1-5 root flock -n /var/lock/alpaca-bot-nightly.lock bash -lc 'cd /workspace/alpaca_bot && set -a && source /etc/alpaca_bot/alpaca-bot.env && set +a && docker compose -f deploy/compose.yaml run --rm nightly alpaca-bot-premarket >> /var/log/alpaca-bot-premarket.log 2>&1'
+0 16 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-activity.lock /workspace/alpaca_bot/scripts/paper_activity_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-activity.log 2>&1

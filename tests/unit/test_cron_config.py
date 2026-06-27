@@ -6,20 +6,25 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
 
     readiness = "20 13 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-readiness.lock"
     premarket = "30 13 * * 1-5 root flock -n /var/lock/alpaca-bot-nightly.lock"
+    activity = "0 16 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-activity.lock"
     session_guard = "10 22 * * 1-5 root flock -n /var/lock/alpaca-bot-session-guard.lock"
     profit_probe = "20 22 * * 1-5 root flock -n /var/lock/alpaca-bot-profit-probe.lock"
     nightly = "30 22 * * 1-5 root flock -n /var/lock/alpaca-bot-nightly.lock"
 
     assert readiness in cron_text
     assert premarket in cron_text
+    assert activity in cron_text
     assert session_guard in cron_text
     assert profit_probe in cron_text
     assert nightly in cron_text
     assert cron_text.index(readiness) < cron_text.index(premarket)
+    assert cron_text.index(premarket) < cron_text.index(activity)
     assert cron_text.index(session_guard) < cron_text.index(profit_probe)
     assert cron_text.index(profit_probe) < cron_text.index(nightly)
     assert "scripts/paper_readiness_check.sh" in cron_text
     assert "/var/log/alpaca-bot-paper-readiness.log" in cron_text
+    assert "scripts/paper_activity_check.sh" in cron_text
+    assert "/var/log/alpaca-bot-paper-activity.log" in cron_text
     assert "scripts/paper_profit_probe.sh" in cron_text
     assert "/var/log/alpaca-bot-profit-probe.log" in cron_text
 
@@ -42,3 +47,15 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_true ENABLE_VWAP_ENTRY_FILTER" in script
     assert "require_env_false_or_unset ENABLE_REGIME_FILTER" in script
     assert "require_env_false_or_unset ENABLE_OPTIONS_TRADING" in script
+
+
+def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
+    script = Path("scripts/paper_activity_check.sh").read_text()
+
+    assert "PAPER_ACTIVITY_WINDOW_MINUTES" in script
+    assert "PAPER_READINESS_AUTO_RESUME=false" in script
+    assert "decision_record_count" in script
+    assert "entries_disabled" in script
+    assert "market_closed" in script
+    assert "no supervisor cycles" in script
+    assert "no decision cycles" in script
