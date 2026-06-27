@@ -32,32 +32,33 @@ def load_supervisor_api():
     return module, module.RuntimeSupervisor, module.SupervisorCycleReport
 
 
-def make_settings() -> Settings:
-    return Settings.from_env(
-        {
-            "TRADING_MODE": "paper",
-            "ENABLE_LIVE_TRADING": "false",
-            "STRATEGY_VERSION": "v1-breakout",
-            "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
-            "MARKET_DATA_FEED": "sip",
-            "SYMBOLS": "AAPL,MSFT,SPY",
-            "DAILY_SMA_PERIOD": "20",
-            "BREAKOUT_LOOKBACK_BARS": "20",
-            "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
-            "RELATIVE_VOLUME_THRESHOLD": "1.5",
-            "ENTRY_TIMEFRAME_MINUTES": "15",
-            "RISK_PER_TRADE_PCT": "0.0025",
-            "MAX_POSITION_PCT": "0.05",
-            "MAX_OPEN_POSITIONS": "3",
-            "DAILY_LOSS_LIMIT_PCT": "0.01",
-            "STOP_LIMIT_BUFFER_PCT": "0.001",
-            "BREAKOUT_STOP_BUFFER_PCT": "0.001",
-            "ENTRY_STOP_PRICE_BUFFER": "0.01",
-            "ENTRY_WINDOW_START": "10:00",
-            "ENTRY_WINDOW_END": "15:30",
-            "FLATTEN_TIME": "15:45",
-        }
-    )
+def make_settings(overrides: dict[str, str] | None = None) -> Settings:
+    env = {
+        "TRADING_MODE": "paper",
+        "ENABLE_LIVE_TRADING": "false",
+        "STRATEGY_VERSION": "v1-breakout",
+        "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+        "MARKET_DATA_FEED": "sip",
+        "SYMBOLS": "AAPL,MSFT,SPY",
+        "DAILY_SMA_PERIOD": "20",
+        "BREAKOUT_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_THRESHOLD": "1.5",
+        "ENTRY_TIMEFRAME_MINUTES": "15",
+        "RISK_PER_TRADE_PCT": "0.0025",
+        "MAX_POSITION_PCT": "0.05",
+        "MAX_OPEN_POSITIONS": "3",
+        "DAILY_LOSS_LIMIT_PCT": "0.01",
+        "STOP_LIMIT_BUFFER_PCT": "0.001",
+        "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+        "ENTRY_STOP_PRICE_BUFFER": "0.01",
+        "ENTRY_WINDOW_START": "10:00",
+        "ENTRY_WINDOW_END": "15:30",
+        "FLATTEN_TIME": "15:45",
+    }
+    if overrides:
+        env.update(overrides)
+    return Settings.from_env(env)
 
 
 class RecordingTradingStatusStore:
@@ -122,11 +123,57 @@ class RecordingPositionStore:
 
 
 class RecordingAuditEventStore:
-    def __init__(self) -> None:
+    def __init__(self, events: list[AuditEvent] | None = None) -> None:
         self.appended: list[object] = []
+        self.events = list(events or [])
+        self.list_by_event_types_calls: list[dict[str, object]] = []
 
     def append(self, event: object, *, commit: bool = True) -> None:
         self.appended.append(event)
+
+    def list_by_event_types(
+        self,
+        *,
+        event_types: list[str],
+        limit: int = 20,
+        offset: int = 0,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        trading_mode: TradingMode | str | None = None,
+        strategy_version: str | None = None,
+    ) -> list[AuditEvent]:
+        self.list_by_event_types_calls.append(
+            {
+                "event_types": event_types,
+                "limit": limit,
+                "offset": offset,
+                "since": since,
+                "until": until,
+                "trading_mode": trading_mode,
+                "strategy_version": strategy_version,
+            }
+        )
+        mode_value = (
+            trading_mode.value if isinstance(trading_mode, TradingMode) else trading_mode
+        )
+        filtered: list[AuditEvent] = []
+        for event in self.events:
+            if event.event_type not in event_types:
+                continue
+            if since is not None and event.created_at < since:
+                continue
+            if until is not None and event.created_at >= until:
+                continue
+            payload = event.payload
+            if mode_value is not None and payload.get("trading_mode", mode_value) != mode_value:
+                continue
+            if (
+                strategy_version is not None
+                and payload.get("strategy_version", strategy_version) != strategy_version
+            ):
+                continue
+            filtered.append(event)
+        return filtered[offset: offset + limit]
 
 
 class RecordingOrderStore:
@@ -217,6 +264,7 @@ def make_runtime_context(
     settings: Settings,
     *,
     trading_status_store: RecordingTradingStatusStore | None = None,
+    audit_event_store: RecordingAuditEventStore | None = None,
     position_store: RecordingPositionStore | None = None,
     order_store: RecordingOrderStore | None = None,
     daily_session_state_store: RecordingDailySessionStateStore | None = None,
@@ -230,7 +278,7 @@ def make_runtime_context(
         connection=_FakeConn(),  # type: ignore[arg-type]
         lock=object(),  # type: ignore[arg-type]
         trading_status_store=trading_status_store or RecordingTradingStatusStore(),  # type: ignore[arg-type]
-        audit_event_store=RecordingAuditEventStore(),  # type: ignore[arg-type]
+        audit_event_store=audit_event_store or RecordingAuditEventStore(),  # type: ignore[arg-type]
         order_store=order_store or RecordingOrderStore(),  # type: ignore[arg-type]
         position_store=position_store or RecordingPositionStore(),  # type: ignore[arg-type]
         daily_session_state_store=daily_session_state_store or RecordingDailySessionStateStore(),  # type: ignore[arg-type]
@@ -1045,6 +1093,136 @@ def test_runtime_supervisor_run_cycle_once_respects_trading_status_for_entries_d
         assert report.entries_disabled_reasons == (f"trading_status:{status.value}",)
     else:
         assert report.entries_disabled_reasons == ()
+
+
+def test_runtime_supervisor_blocks_paper_proof_entries_without_readiness_audit(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings({"PAPER_PROOF_FREEZE": "true"})
+    now = datetime(2026, 6, 29, 14, 15, tzinfo=timezone.utc)
+    audit_store = RecordingAuditEventStore()
+    runtime = make_runtime_context(
+        settings,
+        audit_event_store=audit_store,
+        position_store=RecordingPositionStore(),
+    )
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    stream = FakeStream()
+    cycle_calls: list[dict[str, object]] = []
+    dispatch_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: cycle_calls.append(kwargs) or SimpleNamespace(intents=[]),
+    )
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0},
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    report = supervisor.run_cycle_once(
+        now=lambda: now,
+        session_type=module.SessionType.REGULAR,
+    )
+
+    active_strategy_names = set(import_module("alpaca_bot.strategy").STRATEGY_REGISTRY)
+    assert report.entries_disabled is True
+    assert report.entries_disabled_reasons == ("paper_readiness_check_missing",)
+    assert cycle_calls[0]["entries_disabled"] is True
+    assert set(report.blocked_strategy_names) == active_strategy_names
+    assert dispatch_calls[0]["allowed_intent_types"] == {"stop", "exit"}
+    assert dispatch_calls[0]["blocked_strategy_names"] == active_strategy_names
+    assert audit_store.list_by_event_types_calls[-1]["event_types"] == [
+        "scheduled_check_completed"
+    ]
+    assert audit_store.list_by_event_types_calls[-1]["limit"] == 100
+    assert audit_store.list_by_event_types_calls[-1]["trading_mode"] == TradingMode.PAPER
+    assert audit_store.list_by_event_types_calls[-1]["strategy_version"] == "v1-breakout"
+
+
+def test_runtime_supervisor_allows_paper_proof_entries_after_readiness_audit(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings({"PAPER_PROOF_FREEZE": "true"})
+    now = datetime(2026, 6, 29, 14, 15, tzinfo=timezone.utc)
+    audit_store = RecordingAuditEventStore(
+        events=[
+            AuditEvent(
+                event_type="scheduled_check_completed",
+                payload={
+                    "check_name": "paper_readiness",
+                    "status": "passed",
+                    "session_date": "2026-06-29",
+                    "trading_mode": "paper",
+                    "strategy_version": "v1-breakout",
+                },
+                created_at=datetime(2026, 6, 29, 13, 55, tzinfo=timezone.utc),
+            )
+        ]
+    )
+    runtime = make_runtime_context(
+        settings,
+        audit_event_store=audit_store,
+        position_store=RecordingPositionStore(),
+    )
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    stream = FakeStream()
+    cycle_calls: list[dict[str, object]] = []
+    dispatch_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: cycle_calls.append(kwargs) or SimpleNamespace(intents=[]),
+    )
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0},
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    report = supervisor.run_cycle_once(
+        now=lambda: now,
+        session_type=module.SessionType.REGULAR,
+    )
+
+    assert report.entries_disabled is False
+    assert report.entries_disabled_reasons == ()
+    assert cycle_calls[0]["entries_disabled"] is False
+    assert report.blocked_strategy_names == ()
+    assert "allowed_intent_types" not in dispatch_calls[0]
 
 
 def test_runtime_supervisor_run_forever_starts_once_loops_until_stop_and_sleeps(

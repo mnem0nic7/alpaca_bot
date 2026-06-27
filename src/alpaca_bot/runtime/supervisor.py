@@ -577,6 +577,11 @@ class RuntimeSupervisor:
             entries_disabled_reasons.append("daily_loss_limit_breached")
         if session_date in self._consecutive_loss_gate_fired:
             entries_disabled_reasons.append("intraday_consecutive_loss_gate")
+        if (
+            self._paper_proof_requires_readiness_audit(session_type=session_type)
+            and not self._paper_readiness_audit_passed(session_date=session_date)
+        ):
+            entries_disabled_reasons.append("paper_readiness_check_missing")
         entries_disabled = bool(entries_disabled_reasons)
         open_positions = self._load_open_positions()
         self._close_stale_carryover_positions(
@@ -2135,6 +2140,58 @@ class RuntimeSupervisor:
         if session_state is not None and session_state.entries_disabled and not is_extended:
             return TradingStatusValue.CLOSE_ONLY
         return status
+
+    def _paper_proof_requires_readiness_audit(
+        self, *, session_type: SessionType | None
+    ) -> bool:
+        return (
+            self.settings.trading_mode.value == "paper"
+            and self.settings.paper_proof_freeze
+            and session_type is SessionType.REGULAR
+        )
+
+    def _paper_readiness_audit_passed(self, *, session_date: date) -> bool:
+        audit_store = getattr(self.runtime, "audit_event_store", None)
+        loader = getattr(audit_store, "list_by_event_types", None)
+        if not callable(loader):
+            return False
+
+        since = datetime.combine(session_date, datetime.min.time()).replace(
+            tzinfo=self.settings.market_timezone
+        )
+        store_lock = getattr(self.runtime, "store_lock", None)
+        try:
+            with store_lock if store_lock is not None else contextlib.nullcontext():
+                events = loader(
+                    event_types=["scheduled_check_completed"],
+                    limit=100,
+                    since=since,
+                    trading_mode=self.settings.trading_mode,
+                    strategy_version=self.settings.strategy_version,
+                )
+        except Exception:
+            logger.exception(
+                "Failed to load paper readiness audit evidence; blocking entries"
+            )
+            return False
+
+        expected_session = session_date.isoformat()
+        expected_mode = self.settings.trading_mode.value
+        expected_version = self.settings.strategy_version
+        for event in events:
+            payload = getattr(event, "payload", {}) or {}
+            if payload.get("check_name") != "paper_readiness":
+                continue
+            if payload.get("status") != "passed":
+                continue
+            if payload.get("session_date") != expected_session:
+                continue
+            if payload.get("trading_mode", expected_mode) != expected_mode:
+                continue
+            if payload.get("strategy_version", expected_version) != expected_version:
+                continue
+            return True
+        return False
 
     def _load_trading_status(self) -> TradingStatusValue | None:
         if not hasattr(self.runtime.trading_status_store, "load"):
