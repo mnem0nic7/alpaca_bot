@@ -239,6 +239,14 @@ def _row_to_trade_record(row: dict) -> ReplayTradeRecord:
 
 
 @dataclass
+class DecisionActivityStats:
+    cycles: int = 0
+    records: int = 0
+    accepted: int = 0
+    latest_cycle_at: datetime | None = None
+
+
+@dataclass
 class SessionDiagnostics:
     cycle_errors: list[AuditEvent] = field(default_factory=list)
     dispatch_failures: list[AuditEvent] = field(default_factory=list)
@@ -252,6 +260,7 @@ class SessionDiagnostics:
     strategy_name: str | None = None
     strategy_disabled_cycles: int = 0
     strategy_disabled_reasons: dict[str, int] = field(default_factory=dict)
+    decision_activity: DecisionActivityStats = field(default_factory=DecisionActivityStats)
 
     @property
     def has_issues(self) -> bool:
@@ -265,6 +274,7 @@ class SessionDiagnostics:
             self.entries_disabled_cycles,
             self.strategy_disabled_cycles,
             self.total_supervisor_cycles == 0,
+            self.total_supervisor_cycles > 0 and self.decision_activity.records == 0,
         ])
 
 
@@ -303,6 +313,14 @@ def _build_session_diagnostics(
         strategy_version=strategy_version,
     )
     strategy_disabled_cycles, strategy_disabled_reasons = _load_strategy_disabled_cycle_stats(
+        conn,
+        session_start=session_start,
+        session_end=session_end,
+        trading_mode=trading_mode,
+        strategy_version=strategy_version,
+        strategy_name=strategy_name,
+    )
+    decision_activity = _load_decision_activity_stats(
         conn,
         session_start=session_start,
         session_end=session_end,
@@ -355,6 +373,7 @@ def _build_session_diagnostics(
         strategy_name=strategy_name,
         strategy_disabled_cycles=strategy_disabled_cycles,
         strategy_disabled_reasons=strategy_disabled_reasons,
+        decision_activity=decision_activity,
     )
 
 
@@ -497,6 +516,53 @@ def _load_strategy_disabled_cycle_stats(
     return (int(row[0] or 0), reasons)
 
 
+def _load_decision_activity_stats(
+    conn: ConnectionProtocol,
+    *,
+    session_start: datetime,
+    session_end: datetime,
+    trading_mode: TradingMode | str,
+    strategy_version: str,
+    strategy_name: str | None,
+) -> DecisionActivityStats:
+    trading_mode_value = trading_mode.value if isinstance(trading_mode, TradingMode) else str(trading_mode)
+    try:
+        row = fetch_one(
+            conn,
+            """
+            SELECT
+                COUNT(DISTINCT cycle_at)::int,
+                COUNT(*)::int,
+                COUNT(*) FILTER (WHERE decision = 'accepted')::int,
+                MAX(cycle_at)
+            FROM decision_log
+            WHERE cycle_at >= %s
+              AND cycle_at < %s
+              AND trading_mode = %s
+              AND strategy_version = %s
+              AND (%s::text IS NULL OR strategy_name = %s)
+            """,
+            (
+                session_start,
+                session_end,
+                trading_mode_value,
+                strategy_version,
+                strategy_name,
+                strategy_name,
+            ),
+        )
+    except Exception:
+        return DecisionActivityStats()
+    if row is None:
+        return DecisionActivityStats()
+    return DecisionActivityStats(
+        cycles=int(row[0] or 0),
+        records=int(row[1] or 0),
+        accepted=int(row[2] or 0),
+        latest_cycle_at=row[3],
+    )
+
+
 def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
     print()
     print(" Diagnostics")
@@ -504,6 +570,7 @@ def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
 
     if not diagnostics.has_issues:
         print(" ✓ No operational issues found")
+        _print_decision_activity(diagnostics)
         print()
         return
 
@@ -568,7 +635,26 @@ def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
             )
             print(f"     Reasons: {rendered}")
 
+    _print_decision_activity(diagnostics)
+
     print()
+
+
+def _print_decision_activity(diagnostics: SessionDiagnostics) -> None:
+    activity = diagnostics.decision_activity
+    strategy_label = (
+        f"{diagnostics.strategy_name} decision activity"
+        if diagnostics.strategy_name
+        else "Decision activity"
+    )
+    if activity.records > 0:
+        latest = activity.latest_cycle_at.isoformat() if activity.latest_cycle_at else "unknown"
+        print(
+            f" - {strategy_label}: cycles={activity.cycles} "
+            f"records={activity.records} accepted={activity.accepted} latest={latest}"
+        )
+    elif diagnostics.total_supervisor_cycles > 0:
+        print(f" ⚠ {strategy_label}: no decision_log rows")
 
 
 def _print_session_report(

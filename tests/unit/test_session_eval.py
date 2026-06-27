@@ -317,6 +317,72 @@ def test_session_eval_cli_reports_strategy_disabled_cycles(monkeypatch, capsys):
     assert "No operational issues" not in out
 
 
+def test_session_eval_cli_reports_missing_decision_activity(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    _patch_cli_deps(monkeypatch, rows=[])
+    monkeypatch.setattr(
+        cli_module,
+        "_load_entries_disabled_cycle_stats",
+        lambda *_args, **_kwargs: (10, 0, {}),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_load_decision_activity_stats",
+        lambda *_args, **_kwargs: cli_module.DecisionActivityStats(),
+    )
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+    ])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "No closed trades" in out
+    assert "bull_flag decision activity: no decision_log rows" in out
+    assert "No operational issues" not in out
+
+
+def test_session_eval_cli_reports_decision_activity(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    latest = datetime(2026, 5, 4, 15, 30, tzinfo=timezone.utc)
+    _patch_cli_deps(monkeypatch, rows=[])
+    monkeypatch.setattr(
+        cli_module,
+        "_load_entries_disabled_cycle_stats",
+        lambda *_args, **_kwargs: (10, 0, {}),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_load_decision_activity_stats",
+        lambda *_args, **_kwargs: cli_module.DecisionActivityStats(
+            cycles=3,
+            records=2940,
+            accepted=2,
+            latest_cycle_at=latest,
+        ),
+    )
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+    ])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "No closed trades" in out
+    assert (
+        "bull_flag decision activity: cycles=3 records=2940 "
+        "accepted=2 latest=2026-05-04T15:30:00+00:00"
+    ) in out
+
+
 def test_load_entries_disabled_cycle_stats_parses_colon_reasons(monkeypatch):
     import alpaca_bot.admin.session_eval_cli as cli_module
 
@@ -376,6 +442,36 @@ def test_load_strategy_disabled_cycle_stats_parses_reasons(monkeypatch):
     }
     assert calls
     assert "bull_flag" in calls[0][2]
+
+
+def test_load_decision_activity_stats_parses_counts(monkeypatch):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    latest = datetime(2026, 5, 4, 15, 30, tzinfo=timezone.utc)
+    calls: list[tuple] = []
+
+    def fake_fetch_one(*args, **kwargs):
+        calls.append(args)
+        return (4, 3920, 3, latest)
+
+    monkeypatch.setattr(cli_module, "fetch_one", fake_fetch_one)
+
+    stats = cli_module._load_decision_activity_stats(
+        object(),
+        session_start=datetime(2026, 5, 4, tzinfo=timezone.utc),
+        session_end=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        trading_mode="paper",
+        strategy_version="v1",
+        strategy_name="bull_flag",
+    )
+
+    assert stats.cycles == 4
+    assert stats.records == 3920
+    assert stats.accepted == 3
+    assert stats.latest_cycle_at == latest
+    assert calls
+    assert "decision_log" in calls[0][1]
+    assert calls[0][2][-2:] == ("bull_flag", "bull_flag")
 
 
 def test_session_eval_cli_require_min_trades_fails_when_no_trades(monkeypatch, capsys):
