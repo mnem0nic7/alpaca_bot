@@ -255,7 +255,29 @@ SELECT
         AND COALESCE(r.payload->'blocked_strategy_names', '[]'::jsonb) ? :'paper_activity_strategy'
       GROUP BY reason
     ) strategy_reason_counts
-  ), '')
+  ), ''),
+  COALESCE((
+    SELECT COUNT(*)::int
+    FROM positions
+    WHERE trading_mode = 'paper'
+      AND strategy_version = :'strategy_version'
+  ), 0),
+  COALESCE((
+    SELECT COUNT(*)::int
+    FROM orders
+    WHERE trading_mode = 'paper'
+      AND strategy_version = :'strategy_version'
+      AND status IN (
+        'pending_submit',
+        'submitting',
+        'new',
+        'accepted',
+        'submitted',
+        'partially_filled',
+        'held',
+        'pending_new'
+      )
+  ), 0)
 FROM recent;
 SQL
 )"
@@ -264,7 +286,8 @@ IFS='|' read -r supervisor_cycles disabled_cycles decision_cycles decision_recor
   market_closed_idles latest_cycle latest_decision strategy_blocked_cycles \
   strategy_decision_cycles strategy_decision_records legacy_decision_cycles \
   strategy_decision_log_cycles strategy_decision_log_records latest_decision_log \
-  active_strategy_names disabled_reasons strategy_disabled_reasons <<< "$stats"
+  active_strategy_names disabled_reasons strategy_disabled_reasons \
+  stock_open_positions active_stock_orders <<< "$stats"
 
 strategy_evidence_cycles="${strategy_decision_cycles:-0}"
 if [[ "${strategy_decision_log_cycles:-0}" -gt "$strategy_evidence_cycles" ]]; then
@@ -276,6 +299,11 @@ strategy_evidence_source="audit"
 if [[ "${strategy_decision_log_records:-0}" -gt "$strategy_evidence_records" ]]; then
   strategy_evidence_records="$strategy_decision_log_records"
   strategy_evidence_source="decision_log"
+fi
+
+has_stock_exposure=false
+if [[ "${stock_open_positions:-0}" -gt 0 || "${active_stock_orders:-0}" -gt 0 ]]; then
+  has_stock_exposure=true
 fi
 
 if [[ "${supervisor_cycles:-0}" -eq 0 && "${market_closed_idles:-0}" -gt 0 ]]; then
@@ -334,15 +362,15 @@ if [[ "${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,}" == "true" ]]; then
     exit 1
   fi
 
-  if [[ "${strategy_decision_log_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" ]]; then
+  if [[ "${strategy_decision_log_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" && "$has_stock_exposure" != "true" ]]; then
     echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY decision_log_records=${strategy_decision_log_records:-0} below $PAPER_ACTIVITY_MIN_DECISION_RECORDS audit_records=${strategy_decision_records:-0}" >&2
     exit 1
   fi
 fi
 
-if [[ "${strategy_evidence_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" ]]; then
+if [[ "${strategy_evidence_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" && "$has_stock_exposure" != "true" ]]; then
   echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY decision_evidence_records=$strategy_evidence_records below $PAPER_ACTIVITY_MIN_DECISION_RECORDS audit_records=${strategy_decision_records:-0} decision_log_records=${strategy_decision_log_records:-0}" >&2
   exit 1
 fi
 
-echo "paper activity ok: supervisor_cycles=$supervisor_cycles decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source require_decision_log=${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,} legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
+echo "paper activity ok: supervisor_cycles=$supervisor_cycles decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source require_decision_log=${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
