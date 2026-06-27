@@ -46,7 +46,12 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'kill_switch=false' in script
     assert 'open_positions" == "0"' in script
     assert 'active_orders" == "0"' in script
-    assert "pending_submit','submitting','new','accepted','submitted','partially_filled','held','pending_new" in script
+    assert "load_stock_exposure_counts" in script
+    assert "'pending_submit'" in script
+    assert "'partially_filled'" in script
+    assert "paper readiness stock exposure ok: positions=0 active_orders=0" in script
+    assert "stock-only proof has $open_positions open stock positions" in script
+    assert "stock-only proof has $active_orders active stock orders" in script
     assert "close_only with $active_orders active orders" in script
     assert "symbol_watchlist" in script
     assert "COALESCE(ignored, FALSE) = FALSE" in script

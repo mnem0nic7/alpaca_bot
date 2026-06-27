@@ -224,6 +224,38 @@ fi
 
 echo "paper readiness confidence floor ok: floor=$confidence_floor_value"
 
+load_stock_exposure_counts() {
+  "${compose[@]}" exec -T postgres psql \
+    -U "$POSTGRES_USER" \
+    -d "$POSTGRES_DB" \
+    -tA -F '|' \
+    -v strategy_version="$STRATEGY_VERSION" <<'SQL'
+SELECT
+  (
+    SELECT COUNT(*)::int
+    FROM positions
+    WHERE trading_mode = 'paper'
+      AND strategy_version = :'strategy_version'
+  ),
+  (
+    SELECT COUNT(*)::int
+    FROM orders
+    WHERE trading_mode = 'paper'
+      AND strategy_version = :'strategy_version'
+      AND status IN (
+        'pending_submit',
+        'submitting',
+        'new',
+        'accepted',
+        'submitted',
+        'partially_filled',
+        'held',
+        'pending_new'
+      )
+  );
+SQL
+}
+
 open_option_positions="$("${compose[@]}" exec -T postgres psql \
   -U "$POSTGRES_USER" \
   -d "$POSTGRES_DB" \
@@ -276,17 +308,8 @@ if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
       exit 1
     fi
 
-    open_positions="$("${compose[@]}" exec -T postgres psql \
-      -U "$POSTGRES_USER" \
-      -d "$POSTGRES_DB" \
-      -tAc "select count(*) from positions where trading_mode = 'paper' and strategy_version = '$STRATEGY_VERSION';" \
-      | tr -d '[:space:]')"
-
-    active_orders="$("${compose[@]}" exec -T postgres psql \
-      -U "$POSTGRES_USER" \
-      -d "$POSTGRES_DB" \
-      -tAc "select count(*) from orders where trading_mode = 'paper' and strategy_version = '$STRATEGY_VERSION' and status in ('pending_submit','submitting','new','accepted','submitted','partially_filled','held','pending_new');" \
-      | tr -d '[:space:]')"
+    stock_exposure_counts="$(load_stock_exposure_counts)"
+    IFS='|' read -r open_positions active_orders <<< "$stock_exposure_counts"
 
     if [[ "$open_positions" == "0" && "$active_orders" == "0" ]]; then
       echo "paper readiness auto-resuming stale close_only state"
@@ -301,6 +324,21 @@ if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
     fi
   fi
 fi
+
+stock_exposure_counts="$(load_stock_exposure_counts)"
+IFS='|' read -r open_positions active_orders <<< "$stock_exposure_counts"
+
+if [[ "${open_positions:-0}" != "0" ]]; then
+  echo "paper readiness failed: stock-only proof has $open_positions open stock positions" >&2
+  exit 1
+fi
+
+if [[ "${active_orders:-0}" != "0" ]]; then
+  echo "paper readiness failed: stock-only proof has $active_orders active stock orders" >&2
+  exit 1
+fi
+
+echo "paper readiness stock exposure ok: positions=0 active_orders=0"
 
 "${compose[@]}" run -T --rm \
   --entrypoint alpaca-bot-ops-check admin \
