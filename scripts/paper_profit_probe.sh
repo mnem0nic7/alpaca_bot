@@ -38,6 +38,16 @@ docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
   --min-trades-for-gate "$PROFIT_PROBE_MIN_TRADES"
 rc=$?
 
+if [[ "$rc" -eq 43 ]]; then
+  if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
+    --entrypoint alpaca-bot-funnel-report admin \
+    --start "$PROFIT_PROBE_START_DATE" \
+    --end "$PROFIT_PROBE_DATE" \
+    --mode "${TRADING_MODE:-paper}"; then
+    echo "paper profit probe warning: funnel diagnostic failed" >&2
+  fi
+fi
+
 if [[ "$rc" -eq 42 || "$rc" -eq 44 ]]; then
   reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: pnl below ${PROFIT_PROBE_MIN_PNL} after ${PROFIT_PROBE_MIN_TRADES}+ trades"
   if [[ "$rc" -eq 44 ]]; then
