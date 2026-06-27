@@ -78,6 +78,18 @@ SELECT
     WHERE event_type = 'supervisor_cycle'
       AND COALESCE(payload->'blocked_strategy_names', '[]'::jsonb) ? '${PAPER_ACTIVITY_STRATEGY}'
   )::int,
+  COUNT(*) FILTER (
+    WHERE event_type = 'decision_cycle_completed'
+      AND payload->>'strategy_name' = '${PAPER_ACTIVITY_STRATEGY}'
+  )::int,
+  COALESCE(SUM(
+    CASE
+      WHEN event_type = 'decision_cycle_completed'
+       AND payload->>'strategy_name' = '${PAPER_ACTIVITY_STRATEGY}'
+      THEN COALESCE((payload->>'decision_record_count')::int, 0)
+      ELSE 0
+    END
+  ), 0)::int,
   COALESCE((
     SELECT string_agg(reason || ':' || reason_count::text, ',' ORDER BY reason)
     FROM (
@@ -113,7 +125,8 @@ SQL
 
 IFS='|' read -r supervisor_cycles disabled_cycles decision_cycles decision_records \
   market_closed_idles latest_cycle latest_decision strategy_blocked_cycles \
-  disabled_reasons strategy_disabled_reasons <<< "$stats"
+  strategy_decision_cycles strategy_decision_records disabled_reasons \
+  strategy_disabled_reasons <<< "$stats"
 
 if [[ "${supervisor_cycles:-0}" -eq 0 && "${market_closed_idles:-0}" -gt 0 ]]; then
   echo "paper activity skipped: market closed in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes"
@@ -148,9 +161,14 @@ if [[ "${decision_cycles:-0}" -eq 0 ]]; then
   exit 1
 fi
 
-if [[ "${decision_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" ]]; then
-  echo "paper activity failed: decision_record_count=$decision_records below $PAPER_ACTIVITY_MIN_DECISION_RECORDS" >&2
+if [[ "${strategy_decision_cycles:-0}" -eq 0 ]]; then
+  echo "paper activity failed: no $PAPER_ACTIVITY_STRATEGY decision cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes" >&2
   exit 1
 fi
 
-echo "paper activity ok: supervisor_cycles=$supervisor_cycles decision_cycles=$decision_cycles decision_records=$decision_records latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none}"
+if [[ "${strategy_decision_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" ]]; then
+  echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY decision_record_count=$strategy_decision_records below $PAPER_ACTIVITY_MIN_DECISION_RECORDS" >&2
+  exit 1
+fi
+
+echo "paper activity ok: supervisor_cycles=$supervisor_cycles decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_decision_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_records=$strategy_decision_records latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none}"

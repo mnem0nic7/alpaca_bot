@@ -135,6 +135,9 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "PAPER_READINESS_AUTO_RESUME=false" in script
     assert "PAPER_READINESS_REQUIRE_FLAT=false" in script
     assert "decision_record_count" in script
+    assert "payload->>'strategy_name' = '${PAPER_ACTIVITY_STRATEGY}'" in script
+    assert "strategy_decision_cycles" in script
+    assert "strategy_decision_records" in script
     assert "entries_disabled" in script
     assert "blocked_strategy_names" in script
     assert "strategy_entries_disabled_reasons" in script
@@ -143,6 +146,8 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "market_closed" in script
     assert "no supervisor cycles" in script
     assert "no decision cycles" in script
+    assert "no $PAPER_ACTIVITY_STRATEGY decision cycles" in script
+    assert "$PAPER_ACTIVITY_STRATEGY decision_record_count" in script
 
 
 def test_post_close_checks_fail_on_open_positions() -> None:
