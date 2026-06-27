@@ -10,6 +10,7 @@ PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_ST
 PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"
 PAPER_READINESS_REQUIRE_SCENARIOS="${PAPER_READINESS_REQUIRE_SCENARIOS:-true}"
 PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS="${PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS:-true}"
+PAPER_READINESS_CLOSE_ONLY_ON_FAILURE="${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE:-true}"
 PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-}"
 PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"
 PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
@@ -37,6 +38,42 @@ if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
   echo "paper readiness check skipped for TRADING_MODE=${TRADING_MODE:-unset}"
   exit 0
 fi
+
+case "${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE,,}" in
+  true|false) ;;
+  *)
+    echo "PAPER_READINESS_CLOSE_ONLY_ON_FAILURE must be true or false" >&2
+    exit 1
+    ;;
+esac
+
+compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
+
+close_only_on_readiness_failure() {
+  local rc="$?"
+  trap - EXIT
+
+  if [[ "$rc" -eq 0 ]]; then
+    exit 0
+  fi
+
+  if [[ "${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE,,}" != "true" ]]; then
+    exit "$rc"
+  fi
+
+  local reason="paper readiness failed for session ${PAPER_READINESS_SESSION_DATE:-unknown}: pre-open checks failed"
+  if ! "${compose[@]}" run -T --rm admin \
+    close-only \
+    --mode paper \
+    --strategy-version "${STRATEGY_VERSION:-v1-breakout}" \
+    --reason "$reason"; then
+    echo "paper readiness warning: failed to apply close-only after readiness failure" >&2
+  fi
+
+  exit "$rc"
+}
+
+trap close_only_on_readiness_failure EXIT
 
 if [[ ! "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" =~ ^[0-9]+$ ]] \
   || [[ "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" -lt 1 ]]; then
@@ -148,8 +185,6 @@ require_env_false_or_unset ENABLE_REGIME_FILTER
 require_env_false_or_unset ENABLE_NEWS_FILTER
 require_env_false_or_unset ENABLE_SPREAD_FILTER
 require_env_false_or_unset ENABLE_OPTIONS_TRADING
-
-compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
 run_container_settings_posture_check() {
   "${compose[@]}" run -T --rm \
