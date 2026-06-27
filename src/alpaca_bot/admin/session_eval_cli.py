@@ -356,6 +356,9 @@ def _build_session_diagnostics(
         conn,
         session_start=session_start,
         session_end=session_end,
+        eval_start_date=eval_start_date,
+        eval_end_date=eval_end_date,
+        market_timezone=market_timezone,
         trading_mode=trading_mode,
         strategy_version=strategy_version,
         strategy_name=strategy_name,
@@ -490,6 +493,9 @@ def _load_strategy_disabled_cycle_stats(
     *,
     session_start: datetime,
     session_end: datetime,
+    eval_start_date: date,
+    eval_end_date: date,
+    market_timezone: str,
     trading_mode: TradingMode | str,
     strategy_version: str,
     strategy_name: str | None,
@@ -502,13 +508,49 @@ def _load_strategy_disabled_cycle_stats(
             conn,
             """
             WITH recent AS (
-              SELECT event_type, payload
+              SELECT event_type, payload, created_at
               FROM audit_events
               WHERE event_type = 'supervisor_cycle'
                 AND created_at >= %s
                 AND created_at < %s
                 AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)
                 AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)
+            ),
+            flatten_state AS (
+              SELECT session_date, updated_at
+              FROM daily_session_state
+              WHERE session_date >= %s
+                AND session_date <= %s
+                AND trading_mode = %s
+                AND strategy_version = %s
+                AND strategy_name = %s
+                AND entries_disabled = TRUE
+                AND flatten_complete = TRUE
+            ),
+            classified AS (
+              SELECT
+                r.payload,
+                r.created_at,
+                COALESCE(
+                  r.payload->'strategy_entries_disabled_reasons'->%s,
+                  '[]'::jsonb
+                ) AS strategy_reasons,
+                EXISTS (
+                  SELECT 1
+                  FROM flatten_state fs
+                  WHERE fs.session_date = (r.created_at AT TIME ZONE %s)::date
+                    AND r.created_at >= fs.updated_at
+                ) AS after_flatten_complete
+              FROM recent r
+            ),
+            proof_blocked AS (
+              SELECT *
+              FROM classified
+              WHERE COALESCE(payload->'blocked_strategy_names', '[]'::jsonb) ? %s
+                AND NOT (
+                  after_flatten_complete
+                  AND strategy_reasons = '["strategy_session_state_entries_disabled"]'::jsonb
+                )
             )
             SELECT
                 COUNT(*) FILTER (
@@ -518,25 +560,27 @@ def _load_strategy_disabled_cycle_stats(
                     SELECT string_agg(reason || ':' || reason_count::text, ',' ORDER BY reason)
                     FROM (
                         SELECT reason, COUNT(*)::int AS reason_count
-                        FROM recent r
+                        FROM proof_blocked r
                         CROSS JOIN LATERAL jsonb_array_elements_text(
-                            COALESCE(
-                                r.payload->'strategy_entries_disabled_reasons'->%s,
-                                '[]'::jsonb
-                            )
+                            r.strategy_reasons
                         ) AS reason
-                        WHERE COALESCE(r.payload->'blocked_strategy_names', '[]'::jsonb) ? %s
                         GROUP BY reason
                     ) reason_counts
                 ), '') AS reason_summary
-            FROM recent
+            FROM proof_blocked
             """,
             (
                 session_start,
                 session_end,
                 trading_mode_value,
                 strategy_version,
+                eval_start_date,
+                eval_end_date,
+                trading_mode_value,
+                strategy_version,
                 strategy_name,
+                strategy_name,
+                market_timezone,
                 strategy_name,
                 strategy_name,
             ),

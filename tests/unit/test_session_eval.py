@@ -487,6 +487,9 @@ def test_load_strategy_disabled_cycle_stats_parses_reasons(monkeypatch):
         object(),
         session_start=datetime(2026, 5, 4, tzinfo=timezone.utc),
         session_end=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        eval_start_date=date(2026, 5, 4),
+        eval_end_date=date(2026, 5, 4),
+        market_timezone="America/New_York",
         trading_mode="paper",
         strategy_version="v1",
         strategy_name="bull_flag",
@@ -499,6 +502,41 @@ def test_load_strategy_disabled_cycle_stats_parses_reasons(monkeypatch):
     }
     assert calls
     assert "bull_flag" in calls[0][2]
+    assert "America/New_York" in calls[0][2]
+
+
+def test_load_strategy_disabled_cycle_stats_excludes_post_flatten_state_blocks(monkeypatch):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    calls: list[tuple] = []
+
+    def fake_fetch_one(*args, **kwargs):
+        calls.append(args)
+        return (0, "")
+
+    monkeypatch.setattr(cli_module, "fetch_one", fake_fetch_one)
+
+    disabled, reasons = cli_module._load_strategy_disabled_cycle_stats(
+        object(),
+        session_start=datetime(2026, 5, 4, tzinfo=timezone.utc),
+        session_end=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        eval_start_date=date(2026, 5, 4),
+        eval_end_date=date(2026, 5, 4),
+        market_timezone="America/New_York",
+        trading_mode="paper",
+        strategy_version="v1",
+        strategy_name="bull_flag",
+    )
+
+    assert disabled == 0
+    assert reasons == {}
+    sql = calls[0][1]
+    params = calls[0][2]
+    assert "daily_session_state" in sql
+    assert "flatten_complete = TRUE" in sql
+    assert "strategy_session_state_entries_disabled" in sql
+    assert date(2026, 5, 4) in params
+    assert "America/New_York" in params
 
 
 def test_load_decision_activity_stats_parses_counts(monkeypatch):
