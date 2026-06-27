@@ -39,6 +39,7 @@ def _patch_common_db(monkeypatch, module, symbols=("AAPL", "MSFT")):
     class FakeWatchlistStore:
         def __init__(self, conn): pass
         def list_enabled(self, trading_mode): return list(symbols)
+        def list_ignored(self, trading_mode): return []
 
     monkeypatch.setattr(module, "WatchlistStore", FakeWatchlistStore)
 
@@ -137,6 +138,46 @@ def test_nightly_cli_no_watchlist_symbols_skips_evolve(monkeypatch, tmp_path):
 
     assert result == 0
     assert not evolve_called, "run_multi_scenario_sweep must not be called with empty watchlist"
+
+
+def test_nightly_cli_excludes_ignored_watchlist_symbols(monkeypatch, tmp_path):
+    """Ignored watchlist rows should not be backfilled or evolved."""
+    from alpaca_bot.nightly import cli as module
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    monkeypatch.setattr(module, "connect_postgres", lambda url: object())
+
+    class FakeWatchlistStore:
+        def __init__(self, conn): pass
+        def list_enabled(self, trading_mode): return ["AAPL", "MSFT", "HEIA"]
+        def list_ignored(self, trading_mode): return ["HEIA"]
+
+    monkeypatch.setattr(module, "WatchlistStore", FakeWatchlistStore)
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    seen_symbols = []
+
+    class FakeAdapter:
+        @staticmethod
+        def from_settings(settings): return object()
+
+    class FakeFetcher:
+        def __init__(self, adapter, settings): pass
+        def fetch_and_save(self, *, symbols, days, output_dir, starting_equity=100_000.0):
+            seen_symbols.extend(symbols)
+            return []
+
+    monkeypatch.setattr(module, "AlpacaMarketDataAdapter", FakeAdapter)
+    monkeypatch.setattr(module, "BackfillFetcher", FakeFetcher)
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--no-db", "--output-dir", str(tmp_path),
+    ])
+
+    result = module.main()
+
+    assert result == 1
+    assert seen_symbols == ["AAPL", "MSFT"]
 
 
 def test_nightly_cli_no_held_candidates_continues_to_live_report(monkeypatch, tmp_path):

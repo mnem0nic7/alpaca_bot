@@ -37,6 +37,11 @@ nightly 252-day scenario set using floor-sized paper equity. Live paper has no
 closed `bull_flag` history yet, so the supervisor sizes entries at the
 confidence floor: `$68,991.18 * 0.25 = $17,247.79`.
 
+The scenario set was then refreshed from Alpaca. Four paper watchlist symbols
+with no returned bars (`HEIA`, `MOGA`, `TBBQ`, `UHALB`) were marked ignored,
+leaving `999` active paper symbols with `999` scenario files and `100.00%`
+coverage.
+
 Command:
 
 ```bash
@@ -53,7 +58,7 @@ Result:
 
 | scenarios | trades | win rate | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(edge>0) | verdict |
 |---:|---:|---:|---:|---:|---:|---|---:|---|
-| 999 | 326 | 73.6% | 1.71 | 919.53 | 2.8206 | [1.0461, 4.4724] | 0.0000 | positive-edge |
+| 999 | 326 | 73.6% | 1.68 | 891.50 | 2.7347 | [0.9796, 4.4462] | 0.0015 | positive-edge |
 
 Decision:
 

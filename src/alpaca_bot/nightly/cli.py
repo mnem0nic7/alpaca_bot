@@ -88,7 +88,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         # ── Watchlist ────────────────────────────────────────────────────────
         watchlist_store = WatchlistStore(conn)
-        symbols: list[str] = watchlist_store.list_enabled(trading_mode.value)
+        enabled_symbols: list[str] = watchlist_store.list_enabled(trading_mode.value)
+        list_ignored = getattr(watchlist_store, "list_ignored", None)
+        ignored_symbols = (
+            set(list_ignored(trading_mode.value))
+            if callable(list_ignored)
+            else set()
+        )
+        symbols = [symbol for symbol in enabled_symbols if symbol not in ignored_symbols]
 
         # ── Backfill ─────────────────────────────────────────────────────────
         print("\n── Backfill ─────────────────────────────────────────────────────────")
