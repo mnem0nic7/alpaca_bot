@@ -36,3 +36,33 @@ total historical P&L, but K=2 has the stronger profit factor, mean/trade,
 annualized Sharpe, and CI floor. The current paper objective is to establish
 profitable closed paper trades with the most robust available audited posture,
 not to maximize in-sample turnover.
+
+## Live Confidence-Floor Sizing Check
+
+Current paper has no closed `bull_flag` history yet, so the confidence score is
+the operator-set floor `0.25`. With the latest paper equity baseline
+`$68,991.18`, live sizing behaves like a portfolio replay starting around
+`$17,247.80`.
+
+Command:
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+alpaca-bot-backtest portfolio-audit \
+  --scenario-dir /var/lib/alpaca-bot/nightly/scenarios \
+  --strategy bull_flag \
+  --slippage-bps 2 \
+  --max-open-positions 2 \
+  --starting-equity 17247.795
+```
+
+Result:
+
+| K | starting equity | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(edge>0) | verdict |
+|---|---:|---:|---:|---:|---:|---:|---:|---|---:|---|
+| 2 | 17,247.80 | 916 | 68.6% | 1.22 | 860.26 | 0.9391 | 1.93 | [0.0418, 1.8554] | 0.0180 | positive-edge |
+
+Decision: keep the paper confidence floor at `0.25` while `bull_flag` has no
+paper trade history. The floor-sized replay remains positive-edge after 2 bps
+slippage, so raising the floor just to match the 100k audit would add risk
+without being required for the paper profit proof.

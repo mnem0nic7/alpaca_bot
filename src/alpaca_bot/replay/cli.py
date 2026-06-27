@@ -190,6 +190,16 @@ def main(argv: list[str] | None = None) -> int:
         "--limit", type=int, default=0, metavar="N",
         help="use only the first N scenario files (0 = all)",
     )
+    port_p.add_argument(
+        "--starting-equity",
+        type=float,
+        default=None,
+        metavar="DOLLARS",
+        help=(
+            "override every scenario's starting equity, useful for matching "
+            "live confidence-scaled paper sizing"
+        ),
+    )
     port_p.add_argument("--output", metavar="FILE", default="-")
     port_p.add_argument(
         "--jsonl",
@@ -421,6 +431,14 @@ def _cmd_portfolio_audit(args: argparse.Namespace) -> int:
         print(f"No scenario files in {args.scenario_dir}", file=sys.stderr)
         return 1
     scenarios = [ReplayRunner.load_scenario(p) for p in paths]
+    if args.starting_equity is not None:
+        if args.starting_equity <= 0.0:
+            print("--starting-equity must be greater than 0", file=sys.stderr)
+            return 1
+        scenarios = [
+            dataclasses.replace(scenario, starting_equity=args.starting_equity)
+            for scenario in scenarios
+        ]
     duplicate_symbols = _duplicate_scenario_symbols(scenarios)
     if duplicate_symbols:
         print(
@@ -443,6 +461,11 @@ def _cmd_portfolio_audit(args: argparse.Namespace) -> int:
         "Read-only diagnostic — no production config change.",
         "",
     ]
+    if args.starting_equity is not None:
+        blocks.extend([
+            f"Scenario starting equity override: ${args.starting_equity:,.2f}.",
+            "",
+        ])
     for k in ks:
         ksettings = dataclasses.replace(settings, max_open_positions=k)
         rows = run_audit(

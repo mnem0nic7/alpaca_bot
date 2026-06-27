@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 
+from alpaca_bot.replay import cli as replay_cli
 from alpaca_bot.replay.cli import main
 
 ENVKEYS = {
@@ -71,6 +72,48 @@ def test_portfolio_audit_cli_writes_jsonl_per_k(tmp_path, monkeypatch):
     assert all(line["slippage_bps"] == 5 for line in lines)
     assert all(line["scenarios"] == 2 for line in lines)
     assert all(line["rows"][0]["strategy"] == "bull_flag" for line in lines)
+
+
+def test_portfolio_audit_cli_overrides_starting_equity(tmp_path, monkeypatch):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+    _write_scenario(scen / "AAA.json", "AAA")
+    captured_equities = []
+
+    def fake_run_audit(*, scenarios, **kwargs):
+        captured_equities.extend(s.starting_equity for s in scenarios)
+        return []
+
+    monkeypatch.setattr(replay_cli, "run_audit", fake_run_audit)
+    out = tmp_path / "report.md"
+
+    rc = main([
+        "portfolio-audit", "--scenario-dir", str(scen),
+        "--strategy", "bull_flag",
+        "--starting-equity", "17247.80",
+        "--output", str(out),
+    ])
+
+    assert rc == 0
+    assert captured_equities == [17247.80]
+    assert "Scenario starting equity override: $17,247.80." in out.read_text()
+
+
+def test_portfolio_audit_cli_rejects_nonpositive_starting_equity(tmp_path, monkeypatch, capsys):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+    _write_scenario(scen / "AAA.json", "AAA")
+
+    rc = main([
+        "portfolio-audit", "--scenario-dir", str(scen),
+        "--strategy", "bull_flag",
+        "--starting-equity", "0",
+    ])
+
+    assert rc == 1
+    assert "--starting-equity must be greater than 0" in capsys.readouterr().err
 
 
 def test_portfolio_audit_cli_rejects_duplicate_symbols(tmp_path, monkeypatch, capsys):
