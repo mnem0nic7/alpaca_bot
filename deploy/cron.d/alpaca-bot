@@ -8,4 +8,6 @@ SHELL=/bin/bash
 30 22 * * 1-5 root flock -n /var/lock/alpaca-bot-nightly.lock bash -lc 'mkdir -p /var/lib/alpaca-bot/nightly && cd /workspace/alpaca_bot && set -a && source /etc/alpaca_bot/alpaca-bot.env && set +a && docker compose -f deploy/compose.yaml run --rm nightly >> /var/log/alpaca-bot-nightly.log 2>&1 && ./scripts/apply_candidate.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-nightly.log 2>&1'
 # Pre-open paper readiness — runs before NYSE open (13:20 UTC = 09:20 ET during EDT)
 20 13 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-readiness.lock /workspace/alpaca_bot/scripts/paper_readiness_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-readiness.log 2>&1
+# Post-open paper activity — first pass after the 10:00 ET entry window starts, second pass mid-session
+15 14 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-activity.lock /workspace/alpaca_bot/scripts/paper_activity_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-activity.log 2>&1
 0 16 * * 1-5 root flock -n /var/lock/alpaca-bot-paper-activity.lock /workspace/alpaca_bot/scripts/paper_activity_check.sh /etc/alpaca_bot/alpaca-bot.env >> /var/log/alpaca-bot-paper-activity.log 2>&1
