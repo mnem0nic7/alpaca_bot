@@ -41,12 +41,24 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "DEPLOY_PROOF_SETTLE_SECONDS must be a non-negative integer" in deploy_text
     assert 'DEPLOY_REQUIRE_DECISION_DRY_RUN="${DEPLOY_REQUIRE_DECISION_DRY_RUN:-true}"' in deploy_text
     assert "DEPLOY_REQUIRE_DECISION_DRY_RUN must be true or false" in deploy_text
+    assert 'DEPLOY_DECISION_DRY_RUN_STRATEGY="${DEPLOY_DECISION_DRY_RUN_STRATEGY:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}}"' in deploy_text
+    assert 'DEPLOY_DECISION_DRY_RUN_MIN_RECORDS="${DEPLOY_DECISION_DRY_RUN_MIN_RECORDS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}}"' in deploy_text
+    assert 'DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-false}}"' in deploy_text
+    assert 'DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES="${DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES:-${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}}"' in deploy_text
+    assert "DEPLOY_DECISION_DRY_RUN_STRATEGY contains unsupported characters" in deploy_text
+    assert "DEPLOY_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in deploy_text
+    assert "DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED must be true or false" in deploy_text
+    assert "DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES must be comma-separated HH:MM values" in deploy_text
     assert 'REQUIRE_CRON_HEALTH="${REQUIRE_CRON_HEALTH:-true}"' in deploy_text
     assert "REQUIRE_CRON_HEALTH must be true or false" in deploy_text
     assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in deploy_text
     assert "Cron health check skipped because REQUIRE_CRON_HEALTH=false" in deploy_text
     assert "verify_paper_decision_dry_run()" in deploy_text
     assert "Paper decision dry run skipped because DEPLOY_REQUIRE_DECISION_DRY_RUN=false" in deploy_text
+    assert 'PAPER_DECISION_DRY_RUN_STRATEGY="$DEPLOY_DECISION_DRY_RUN_STRATEGY"' in deploy_text
+    assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="$DEPLOY_DECISION_DRY_RUN_MIN_RECORDS"' in deploy_text
+    assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED"' in deploy_text
+    assert 'PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="$DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES"' in deploy_text
     assert '"$ROOT_DIR/scripts/paper_decision_dry_run.sh" "$ENV_FILE"' in deploy_text
     assert '--expect-trading-mode "${TRADING_MODE}"' in deploy_text
     assert '--expect-strategy-version "${STRATEGY_VERSION}"' in deploy_text
