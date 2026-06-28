@@ -235,6 +235,7 @@ class AuditEventStore:
         until: datetime | None = None,
         trading_mode: TradingMode | str | None = None,
         strategy_version: str | None = None,
+        strategy_name: str | None = None,
     ) -> list[AuditEvent]:
         if not event_types:
             return []
@@ -251,6 +252,11 @@ class AuditEventStore:
             if strategy_version is not None
             else ""
         )
+        strategy_clause = (
+            "AND (NOT (payload ? 'strategy_name') OR payload->>'strategy_name' = %s)"
+            if strategy_name is not None
+            else ""
+        )
         since_params = (since,) if since is not None else ()
         until_params = (until,) if until is not None else ()
         mode_value = (
@@ -258,6 +264,7 @@ class AuditEventStore:
         )
         mode_params = (mode_value,) if trading_mode is not None else ()
         version_params = (strategy_version,) if strategy_version is not None else ()
+        strategy_params = (strategy_name,) if strategy_name is not None else ()
         rows = fetch_all(
             self._connection,
             f"""
@@ -268,6 +275,7 @@ class AuditEventStore:
               {until_clause}
               {mode_clause}
               {version_clause}
+              {strategy_clause}
             ORDER BY created_at DESC, event_id DESC
             LIMIT %s
             OFFSET %s
@@ -278,6 +286,7 @@ class AuditEventStore:
                 *until_params,
                 *mode_params,
                 *version_params,
+                *strategy_params,
                 limit,
                 offset,
             ),
@@ -508,8 +517,11 @@ class OrderStore:
         strategy_version: str,
         session_date: date,
         market_timezone: str = "America/New_York",
+        strategy_name: str | None = None,
     ) -> list[OrderRecord]:
         """Return entry orders that were canceled or rejected on the given session date."""
+        strategy_clause = "AND strategy_name IS NOT DISTINCT FROM %s" if strategy_name is not None else ""
+        strategy_params = (strategy_name,) if strategy_name is not None else ()
         rows = fetch_all(
             self._connection,
             f"""
@@ -520,9 +532,16 @@ class OrderStore:
               AND intent_type = 'entry'
               AND status IN ('canceled', 'rejected')
               AND DATE(updated_at AT TIME ZONE %s) = %s
+              {strategy_clause}
             ORDER BY updated_at
             """,
-            (trading_mode.value, strategy_version, market_timezone, session_date),
+            (
+                trading_mode.value,
+                strategy_version,
+                market_timezone,
+                session_date,
+                *strategy_params,
+            ),
         )
         return [_row_to_order_record(row) for row in rows]
 

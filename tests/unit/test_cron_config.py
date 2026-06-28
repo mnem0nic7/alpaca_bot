@@ -18,6 +18,14 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
         "2 14,15 * * 1-5 root RUN_IF_NY_TIME_GRACE_MINUTES=1 "
         "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1002"
     )
+    readiness_post_open_repair_1005 = (
+        "5 14,15 * * 1-5 root RUN_IF_NY_TIME_GRACE_MINUTES=1 "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1005"
+    )
+    readiness_post_open_repair_1010 = (
+        "10 14,15 * * 1-5 root RUN_IF_NY_TIME_GRACE_MINUTES=1 "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1010"
+    )
     readiness_stale_repair_1015 = (
         "15 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1015"
     )
@@ -83,6 +91,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert readiness_retry in cron_text
     assert readiness_final in cron_text
     assert readiness_post_open_repair in cron_text
+    assert readiness_post_open_repair_1005 in cron_text
+    assert readiness_post_open_repair_1010 in cron_text
     assert readiness_stale_repair_1015 in cron_text
     assert readiness_stale_repair_1045 in cron_text
     assert readiness_stale_repair_1115 in cron_text
@@ -106,7 +116,9 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(readiness) < cron_text.index(readiness_retry)
     assert cron_text.index(readiness_retry) < cron_text.index(readiness_final)
     assert cron_text.index(readiness_final) < cron_text.index(readiness_post_open_repair)
-    assert cron_text.index(readiness_post_open_repair) < cron_text.index(readiness_stale_repair_1015)
+    assert cron_text.index(readiness_post_open_repair) < cron_text.index(readiness_post_open_repair_1005)
+    assert cron_text.index(readiness_post_open_repair_1005) < cron_text.index(readiness_post_open_repair_1010)
+    assert cron_text.index(readiness_post_open_repair_1010) < cron_text.index(readiness_stale_repair_1015)
     assert cron_text.index(readiness_stale_repair_1015) < cron_text.index(early_activity)
     assert cron_text.index(early_activity) < cron_text.index(activity)
     assert cron_text.index(early_activity) < cron_text.index(readiness_stale_repair_1045)
@@ -130,8 +142,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(profit_probe) < cron_text.index(proof_status)
     assert cron_text.index(proof_status) < cron_text.index(nightly)
     assert cron_text.index(profit_probe) < cron_text.index(nightly)
-    assert cron_text.count("scripts/run_if_ny_time.sh") == 24
-    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 23
+    assert cron_text.count("scripts/run_if_ny_time.sh") == 26
+    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 25
     assert "flock -n /var/lock/alpaca-bot-nightly.lock" in cron_text
     assert "flock -n /var/lock/alpaca-bot-paper" not in cron_text
     assert "flock -n /var/lock/alpaca-bot-session-guard.lock" not in cron_text
@@ -140,7 +152,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "scripts/paper_readiness_check.sh" in cron_text
     assert cron_text.count("scripts/paper_readiness_check.sh") == 2
     assert "scripts/paper_readiness_if_needed.sh" in cron_text
-    assert cron_text.count("scripts/paper_readiness_if_needed.sh") == 16
+    assert cron_text.count("scripts/paper_readiness_if_needed.sh") == 18
     assert cron_text.count("PAPER_READINESS_FORCE_REFRESH=true") == 4
     assert cron_text.count("PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=false") == 2
     assert cron_text.index("PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=false") < cron_text.index(
@@ -170,7 +182,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" /etc/cron.d/alpaca-bot' in install_cron
     assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in install_cron
     assert "Runs weekdays on New York wall time" in install_cron
-    assert "paper readiness 09:20/09:55/09:58/10:02 plus stale-repair checks from 10:15-15:15" in install_cron
+    assert "paper readiness 09:20/09:55/09:58/10:02/10:05/10:10 plus stale-repair checks from 10:15-15:15" in install_cron
     assert "force refresh 12:15/14:25/16:55/17:24" in install_cron
     assert "paper activity 10:25/12:00" in install_cron
     assert "proof status 17:28" in install_cron
@@ -1689,6 +1701,10 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "has_stock_exposure" in script
     assert "decision_evidence_records" in script
     assert "payload->>'strategy_name' = :'paper_activity_strategy'" in script
+    assert (
+        "AND (NOT (payload ? 'strategy_name') OR payload->>'strategy_name' = :'paper_activity_strategy')"
+        in script
+    )
     assert "strategy_decision_cycles" in script
     assert "strategy_decision_records" in script
     assert "-v trading_mode=" in script

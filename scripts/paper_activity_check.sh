@@ -378,6 +378,7 @@ SELECT
       'order_dispatch_failed',
       'order_dispatch_stop_price_rejected'
     )
+      AND (NOT (payload ? 'strategy_name') OR payload->>'strategy_name' = :'paper_activity_strategy')
   )::int,
   COUNT(*) FILTER (
     WHERE event_type IN (
@@ -387,6 +388,7 @@ SELECT
       'trade_update_failed',
       'protective_stop_quantity_replace_failed'
     )
+      AND (NOT (payload ? 'strategy_name') OR payload->>'strategy_name' = :'paper_activity_strategy')
   )::int
 FROM recent;
 SQL

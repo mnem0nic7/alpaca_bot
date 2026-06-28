@@ -363,6 +363,7 @@ def _build_session_diagnostics(
                 strategy_version=strategy_version,
                 session_date=session_date,
                 market_timezone=market_timezone,
+                strategy_name=strategy_name,
             )
         )
     total_cycles, disabled_cycles, disabled_reasons = _load_entries_disabled_cycle_stats(
@@ -400,6 +401,7 @@ def _build_session_diagnostics(
             limit=100,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
+            strategy_name=strategy_name,
         ),
         dispatch_failures=audit_store.list_by_event_types(
             event_types=[
@@ -411,6 +413,7 @@ def _build_session_diagnostics(
             limit=100,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
+            strategy_name=strategy_name,
         ),
         failed_entries=failed_entries,
         stream_issues=audit_store.list_by_event_types(
@@ -426,15 +429,18 @@ def _build_session_diagnostics(
             limit=100,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
+            strategy_name=strategy_name,
         ),
         open_positions=position_store.list_all(
             trading_mode=trading_mode,
             strategy_version=strategy_version,
+            strategy_name=strategy_name,
         ),
         active_orders=order_store.list_by_status(
             trading_mode=trading_mode,
             strategy_version=strategy_version,
             statuses=list(ACTIVE_ORDER_STATUSES),
+            strategy_name=strategy_name,
         ),
         reconciliation_issues=audit_store.list_by_event_types(
             event_types=["reconciliation_miss_count_incremented", "runtime_reconciliation_detected"],
@@ -443,6 +449,7 @@ def _build_session_diagnostics(
             limit=100,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
+            strategy_name=strategy_name,
         ),
         total_supervisor_cycles=total_cycles,
         entries_disabled_cycles=disabled_cycles,

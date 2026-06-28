@@ -24,6 +24,7 @@ class _RecordingAuditConn:
 
     def __init__(self, rows: list[tuple]) -> None:
         self._rows = rows
+        self.last_sql: str | None = None
         self.last_params: tuple | None = None
 
     def cursor(self):
@@ -31,6 +32,7 @@ class _RecordingAuditConn:
 
         class _Cur:
             def execute(self, sql, params=None):
+                conn_ref.last_sql = sql
                 conn_ref.last_params = params
 
             def fetchall(self):
@@ -83,12 +85,18 @@ def test_list_by_event_types_accepts_scope_filters():
         event_types=["supervisor_cycle_error"],
         trading_mode="paper",
         strategy_version="v1",
+        strategy_name="bull_flag",
         limit=100,
     )
 
+    assert conn.last_sql is not None
+    assert "payload->>'trading_mode' = %s" in conn.last_sql
+    assert "payload->>'strategy_version' = %s" in conn.last_sql
+    assert "payload->>'strategy_name' = %s" in conn.last_sql
     assert conn.last_params is not None
     assert "paper" in conn.last_params
     assert "v1" in conn.last_params
+    assert "bull_flag" in conn.last_params
 
 
 # ---------------------------------------------------------------------------
@@ -106,13 +114,17 @@ class _FakeOrderConn:
 
     def __init__(self, rows: list[tuple]) -> None:
         self._rows = rows
+        self.last_sql: str | None = None
+        self.last_params: tuple | None = None
 
     def cursor(self):
+        conn_ref = self
         rows = self._rows
 
         class _Cur:
             def execute(self, sql, params=None):
-                pass
+                conn_ref.last_sql = sql
+                conn_ref.last_params = params
 
             def fetchall(self):
                 return rows
@@ -182,6 +194,22 @@ def test_list_failed_entries_empty_when_no_rows():
         session_date=date(2026, 5, 11),
     )
     assert result == []
+
+
+def test_list_failed_entries_accepts_strategy_scope():
+    conn = _FakeOrderConn([])
+    store = OrderStore(conn)
+    store.list_failed_entries(
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        session_date=date(2026, 5, 11),
+        strategy_name="bull_flag",
+    )
+
+    assert conn.last_sql is not None
+    assert "strategy_name IS NOT DISTINCT FROM %s" in conn.last_sql
+    assert conn.last_params is not None
+    assert "bull_flag" in conn.last_params
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +325,60 @@ def test_build_session_diagnostics_cycle_errors(monkeypatch):
     ]
     assert dispatch_calls
     assert "order_dispatch_stop_price_rejected" in dispatch_calls[0]["event_types"]
+
+
+def test_build_session_diagnostics_scopes_strategy_filters(monkeypatch):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+    from types import SimpleNamespace
+
+    audit_calls: list[dict] = []
+    failed_entry_calls: list[dict] = []
+    active_order_calls: list[dict] = []
+    position_calls: list[dict] = []
+
+    fake_audit_store = SimpleNamespace(
+        list_by_event_types=lambda **kw: audit_calls.append(kw) or [],
+    )
+    fake_order_store = SimpleNamespace(
+        list_failed_entries=lambda **kw: failed_entry_calls.append(kw) or [],
+        list_by_status=lambda **kw: active_order_calls.append(kw) or [],
+    )
+    fake_position_store = SimpleNamespace(
+        list_all=lambda **kw: position_calls.append(kw) or [],
+    )
+
+    monkeypatch.setattr(cli_module, "AuditEventStore", lambda conn: fake_audit_store)
+    monkeypatch.setattr(cli_module, "OrderStore", lambda conn: fake_order_store)
+    monkeypatch.setattr(cli_module, "PositionStore", lambda conn: fake_position_store)
+    monkeypatch.setattr(
+        cli_module,
+        "_load_entries_disabled_cycle_stats",
+        lambda *_args, **_kwargs: (10, 0, {}),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_load_decision_activity_stats",
+        lambda *_args, **_kwargs: cli_module.DecisionActivityStats(cycles=2, records=20),
+    )
+
+    cli_module._build_session_diagnostics(
+        object(),
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        eval_start_date=date(2026, 5, 11),
+        eval_end_date=date(2026, 5, 11),
+        market_timezone="America/New_York",
+        strategy_name="bull_flag",
+    )
+
+    assert audit_calls
+    assert all(call["strategy_name"] == "bull_flag" for call in audit_calls)
+    assert failed_entry_calls
+    assert all(call["strategy_name"] == "bull_flag" for call in failed_entry_calls)
+    assert active_order_calls
+    assert active_order_calls[0]["strategy_name"] == "bull_flag"
+    assert position_calls
+    assert position_calls[0]["strategy_name"] == "bull_flag"
 
 
 def test_build_session_diagnostics_open_positions(monkeypatch):
