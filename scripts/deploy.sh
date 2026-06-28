@@ -110,7 +110,8 @@ if credentials_ready && paper_proof_enabled; then
   proof_summary="$(
     printf '%s\n' "$proof_status_output" \
       | grep -E '^paper proof summary: ' \
-      | tail -n 1
+      | tail -n 1 \
+      || true
   )"
   if [[ "$proof_summary" != *"readiness=ready"* \
     || "$proof_summary" != *"blockers=none"* ]]; then

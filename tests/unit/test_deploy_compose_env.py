@@ -52,8 +52,10 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert '"$ROOT_DIR/scripts/paper_readiness_if_needed.sh"' in deploy_text
     assert '"$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE"' in deploy_text
     assert "paper proof summary:" in deploy_text
+    assert "|| true" in deploy_text
     assert '"readiness=ready"' in deploy_text
     assert '"blockers=none"' in deploy_text
+    assert "${proof_summary:-missing summary}" in deploy_text
     assert "deploy failed: paper proof status not ready after deploy" in deploy_text
 
 
