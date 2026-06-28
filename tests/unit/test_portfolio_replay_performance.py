@@ -135,3 +135,56 @@ def test_portfolio_index_sorts_unsorted_bar_lists() -> None:
 
     assert lane.intraday == [earlier, later]
     assert lane.daily == [earlier, later]
+
+
+def test_portfolio_run_advances_sparse_lanes_without_timestamp_index(monkeypatch) -> None:
+    from alpaca_bot.core.engine import CycleResult
+
+    settings = _settings()
+    runner = PortfolioReplayRunner(settings)
+    t0 = datetime(2026, 1, 4, 14, 30, tzinfo=timezone.utc)
+    t1 = datetime(2026, 1, 4, 14, 45, tzinfo=timezone.utc)
+    t2 = datetime(2026, 1, 4, 15, 0, tzinfo=timezone.utc)
+    prior_daily = [_bar("AAA", datetime(2026, 1, 3, tzinfo=timezone.utc))]
+    scenarios = [
+        ReplayScenario(
+            name="AAA",
+            symbol="AAA",
+            starting_equity=100_000.0,
+            daily_bars=prior_daily,
+            intraday_bars=[_bar("AAA", t0), _bar("AAA", t2)],
+        ),
+        ReplayScenario(
+            name="BBB",
+            symbol="BBB",
+            starting_equity=100_000.0,
+            daily_bars=[_bar("BBB", datetime(2026, 1, 3, tzinfo=timezone.utc))],
+            intraday_bars=[_bar("BBB", t1)],
+        ),
+    ]
+    calls = []
+
+    def fake_evaluate_cycle(**kw):
+        calls.append(
+            (
+                kw["now"],
+                tuple(kw["symbols"]),
+                {
+                    symbol: len(prefix)
+                    for symbol, prefix in kw["intraday_bars_by_symbol"].items()
+                },
+            )
+        )
+        return CycleResult(as_of=kw["now"])
+
+    monkeypatch.setattr(
+        "alpaca_bot.replay.portfolio.evaluate_cycle",
+        fake_evaluate_cycle,
+    )
+
+    assert runner.run(scenarios) == []
+    assert calls == [
+        (t0, ("AAA",), {"AAA": 1}),
+        (t1, ("BBB",), {"BBB": 1}),
+        (t2, ("AAA",), {"AAA": 2}),
+    ]
