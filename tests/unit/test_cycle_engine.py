@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from alpaca_bot.config import Settings
-from alpaca_bot.domain import Bar, OpenPosition
+from alpaca_bot.domain import Bar, EntrySignal, OpenPosition
 
 
 def make_settings(**overrides: str) -> Settings:
@@ -125,6 +125,88 @@ def test_evaluate_cycle_emits_entry_intent_for_valid_breakout() -> None:
     assert result.intents[0].limit_price == 110.12
     assert result.intents[0].initial_stop_price == 108.0
     assert result.intents[0].quantity == 45
+
+
+def test_evaluate_cycle_allows_entry_when_next_bar_starts_before_flatten() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    signal_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc),
+        open=100.0,
+        high=102.0,
+        low=99.0,
+        close=101.0,
+        volume=5_000,
+    )
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=signal_bar.timestamp,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": [signal_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=lambda **kwargs: EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=100.0,
+            relative_volume=2.0,
+            stop_price=101.0,
+            limit_price=101.1,
+            initial_stop_price=99.0,
+        ),
+    )
+
+    entries = [intent for intent in result.intents if intent.intent_type is CycleIntentType.ENTRY]
+    assert len(entries) == 1
+    assert entries[0].signal_timestamp == signal_bar.timestamp
+
+
+def test_evaluate_cycle_rejects_entry_when_next_bar_starts_at_flatten() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    signal_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc),
+        open=100.0,
+        high=102.0,
+        low=99.0,
+        close=101.0,
+        volume=5_000,
+    )
+    evaluator_calls = 0
+
+    def evaluator(**kwargs) -> EntrySignal:
+        nonlocal evaluator_calls
+        evaluator_calls += 1
+        return EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=100.0,
+            relative_volume=2.0,
+            stop_price=101.0,
+            limit_price=101.1,
+            initial_stop_price=99.0,
+        )
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=signal_bar.timestamp,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": [signal_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=evaluator,
+    )
+
+    assert result.intents == []
+    assert evaluator_calls == 0
+    assert result.decision_records[-1].reject_reason == "entry_execution_at_or_after_flatten"
 
 
 def test_evaluate_cycle_skips_entry_when_symbol_already_traded_today() -> None:

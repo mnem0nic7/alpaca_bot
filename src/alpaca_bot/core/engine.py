@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
 from typing import TYPE_CHECKING, Mapping, Sequence
 
@@ -52,6 +52,29 @@ def _filter_valid_bars(bars: Sequence[Bar], *, label: str = "") -> Sequence[Bar]
             f" for {label}" if label else "",
         )
     return valid
+
+
+def _entry_execution_at_or_after_flatten(
+    signal_timestamp: datetime,
+    settings: Settings,
+    *,
+    session_type: SessionType | None,
+) -> bool:
+    effective_session = session_type
+    if effective_session is None:
+        local_time = signal_timestamp.astimezone(settings.market_timezone).time()
+        if settings.entry_window_start <= local_time <= settings.entry_window_end:
+            effective_session = SessionType.REGULAR
+    if effective_session is not SessionType.REGULAR:
+        return False
+    signal_local = signal_timestamp.astimezone(settings.market_timezone)
+    execution_start = signal_local + timedelta(minutes=settings.entry_timeframe_minutes)
+    flatten_at = datetime.combine(
+        signal_local.date(),
+        settings.flatten_time,
+        tzinfo=settings.market_timezone,
+    )
+    return execution_start >= flatten_at
 
 
 class CycleIntentType(StrEnum):
@@ -822,6 +845,38 @@ def evaluate_cycle(
                         continue
                 else:
                     signal_index = len(bars) - 1
+
+                signal_bar = bars[signal_index]
+                if _entry_execution_at_or_after_flatten(
+                    signal_bar.timestamp,
+                    settings,
+                    session_type=session_type,
+                ):
+                    _decision_records.append(DecisionRecord(
+                        cycle_at=now,
+                        symbol=symbol,
+                        strategy_name=strategy_name,
+                        trading_mode=_tm,
+                        strategy_version=_sv,
+                        decision="rejected",
+                        reject_stage="timing",
+                        reject_reason="entry_execution_at_or_after_flatten",
+                        entry_level=None,
+                        signal_bar_close=signal_bar.close,
+                        relative_volume=None,
+                        atr=None,
+                        stop_price=None,
+                        limit_price=None,
+                        initial_stop_price=None,
+                        quantity=None,
+                        risk_per_share=None,
+                        equity=equity,
+                        filter_results={},
+                        vix_close=_ctx_vix_close,
+                        vix_above_sma=_ctx_vix_above_sma,
+                        sector_passing_pct=_ctx_sector_passing_pct,
+                    ))
+                    continue
 
                 signal = signal_evaluator(
                     symbol=symbol,
