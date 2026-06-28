@@ -1076,6 +1076,18 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "scoring_end_date=" in script
     assert "paper proof strategy status:" in script
     assert "status={strategy_status} target={strategy_name}" in script
+    assert "paper proof posture:" in script
+    assert "status={posture_status}" in script
+    assert "relative_volume_threshold={settings.relative_volume_threshold:g}" in script
+    assert "max_open_positions={settings.max_open_positions}" in script
+    assert "abs(float(settings.relative_volume_threshold) - 2.0)" in script
+    assert "int(settings.max_open_positions) == 3" in script
+    assert "bool(settings.enable_vwap_entry_filter)" in script
+    assert "not bool(settings.enable_vix_filter)" in script
+    assert "not bool(settings.enable_sector_filter)" in script
+    assert "not bool(settings.extended_hours_enabled)" in script
+    assert "bool(settings.paper_proof_freeze)" in script
+    assert "int(settings.intraday_consecutive_loss_gate) == 0" in script
     assert "paper proof local exposure:" in script
     assert "positions={local_open_positions} active_orders={local_active_orders}" in script
     assert "load_broker_exposure" in script

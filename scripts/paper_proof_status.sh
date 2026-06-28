@@ -307,11 +307,37 @@ proof_window = (
 )
 active_strategy_names = [name for name in active_strategies.split(",") if name]
 strategy_status = "ok" if strategy_name in active_strategy_names else "disabled"
+posture_status = (
+    "ok"
+    if (
+        abs(float(settings.relative_volume_threshold) - 2.0) < 1e-9
+        and int(settings.max_open_positions) == 3
+        and bool(settings.enable_vwap_entry_filter)
+        and not bool(settings.enable_vix_filter)
+        and not bool(settings.enable_sector_filter)
+        and not bool(settings.extended_hours_enabled)
+        and bool(settings.paper_proof_freeze)
+        and int(settings.intraday_consecutive_loss_gate) == 0
+    )
+    else "drifted"
+)
 
 print(f"paper proof active strategies: {active_strategies or 'none'}")
 print(
     "paper proof strategy status: "
     f"status={strategy_status} target={strategy_name} active=[{active_strategies or ''}]"
+)
+print(
+    "paper proof posture: "
+    f"status={posture_status} "
+    f"relative_volume_threshold={settings.relative_volume_threshold:g} "
+    f"max_open_positions={settings.max_open_positions} "
+    f"vwap_filter={str(settings.enable_vwap_entry_filter).lower()} "
+    f"vix_filter={str(settings.enable_vix_filter).lower()} "
+    f"sector_filter={str(settings.enable_sector_filter).lower()} "
+    f"extended_hours={str(settings.extended_hours_enabled).lower()} "
+    f"paper_proof_freeze={str(settings.paper_proof_freeze).lower()} "
+    f"intraday_consecutive_loss_gate={settings.intraday_consecutive_loss_gate}"
 )
 print(
     "paper proof local exposure: "
