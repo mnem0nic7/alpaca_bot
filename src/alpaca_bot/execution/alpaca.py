@@ -96,6 +96,9 @@ class BrokerOrder:
     side: str
     status: str
     quantity: float
+    fill_price: float | None = None
+    filled_quantity: float | None = None
+    updated_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -243,17 +246,22 @@ class AlpacaExecutionAdapter:
         else:
             filters = GetOrdersRequest(status="open", limit=500)
         raw_orders = _retry_with_backoff(lambda: self._trading.get_orders(filter=filters))
-        return [
-            BrokerOrder(
-                client_order_id=str(getattr(order, "client_order_id", "")),
-                broker_order_id=str(getattr(order, "id", "")) or None,
-                symbol=str(order.symbol).upper(),
-                side=order.side.value if hasattr(order.side, "value") else str(order.side),
-                status=order.status.value if hasattr(order.status, "value") else str(order.status),
-                quantity=float(order.qty),
-            )
-            for order in raw_orders
-        ]
+        return [_parse_broker_order(order) for order in raw_orders]
+
+    def list_recent_closed_orders(
+        self,
+        *,
+        after: datetime | None = None,
+        limit: int = 500,
+    ) -> list[BrokerOrder]:
+        try:
+            from alpaca.trading.requests import GetOrdersRequest
+        except ModuleNotFoundError:
+            filters = {"status": "closed", "limit": limit, "after": after}
+        else:
+            filters = GetOrdersRequest(status="closed", limit=limit, after=after)
+        raw_orders = _retry_with_backoff(lambda: self._trading.get_orders(filter=filters))
+        return [_parse_broker_order(order) for order in raw_orders]
 
     def get_open_orders_for_symbol(self, symbol: str) -> list[BrokerOrder]:
         try:
@@ -643,6 +651,25 @@ def _as_datetime(value: Any) -> datetime:
     raise TypeError(f"Unsupported datetime value: {value!r}")
 
 
+def _optional_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime | str):
+        return _as_datetime(value)
+    return None
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if not isinstance(value, int | float | str):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _as_date(value: Any) -> date:
     if isinstance(value, date) and not isinstance(value, datetime):
         return value
@@ -1014,6 +1041,9 @@ def _parse_broker_order(raw: Any) -> BrokerOrder:
         side=raw_side.value if hasattr(raw_side, "value") else str(raw_side),
         status=raw_status.value if hasattr(raw_status, "value") else str(raw_status),
         quantity=float(getattr(raw, "qty", 0)),
+        fill_price=_optional_float(getattr(raw, "filled_avg_price", None)),
+        filled_quantity=_optional_float(getattr(raw, "filled_qty", None)),
+        updated_at=_optional_datetime(getattr(raw, "updated_at", None)),
     )
 
 

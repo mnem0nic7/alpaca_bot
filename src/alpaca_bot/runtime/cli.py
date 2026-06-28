@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import sys
 from typing import Callable, Sequence, TextIO
@@ -36,12 +36,16 @@ def main(
     )
     timestamp = (now or (lambda: datetime.now(timezone.utc)))()
     open_orders = list(_list_open_orders(broker))
+    recent_closed_orders = list(
+        _list_recent_closed_orders(broker, after=timestamp - timedelta(days=2))
+    )
     open_positions = list(_list_open_positions(broker))
     recovery_report = recover_startup_state(
         settings=resolved_settings,
         runtime=runtime,
         broker_open_positions=open_positions,
         broker_open_orders=open_orders,
+        broker_closed_orders=recent_closed_orders,
         now=timestamp,
     )
     report = start_trader(
@@ -87,6 +91,16 @@ def main(
 def _list_open_orders(broker: object) -> Sequence[object]:
     if hasattr(broker, "list_open_orders"):
         return broker.list_open_orders()
+    return ()
+
+
+def _list_recent_closed_orders(
+    broker: object,
+    *,
+    after: datetime | None = None,
+) -> Sequence[object]:
+    if hasattr(broker, "list_recent_closed_orders"):
+        return broker.list_recent_closed_orders(after=after)
     return ()
 
 

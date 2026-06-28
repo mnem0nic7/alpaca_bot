@@ -91,6 +91,7 @@ def recover_startup_state(
     runtime: RuntimeProtocol,
     broker_open_positions: Sequence[BrokerPosition],
     broker_open_orders: Sequence[BrokerOrder],
+    broker_closed_orders: Sequence[BrokerOrder] = (),
     now: datetime | Callable[[], datetime] | None = None,
     audit_event_type: str | None = "startup_recovery_completed",
     notifier: Notifier | None = None,
@@ -351,6 +352,7 @@ def recover_startup_state(
 
     synced_order_count = 0
     matched_local_client_ids: set[str] = set()
+    recovered_closed_order_fills: dict[str, OrderRecord] = {}
     for broker_order in broker_open_orders:
         existing = None
         if broker_order.broker_order_id is not None:
@@ -370,6 +372,45 @@ def recover_startup_state(
         ):
             mismatches.append(f"broker order differs locally: {broker_order.client_order_id}")
         synced_order_count += 1
+
+    for broker_order in broker_closed_orders:
+        existing = None
+        if broker_order.broker_order_id is not None:
+            existing = local_orders_by_broker_id.get(broker_order.broker_order_id)
+        if existing is None:
+            existing = local_orders_by_client_id.get(broker_order.client_order_id)
+        if existing is None:
+            continue
+
+        fill_price = broker_order.fill_price
+        filled_quantity = _broker_filled_quantity(broker_order)
+        if fill_price is None or filled_quantity is None or filled_quantity <= 0:
+            continue
+
+        matched_local_client_ids.add(existing.client_order_id)
+        normalized_status = str(broker_order.status).lower()
+        mismatches.append(f"broker closed order fill recovered: {existing.client_order_id}")
+        recovered_closed_order_fills[existing.client_order_id] = OrderRecord(
+            client_order_id=existing.client_order_id,
+            symbol=existing.symbol,
+            side=existing.side,
+            intent_type=existing.intent_type,
+            status=normalized_status,
+            quantity=broker_order.quantity if broker_order.quantity > 0 else existing.quantity,
+            trading_mode=existing.trading_mode,
+            strategy_version=existing.strategy_version,
+            strategy_name=existing.strategy_name,
+            created_at=existing.created_at,
+            updated_at=broker_order.updated_at or timestamp,
+            stop_price=existing.stop_price,
+            limit_price=existing.limit_price,
+            initial_stop_price=existing.initial_stop_price,
+            broker_order_id=broker_order.broker_order_id or existing.broker_order_id,
+            signal_timestamp=existing.signal_timestamp,
+            fill_price=fill_price,
+            filled_quantity=filled_quantity,
+            reconciliation_miss_count=existing.reconciliation_miss_count,
+        )
 
     cleared_order_count = 0
     for order in local_active_orders:
@@ -440,6 +481,25 @@ def recover_startup_state(
                         "fill_price": recovered_entry.fill_price,
                         "filled_quantity": recovered_entry.filled_quantity,
                         "initial_stop_price": recovered_entry.initial_stop_price,
+                    },
+                    created_at=timestamp,
+                ),
+                commit=False,
+            )
+        for recovered_order in recovered_closed_order_fills.values():
+            runtime.order_store.save(recovered_order, commit=False)
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="startup_recovery_closed_order_fill_recovered",
+                    symbol=recovered_order.symbol,
+                    payload={
+                        "client_order_id": recovered_order.client_order_id,
+                        "broker_order_id": recovered_order.broker_order_id,
+                        "intent_type": recovered_order.intent_type,
+                        "strategy_name": recovered_order.strategy_name,
+                        "status": recovered_order.status,
+                        "fill_price": recovered_order.fill_price,
+                        "filled_quantity": recovered_order.filled_quantity,
                     },
                     created_at=timestamp,
                 ),
@@ -725,6 +785,8 @@ def recover_startup_state(
                 continue
             if order.client_order_id in recovered_entry_fills:
                 continue
+            if order.client_order_id in recovered_closed_order_fills:
+                continue
             # Never-submitted orders (pending_submit or submitting with no broker ID) are
             # absent from the broker because dispatch hadn't completed when we crashed.
             # submitting orders need an explicit reset to pending_submit so
@@ -911,6 +973,14 @@ def _latest_recoverable_entry_order(
             order.client_order_id,
         ),
     )
+
+
+def _broker_filled_quantity(order: BrokerOrder) -> float | None:
+    if order.filled_quantity is not None:
+        return order.filled_quantity
+    if str(order.status).lower() == "filled":
+        return order.quantity
+    return None
 
 
 def _infer_strategy_name_from_client_order_id(client_order_id: str) -> str:

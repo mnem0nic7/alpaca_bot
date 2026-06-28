@@ -34,7 +34,11 @@ from alpaca_bot.runtime.bootstrap import (
 from alpaca_bot.risk.weighting import WeightResult, compute_strategy_weights, compute_losing_day_streaks
 from alpaca_bot.risk.confidence import compute_confidence_scores
 from alpaca_bot.storage.db import check_connection
-from alpaca_bot.runtime.cli import _list_open_orders, _list_open_positions
+from alpaca_bot.runtime.cli import (
+    _list_open_orders,
+    _list_open_positions,
+    _list_recent_closed_orders,
+)
 from alpaca_bot.core.engine import CycleIntent, CycleIntentType, CycleResult
 from alpaca_bot.runtime.cycle import run_cycle
 from alpaca_bot.runtime.cycle_intent_execution import ACTIVE_STOP_STATUSES, execute_cycle_intents
@@ -221,6 +225,12 @@ class RuntimeSupervisor:
         timestamp = _resolve_now(now)
         open_orders = list(_list_open_orders(self.broker))
         open_positions = list(_list_open_positions(self.broker))
+        closed_orders = list(
+            _list_recent_closed_orders(
+                self.broker,
+                after=timestamp - timedelta(days=2),
+            )
+        )
         _startup_lock = getattr(self.runtime, "store_lock", None)
         _startup_lock_ctx = _startup_lock if _startup_lock is not None else contextlib.nullcontext()
         with _startup_lock_ctx:
@@ -229,6 +239,7 @@ class RuntimeSupervisor:
                 runtime=self.runtime,
                 broker_open_positions=open_positions,
                 broker_open_orders=open_orders,
+                broker_closed_orders=closed_orders,
                 now=timestamp,
                 notifier=self._notifier,
             )
@@ -289,6 +300,12 @@ class RuntimeSupervisor:
         timestamp = _resolve_now(now)
         broker_open_orders = list(_list_open_orders(self.broker))
         broker_open_positions = list(_list_open_positions(self.broker))
+        broker_closed_orders = list(
+            _list_recent_closed_orders(
+                self.broker,
+                after=timestamp - timedelta(days=2),
+            )
+        )
         _rec_lock = getattr(self.runtime, "store_lock", None)
         _rec_lock_ctx = _rec_lock if _rec_lock is not None else contextlib.nullcontext()
         _recovery_exception_occurred = False
@@ -299,6 +316,7 @@ class RuntimeSupervisor:
                     runtime=self.runtime,
                     broker_open_positions=broker_open_positions,
                     broker_open_orders=broker_open_orders,
+                    broker_closed_orders=broker_closed_orders,
                     now=timestamp,
                     audit_event_type=None,
                 )

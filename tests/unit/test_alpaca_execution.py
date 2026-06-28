@@ -41,6 +41,9 @@ class OrderStub:
     side: str
     status: str
     qty: str
+    filled_qty: str | None = None
+    filled_avg_price: str | None = None
+    updated_at: datetime | None = None
 
 
 @dataclass
@@ -129,6 +132,8 @@ class TradingClientStub:
                 "status": str(filter.status.value if hasattr(filter.status, "value") else filter.status),
                 "limit": getattr(filter, "limit", None),
             }
+            if getattr(filter, "after", None) is not None:
+                self.order_filter["after"] = getattr(filter, "after")
         else:
             self.order_filter = filter
         return self.orders
@@ -331,6 +336,37 @@ def test_list_open_orders_requests_limit_500() -> None:
         "status": "open",
         "limit": 500,
     }, f"list_open_orders must request limit=500; got {trading_client.order_filter}"
+
+
+def test_list_recent_closed_orders_requests_closed_orders_after_timestamp() -> None:
+    trading_client = TradingClientStub()
+    updated_at = datetime(2026, 6, 29, 15, 30, tzinfo=timezone.utc)
+    trading_client.orders = [
+        OrderStub(
+            client_order_id="paper:v1:AAPL:stop",
+            id="broker-stop-1",
+            symbol="AAPL",
+            side="sell",
+            status="filled",
+            qty="45",
+            filled_qty="45",
+            filled_avg_price="109.89",
+            updated_at=updated_at,
+        )
+    ]
+    broker = AlpacaExecutionAdapter(trading_client)
+    after = datetime(2026, 6, 28, tzinfo=timezone.utc)
+
+    orders = broker.list_recent_closed_orders(after=after, limit=250)
+
+    assert trading_client.order_filter == {
+        "status": "closed",
+        "limit": 250,
+        "after": after,
+    }
+    assert orders[0].fill_price == pytest.approx(109.89)
+    assert orders[0].filled_quantity == pytest.approx(45.0)
+    assert orders[0].updated_at == updated_at
 
 
 def test_alpaca_broker_is_backwards_compatible_alias() -> None:
@@ -661,3 +697,24 @@ def test_parse_broker_order_enum_status_not_string_enum_prefix() -> None:
     assert order.status == "accepted"
     assert "OrderStatus" not in order.status
     assert "_OrderStatus" not in order.status
+
+
+def test_parse_broker_order_includes_fill_metadata() -> None:
+    updated_at = datetime(2026, 6, 29, 19, 45, tzinfo=timezone.utc)
+    raw = StringOrderStub(
+        client_order_id="paper:v1:AAPL:stop",
+        id="broker-stop-1",
+        symbol="AAPL",
+        side="sell",
+        status="filled",
+        qty="45",
+    )
+    raw.filled_qty = "45"
+    raw.filled_avg_price = "109.89"
+    raw.updated_at = updated_at
+
+    order = _parse_broker_order(raw)
+
+    assert order.fill_price == pytest.approx(109.89)
+    assert order.filled_quantity == pytest.approx(45.0)
+    assert order.updated_at == updated_at
