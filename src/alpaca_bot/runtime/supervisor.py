@@ -225,12 +225,7 @@ class RuntimeSupervisor:
         timestamp = _resolve_now(now)
         open_orders = list(_list_open_orders(self.broker))
         open_positions = list(_list_open_positions(self.broker))
-        closed_orders = list(
-            _list_recent_closed_orders(
-                self.broker,
-                after=timestamp - timedelta(days=2),
-            )
-        )
+        closed_orders = self._load_recent_closed_orders(timestamp)
         _startup_lock = getattr(self.runtime, "store_lock", None)
         _startup_lock_ctx = _startup_lock if _startup_lock is not None else contextlib.nullcontext()
         with _startup_lock_ctx:
@@ -300,12 +295,7 @@ class RuntimeSupervisor:
         timestamp = _resolve_now(now)
         broker_open_orders = list(_list_open_orders(self.broker))
         broker_open_positions = list(_list_open_positions(self.broker))
-        broker_closed_orders = list(
-            _list_recent_closed_orders(
-                self.broker,
-                after=timestamp - timedelta(days=2),
-            )
-        )
+        broker_closed_orders = self._load_recent_closed_orders(timestamp)
         _rec_lock = getattr(self.runtime, "store_lock", None)
         _rec_lock_ctx = _rec_lock if _rec_lock is not None else contextlib.nullcontext()
         _recovery_exception_occurred = False
@@ -1870,6 +1860,31 @@ class RuntimeSupervisor:
                     self.runtime.connection.rollback()
                 except Exception:
                     pass
+
+    def _load_recent_closed_orders(self, timestamp: datetime) -> list[object]:
+        try:
+            return list(
+                _list_recent_closed_orders(
+                    self.broker,
+                    after=timestamp - timedelta(days=2),
+                )
+            )
+        except Exception as exc:
+            logger.warning(
+                "Closed-order reconciliation lookup failed; continuing without closed-order backfill",
+                exc_info=True,
+            )
+            self._append_audit(
+                AuditEvent(
+                    event_type="closed_order_reconciliation_lookup_failed",
+                    payload={
+                        "timestamp": timestamp.isoformat(),
+                        "error": str(exc),
+                    },
+                    created_at=timestamp,
+                )
+            )
+            return []
 
     def _load_confidence_floor(self) -> float:
         floor_store = getattr(self.runtime, "confidence_floor_store", None)

@@ -971,6 +971,52 @@ def test_runtime_supervisor_run_cycle_once_gathers_runtime_inputs_and_dispatches
     ]
 
 
+def test_run_cycle_once_continues_when_closed_order_lookup_fails(monkeypatch) -> None:
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=21),
+            "MSFT": make_bar_series("MSFT", end=now, count=21),
+            "SPY": make_bar_series("SPY", end=now, count=21),
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=20, days=True),
+            "MSFT": make_bar_series("MSFT", end=now, count=20, days=True),
+            "SPY": make_bar_series("SPY", end=now, count=20, days=True),
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "_list_recent_closed_orders",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("alpaca closed lookup failed")),
+    )
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **kwargs: {"submitted_count": 0})
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    assert isinstance(report, SupervisorCycleReport)
+    assert any(
+        event.event_type == "closed_order_reconciliation_lookup_failed"
+        and event.payload["error"] == "alpaca closed lookup failed"
+        for event in runtime.audit_event_store.appended
+    )
+
+
 def test_runtime_supervisor_run_cycle_once_disables_entries_when_runtime_reconciliation_finds_mismatch(
     monkeypatch,
 ) -> None:
