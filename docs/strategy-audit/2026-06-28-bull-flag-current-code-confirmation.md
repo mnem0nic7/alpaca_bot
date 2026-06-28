@@ -432,3 +432,30 @@ Decision: keep the deployed paper posture unchanged. The full live active
 scenario set at current HEAD remains positive-edge after 2 bps per-side
 slippage, while live proof status is still ready and pending the first
 `2026-06-29`-or-later completed paper session.
+
+Live decision-path dry run after intraday readiness smoke hardening at commit
+`20f32f4` used the exact enabled, non-ignored paper watchlist from Postgres and
+the production Alpaca IEX feed. The run did not persist orders, did not write
+decision logs, and did not call broker order submission; it fetched bars and ran
+`evaluate_cycle` in memory for `bull_flag` at `2026-06-26T15:30:00-04:00`.
+
+- active paper symbols: `980`
+- ignored paper symbols: `6`
+- fractionable active symbols: `978`
+- account equity used for sizing: `$68,991.18`
+- completed intraday coverage: `980/980`
+- daily coverage: `980/980`
+- symbols with fewer than 20 completed intraday bars: `3`
+  (`DJCO:8`, `NUTX:18`, `ODC:18`)
+- decision records produced: `965`
+- accepted entry records: `1`
+- rejected records: `2`
+- skipped no-signal records: `962`
+- accepted intent sample: `TPB:39.62732912119471@87.05`
+
+Decision: keep the deployed paper posture unchanged. The live decision path can
+evaluate nearly the whole active universe and produces enough strategy-specific
+decision evidence for the 10:25/12:00 paper-activity checks. The three thin
+symbols are sparse-data names, not infrastructure failures, and the proof
+status remains `ready` / `pending` with no blockers until live paper execution
+starts on or after `2026-06-29`.
