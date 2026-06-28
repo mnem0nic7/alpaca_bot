@@ -121,3 +121,33 @@ posture still clears the exact live-universe 2 bps proof replay and remains
 positive-edge under a 5 bps stress replay, so there is no evidence-based reason
 to alter the paper proof configuration immediately before the 2026-06-29
 session.
+
+Proof-velocity stress check at commit `0099566` compared the deployed K=3
+posture against wider K=4 and K=5 alternatives under a harsher 5 bps-per-side
+slippage assumption:
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+python3 -m alpaca_bot.replay.cli portfolio-audit \
+  --scenario-dir /tmp/alpaca-active-120d-scenarios \
+  --strategy bull_flag \
+  --slippage-bps 5 \
+  --max-open-positions 3 \
+  --max-open-positions 4 \
+  --max-open-positions 5 \
+  --starting-equity 17247.795 \
+  --output /tmp/alpaca-bull-flag-120d-k345-stress-5bps-0099566.md \
+  --jsonl /tmp/alpaca-bull-flag-120d-k345-stress-5bps-0099566.jsonl
+```
+
+| K | scenarios | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(mean<=0) | frictionless P&L | cost drag | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---|
+| 3 | 980 | 412 | 74.0% | 1.65 | 939.28 | 2.2798 | 5.06 | [0.8819, 3.6206] | 0.0000 | 1283.93 | 344.64 | positive-edge |
+| 4 | 980 | 501 | 72.5% | 1.48 | 934.64 | 1.8655 | 4.56 | [0.5964, 3.0477] | 0.0025 | 1367.82 | 433.18 | positive-edge |
+| 5 | 980 | 561 | 71.7% | 1.40 | 921.66 | 1.6429 | 4.02 | [0.4389, 2.8391] | 0.0055 | 1380.13 | 458.47 | positive-edge |
+
+Decision: keep K=3. Wider K improves historical trade count, but it lowers
+after-cost profit factor, total P&L, mean/trade, annualized Sharpe, and
+confidence-interval floor under stress slippage. For paper proof, the current
+K=3 posture is still the better tradeoff between proof velocity and robust
+profitability.
