@@ -193,6 +193,19 @@ market closed, and the activity check exited cleanly with
 `paper activity skipped: market closed in last 90 minutes`. This confirms the
 post-open activity path remains non-disruptive before the proof window opens.
 
+The post-close proof scripts were also dry-run directly against the live paper
+broker state before the proof window opened:
+
+```bash
+./scripts/session_guard.sh /etc/alpaca_bot/alpaca-bot.env
+./scripts/paper_profit_probe.sh /etc/alpaca_bot/alpaca-bot.env
+```
+
+Both exited `43` as pending because the latest completed session was
+`2026-06-26`, which is before the configured `2026-06-29` proof start. Both
+also confirmed broker exposure was flat (`open_orders=0`, `open_positions=0`),
+so the pre-start pending path did not apply close-only.
+
 Post profit-probe pending-guard regression at commit `4359314`, the live active
 paper watchlist was compared with the exact latest-120-day replay directory:
 
