@@ -570,12 +570,47 @@ def test_dispatch_does_not_skip_naive_signal_timestamp_from_same_day() -> None:
     assert report["submitted_count"] == 1
 
 
+def test_dispatch_keeps_pending_entry_at_next_bar_start() -> None:
+    """A pending_submit entry remains valid when the replay execution bar starts."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    signal_ts = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)
+    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes)
+    entry = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:next-bar-active",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=signal_ts,
+        updated_at=signal_ts,
+        stop_price=101.0,
+        limit_price=101.5,
+        initial_stop_price=99.5,
+        signal_timestamp=signal_ts,
+    )
+    order_store = RecordingOrderStore([entry])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
+    broker = RecordingBroker()
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    assert len(broker.entry_calls) == 1
+    assert not any(order.status == "expired" for order in order_store.saved)
+    assert not any(event.event_type == "entry_order_expired_next_bar" for event in audit_store.appended)
+    assert report["submitted_count"] == 1
+
+
 def test_dispatch_expires_pending_entry_after_next_bar_window() -> None:
     """A pending_submit entry that missed its next-bar window must not submit late."""
     _, dispatch_pending_orders = load_order_dispatch_api()
     settings = make_settings()
     signal_ts = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)
-    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes)
+    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes * 2)
     stale_entry = OrderRecord(
         client_order_id="paper:v1-breakout:AAPL:entry:next-bar-expired",
         symbol="AAPL",

@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 _UNRECOVERABLE_STOP_CODES = frozenset({"42210000"})
 
 
+def entry_order_next_bar_expiry_age(settings: Settings) -> timedelta:
+    # Alpaca intraday bars are timestamped at the start of the interval.  A
+    # signal on bar N is active for bar N+1, so it expires at the end of N+1.
+    return timedelta(minutes=settings.entry_timeframe_minutes * 2)
+
+
 def _is_unrecoverable_stop_error(exc: Exception) -> bool:
     msg = str(exc)
     return any(code in msg for code in _UNRECOVERABLE_STOP_CODES)
@@ -176,7 +182,7 @@ def dispatch_pending_orders(
                 if timestamp.tzinfo is None
                 else timestamp.astimezone(timezone.utc)
             )
-            max_age = timedelta(minutes=settings.entry_timeframe_minutes)
+            max_age = entry_order_next_bar_expiry_age(settings)
             age = timestamp_utc - sig_ts.astimezone(timezone.utc)
             if age >= max_age:
                 logger.warning(

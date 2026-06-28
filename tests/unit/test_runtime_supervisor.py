@@ -3450,7 +3450,7 @@ def test_run_cycle_once_cancels_stale_live_entry_before_evaluation(monkeypatch) 
     module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
     settings = make_settings({"SYMBOLS": "AAPL"})
     signal_ts = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
-    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes)
+    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes * 2)
     entry_order = OrderRecord(
         client_order_id="paper:v1-breakout:AAPL:entry:stale",
         symbol="AAPL",
@@ -3526,7 +3526,7 @@ def test_run_cycle_once_keeps_fresh_live_entry_until_next_bar(monkeypatch) -> No
     module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
     settings = make_settings({"SYMBOLS": "AAPL"})
     signal_ts = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
-    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes) - timedelta(seconds=1)
+    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes)
     entry_order = OrderRecord(
         client_order_id="paper:v1-breakout:AAPL:entry:fresh",
         symbol="AAPL",
@@ -3601,7 +3601,7 @@ def test_run_cycle_once_cancels_stale_partial_entry_after_recovery_stop(monkeypa
     module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
     settings = make_settings({"SYMBOLS": "AAPL"})
     signal_ts = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
-    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes)
+    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes * 2)
     partial_entry = OrderRecord(
         client_order_id="paper:v1-breakout:AAPL:entry:partial",
         symbol="AAPL",

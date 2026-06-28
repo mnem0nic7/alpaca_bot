@@ -42,7 +42,10 @@ from alpaca_bot.runtime.cli import (
 from alpaca_bot.core.engine import CycleIntent, CycleIntentType, CycleResult
 from alpaca_bot.runtime.cycle import run_cycle
 from alpaca_bot.runtime.cycle_intent_execution import ACTIVE_STOP_STATUSES, execute_cycle_intents
-from alpaca_bot.runtime.order_dispatch import dispatch_pending_orders
+from alpaca_bot.runtime.order_dispatch import (
+    dispatch_pending_orders,
+    entry_order_next_bar_expiry_age,
+)
 from alpaca_bot.runtime.startup_recovery import (
     compose_startup_mismatch_detector,
     recover_startup_state,
@@ -1689,7 +1692,7 @@ class RuntimeSupervisor:
                 statuses=list(ACTIVE_ENTRY_STATUSES),
             )
 
-        max_age = timedelta(minutes=self.settings.entry_timeframe_minutes)
+        max_age = entry_order_next_bar_expiry_age(self.settings)
         timestamp_utc = (
             timestamp.replace(tzinfo=timezone.utc)
             if timestamp.tzinfo is None
