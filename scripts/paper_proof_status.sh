@@ -112,6 +112,16 @@ def load_latest_completed_session_date(settings: Settings) -> tuple[date | None,
     return max(completed), None
 
 
+def load_broker_exposure(settings: Settings) -> tuple[int | None, int | None, str | None]:
+    try:
+        broker = AlpacaExecutionAdapter.from_settings(settings)
+        open_orders = broker.list_open_orders()
+        open_positions = broker.list_positions()
+    except Exception as exc:
+        return None, None, str(exc)
+    return len(open_orders), len(open_positions), None
+
+
 settings = Settings.from_env()
 trading_mode = TradingMode(os.environ.get("TRADING_MODE", "paper"))
 strategy_version = os.environ["STRATEGY_VERSION"]
@@ -122,6 +132,7 @@ proof_start = parse_date(os.environ["PROOF_STATUS_START_DATE"], name="PROOF_STAT
 end_value = os.environ.get("PROOF_STATUS_END_DATE", "")
 current_market_date = datetime.now(settings.market_timezone).date()
 latest_completed_session, calendar_warning = load_latest_completed_session_date(settings)
+broker_open_orders, broker_open_positions, broker_exposure_warning = load_broker_exposure(settings)
 proof_end = (
     parse_date(end_value, name="PROOF_STATUS_END_DATE")
     if end_value
@@ -261,6 +272,13 @@ print(
     "paper proof local exposure: "
     f"positions={local_open_positions} active_orders={local_active_orders}"
 )
+if broker_exposure_warning:
+    print(f"paper proof broker exposure warning: {broker_exposure_warning}")
+else:
+    print(
+        "paper proof broker exposure: "
+        f"open_orders={broker_open_orders} open_positions={broker_open_positions}"
+    )
 if calendar_warning:
     print(f"paper proof calendar warning: {calendar_warning}")
 print(
