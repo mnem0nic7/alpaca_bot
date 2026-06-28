@@ -18,6 +18,7 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO",
         "BULL_FLAG_CONSOLIDATION_RANGE_PCT",
         "MAX_OPEN_POSITIONS",
+        "CONFIDENCE_FLOOR",
         "ATR_STOP_MULTIPLIER",
         "TRAILING_STOP_ATR_MULTIPLIER",
         "OPTION_CHAIN_MIN_TOTAL_VOLUME",
@@ -26,6 +27,9 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "PAPER_PROOF_FREEZE",
         "PAPER_READINESS_MAX_PASS_AGE_MINUTES",
         "PROFIT_PROBE_START_DATE",
+        "ENABLE_REGIME_FILTER",
+        "ENABLE_NEWS_FILTER",
+        "ENABLE_SPREAD_FILTER",
         "REPLAY_SLIPPAGE_BPS",
     }
 
@@ -44,6 +48,10 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "BULL_FLAG_CONSOLIDATION_RANGE_PCT: "
         "${BULL_FLAG_CONSOLIDATION_RANGE_PCT:-0.5}"
     ) in compose_text
+    assert "CONFIDENCE_FLOOR: ${CONFIDENCE_FLOOR:-0.25}" in compose_text
+    assert "ENABLE_REGIME_FILTER: ${ENABLE_REGIME_FILTER:-false}" in compose_text
+    assert "ENABLE_NEWS_FILTER: ${ENABLE_NEWS_FILTER:-false}" in compose_text
+    assert "ENABLE_SPREAD_FILTER: ${ENABLE_SPREAD_FILTER:-false}" in compose_text
 
 
 def test_deploy_ops_check_enforces_paper_readiness() -> None:
