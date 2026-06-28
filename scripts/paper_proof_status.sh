@@ -1481,7 +1481,7 @@ posture_status = (
         and int(settings.daily_sma_period) == 20
         and int(settings.breakout_lookback_bars) == 20
         and int(settings.relative_volume_lookback_bars) == 20
-        and abs(float(settings.relative_volume_threshold) - 1.8) < 1e-9
+        and abs(float(settings.relative_volume_threshold) - 2.0) < 1e-9
         and int(settings.entry_timeframe_minutes) == 15
         and abs(float(settings.risk_per_trade_pct) - 0.01) < 1e-9
         and abs(float(settings.max_position_pct) - 0.05) < 1e-9

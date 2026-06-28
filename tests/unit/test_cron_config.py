@@ -1809,7 +1809,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_value DAILY_SMA_PERIOD 20" in script
     assert "require_env_value BREAKOUT_LOOKBACK_BARS 20" in script
     assert "require_env_value RELATIVE_VOLUME_LOOKBACK_BARS 20" in script
-    assert "require_env_value RELATIVE_VOLUME_THRESHOLD 1.8" in script
+    assert "require_env_value RELATIVE_VOLUME_THRESHOLD 2.0" in script
     assert "require_env_value ENTRY_TIMEFRAME_MINUTES 15" in script
     assert "require_env_value MAX_OPEN_POSITIONS 3" in script
     assert "require_env_value REPLAY_SLIPPAGE_BPS 2.0" in script
@@ -3436,7 +3436,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "entry_window_start={as_hhmm(settings.entry_window_start)}" in script
     assert "entry_window_end={as_hhmm(settings.entry_window_end)}" in script
     assert "flatten_time={as_hhmm(settings.flatten_time)}" in script
-    assert "abs(float(settings.relative_volume_threshold) - 1.8)" in script
+    assert "abs(float(settings.relative_volume_threshold) - 2.0)" in script
     assert 'settings.market_data_feed.value == "iex"' in script
     assert "int(settings.daily_sma_period) == 20" in script
     assert "int(settings.breakout_lookback_bars) == 20" in script

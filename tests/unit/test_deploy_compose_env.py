@@ -150,7 +150,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     env_text = Path("deploy/paper.env.example").read_text()
 
     assert "MARKET_DATA_FEED=iex" in env_text
-    assert "RELATIVE_VOLUME_THRESHOLD=1.8" in env_text
+    assert "RELATIVE_VOLUME_THRESHOLD=2.0" in env_text
     assert "MAX_OPEN_POSITIONS=3" in env_text
     assert "BULL_FLAG_MIN_RUN_PCT=0.02" in env_text
     assert "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO=0.6" in env_text
@@ -188,7 +188,7 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "MARKET_DATA_FEED=iex" in script
     assert 'RISK_PER_TRADE_PCT="0.01"' in script
     assert 'MAX_OPEN_POSITIONS="3"' in script
-    assert 'RELATIVE_VOLUME_THRESHOLD="1.8"' in script
+    assert 'RELATIVE_VOLUME_THRESHOLD="2.0"' in script
     assert "BULL_FLAG_MIN_RUN_PCT=0.02" in script
     assert "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO=0.6" in script
     assert "BULL_FLAG_CONSOLIDATION_RANGE_PCT=0.5" in script

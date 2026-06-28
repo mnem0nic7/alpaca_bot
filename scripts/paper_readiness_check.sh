@@ -367,7 +367,7 @@ require_env_value MARKET_DATA_FEED iex
 require_env_value DAILY_SMA_PERIOD 20
 require_env_value BREAKOUT_LOOKBACK_BARS 20
 require_env_value RELATIVE_VOLUME_LOOKBACK_BARS 20
-require_env_value RELATIVE_VOLUME_THRESHOLD 1.8
+require_env_value RELATIVE_VOLUME_THRESHOLD 2.0
 require_env_value ENTRY_TIMEFRAME_MINUTES 15
 require_env_value MAX_OPEN_POSITIONS 3
 require_env_value REPLAY_SLIPPAGE_BPS 2.0
@@ -438,7 +438,7 @@ check("market_data_feed", settings.market_data_feed.value, "iex")
 check("daily_sma_period", settings.daily_sma_period, 20)
 check("breakout_lookback_bars", settings.breakout_lookback_bars, 20)
 check("relative_volume_lookback_bars", settings.relative_volume_lookback_bars, 20)
-check("relative_volume_threshold", settings.relative_volume_threshold, 1.8)
+check("relative_volume_threshold", settings.relative_volume_threshold, 2.0)
 check("entry_timeframe_minutes", settings.entry_timeframe_minutes, 15)
 check("risk_per_trade_pct", settings.risk_per_trade_pct, 0.01)
 check("max_position_pct", settings.max_position_pct, 0.05)

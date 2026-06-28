@@ -73,3 +73,22 @@ Decision: promote the paper proof posture from
 the VWAP entry filter enabled, preserves `MAX_OPEN_POSITIONS=3`, improves
 trade throughput, and moves the same proof sample from `no-evidence` to
 `positive-edge`.
+
+## Superseding Full-Universe Check
+
+The 100-symbol proof sample was not stable enough to justify a looser
+threshold by itself, so the threshold candidates were replayed against the full
+active scenario universe: 999 symbols, current paper equity, `MAX_OPEN_POSITIONS=3`,
+and 2 bps/side slippage.
+
+| posture | trades | total P&L | profit factor | CI low | verdict |
+|---|---:|---:|---:|---:|---|
+| `RELATIVE_VOLUME_THRESHOLD=2.0` | 1,043 | `$7,193.59` | 1.3941 | 3.2575 | positive-edge |
+| `RELATIVE_VOLUME_THRESHOLD=1.9` | 1,069 | `$6,956.42` | 1.3682 | 2.5295 | positive-edge |
+| `RELATIVE_VOLUME_THRESHOLD=1.8` | 1,129 | `$5,969.38` | 1.2959 | 1.7842 | positive-edge |
+
+Decision: restore the paper proof posture to
+`RELATIVE_VOLUME_THRESHOLD=2.0`. The looser settings add trades, but the full
+universe shows lower total P&L, lower profit factor, lower Sharpe, and weaker
+bootstrap CI. The stricter threshold still produced enough historical portfolio
+activity for proof throughput while preserving the strongest edge.
