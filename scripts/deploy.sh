@@ -59,6 +59,15 @@ refresh_paper_readiness() {
     "$ENV_FILE"
 }
 
+remove_supervisor_container() {
+  local project_name
+  project_name="${COMPOSE_PROJECT_NAME:-$(basename "$(dirname "$COMPOSE_FILE")")}"
+
+  docker compose -f "$COMPOSE_FILE" stop supervisor >/dev/null 2>&1 || true
+  docker compose -f "$COMPOSE_FILE" rm -f supervisor >/dev/null 2>&1 || true
+  docker rm -f "${project_name}-supervisor-1" >/dev/null 2>&1 || true
+}
+
 verify_paper_proof_ready() {
   local proof_status_output
   local proof_summary
@@ -113,7 +122,7 @@ docker compose -f "$COMPOSE_FILE" run --rm migrate
 docker compose -f "$COMPOSE_FILE" up -d --force-recreate web
 
 if credentials_ready; then
-  docker compose -f "$COMPOSE_FILE" rm -sf supervisor >/dev/null 2>&1 || true
+  remove_supervisor_container
   docker compose -f "$COMPOSE_FILE" up -d --force-recreate supervisor
   docker compose -f "$COMPOSE_FILE" run --rm --entrypoint alpaca-bot-ops-check admin \
     --url http://web:8080/healthz \
@@ -128,7 +137,7 @@ if credentials_ready; then
     refresh_paper_readiness
   fi
 else
-  docker compose -f "$COMPOSE_FILE" rm -sf supervisor >/dev/null 2>&1 || true
+  remove_supervisor_container
   docker compose -f "$COMPOSE_FILE" run --rm --entrypoint alpaca-bot-ops-check admin \
     --url http://web:8080/healthz \
     --no-expect-worker \
