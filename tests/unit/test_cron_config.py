@@ -31,7 +31,10 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
         "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=false "
         "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1655"
     )
-    early_activity = "25 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1025"
+    early_activity = (
+        "25 14,15 * * 1-5 root PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE=false "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1025"
+    )
     activity = "0 16,17 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1200"
     session_guard = "10 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1710"
     profit_probe = "20 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1720"
@@ -81,6 +84,10 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "/var/log/alpaca-bot-paper-readiness.log" in cron_text
     assert "scripts/paper_activity_check.sh" in cron_text
     assert cron_text.count("scripts/paper_activity_check.sh") == 2
+    assert cron_text.count("PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE=false") == 1
+    assert cron_text.index("PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE=false") < cron_text.index(
+        "run_if_ny_time.sh 1025"
+    )
     assert "run_locked_check_with_audit.sh paper_activity" in cron_text
     assert "/var/log/alpaca-bot-paper-activity.log" in cron_text
     assert "scripts/paper_profit_probe.sh" in cron_text
