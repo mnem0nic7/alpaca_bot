@@ -41,6 +41,9 @@ if [[ ! "$PROOF_STATUS_MIN_PNL" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
   exit 1
 fi
 
+export COMPOSE_ANSI="${COMPOSE_ANSI:-never}"
+export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-quiet}"
+
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 trading_mode="${TRADING_MODE:-paper}"
 
