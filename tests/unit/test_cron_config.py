@@ -1618,6 +1618,58 @@ def test_session_guard_pending_before_proof_start_does_not_close_only(tmp_path: 
     assert not close_only_marker.exists()
 
 
+def test_session_guard_uses_profit_probe_start_after_sourcing_env(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-07-06",
+                "PROFIT_PROBE_STRATEGY=bull_flag",
+            ]
+        )
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "args=\"$*\"\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'BROKER_FLAT_CONTEXT'; then\n"
+        "  printf 'bull_flag session guard pending 2026-07-06 "
+        "broker exposure ok: open_orders=0 open_positions=0\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf 'unexpected docker call: %s\\n' \"$args\" >&2\n"
+        "exit 99\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/session_guard.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "SESSION_GUARD_DATE": "2026-07-05",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+    assert (
+        "scheduled check context: session_date=2026-07-05 "
+        "proof_start=2026-07-06 strategy=bull_flag"
+    ) in result.stdout
+    assert (
+        "session guard pending: latest completed session 2026-07-05 "
+        "is before proof start 2026-07-06"
+    ) in result.stdout
+    assert "broker exposure ok: open_orders=0 open_positions=0" in result.stdout
+
+
 def test_paper_profit_probe_pending_before_proof_start_does_not_close_only(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     env_file.write_text(
@@ -1857,6 +1909,12 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
 def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> None:
     script = Path("scripts/paper_proof_status.sh").read_text()
 
+    assert script.index('source "$ENV_FILE"') < script.index(
+        'PROOF_STATUS_STRATEGY="${PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"'
+    )
+    assert script.index('source "$ENV_FILE"') < script.index(
+        'PROOF_STATUS_START_DATE="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"'
+    )
     assert "load_latest_completed_session_date" in script
     assert "load_next_market_session_date" in script
     assert "AlpacaExecutionAdapter.from_settings" in script
@@ -2118,6 +2176,12 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "missing env file: $ENV_FILE" in session_guard
     assert 'SESSION_GUARD_FAIL_ON_DIAGNOSTICS="${SESSION_GUARD_FAIL_ON_DIAGNOSTICS:-true}"' in session_guard
     assert 'SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"' in session_guard
+    assert session_guard.index('source "$ENV_FILE"') < session_guard.index(
+        'SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"'
+    )
+    assert session_guard.index('source "$ENV_FILE"') < session_guard.index(
+        'SESSION_GUARD_STRATEGY="${SESSION_GUARD_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"'
+    )
     assert "SESSION_GUARD_FAIL_ON_DIAGNOSTICS must be true or false" in session_guard
     assert "SESSION_GUARD_STRATEGY contains unsupported characters" in session_guard
     assert "load_latest_completed_session_date" in session_guard
@@ -2210,7 +2274,9 @@ def test_paper_profit_probe_validates_thresholds_before_docker(tmp_path: Path) -
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_docker = fake_bin / "docker"
-    fake_docker.write_text("#!/usr/bin/env bash\nprintf 'docker should not run\\n'\nexit 99\n")
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\nprintf 'docker should not run\\n'\nexit 99\n"
+    )
     fake_docker.chmod(0o755)
 
     result = subprocess.run(
@@ -2254,4 +2320,35 @@ def test_session_guard_validates_start_date_before_docker(tmp_path: Path) -> Non
 
     assert result.returncode == 1
     assert "SESSION_GUARD_START_DATE must use YYYY-MM-DD" in result.stderr
+    assert "docker should not run" not in result.stdout
+
+
+def test_paper_proof_status_uses_profit_probe_start_after_sourcing_env(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026/07/06",
+                "PROFIT_PROBE_STRATEGY=bull_flag",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text("#!/usr/bin/env bash\nprintf 'docker should not run\\n'\nexit 99\n")
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_proof_status.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "PROOF_STATUS_START_DATE must use YYYY-MM-DD" in result.stderr
     assert "docker should not run" not in result.stdout
