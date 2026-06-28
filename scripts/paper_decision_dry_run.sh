@@ -30,6 +30,7 @@ capture_env_overrides \
   PAPER_DECISION_DRY_RUN_MIN_RECORDS \
   PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS \
   PAPER_DECISION_DRY_RUN_SAMPLE_TIME \
+  PAPER_DECISION_DRY_RUN_SAMPLE_TIMES \
   PAPER_DECISION_DRY_RUN_AS_OF \
   PAPER_DECISION_DRY_RUN_SESSION_DATE \
   PAPER_DECISION_DRY_RUN_EQUITY
@@ -52,6 +53,7 @@ PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPT
 PAPER_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_DECISION_DRY_RUN_MIN_RECORDS:-1}"
 PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS="${PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS:-5}"
 PAPER_DECISION_DRY_RUN_SAMPLE_TIME="${PAPER_DECISION_DRY_RUN_SAMPLE_TIME:-15:30}"
+PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="${PAPER_DECISION_DRY_RUN_SAMPLE_TIMES:-}"
 PAPER_DECISION_DRY_RUN_AS_OF="${PAPER_DECISION_DRY_RUN_AS_OF:-}"
 PAPER_DECISION_DRY_RUN_SESSION_DATE="${PAPER_DECISION_DRY_RUN_SESSION_DATE:-}"
 PAPER_DECISION_DRY_RUN_EQUITY="${PAPER_DECISION_DRY_RUN_EQUITY:-}"
@@ -87,6 +89,7 @@ compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
   -e PAPER_DECISION_DRY_RUN_MIN_RECORDS="$PAPER_DECISION_DRY_RUN_MIN_RECORDS" \
   -e PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS="$PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS" \
   -e PAPER_DECISION_DRY_RUN_SAMPLE_TIME="$PAPER_DECISION_DRY_RUN_SAMPLE_TIME" \
+  -e PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="$PAPER_DECISION_DRY_RUN_SAMPLE_TIMES" \
   -e PAPER_DECISION_DRY_RUN_AS_OF="$PAPER_DECISION_DRY_RUN_AS_OF" \
   -e PAPER_DECISION_DRY_RUN_SESSION_DATE="$PAPER_DECISION_DRY_RUN_SESSION_DATE" \
   -e PAPER_DECISION_DRY_RUN_EQUITY="$PAPER_DECISION_DRY_RUN_EQUITY" \
@@ -124,6 +127,29 @@ def _parse_sample_time(value: str) -> time:
     except Exception:
         print("PAPER_DECISION_DRY_RUN_SAMPLE_TIME must use HH:MM", file=sys.stderr)
         raise SystemExit(1)
+
+
+def _parse_sample_times(value: str) -> tuple[time, ...]:
+    sample_times = []
+    for raw_part in value.split(","):
+        part = raw_part.strip()
+        if not part:
+            continue
+        try:
+            sample_times.append(_parse_sample_time(part))
+        except SystemExit:
+            print(
+                "PAPER_DECISION_DRY_RUN_SAMPLE_TIMES must be comma-separated HH:MM values",
+                file=sys.stderr,
+            )
+            raise
+    if not sample_times:
+        print(
+            "PAPER_DECISION_DRY_RUN_SAMPLE_TIMES must include at least one HH:MM value",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    return tuple(sample_times)
 
 
 def _parse_session_date(value: str) -> date:
@@ -170,14 +196,14 @@ def _latest_completed_session_date(
     raise SystemExit(1)
 
 
-def _resolve_as_of(
+def _resolve_as_ofs(
     *,
     broker: AlpacaExecutionAdapter,
     settings: Settings,
-) -> datetime:
+) -> tuple[datetime, ...]:
     as_of_env = (os.environ.get("PAPER_DECISION_DRY_RUN_AS_OF") or "").strip()
     if as_of_env:
-        return _parse_as_of(settings, as_of_env)
+        return (_parse_as_of(settings, as_of_env),)
 
     session_env = (os.environ.get("PAPER_DECISION_DRY_RUN_SESSION_DATE") or "").strip()
     session_date = (
@@ -185,8 +211,16 @@ def _resolve_as_of(
         if session_env
         else _latest_completed_session_date(broker=broker, settings=settings)
     )
-    sample_time = _parse_sample_time(os.environ.get("PAPER_DECISION_DRY_RUN_SAMPLE_TIME", "15:30"))
-    return datetime.combine(session_date, sample_time, tzinfo=settings.market_timezone)
+    sample_times_env = (os.environ.get("PAPER_DECISION_DRY_RUN_SAMPLE_TIMES") or "").strip()
+    sample_times = (
+        _parse_sample_times(sample_times_env)
+        if sample_times_env
+        else (_parse_sample_time(os.environ.get("PAPER_DECISION_DRY_RUN_SAMPLE_TIME", "15:30")),)
+    )
+    return tuple(
+        datetime.combine(session_date, sample_time, tzinfo=settings.market_timezone)
+        for sample_time in sample_times
+    )
 
 
 def _completed_intraday_bars_by_symbol(
@@ -249,17 +283,19 @@ if not active_symbols:
 
 broker = AlpacaExecutionAdapter.from_settings(settings)
 market_data = AlpacaMarketDataAdapter.from_settings(settings)
-as_of = _resolve_as_of(broker=broker, settings=settings)
+as_ofs = _resolve_as_ofs(broker=broker, settings=settings)
+earliest_as_of = min(as_ofs)
+latest_as_of = max(as_ofs)
 equity = equity_override if equity_override is not None else broker.get_account().equity
 fractionable_symbols = broker.get_fractionable_symbols(active_symbols)
 settings = replace(settings, fractionable_symbols=fractionable_symbols)
 
 daily_end = datetime.combine(
-    as_of.astimezone(settings.market_timezone).date(),
+    latest_as_of.astimezone(settings.market_timezone).date(),
     datetime.min.time(),
     tzinfo=settings.market_timezone,
 )
-daily_start = as_of - timedelta(
+daily_start = latest_as_of - timedelta(
     days=max(
         settings.daily_sma_period * 3,
         60,
@@ -268,13 +304,8 @@ daily_start = as_of - timedelta(
 )
 intraday_bars = market_data.get_stock_bars(
     symbols=list(active_symbols),
-    start=as_of - timedelta(days=lookback_days),
-    end=as_of,
-    timeframe_minutes=settings.entry_timeframe_minutes,
-)
-completed_intraday_bars = _completed_intraday_bars_by_symbol(
-    intraday_bars,
-    timestamp=as_of,
+    start=earliest_as_of - timedelta(days=lookback_days),
+    end=latest_as_of,
     timeframe_minutes=settings.entry_timeframe_minutes,
 )
 daily_bars = market_data.get_daily_bars(
@@ -289,52 +320,99 @@ if settings.enable_regime_filter:
     else:
         regime_daily = market_data.get_daily_bars(
             symbols=[settings.regime_symbol],
-            start=as_of - timedelta(days=max(settings.regime_sma_period * 3, 60)),
+            start=latest_as_of - timedelta(days=max(settings.regime_sma_period * 3, 60)),
             end=daily_end,
         )
         regime_bars = regime_daily.get(settings.regime_symbol)
 
-result = evaluate_cycle(
-    settings=settings,
-    now=as_of,
-    equity=equity,
-    intraday_bars_by_symbol=completed_intraday_bars,
-    daily_bars_by_symbol=daily_bars,
-    open_positions=(),
-    working_order_symbols=set(),
-    traded_symbols_today=set(),
-    entries_disabled=False,
-    signal_evaluator=STRATEGY_REGISTRY[strategy_name],
-    strategy_name=strategy_name,
-    global_open_count=0,
-    symbols=active_symbols,
-    session_type=SessionType.REGULAR,
-    regime_bars=regime_bars,
-)
+evaluations = []
+for as_of in sorted(as_ofs):
+    completed_intraday_bars = _completed_intraday_bars_by_symbol(
+        intraday_bars,
+        timestamp=as_of,
+        timeframe_minutes=settings.entry_timeframe_minutes,
+    )
+    result = evaluate_cycle(
+        settings=settings,
+        now=as_of,
+        equity=equity,
+        intraday_bars_by_symbol=completed_intraday_bars,
+        daily_bars_by_symbol=daily_bars,
+        open_positions=(),
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=STRATEGY_REGISTRY[strategy_name],
+        strategy_name=strategy_name,
+        global_open_count=0,
+        symbols=active_symbols,
+        session_type=SessionType.REGULAR,
+        regime_bars=regime_bars,
+    )
+    records = tuple(result.decision_records)
+    accepted = [record for record in records if record.decision == "accepted"]
+    rejected = [record for record in records if record.decision == "rejected"]
+    skipped_no_signal = [record for record in records if record.decision == "skipped_no_signal"]
+    entry_intents = [
+        intent for intent in result.intents if intent.intent_type == CycleIntentType.ENTRY
+    ]
+    completed_covered = sum(1 for symbol in active_symbols if completed_intraday_bars.get(symbol))
+    thin_completed = sum(
+        1
+        for symbol in active_symbols
+        if len(completed_intraday_bars.get(symbol, ())) < settings.relative_volume_lookback_bars
+    )
+    evaluations.append({
+        "as_of": as_of,
+        "completed_intraday_bars": completed_intraday_bars,
+        "records": records,
+        "accepted": accepted,
+        "rejected": rejected,
+        "skipped_no_signal": skipped_no_signal,
+        "entry_intents": entry_intents,
+        "completed_covered": completed_covered,
+        "thin_completed": thin_completed,
+    })
 
-records = tuple(result.decision_records)
-accepted = [record for record in records if record.decision == "accepted"]
-rejected = [record for record in records if record.decision == "rejected"]
-skipped_no_signal = [record for record in records if record.decision == "skipped_no_signal"]
-entry_intents = [
-    intent for intent in result.intents if intent.intent_type == CycleIntentType.ENTRY
+low_record_evaluations = [
+    item for item in evaluations if len(item["records"]) < min_records
 ]
-
-if len(records) < min_records:
+if low_record_evaluations:
+    detail = ",".join(
+        f"{item['as_of'].isoformat()}:{len(item['records'])}"
+        for item in low_record_evaluations[:10]
+    )
     print(
         "paper decision dry run failed: "
-        f"decision_records={len(records)} below min_records={min_records}",
+        f"decision_records below min_records={min_records}: {detail}",
         file=sys.stderr,
     )
     raise SystemExit(1)
 
-if require_accepted and not accepted:
+max_accepted = max(len(item["accepted"]) for item in evaluations)
+if require_accepted and max_accepted == 0:
     print(
         "paper decision dry run failed: "
-        f"accepted=0 require_accepted=true decision_records={len(records)}",
+        f"accepted=0 require_accepted=true evaluations={len(evaluations)}",
         file=sys.stderr,
     )
     raise SystemExit(1)
+
+best = max(
+    evaluations,
+    key=lambda item: (
+        len(item["entry_intents"]),
+        len(item["accepted"]),
+        len(item["records"]),
+    ),
+)
+as_of = best["as_of"]
+completed_intraday_bars = best["completed_intraday_bars"]
+records = best["records"]
+accepted = best["accepted"]
+rejected = best["rejected"]
+skipped_no_signal = best["skipped_no_signal"]
+entry_intents = best["entry_intents"]
 
 sample = "none"
 if accepted:
@@ -342,13 +420,22 @@ if accepted:
     sample = f"{first.symbol}:{first.quantity}@{first.limit_price}"
 
 intraday_covered = sum(1 for symbol in active_symbols if intraday_bars.get(symbol))
-completed_covered = sum(1 for symbol in active_symbols if completed_intraday_bars.get(symbol))
+completed_covered = best["completed_covered"]
 daily_covered = sum(1 for symbol in active_symbols if daily_bars.get(symbol))
-thin_completed = sum(
-    1
-    for symbol in active_symbols
-    if len(completed_intraday_bars.get(symbol, ())) < settings.relative_volume_lookback_bars
+thin_completed = best["thin_completed"]
+sample_times_text = ",".join(
+    item["as_of"].astimezone(settings.market_timezone).strftime("%H:%M")
+    for item in evaluations
 )
+multi_sample_fields = ""
+if len(evaluations) > 1:
+    multi_sample_fields = (
+        f" sample_times={sample_times_text}"
+        f" evaluations={len(evaluations)}"
+        f" min_decision_records={min(len(item['records']) for item in evaluations)}"
+        f" max_accepted={max(len(item['accepted']) for item in evaluations)}"
+        f" max_entry_intents={max(len(item['entry_intents']) for item in evaluations)}"
+    )
 
 print(
     "paper decision dry run ok: "
@@ -368,5 +455,6 @@ print(
     f"entry_intents={len(entry_intents)} "
     f"equity={equity:.2f} "
     f"sample={sample}"
+    f"{multi_sample_fields}"
 )
 PY

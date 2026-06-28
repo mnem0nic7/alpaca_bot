@@ -299,6 +299,8 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
         '"${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-}" '
         '"${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-}" '
         '"${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-}"\n'
+        "printf 'decision_dry_run_sample_times=%s\\n' "
+        '"${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-}"\n'
     )
     fake_readiness.chmod(0o755)
 
@@ -317,6 +319,7 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
             "PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS": "17",
             "PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED": "true",
             "PAPER_READINESS_DECISION_DRY_RUN_STRATEGY": "bull_flag",
+            "PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES": "10:30,15:30",
             "PAPER_READINESS_MAX_PASS_AGE_MINUTES": "5",
             "PAPER_READINESS_PREVIOUS_SESSION_DATE": "2026-06-25",
         },
@@ -334,6 +337,7 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
         "decision_dry_run=false min_records=17 "
         "require_accepted=true strategy=bull_flag"
     ) in result.stdout
+    assert "decision_dry_run_sample_times=10:30,15:30" in result.stdout
 
 
 def test_paper_readiness_final_retry_reruns_after_supervisor_restart(tmp_path: Path) -> None:
@@ -819,6 +823,7 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "PAPER_READINESS_FORCE_REFRESH" in readiness_if_needed
     assert "PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS" in readiness_if_needed
     assert "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE" in readiness_if_needed
+    assert "PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES" in readiness_if_needed
     assert "reason=force_refresh" in readiness_if_needed
     assert "reason=stale_by_age" in readiness_if_needed
     assert "PAPER_READINESS_FORCE_REFRESH" in readiness_if_needed
@@ -1148,6 +1153,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}"' in script
     assert 'PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-false}"' in script
     assert 'PAPER_READINESS_DECISION_DRY_RUN_STRATEGY="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
+    assert 'PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES="${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}"' in script
     assert 'PAPER_READINESS_SCENARIO_DIR="${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}"' in script
     assert "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE must be true or false" in script
     assert "PAPER_READINESS_REQUIRE_DECISION_DRY_RUN must be true or false" in script
@@ -1214,6 +1220,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_DECISION_DRY_RUN_STRATEGY="$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY"' in script
     assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="$PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS"' in script
     assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED"' in script
+    assert 'PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="$PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES"' in script
     assert "paper readiness decision dry run check skipped" in script
     assert "PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS" in script
     assert "run_watchlist_asset_check" in script
@@ -2604,9 +2611,11 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert 'PAPER_DECISION_DRY_RUN_STRATEGY="${PAPER_DECISION_DRY_RUN_STRATEGY:-bull_flag}"' in script
     assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-false}"' in script
     assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_DECISION_DRY_RUN_MIN_RECORDS:-1}"' in script
+    assert 'PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="${PAPER_DECISION_DRY_RUN_SAMPLE_TIMES:-}"' in script
     assert "PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED must be true or false" in script
     assert "PAPER_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in script
     assert "PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS must be a positive integer" in script
+    assert "PAPER_DECISION_DRY_RUN_SAMPLE_TIMES must be comma-separated HH:MM values" in script
     assert "PAPER_DECISION_DRY_RUN_EQUITY must be a number" in script
     assert "connect_postgres(settings.database_url)" in script
     assert "WatchlistStore(conn)" in script
@@ -2620,6 +2629,8 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "replace(settings, fractionable_symbols=fractionable_symbols)" in script
     assert "get_stock_bars(" in script
     assert "get_daily_bars(" in script
+    assert "_resolve_as_ofs" in script
+    assert "for as_of in sorted(as_ofs)" in script
     assert "evaluate_cycle(" in script
     assert "signal_evaluator=STRATEGY_REGISTRY[strategy_name]" in script
     assert "open_positions=()" in script
@@ -2629,6 +2640,8 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "paper decision dry run ok:" in script
     assert "decision_records={len(records)}" in script
     assert "accepted={len(accepted)}" in script
+    assert "sample_times={sample_times_text}" in script
+    assert "max_entry_intents=" in script
     assert "submit_order" not in script
     assert "bulk_insert" not in script
     assert ".save(" not in script
