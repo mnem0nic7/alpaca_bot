@@ -128,6 +128,11 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "reason": "lock_busy",
             "status": "failed",
             "exit_code": 46,
+            "proof_status": "pending",
+            "proof_blockers": "none",
+            "proof_closed_trades": "3",
+            "proof_required_trades": "10",
+            "proof_pnl": "12.34",
         },
         created_at=now,
     )
@@ -217,6 +222,10 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "strategy=bull_flag" in response.text
     assert "proof=2026-06-29" in response.text
     assert "reason=lock_busy" in response.text
+    assert "proof_status=pending" in response.text
+    assert "blockers=none" in response.text
+    assert "closed=3/10" in response.text
+    assert "proof_pnl=12.34" in response.text
     assert "trades&gt;=10" in response.text
     assert "pnl&gt;=0.01" in response.text
     assert "failed" in response.text

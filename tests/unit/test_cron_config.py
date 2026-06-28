@@ -705,20 +705,34 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'AUDIT_EXIT_CODE="$rc"' in script
     assert 'AUDIT_OUTPUT_TAIL="$output_tail"' in script
     assert 'AUDIT_CONTEXT_LINE="$context_line"' in script
+    assert 'AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"' in script
+    assert 'AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"' in script
     assert "-e AUDIT_CHECK_NAME" in script
     assert "-e AUDIT_STATUS" in script
     assert "-e AUDIT_EXIT_CODE" in script
     assert "-e AUDIT_OUTPUT_TAIL" in script
     assert "-e AUDIT_CONTEXT_LINE" in script
+    assert "-e AUDIT_PROOF_SUMMARY_LINE" in script
+    assert "-e AUDIT_PROOF_PROGRESS_LINE" in script
     assert 'output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"' in script
     assert 'context_line="$(grep -E' in script
+    assert 'proof_summary_line="$(grep -E' in script
+    assert 'proof_progress_line="$(grep -E' in script
     assert "scheduled check context: " in script
     assert "CONTEXT_KEYS" in script
+    assert "PROOF_SUMMARY_FIELDS" in script
+    assert '"readiness": "proof_readiness"' in script
+    assert '"proof": "proof_status"' in script
+    assert '"closed_trades": "proof_closed_trades"' in script
+    assert '"pnl": "proof_pnl"' in script
+    assert "parse_prefixed_fields" in script
     assert '"session_date"' in script
     assert '"previous_session_date"' in script
     assert '"proof_start"' in script
     assert '"reason"' in script
     assert "payload.update(parse_context" in script
+    assert 'os.environ.get("AUDIT_PROOF_SUMMARY_LINE", "")' in script
+    assert 'os.environ.get("AUDIT_PROOF_PROGRESS_LINE", "")' in script
     assert 'paper readiness check skipped' in script
     assert 'paper activity check skipped' in script
     assert 'paper activity skipped:' in script

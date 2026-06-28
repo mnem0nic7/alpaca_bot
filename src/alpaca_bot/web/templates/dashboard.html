@@ -337,6 +337,10 @@
                     {% if event.payload.get("min_trades") %} trades&gt;={{ event.payload.get("min_trades") }}{% endif %}
                     {% if event.payload.get("min_pnl") %} pnl&gt;={{ event.payload.get("min_pnl") }}{% endif %}
                     {% if event.payload.get("reason") %} reason={{ event.payload.get("reason") }}{% endif %}
+                    {% if event.payload.get("proof_status") %} proof_status={{ event.payload.get("proof_status") }}{% endif %}
+                    {% if event.payload.get("proof_blockers") %} blockers={{ event.payload.get("proof_blockers") }}{% endif %}
+                    {% if event.payload.get("proof_closed_trades") %} closed={{ event.payload.get("proof_closed_trades") }}/{{ event.payload.get("proof_required_trades", "?") }}{% endif %}
+                    {% if event.payload.get("proof_pnl") %} proof_pnl={{ event.payload.get("proof_pnl") }}{% endif %}
                   </td>
                   <td class="{{ 'warn' if check_status == 'failed' else 'muted' }}">
                     {{ check_status }}

@@ -61,12 +61,16 @@ esac
 
 output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"
 context_line="$(grep -E '^scheduled check context: ' "$output_file" | tail -n 1 || true)"
+proof_summary_line="$(grep -E '^paper proof summary: ' "$output_file" | tail -n 1 || true)"
+proof_progress_line="$(grep -E '^paper proof progress: ' "$output_file" | tail -n 1 || true)"
 
 export AUDIT_CHECK_NAME="$CHECK_NAME"
 export AUDIT_STATUS="$status"
 export AUDIT_EXIT_CODE="$rc"
 export AUDIT_OUTPUT_TAIL="$output_tail"
 export AUDIT_CONTEXT_LINE="$context_line"
+export AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"
+export AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"
 
 audit_failed=false
 if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
@@ -75,6 +79,8 @@ if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_EXIT_CODE \
     -e AUDIT_OUTPUT_TAIL \
     -e AUDIT_CONTEXT_LINE \
+    -e AUDIT_PROOF_SUMMARY_LINE \
+    -e AUDIT_PROOF_PROGRESS_LINE \
     --entrypoint python admin <<'PY'
 from __future__ import annotations
 
@@ -98,6 +104,25 @@ CONTEXT_KEYS = {
     "min_pnl",
 }
 CONTEXT_VALUE = re.compile(r"^[A-Za-z0-9_.:+-]+$")
+PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/-]+$")
+PROOF_SUMMARY_PREFIX = "paper proof summary: "
+PROOF_PROGRESS_PREFIX = "paper proof progress: "
+PROOF_SUMMARY_FIELDS = {
+    "readiness": "proof_readiness",
+    "proof": "proof_status",
+    "reason": "proof_reason",
+    "blockers": "proof_blockers",
+    "warnings": "proof_warnings",
+}
+PROOF_PROGRESS_FIELDS = {
+    "status": "proof_progress_status",
+    "closed_trades": "proof_closed_trades",
+    "required_trades": "proof_required_trades",
+    "pnl": "proof_pnl",
+    "required_pnl": "proof_required_pnl",
+    "first_exit_session": "proof_first_exit_session",
+    "latest_exit_session": "proof_latest_exit_session",
+}
 
 
 def parse_context(line: str) -> dict[str, str]:
@@ -118,6 +143,27 @@ def parse_context(line: str) -> dict[str, str]:
     return context
 
 
+def parse_prefixed_fields(
+    line: str, *, prefix: str, field_map: dict[str, str]
+) -> dict[str, str]:
+    if not line.startswith(prefix):
+        return {}
+    try:
+        parts = shlex.split(line[len(prefix):])
+    except ValueError:
+        return {}
+
+    fields: dict[str, str] = {}
+    for part in parts:
+        if "=" not in part:
+            continue
+        key, value = part.split("=", 1)
+        target_key = field_map.get(key)
+        if target_key is not None and PROOF_VALUE.fullmatch(value):
+            fields[target_key] = value
+    return fields
+
+
 settings = Settings.from_env()
 conn = connect_postgres(settings.database_url)
 try:
@@ -130,6 +176,20 @@ try:
         "strategy_version": settings.strategy_version,
     }
     payload.update(parse_context(os.environ.get("AUDIT_CONTEXT_LINE", "")))
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_PROOF_SUMMARY_LINE", ""),
+            prefix=PROOF_SUMMARY_PREFIX,
+            field_map=PROOF_SUMMARY_FIELDS,
+        )
+    )
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_PROOF_PROGRESS_LINE", ""),
+            prefix=PROOF_PROGRESS_PREFIX,
+            field_map=PROOF_PROGRESS_FIELDS,
+        )
+    )
 
     AuditEventStore(conn).append(
         AuditEvent(
