@@ -2530,12 +2530,16 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
 def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     script = Path("scripts/paper_decision_dry_run.sh").read_text()
 
+    assert "capture_env_overrides" in script
+    assert "restore_env_overrides" in script
+    assert script.index('source "$ENV_FILE"') < script.index("\nrestore_env_overrides\n")
     assert 'PAPER_DECISION_DRY_RUN_STRATEGY="${PAPER_DECISION_DRY_RUN_STRATEGY:-bull_flag}"' in script
     assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-false}"' in script
     assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_DECISION_DRY_RUN_MIN_RECORDS:-1}"' in script
     assert "PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED must be true or false" in script
     assert "PAPER_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in script
     assert "PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS must be a positive integer" in script
+    assert "PAPER_DECISION_DRY_RUN_EQUITY must be a number" in script
     assert "connect_postgres(settings.database_url)" in script
     assert "WatchlistStore(conn)" in script
     assert "StrategyFlagStore(conn)" in script

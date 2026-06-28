@@ -3,6 +3,37 @@ set -euo pipefail
 
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 
+_preserved_env_names=()
+_preserved_env_values=()
+
+capture_env_overrides() {
+  local name
+  for name in "$@"; do
+    if [[ -n "${!name+x}" ]]; then
+      _preserved_env_names+=("$name")
+      _preserved_env_values+=("${!name}")
+    fi
+  done
+}
+
+restore_env_overrides() {
+  local index
+  for index in "${!_preserved_env_names[@]}"; do
+    printf -v "${_preserved_env_names[$index]}" '%s' "${_preserved_env_values[$index]}"
+    export "${_preserved_env_names[$index]}"
+  done
+}
+
+capture_env_overrides \
+  PAPER_DECISION_DRY_RUN_STRATEGY \
+  PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED \
+  PAPER_DECISION_DRY_RUN_MIN_RECORDS \
+  PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS \
+  PAPER_DECISION_DRY_RUN_SAMPLE_TIME \
+  PAPER_DECISION_DRY_RUN_AS_OF \
+  PAPER_DECISION_DRY_RUN_SESSION_DATE \
+  PAPER_DECISION_DRY_RUN_EQUITY
+
 cd "$(dirname "$0")/.."
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -14,6 +45,7 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+restore_env_overrides
 
 PAPER_DECISION_DRY_RUN_STRATEGY="${PAPER_DECISION_DRY_RUN_STRATEGY:-bull_flag}"
 PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-false}"
@@ -113,6 +145,14 @@ def _parse_as_of(settings: Settings, value: str) -> datetime:
     return parsed.astimezone(settings.market_timezone)
 
 
+def _parse_equity(value: str) -> float:
+    try:
+        return float(value)
+    except ValueError:
+        print("PAPER_DECISION_DRY_RUN_EQUITY must be a number", file=sys.stderr)
+        raise SystemExit(1)
+
+
 def _latest_completed_session_date(
     *,
     broker: AlpacaExecutionAdapter,
@@ -181,6 +221,8 @@ if strategy_name not in STRATEGY_REGISTRY:
 min_records = int(os.environ.get("PAPER_DECISION_DRY_RUN_MIN_RECORDS", "1"))
 lookback_days = int(os.environ.get("PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS", "5"))
 require_accepted = _parse_bool("PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED")
+equity_env = (os.environ.get("PAPER_DECISION_DRY_RUN_EQUITY") or "").strip()
+equity_override = _parse_equity(equity_env) if equity_env else None
 
 conn = connect_postgres(settings.database_url)
 try:
@@ -208,9 +250,7 @@ if not active_symbols:
 broker = AlpacaExecutionAdapter.from_settings(settings)
 market_data = AlpacaMarketDataAdapter.from_settings(settings)
 as_of = _resolve_as_of(broker=broker, settings=settings)
-account = broker.get_account()
-equity_env = (os.environ.get("PAPER_DECISION_DRY_RUN_EQUITY") or "").strip()
-equity = float(equity_env) if equity_env else account.equity
+equity = equity_override if equity_override is not None else broker.get_account().equity
 fractionable_symbols = broker.get_fractionable_symbols(active_symbols)
 settings = replace(settings, fractionable_symbols=fractionable_symbols)
 
