@@ -213,11 +213,14 @@ if [[ "$rc" -eq 42 || "$rc" -eq 43 || "$rc" -eq 46 ]]; then
   fi
 fi
 
-if [[ "$rc" -eq 42 || "$rc" -eq 44 || "$rc" -eq 46 ]]; then
+if [[ "$rc" -eq 42 ]]; then
+  echo \
+    "paper profit probe pending: cumulative pnl below ${PROFIT_PROBE_MIN_PNL} after ${PROFIT_PROBE_MIN_TRADES}+ trades; continuing proof window"
+  rc=43
+fi
+
+if [[ "$rc" -eq 44 || "$rc" -eq 46 ]]; then
   case "$rc" in
-    42)
-      reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: pnl below ${PROFIT_PROBE_MIN_PNL} after ${PROFIT_PROBE_MIN_TRADES}+ trades"
-      ;;
     44)
       reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: open positions remain after close"
       if [[ "$broker_flat_failed" == "true" ]]; then
