@@ -701,8 +701,10 @@ if activity_target_session is not None:
         activity_check_created_text = (
             activity_created_at.isoformat() if activity_created_at is not None else "none"
         )
-        if activity_check_status in {"passed", "skipped"}:
+        if activity_check_status == "passed":
             activity_audit_status = "ok"
+        elif activity_check_status == "skipped":
+            activity_audit_status = "skipped" if activity_due else "ok"
         elif activity_check_status == "pending":
             activity_audit_status = "pending"
         else:
@@ -855,7 +857,7 @@ if stream_status != "ok":
     blockers.append(f"stream_{stream_status}")
 if readiness_audit_status != "ok":
     blockers.append(f"readiness_audit_{readiness_audit_status}")
-if activity_audit_status in {"missing", "failed"} or (
+if activity_audit_status in {"missing", "failed", "skipped"} or (
     activity_due and activity_audit_status == "pending"
 ):
     blockers.append(f"activity_audit_{activity_audit_status}")
