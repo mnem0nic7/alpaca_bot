@@ -156,6 +156,75 @@ class AuditEventStore:
             created_at=row[3],
         )
 
+    def load_latest_scheduled_check(
+        self,
+        *,
+        check_name: str,
+        trading_mode: TradingMode | str,
+        strategy_version: str,
+        session_date: date | str,
+    ) -> AuditEvent | None:
+        mode_value = (
+            trading_mode.value if isinstance(trading_mode, TradingMode) else trading_mode
+        )
+        session_value = (
+            session_date.isoformat() if isinstance(session_date, date) else session_date
+        )
+        row = fetch_one(
+            self._connection,
+            """
+            SELECT event_type, symbol, payload, created_at
+            FROM audit_events
+            WHERE event_type = 'scheduled_check_completed'
+              AND payload->>'check_name' = %s
+              AND payload->>'session_date' = %s
+              AND payload->>'trading_mode' = %s
+              AND payload->>'strategy_version' = %s
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (check_name, session_value, mode_value, strategy_version),
+        )
+        if row is None:
+            return None
+        return AuditEvent(
+            event_type=row[0],
+            symbol=row[1],
+            payload=_load_json_payload(row[2]),
+            created_at=row[3],
+        )
+
+    def load_latest_supervisor_started(
+        self,
+        *,
+        trading_mode: TradingMode | str,
+        strategy_version: str,
+    ) -> AuditEvent | None:
+        mode_value = (
+            trading_mode.value if isinstance(trading_mode, TradingMode) else trading_mode
+        )
+        row = fetch_one(
+            self._connection,
+            """
+            SELECT event_type, symbol, payload, created_at
+            FROM audit_events
+            WHERE event_type = 'supervisor_started'
+              AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)
+              AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (mode_value, strategy_version),
+        )
+        if row is None:
+            return None
+        return AuditEvent(
+            event_type=row[0],
+            symbol=row[1],
+            payload=_load_json_payload(row[2]),
+            created_at=row[3],
+        )
+
     def list_by_event_types(
         self,
         *,

@@ -2394,11 +2394,42 @@ class RuntimeSupervisor:
 
     def _paper_readiness_audit_passed(self, *, session_date: date) -> bool:
         audit_store = getattr(self.runtime, "audit_event_store", None)
+        store_lock = getattr(self.runtime, "store_lock", None)
+        latest_check_loader = getattr(audit_store, "load_latest_scheduled_check", None)
+        latest_supervisor_loader = getattr(audit_store, "load_latest_supervisor_started", None)
+        if callable(latest_check_loader) and callable(latest_supervisor_loader):
+            try:
+                with store_lock if store_lock is not None else contextlib.nullcontext():
+                    readiness_event = latest_check_loader(
+                        check_name="paper_readiness",
+                        session_date=session_date,
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                    )
+                    latest_supervisor_event = latest_supervisor_loader(
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to load paper readiness audit evidence; blocking entries"
+                )
+                return False
+
+            if readiness_event is None:
+                return False
+            if (
+                latest_supervisor_event is not None
+                and readiness_event.created_at < latest_supervisor_event.created_at
+            ):
+                return False
+            payload = getattr(readiness_event, "payload", {}) or {}
+            return payload.get("status") == "passed"
+
         loader = getattr(audit_store, "list_by_event_types", None)
         if not callable(loader):
             return False
 
-        store_lock = getattr(self.runtime, "store_lock", None)
         try:
             with store_lock if store_lock is not None else contextlib.nullcontext():
                 events = loader(

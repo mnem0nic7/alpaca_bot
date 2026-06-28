@@ -1030,6 +1030,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "  printf 'paper proof active strategies: bull_flag\\n'\n"
         "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh\\n'\n"
         "  printf 'paper proof readiness audit: status=ok target_session=2026-06-29 check_status=passed created_at=2026-06-29T13:20:00+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00\\n'\n"
+        "  printf 'paper proof post-close audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 17:25 America/New_York session_guard=passed:0:2026-06-29T21:10:00+00:00 paper_profit_probe=pending:43:2026-06-29T21:20:00+00:00\\n'\n"
         "  printf 'paper proof scheduled check: name=paper_profit_probe status=pending exit_code=43 session_date=2026-06-26 proof_start=2026-06-29 created_at=2026-06-27T22:00:00.000000Z\\n'\n"
         "  printf 'paper proof progress: status=pending closed_trades=3 required_trades=10 pnl=12.34 required_pnl=0.01 window=2026-06-29..2026-06-29 first_exit_session=2026-06-29 latest_exit_session=2026-06-29\\n'\n"
         "  exit 0\n"
@@ -1059,6 +1060,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     assert "paper proof active strategies: bull_flag" in result.stdout
     assert "paper proof runtime: ops_status=ok" in result.stdout
     assert "paper proof readiness audit: status=ok target_session=2026-06-29" in result.stdout
+    assert "paper proof post-close audit: status=ok target_session=2026-06-29" in result.stdout
     assert "paper proof scheduled check: name=paper_profit_probe status=pending" in result.stdout
     assert (
         "paper proof progress: status=pending closed_trades=3 "
@@ -1118,6 +1120,27 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "target_session={readiness_target_session.isoformat()}" in script
     assert "check_status={readiness_audit_check_status}" in script
     assert "created_at={readiness_audit_created_text}" in script
+    assert "from datetime import date, datetime, time, timedelta" in script
+    assert "post_close_target_session = proof_end if proof_end >= proof_start else None" in script
+    assert "post_close_audit_rows = []" in script
+    assert "payload->>'check_name' IN (" in script
+    assert "'session_guard'" in script
+    assert "'paper_profit_probe'" in script
+    assert "payload->>'proof_start' = %s" in script
+    assert "due_time = time(17, 25)" in script
+    assert "post_close_due_after" in script
+    assert "post_close_audit_status = \"not_due\"" in script
+    assert "post_close_audit_status = \"missing\"" in script
+    assert "post_close_audit_status = \"failed\"" in script
+    assert "post_close_audit_status = \"ok\"" in script
+    assert "profit_probe_status == \"pending\" and profit_probe_exit_code == \"43\"" in script
+    assert "blockers.append(f\"post_close_audit_{post_close_audit_status}\")" in script
+    assert "paper proof post-close audit:" in script
+    assert "status={post_close_audit_status}" in script
+    assert "target_session={post_close_target_session.isoformat() if post_close_target_session else 'none'}" in script
+    assert "due={str(post_close_due).lower()}" in script
+    assert "session_guard={post_close_check_statuses['session_guard']}" in script
+    assert "paper_profit_probe={post_close_check_statuses['paper_profit_probe']}" in script
     assert "strategy_disabled" in script
     assert "posture_drifted" in script
     assert "broker_account_blocked" in script

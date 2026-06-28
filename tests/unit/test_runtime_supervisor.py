@@ -177,6 +177,58 @@ class RecordingAuditEventStore:
         return filtered[offset: offset + limit]
 
 
+class DirectLookupAuditEventStore:
+    def __init__(
+        self,
+        *,
+        readiness_event: AuditEvent | None = None,
+        supervisor_started_event: AuditEvent | None = None,
+    ) -> None:
+        self.appended: list[object] = []
+        self.readiness_event = readiness_event
+        self.supervisor_started_event = supervisor_started_event
+        self.latest_scheduled_check_calls: list[dict[str, object]] = []
+        self.latest_supervisor_started_calls: list[dict[str, object]] = []
+
+    def append(self, event: object, *, commit: bool = True) -> None:
+        self.appended.append(event)
+
+    def load_latest_scheduled_check(
+        self,
+        *,
+        check_name: str,
+        trading_mode: TradingMode | str,
+        strategy_version: str,
+        session_date: date | str,
+    ) -> AuditEvent | None:
+        self.latest_scheduled_check_calls.append(
+            {
+                "check_name": check_name,
+                "trading_mode": trading_mode,
+                "strategy_version": strategy_version,
+                "session_date": session_date,
+            }
+        )
+        return self.readiness_event
+
+    def load_latest_supervisor_started(
+        self,
+        *,
+        trading_mode: TradingMode | str,
+        strategy_version: str,
+    ) -> AuditEvent | None:
+        self.latest_supervisor_started_calls.append(
+            {
+                "trading_mode": trading_mode,
+                "strategy_version": strategy_version,
+            }
+        )
+        return self.supervisor_started_event
+
+    def list_by_event_types(self, **_kwargs: object) -> list[AuditEvent]:
+        raise AssertionError("supervisor should use direct audit lookups")
+
+
 class RecordingOrderStore:
     def __init__(
         self,
@@ -1352,6 +1404,91 @@ def test_runtime_supervisor_allows_paper_proof_entries_after_readiness_audit(
     assert cycle_calls[0]["entries_disabled"] is False
     assert report.blocked_strategy_names == ()
     assert "allowed_intent_types" not in dispatch_calls[0]
+
+
+def test_runtime_supervisor_uses_direct_readiness_audit_lookup(monkeypatch) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings({"PAPER_PROOF_FREEZE": "true"})
+    now = datetime(2026, 6, 29, 14, 15, tzinfo=timezone.utc)
+    readiness_event = AuditEvent(
+        event_type="scheduled_check_completed",
+        payload={
+            "check_name": "paper_readiness",
+            "status": "passed",
+            "session_date": "2026-06-29",
+            "trading_mode": "paper",
+            "strategy_version": "v1-breakout",
+        },
+        created_at=datetime(2026, 6, 29, 13, 55, tzinfo=timezone.utc),
+    )
+    supervisor_event = AuditEvent(
+        event_type="supervisor_started",
+        payload={},
+        created_at=datetime(2026, 6, 29, 13, 50, tzinfo=timezone.utc),
+    )
+    audit_store = DirectLookupAuditEventStore(
+        readiness_event=readiness_event,
+        supervisor_started_event=supervisor_event,
+    )
+    runtime = make_runtime_context(
+        settings,
+        audit_event_store=audit_store,
+        position_store=RecordingPositionStore(),
+    )
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    stream = FakeStream()
+    cycle_calls: list[dict[str, object]] = []
+    dispatch_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: cycle_calls.append(kwargs) or SimpleNamespace(intents=[]),
+    )
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0},
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    report = supervisor.run_cycle_once(
+        now=lambda: now,
+        session_type=module.SessionType.REGULAR,
+    )
+
+    assert report.entries_disabled is False
+    assert report.entries_disabled_reasons == ()
+    assert cycle_calls[0]["entries_disabled"] is False
+    assert report.blocked_strategy_names == ()
+    assert "allowed_intent_types" not in dispatch_calls[0]
+    assert audit_store.latest_scheduled_check_calls == [
+        {
+            "check_name": "paper_readiness",
+            "trading_mode": TradingMode.PAPER,
+            "strategy_version": "v1-breakout",
+            "session_date": date(2026, 6, 29),
+        }
+    ]
+    assert audit_store.latest_supervisor_started_calls == [
+        {
+            "trading_mode": TradingMode.PAPER,
+            "strategy_version": "v1-breakout",
+        }
+    ]
 
 
 def test_runtime_supervisor_allows_paper_proof_entries_after_early_readiness_audit(

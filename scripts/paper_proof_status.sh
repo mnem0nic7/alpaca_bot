@@ -89,7 +89,7 @@ echo "paper proof evidence status:"
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
@@ -205,7 +205,8 @@ ops_health_status = os.environ.get("PROOF_STATUS_OPS_HEALTH_STATUS", "unknown")
 ops_health_detail = os.environ.get("PROOF_STATUS_OPS_HEALTH_DETAIL", "").strip()
 proof_start = parse_date(os.environ["PROOF_STATUS_START_DATE"], name="PROOF_STATUS_START_DATE")
 end_value = os.environ.get("PROOF_STATUS_END_DATE", "")
-current_market_date = datetime.now(settings.market_timezone).date()
+current_market_datetime = datetime.now(settings.market_timezone)
+current_market_date = current_market_datetime.date()
 latest_completed_session, calendar_warning = load_latest_completed_session_date(settings)
 next_market_session, next_session_warning = load_next_market_session_date(settings)
 if next_session_warning:
@@ -232,6 +233,7 @@ proof_end = (
     if end_value
     else latest_completed_session or current_market_date
 )
+post_close_target_session = proof_end if proof_end >= proof_start else None
 market_timezone = settings.market_timezone.key
 
 conn = connect_postgres(settings.database_url)
@@ -317,6 +319,40 @@ try:
             ),
         )
         readiness_audit_row = cur.fetchone()
+
+        post_close_audit_rows = []
+        if post_close_target_session is not None:
+            cur.execute(
+                """
+                SELECT check_name, status, exit_code, created_at
+                FROM (
+                  SELECT DISTINCT ON (payload->>'check_name')
+                    payload->>'check_name' AS check_name,
+                    COALESCE(payload->>'status', '') AS status,
+                    COALESCE(payload->>'exit_code', '') AS exit_code,
+                    created_at
+                  FROM audit_events
+                  WHERE event_type = 'scheduled_check_completed'
+                    AND payload->>'trading_mode' = %s
+                    AND payload->>'strategy_version' = %s
+                    AND payload->>'check_name' IN (
+                      'session_guard',
+                      'paper_profit_probe'
+                    )
+                    AND payload->>'session_date' = %s
+                    AND payload->>'proof_start' = %s
+                  ORDER BY payload->>'check_name', created_at DESC, event_id DESC
+                ) latest
+                ORDER BY check_name
+                """,
+                (
+                    trading_mode.value,
+                    strategy_version,
+                    post_close_target_session.isoformat(),
+                    proof_start.isoformat(),
+                ),
+            )
+            post_close_audit_rows = cur.fetchall()
 
         cur.execute(
             """
@@ -405,6 +441,53 @@ readiness_audit_created_text = (
     if readiness_audit_created_at is not None
     else "none"
 )
+post_close_due = False
+post_close_due_after = "none"
+post_close_audit_status = "not_started"
+post_close_check_statuses = {
+    "session_guard": "missing",
+    "paper_profit_probe": "missing",
+}
+if post_close_target_session is not None:
+    due_time = time(17, 25)
+    post_close_due_after = (
+        f"{post_close_target_session.isoformat()} "
+        f"{due_time.strftime('%H:%M')} {settings.market_timezone.key}"
+    )
+    post_close_due = current_market_datetime.date() > post_close_target_session or (
+        current_market_datetime.date() == post_close_target_session
+        and current_market_datetime.time() >= due_time
+    )
+    post_close_audit_status = "not_due"
+    for check_name, status, exit_code, created_at in post_close_audit_rows:
+        created_text = created_at.isoformat() if created_at is not None else "none"
+        post_close_check_statuses[check_name] = (
+            f"{status or 'unknown'}:{exit_code or 'unknown'}:{created_text}"
+        )
+    if post_close_due:
+        missing_checks = [
+            name
+            for name, status in post_close_check_statuses.items()
+            if status == "missing"
+        ]
+        failed_checks = []
+        session_guard_status = post_close_check_statuses["session_guard"].split(":", 1)[0]
+        profit_probe_parts = post_close_check_statuses["paper_profit_probe"].split(":")
+        profit_probe_status = profit_probe_parts[0]
+        profit_probe_exit_code = profit_probe_parts[1] if len(profit_probe_parts) > 1 else ""
+        if session_guard_status != "missing" and session_guard_status != "passed":
+            failed_checks.append("session_guard")
+        if profit_probe_status != "missing" and not (
+            profit_probe_status == "passed"
+            or (profit_probe_status == "pending" and profit_probe_exit_code == "43")
+        ):
+            failed_checks.append("paper_profit_probe")
+        if missing_checks:
+            post_close_audit_status = "missing"
+        elif failed_checks:
+            post_close_audit_status = "failed"
+        else:
+            post_close_audit_status = "ok"
 proof_not_started = proof_end < proof_start
 if proof_not_started:
     proof_status = "pending"
@@ -451,6 +534,8 @@ if ops_health_status != "ok":
     blockers.append("ops_health_failed")
 if readiness_audit_status != "ok":
     blockers.append(f"readiness_audit_{readiness_audit_status}")
+if post_close_audit_status in {"missing", "failed"}:
+    blockers.append(f"post_close_audit_{post_close_audit_status}")
 if local_open_positions > 0:
     blockers.append("local_open_positions")
 if local_active_orders > 0:
@@ -507,6 +592,15 @@ print(
     f"check_status={readiness_audit_check_status} "
     f"created_at={readiness_audit_created_text} "
     f"latest_supervisor_started_at={latest_supervisor_started_text}"
+)
+print(
+    "paper proof post-close audit: "
+    f"status={post_close_audit_status} "
+    f"target_session={post_close_target_session.isoformat() if post_close_target_session else 'none'} "
+    f"due={str(post_close_due).lower()} "
+    f"due_after={post_close_due_after} "
+    f"session_guard={post_close_check_statuses['session_guard']} "
+    f"paper_profit_probe={post_close_check_statuses['paper_profit_probe']}"
 )
 print(f"paper proof active strategies: {active_strategies or 'none'}")
 print(

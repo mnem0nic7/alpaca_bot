@@ -187,6 +187,77 @@ def test_audit_event_store_loads_latest_matching_event() -> None:
     )
 
 
+def test_audit_event_store_loads_latest_scheduled_check_for_session() -> None:
+    now = datetime(2026, 6, 29, 13, 55, tzinfo=timezone.utc)
+    connection = FakeConnection(
+        responses=[
+            (
+                "scheduled_check_completed",
+                None,
+                {"check_name": "paper_readiness", "status": "passed"},
+                now,
+            )
+        ]
+    )
+    store = AuditEventStore(connection)
+
+    event = store.load_latest_scheduled_check(
+        check_name="paper_readiness",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        session_date=date(2026, 6, 29),
+    )
+
+    assert event == AuditEvent(
+        event_type="scheduled_check_completed",
+        symbol=None,
+        payload={"check_name": "paper_readiness", "status": "passed"},
+        created_at=now,
+    )
+    assert connection.executed[0][1] == (
+        "paper_readiness",
+        "2026-06-29",
+        "paper",
+        "v1-breakout",
+    )
+    sql = _last_sql(connection)
+    assert "payload->>'check_name' = %s" in sql
+    assert "payload->>'session_date' = %s" in sql
+    assert "ORDER BY created_at DESC, event_id DESC LIMIT 1" in sql
+
+
+def test_audit_event_store_loads_latest_supervisor_started_for_mode_version() -> None:
+    now = datetime(2026, 6, 29, 14, 5, tzinfo=timezone.utc)
+    connection = FakeConnection(
+        responses=[
+            (
+                "supervisor_started",
+                None,
+                {"trading_mode": "paper", "strategy_version": "v1-breakout"},
+                now,
+            )
+        ]
+    )
+    store = AuditEventStore(connection)
+
+    event = store.load_latest_supervisor_started(
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+    )
+
+    assert event == AuditEvent(
+        event_type="supervisor_started",
+        symbol=None,
+        payload={"trading_mode": "paper", "strategy_version": "v1-breakout"},
+        created_at=now,
+    )
+    assert connection.executed[0][1] == ("paper", "v1-breakout")
+    sql = _last_sql(connection)
+    assert "event_type = 'supervisor_started'" in sql
+    assert "payload ? 'trading_mode'" in sql
+    assert "payload ? 'strategy_version'" in sql
+
+
 def test_order_store_upserts_and_loads_record() -> None:
     now = datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc)
     signal_timestamp = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
