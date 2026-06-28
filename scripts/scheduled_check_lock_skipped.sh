@@ -125,7 +125,10 @@ try:
             SELECT to_char(MAX(created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
             FROM audit_events
             WHERE event_type = 'supervisor_started'
-            """
+              AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)
+              AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)
+            """,
+            (settings.trading_mode.value, settings.strategy_version),
         )
         supervisor_row = cur.fetchone()
 finally:

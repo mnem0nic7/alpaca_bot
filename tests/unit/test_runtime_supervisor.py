@@ -4213,6 +4213,14 @@ def test_supervisor_started_event_emitted(monkeypatch) -> None:
     assert "supervisor_started" in event_types, (
         f"Expected 'supervisor_started' in {event_types}"
     )
+    started_event = next(
+        e for e in runtime.audit_event_store.appended
+        if e.event_type == "supervisor_started"
+    )
+    assert started_event.payload == {
+        "trading_mode": "paper",
+        "strategy_version": "v1-breakout",
+    }
     # supervisor_started must appear before any supervisor_cycle event
     started_idx = event_types.index("supervisor_started")
     cycle_indices = [i for i, t in enumerate(event_types) if t == "supervisor_cycle"]

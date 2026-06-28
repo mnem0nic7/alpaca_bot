@@ -1282,7 +1282,15 @@ class RuntimeSupervisor:
                 self.startup()
             else:
                 self.startup(now=startup_now)
-            self._append_audit(AuditEvent(event_type="supervisor_started", payload={}))
+            self._append_audit(
+                AuditEvent(
+                    event_type="supervisor_started",
+                    payload={
+                        "trading_mode": self.settings.trading_mode.value,
+                        "strategy_version": self.settings.strategy_version,
+                    },
+                )
+            )
             while True:
                 if (should_stop is not None and should_stop()) or self._shutdown_requested:
                     break

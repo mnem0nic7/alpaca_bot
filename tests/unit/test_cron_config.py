@@ -414,6 +414,7 @@ def test_run_if_ny_time_rejects_invalid_hhmm() -> None:
 def test_locked_check_wrapper_audits_lock_skips() -> None:
     wrapper = Path("scripts/run_locked_check_with_audit.sh").read_text()
     lock_skip = Path("scripts/scheduled_check_lock_skipped.sh").read_text()
+    readiness_if_needed = Path("scripts/paper_readiness_if_needed.sh").read_text()
 
     assert "flock -n -E 75" in wrapper
     assert '"$ROOT_DIR/scripts/run_check_with_audit.sh"' in wrapper
@@ -433,6 +434,12 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "proof_start=${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}} strategy=${SESSION_GUARD_STRATEGY" in lock_skip
     assert "paper_profit_probe)" in lock_skip
     assert "exit 48" in lock_skip
+    assert "payload ? 'trading_mode'" in lock_skip
+    assert "payload ? 'strategy_version'" in lock_skip
+    assert "settings.trading_mode.value, settings.strategy_version" in lock_skip
+    assert "payload ? 'trading_mode'" in readiness_if_needed
+    assert "payload ? 'strategy_version'" in readiness_if_needed
+    assert "settings.trading_mode.value, settings.strategy_version" in readiness_if_needed
 
 
 def test_run_check_with_audit_records_scheduled_check_result() -> None:
