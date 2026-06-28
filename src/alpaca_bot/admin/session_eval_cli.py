@@ -402,7 +402,10 @@ def _build_session_diagnostics(
             strategy_version=strategy_version,
         ),
         dispatch_failures=audit_store.list_by_event_types(
-            event_types=["order_dispatch_failed"],
+            event_types=[
+                "order_dispatch_failed",
+                "order_dispatch_stop_price_rejected",
+            ],
             since=session_start,
             until=session_end,
             limit=100,

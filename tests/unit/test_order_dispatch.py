@@ -450,6 +450,9 @@ def test_dispatch_records_error_status_on_broker_failure() -> None:
     assert audit_store.appended[0].event_type == "order_dispatch_submitting"
     assert audit_store.appended[1].event_type == "order_dispatch_failed"
     assert audit_store.appended[1].symbol == "AAPL"
+    assert audit_store.appended[1].payload["trading_mode"] == "paper"
+    assert audit_store.appended[1].payload["strategy_version"] == "v1-breakout"
+    assert audit_store.appended[1].payload["strategy_name"] == "breakout"
     # No orders counted as submitted
     assert report["submitted_count"] == 0
 
@@ -903,6 +906,9 @@ def test_dispatch_unsupported_intent_type_sets_order_to_error_status() -> None:
     assert order_store.saved[1].status == "error"
     assert audit_store.appended[0].event_type == "order_dispatch_submitting"
     assert audit_store.appended[1].event_type == "order_dispatch_failed"
+    assert audit_store.appended[1].payload["trading_mode"] == "paper"
+    assert audit_store.appended[1].payload["strategy_version"] == "v1-breakout"
+    assert audit_store.appended[1].payload["strategy_name"] == "breakout"
 
 
 # ---------------------------------------------------------------------------
@@ -1105,6 +1111,9 @@ def test_dispatch_entry_order_with_none_stop_price_records_error_status() -> Non
     assert len(audit_store.appended) == 2
     assert audit_store.appended[0].event_type == "order_dispatch_submitting"
     assert audit_store.appended[1].event_type == "order_dispatch_failed"
+    assert audit_store.appended[1].payload["trading_mode"] == "paper"
+    assert audit_store.appended[1].payload["strategy_version"] == "v1-breakout"
+    assert audit_store.appended[1].payload["strategy_name"] == "breakout"
     # Dispatch loop continued — 0 orders submitted (broker call never made)
     assert report["submitted_count"] == 0
 
@@ -1792,6 +1801,14 @@ def test_circuit_breaker_42210000_marks_canceled_and_emits_audit() -> None:
     event_types = [e.event_type for e in audit_store.appended]
     assert "order_dispatch_stop_price_rejected" in event_types
     assert "order_dispatch_failed" not in event_types
+    rejected_event = next(
+        event
+        for event in audit_store.appended
+        if event.event_type == "order_dispatch_stop_price_rejected"
+    )
+    assert rejected_event.payload["trading_mode"] == "paper"
+    assert rejected_event.payload["strategy_version"] == "v1-breakout"
+    assert rejected_event.payload["strategy_name"] == "breakout"
 
 
 def test_non_42210000_stop_error_still_marks_error() -> None:
@@ -1831,6 +1848,14 @@ def test_non_42210000_stop_error_still_marks_error() -> None:
     event_types = [e.event_type for e in audit_store.appended]
     assert "order_dispatch_failed" in event_types
     assert "order_dispatch_stop_price_rejected" not in event_types
+    failed_event = next(
+        event
+        for event in audit_store.appended
+        if event.event_type == "order_dispatch_failed"
+    )
+    assert failed_event.payload["trading_mode"] == "paper"
+    assert failed_event.payload["strategy_version"] == "v1-breakout"
+    assert failed_event.payload["strategy_name"] == "breakout"
 
 
 # ---------------------------------------------------------------------------

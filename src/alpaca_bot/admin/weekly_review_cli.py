@@ -493,7 +493,11 @@ def _load_operational_health_events(
             limit=10000,
         ),
         "dispatch_failures": audit_store.list_by_event_types(
-            event_types=["order_dispatch_failed", "option_order_dispatch_failed"],
+            event_types=[
+                "order_dispatch_failed",
+                "order_dispatch_stop_price_rejected",
+                "option_order_dispatch_failed",
+            ],
             since=since_dt,
             until=until_dt,
             limit=10000,

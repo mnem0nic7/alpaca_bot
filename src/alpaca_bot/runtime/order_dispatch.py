@@ -442,6 +442,9 @@ def dispatch_pending_orders(
                             event_type=audit_event_type,
                             symbol=order.symbol,
                             payload={
+                                "trading_mode": settings.trading_mode.value,
+                                "strategy_version": settings.strategy_version,
+                                "strategy_name": order.strategy_name,
                                 "error": str(exc),
                                 "symbol": order.symbol,
                                 "intent_type": order.intent_type,

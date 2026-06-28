@@ -373,7 +373,12 @@ SELECT
         'done_for_day'
       )
   ), 0),
-  COUNT(*) FILTER (WHERE event_type = 'order_dispatch_failed')::int,
+  COUNT(*) FILTER (
+    WHERE event_type IN (
+      'order_dispatch_failed',
+      'order_dispatch_stop_price_rejected'
+    )
+  )::int,
   COUNT(*) FILTER (
     WHERE event_type IN (
       'stream_heartbeat_stale',
@@ -454,7 +459,7 @@ if [[ "${latest_cycle_strategy_blocked:-false}" == "true" ]]; then
 fi
 
 if [[ "${dispatch_failures:-0}" -gt 0 ]]; then
-  echo "paper activity failed: order_dispatch_failed events in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes count=$dispatch_failures" >&2
+  echo "paper activity failed: order dispatch failure events in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes count=$dispatch_failures" >&2
   exit 1
 fi
 

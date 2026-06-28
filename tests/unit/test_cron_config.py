@@ -1674,8 +1674,9 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "reject_reason" in script
     assert "strategy_evidence_records" in script
     assert "order_dispatch_failed" in script
+    assert "order_dispatch_stop_price_rejected" in script
     assert "dispatch_failures" in script
-    assert "paper activity failed: order_dispatch_failed events" in script
+    assert "paper activity failed: order dispatch failure events" in script
     assert "stream_heartbeat_stale" in script
     assert "stream_restart_failed" in script
     assert "trade_update_stream_failed" in script
@@ -1951,7 +1952,7 @@ def test_paper_activity_fails_on_recent_dispatch_failures(tmp_path: Path) -> Non
     )
 
     assert result.returncode == 1
-    assert "order_dispatch_failed events" in result.stderr
+    assert "order dispatch failure events" in result.stderr
     assert "count=2" in result.stderr
     assert not docker_marker.exists()
 

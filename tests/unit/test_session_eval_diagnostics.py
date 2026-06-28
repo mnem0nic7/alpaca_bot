@@ -289,6 +289,13 @@ def test_build_session_diagnostics_cycle_errors(monkeypatch):
     ]
     assert stream_calls
     assert "trade_update_failed" in stream_calls[0]["event_types"]
+    dispatch_calls = [
+        call
+        for call in call_log
+        if "order_dispatch_failed" in call.get("event_types", [])
+    ]
+    assert dispatch_calls
+    assert "order_dispatch_stop_price_rejected" in dispatch_calls[0]["event_types"]
 
 
 def test_build_session_diagnostics_open_positions(monkeypatch):
