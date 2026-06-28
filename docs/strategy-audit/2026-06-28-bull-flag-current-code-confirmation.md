@@ -401,3 +401,34 @@ Decision: keep the deployed paper posture unchanged. The current deployed
 HEAD still clears the exact active-universe latest-120-day replay with positive
 after-cost edge, and the proof stack remains ready but pending a completed
 `2026-06-29`-or-later paper proof session.
+
+Current-head replay confirmation after midday readiness cron hardening at
+commit `b19f905` used the exact live enabled, non-ignored proof universe from
+Postgres and symlinked the matching live nightly scenarios:
+
+- live active paper symbols: `980`
+- exact active live scenario files: `980`
+- missing active scenarios: `0`
+- deployed proof posture: `bull_flag`, `MAX_OPEN_POSITIONS=3`,
+  `REPLAY_SLIPPAGE_BPS=2.0`, floor-sized starting equity `$17,247.795`
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+python3 -m alpaca_bot.replay.cli portfolio-audit \
+  --scenario-dir /tmp/alpaca-active-proof-vWYxQs \
+  --strategy bull_flag \
+  --slippage-bps 2 \
+  --max-open-positions 3 \
+  --starting-equity 17247.795 \
+  --output /tmp/alpaca-bull-flag-active-proof-b19f905.md \
+  --jsonl /tmp/alpaca-bull-flag-active-proof-b19f905.jsonl
+```
+
+| scenarios | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(mean<=0) | frictionless P&L | cost drag | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---|
+| 980 | 1033 | 71.6% | 1.42 | 1810.17 | 1.7523 | 3.61 | [0.8460, 2.6589] | 0.0000 | 2210.26 | 400.09 | positive-edge |
+
+Decision: keep the deployed paper posture unchanged. The full live active
+scenario set at current HEAD remains positive-edge after 2 bps per-side
+slippage, while live proof status is still ready and pending the first
+`2026-06-29`-or-later completed paper session.
