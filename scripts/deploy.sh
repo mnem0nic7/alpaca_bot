@@ -45,6 +45,11 @@ credentials_ready() {
   esac
 }
 
+paper_proof_enabled() {
+  local paper_proof_freeze="${PAPER_PROOF_FREEZE:-false}"
+  [[ "${TRADING_MODE:-}" == "paper" && "${paper_proof_freeze,,}" == "true" ]]
+}
+
 require_var POSTGRES_DB
 require_var POSTGRES_USER
 require_var POSTGRES_PASSWORD
@@ -76,8 +81,7 @@ if credentials_ready; then
     --expect-trading-status enabled \
     --expect-kill-switch false \
     --expect-only-enabled-strategy bull_flag
-  paper_proof_freeze="${PAPER_PROOF_FREEZE:-false}"
-  if [[ "${TRADING_MODE}" == "paper" && "${paper_proof_freeze,,}" == "true" ]]; then
+  if paper_proof_enabled; then
     "$ROOT_DIR/scripts/run_locked_check_with_audit.sh" \
       paper_readiness \
       /var/lock/alpaca-bot-paper-readiness.lock \
@@ -98,6 +102,21 @@ if [[ "${REQUIRE_CRON_HEALTH,,}" == "true" ]]; then
   "$ROOT_DIR/scripts/cron_health_check.sh"
 else
   echo "Cron health check skipped because REQUIRE_CRON_HEALTH=false" >&2
+fi
+
+if credentials_ready && paper_proof_enabled; then
+  proof_status_output="$("$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE")"
+  printf '%s\n' "$proof_status_output"
+  proof_summary="$(
+    printf '%s\n' "$proof_status_output" \
+      | grep -E '^paper proof summary: ' \
+      | tail -n 1
+  )"
+  if [[ "$proof_summary" != *"readiness=ready"* \
+    || "$proof_summary" != *"blockers=none"* ]]; then
+    echo "deploy failed: paper proof status not ready after deploy: ${proof_summary:-missing summary}" >&2
+    exit 1
+  fi
 fi
 
 docker compose -f "$COMPOSE_FILE" ps

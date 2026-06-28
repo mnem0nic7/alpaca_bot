@@ -44,12 +44,17 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "--expect-trading-status enabled" in deploy_text
     assert "--expect-kill-switch false" in deploy_text
     assert "--expect-only-enabled-strategy bull_flag" in deploy_text
-    assert 'paper_proof_freeze="${PAPER_PROOF_FREEZE:-false}"' in deploy_text
+    assert "paper_proof_enabled()" in deploy_text
     assert '"${paper_proof_freeze,,}" == "true"' in deploy_text
     assert '"$ROOT_DIR/scripts/run_locked_check_with_audit.sh"' in deploy_text
     assert "paper_readiness" in deploy_text
     assert "/var/lock/alpaca-bot-paper-readiness.lock" in deploy_text
     assert '"$ROOT_DIR/scripts/paper_readiness_if_needed.sh"' in deploy_text
+    assert '"$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE"' in deploy_text
+    assert "paper proof summary:" in deploy_text
+    assert '"readiness=ready"' in deploy_text
+    assert '"blockers=none"' in deploy_text
+    assert "deploy failed: paper proof status not ready after deploy" in deploy_text
 
 
 def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
