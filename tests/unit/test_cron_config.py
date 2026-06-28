@@ -1089,6 +1089,11 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"accepted": "decision_dry_run_accepted"' in script
     assert '"entry_intents": "decision_dry_run_entry_intents"' in script
     assert '"sample": "decision_dry_run_sample"' in script
+    assert '"sample_times": "decision_dry_run_sample_times"' in script
+    assert '"evaluations": "decision_dry_run_evaluations"' in script
+    assert '"min_decision_records": "decision_dry_run_min_decision_records"' in script
+    assert '"max_accepted": "decision_dry_run_max_accepted"' in script
+    assert '"max_entry_intents": "decision_dry_run_max_entry_intents"' in script
     assert "parse_prefixed_fields" in script
     assert '"session_date"' in script
     assert '"previous_session_date"' in script
@@ -2391,6 +2396,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS" in script
     assert "PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in script
     assert "-e PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS=\"$PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS\"" in script
+    assert "-e PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS=\"$PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS\"" in script
     assert "./scripts/ops_check.sh \"$ENV_FILE\"" in script
     assert "--expect-trading-mode \"$trading_mode\"" in script
     assert "--expect-strategy-version \"$STRATEGY_VERSION\"" in script
@@ -2443,9 +2449,16 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "COALESCE(payload->>'reason', '') AS reason" in script
     assert "payload->>'decision_dry_run_strategy'" in script
     assert "payload->>'decision_dry_run_records'" in script
+    assert "payload->>'decision_dry_run_sample_times'" in script
+    assert "payload->>'decision_dry_run_evaluations'" in script
+    assert "payload->>'decision_dry_run_min_decision_records'" in script
+    assert "payload->>'decision_dry_run_max_entry_intents'" in script
     assert "readiness_audit_rows = cur.fetchall()" in script
     assert "parse_int_or_none" in script
     assert "min_decision_dry_run_records" in script
+    assert "min_decision_dry_run_evaluations" in script
+    assert "PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS" in script
+    assert "PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS must be a positive integer" in script
     assert "latest_readiness_reason.startswith(\"lock_busy\")" in script
     assert "(row for row in readiness_audit_rows if row[0] == \"passed\")" in script
     assert "readiness_audit_status" in script
@@ -2458,6 +2471,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "readiness_decision_dry_run_status = \"strategy_mismatch\"" in script
     assert "readiness_decision_dry_run_status = \"active_under_minimum\"" in script
     assert "readiness_decision_dry_run_status = \"records_under_minimum\"" in script
+    assert "readiness_decision_dry_run_status = \"evaluations_under_minimum\"" in script
+    assert "readiness_decision_dry_run_status = \"sample_records_under_minimum\"" in script
     assert "paper proof readiness audit:" in script
     assert "status={readiness_audit_status}" in script
     assert "target_session={readiness_target_session.isoformat()}" in script
@@ -2470,6 +2485,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "decision_records={readiness_decision_dry_run_records or 'none'}" in script
     assert "required_records={min_decision_dry_run_records}" in script
     assert "accepted={readiness_decision_dry_run_accepted or 'none'}" in script
+    assert "sample_times={readiness_decision_dry_run_sample_times or 'none'}" in script
+    assert "evaluations={readiness_decision_dry_run_evaluations or 'none'}" in script
+    assert "required_evaluations={min_decision_dry_run_evaluations}" in script
+    assert "min_decision_records={readiness_decision_dry_run_min_records or 'none'}" in script
+    assert "max_accepted={readiness_decision_dry_run_max_accepted or 'none'}" in script
+    assert "max_entry_intents={readiness_decision_dry_run_max_entry_intents or 'none'}" in script
     assert "sample={readiness_decision_dry_run_sample or 'none'}" in script
     assert "activity_target_session = None" in script
     assert "activity_due_time = time(10, 35)" in script

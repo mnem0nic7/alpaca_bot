@@ -155,6 +155,11 @@ DECISION_DRY_RUN_FIELDS = {
     "entry_intents": "decision_dry_run_entry_intents",
     "equity": "decision_dry_run_equity",
     "sample": "decision_dry_run_sample",
+    "sample_times": "decision_dry_run_sample_times",
+    "evaluations": "decision_dry_run_evaluations",
+    "min_decision_records": "decision_dry_run_min_decision_records",
+    "max_accepted": "decision_dry_run_max_accepted",
+    "max_entry_intents": "decision_dry_run_max_entry_intents",
 }
 
 

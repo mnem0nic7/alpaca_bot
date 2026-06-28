@@ -38,7 +38,8 @@ capture_env_overrides \
   PROOF_STATUS_SCENARIO_DIR \
   PROOF_STATUS_STREAM_START_GRACE_SECONDS \
   PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES \
-  PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS
+  PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS \
+  PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS
 
 cd "$(dirname "$0")/.."
 
@@ -67,6 +68,7 @@ PROOF_STATUS_SCENARIO_DIR="${PROOF_STATUS_SCENARIO_DIR:-${PAPER_READINESS_SCENAR
 PROOF_STATUS_STREAM_START_GRACE_SECONDS="${PROOF_STATUS_STREAM_START_GRACE_SECONDS:-120}"
 PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES="${PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES:-${PAPER_READINESS_MAX_PASS_AGE_MINUTES:-180}}"
 PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS="${PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}}"
+PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS="${PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS:-6}}"
 
 if [[ -z "${STRATEGY_VERSION:-}" ]]; then
   echo "missing STRATEGY_VERSION in $ENV_FILE" >&2
@@ -107,6 +109,10 @@ if [[ ! "$PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" =~ ^[0-9]+$ || "$PROOF_ST
 fi
 if [[ ! "$PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS" =~ ^[0-9]+$ ]]; then
   echo "PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS must be a positive integer" >&2
   exit 1
 fi
 case "${PROOF_STATUS_FAIL_ON_ISSUES,,}" in
@@ -187,6 +193,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_STREAM_START_GRACE_SECONDS="$PROOF_STATUS_STREAM_START_GRACE_SECONDS" \
   -e PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES="$PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" \
   -e PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS="$PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS" \
+  -e PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS="$PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS" \
   -e PROOF_STATUS_START_DATE="$PROOF_STATUS_START_DATE" \
   -e PROOF_STATUS_END_DATE="$PROOF_STATUS_END_DATE" \
   -e PROOF_STATUS_CRON_HEALTH_STATUS="$cron_health_status" \
@@ -413,6 +420,9 @@ min_trades = int(os.environ["PROOF_STATUS_MIN_TRADES"])
 min_pnl = float(os.environ["PROOF_STATUS_MIN_PNL"])
 min_watchlist_symbols = int(os.environ["PROOF_STATUS_MIN_WATCHLIST_SYMBOLS"])
 min_decision_dry_run_records = int(os.environ["PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS"])
+min_decision_dry_run_evaluations = int(
+    os.environ["PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS"]
+)
 min_confidence_floor = float(os.environ["PROOF_STATUS_MIN_CONFIDENCE_FLOOR"])
 require_scenarios = os.environ.get("PROOF_STATUS_REQUIRE_SCENARIOS", "true").lower() == "true"
 scenario_dir = Path(os.environ["PROOF_STATUS_SCENARIO_DIR"])
@@ -689,7 +699,12 @@ try:
               COALESCE(payload->>'decision_dry_run_records', '') AS decision_dry_run_records,
               COALESCE(payload->>'decision_dry_run_accepted', '') AS decision_dry_run_accepted,
               COALESCE(payload->>'decision_dry_run_entry_intents', '') AS decision_dry_run_entry_intents,
-              COALESCE(payload->>'decision_dry_run_sample', '') AS decision_dry_run_sample
+              COALESCE(payload->>'decision_dry_run_sample', '') AS decision_dry_run_sample,
+              COALESCE(payload->>'decision_dry_run_sample_times', '') AS decision_dry_run_sample_times,
+              COALESCE(payload->>'decision_dry_run_evaluations', '') AS decision_dry_run_evaluations,
+              COALESCE(payload->>'decision_dry_run_min_decision_records', '') AS decision_dry_run_min_records,
+              COALESCE(payload->>'decision_dry_run_max_accepted', '') AS decision_dry_run_max_accepted,
+              COALESCE(payload->>'decision_dry_run_max_entry_intents', '') AS decision_dry_run_max_entry_intents
             FROM audit_events
             WHERE event_type = 'scheduled_check_completed'
               AND payload->>'trading_mode' = %s
@@ -976,6 +991,11 @@ readiness_decision_dry_run_records = ""
 readiness_decision_dry_run_accepted = ""
 readiness_decision_dry_run_entry_intents = ""
 readiness_decision_dry_run_sample = ""
+readiness_decision_dry_run_sample_times = ""
+readiness_decision_dry_run_evaluations = ""
+readiness_decision_dry_run_min_records = ""
+readiness_decision_dry_run_max_accepted = ""
+readiness_decision_dry_run_max_entry_intents = ""
 if readiness_audit_row and len(readiness_audit_row) >= 10:
     readiness_decision_dry_run_strategy = readiness_audit_row[3] or ""
     readiness_decision_dry_run_as_of = readiness_audit_row[4] or ""
@@ -984,11 +1004,23 @@ if readiness_audit_row and len(readiness_audit_row) >= 10:
     readiness_decision_dry_run_accepted = readiness_audit_row[7] or ""
     readiness_decision_dry_run_entry_intents = readiness_audit_row[8] or ""
     readiness_decision_dry_run_sample = readiness_audit_row[9] or ""
+    if len(readiness_audit_row) >= 15:
+        readiness_decision_dry_run_sample_times = readiness_audit_row[10] or ""
+        readiness_decision_dry_run_evaluations = readiness_audit_row[11] or ""
+        readiness_decision_dry_run_min_records = readiness_audit_row[12] or ""
+        readiness_decision_dry_run_max_accepted = readiness_audit_row[13] or ""
+        readiness_decision_dry_run_max_entry_intents = readiness_audit_row[14] or ""
 readiness_decision_dry_run_active_value = parse_int_or_none(
     readiness_decision_dry_run_active
 )
 readiness_decision_dry_run_records_value = parse_int_or_none(
     readiness_decision_dry_run_records
+)
+readiness_decision_dry_run_min_records_value = parse_int_or_none(
+    readiness_decision_dry_run_min_records
+)
+readiness_decision_dry_run_evaluations_value = parse_int_or_none(
+    readiness_decision_dry_run_evaluations
 )
 readiness_decision_dry_run_status = "ok"
 if not (
@@ -1009,6 +1041,16 @@ elif readiness_decision_dry_run_active_value < min_watchlist_symbols:
     readiness_decision_dry_run_status = "active_under_minimum"
 elif readiness_decision_dry_run_records_value < min_decision_dry_run_records:
     readiness_decision_dry_run_status = "records_under_minimum"
+elif (
+    readiness_decision_dry_run_evaluations_value is None
+    or readiness_decision_dry_run_evaluations_value < min_decision_dry_run_evaluations
+):
+    readiness_decision_dry_run_status = "evaluations_under_minimum"
+elif (
+    readiness_decision_dry_run_min_records_value is not None
+    and readiness_decision_dry_run_min_records_value < min_decision_dry_run_records
+):
+    readiness_decision_dry_run_status = "sample_records_under_minimum"
 activity_due = False
 activity_due_after = "none"
 activity_check_status = "missing"
@@ -1285,7 +1327,13 @@ print(
     f"required_records={min_decision_dry_run_records} "
     f"accepted={readiness_decision_dry_run_accepted or 'none'} "
     f"entry_intents={readiness_decision_dry_run_entry_intents or 'none'} "
-    f"sample={readiness_decision_dry_run_sample or 'none'}"
+    f"sample={readiness_decision_dry_run_sample or 'none'} "
+    f"sample_times={readiness_decision_dry_run_sample_times or 'none'} "
+    f"evaluations={readiness_decision_dry_run_evaluations or 'none'} "
+    f"required_evaluations={min_decision_dry_run_evaluations} "
+    f"min_decision_records={readiness_decision_dry_run_min_records or 'none'} "
+    f"max_accepted={readiness_decision_dry_run_max_accepted or 'none'} "
+    f"max_entry_intents={readiness_decision_dry_run_max_entry_intents or 'none'}"
 )
 print(
     "paper proof activity audit: "
