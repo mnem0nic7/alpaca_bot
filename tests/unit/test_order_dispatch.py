@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from importlib import import_module
 from types import SimpleNamespace
 
@@ -458,8 +458,8 @@ def test_dispatch_skips_entry_orders_with_stale_signal_date() -> None:
     """Entry orders whose signal_timestamp is from a prior session date must be skipped."""
     _, dispatch_pending_orders = load_order_dispatch_api()
     settings = make_settings()
-    # now is 14:30 ET on 2026-04-25 (18:30 UTC)
-    now = datetime(2026, 4, 25, 18, 30, tzinfo=timezone.utc)
+    # now is 10:10 ET on 2026-04-25 (14:10 UTC), still inside the next-bar window.
+    now = datetime(2026, 4, 25, 14, 10, tzinfo=timezone.utc)
     # Signal was generated yesterday
     yesterday_signal = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
     stale_entry = OrderRecord(
@@ -538,8 +538,8 @@ def test_dispatch_does_not_skip_naive_signal_timestamp_from_same_day() -> None:
     skipped — only genuinely stale dates should be filtered."""
     _, dispatch_pending_orders = load_order_dispatch_api()
     settings = make_settings()
-    # now is 14:30 ET on 2026-04-25 (18:30 UTC)
-    now = datetime(2026, 4, 25, 18, 30, tzinfo=timezone.utc)
+    # now is 10:10 ET on 2026-04-25 (14:10 UTC), still inside the next-bar window.
+    now = datetime(2026, 4, 25, 14, 10, tzinfo=timezone.utc)
     # Naive datetime from today's session (naive → assume UTC → 2026-04-25)
     same_day_naive = datetime(2026, 4, 25, 14, 0)  # no tzinfo, same UTC date
     entry = OrderRecord(
@@ -568,6 +568,44 @@ def test_dispatch_does_not_skip_naive_signal_timestamp_from_same_day() -> None:
     # Same-day naive signal must be dispatched, not skipped
     assert len(broker.entry_calls) == 1
     assert report["submitted_count"] == 1
+
+
+def test_dispatch_expires_pending_entry_after_next_bar_window() -> None:
+    """A pending_submit entry that missed its next-bar window must not submit late."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    signal_ts = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)
+    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes)
+    stale_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:next-bar-expired",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=signal_ts,
+        updated_at=signal_ts,
+        stop_price=101.0,
+        limit_price=101.5,
+        initial_stop_price=99.5,
+        signal_timestamp=signal_ts,
+    )
+    order_store = RecordingOrderStore([stale_entry])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
+    broker = RecordingBroker()
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    assert broker.entry_calls == []
+    assert len(order_store.saved) == 1
+    assert order_store.saved[0].status == "expired"
+    assert order_store.saved[0].client_order_id == stale_entry.client_order_id
+    assert audit_store.appended[0].event_type == "entry_order_expired_next_bar"
+    assert audit_store.appended[0].symbol == "AAPL"
+    assert report["submitted_count"] == 0
 
 
 def test_dispatch_pending_orders_acquires_store_lock_for_order_store_save() -> None:

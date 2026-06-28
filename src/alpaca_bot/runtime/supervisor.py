@@ -56,6 +56,7 @@ from alpaca_bot.storage import (
     DailySessionState,
     EQUITY_SESSION_STATE_STRATEGY_NAME,
     GLOBAL_SESSION_STATE_STRATEGY_NAME,
+    OrderRecord,
     PositionRecord,
     StrategyFlag,
     TradingStatusValue,
@@ -71,6 +72,9 @@ from alpaca_bot.storage.models import OptionOrderRecord
 
 
 STREAM_HEARTBEAT_TIMEOUT_SECONDS = 300
+ACTIVE_ENTRY_STATUSES = (
+    "submitting", "new", "accepted", "submitted", "partially_filled", "held", "pending_new",
+)
 
 
 def _external_short_upnl(broker_positions: list[BrokerPosition]) -> float:
@@ -361,6 +365,15 @@ class RuntimeSupervisor:
             )
         account = self.broker.get_account()
         session_date = _session_date(timestamp, self.settings)
+        expired_entry_broker_ids = self._expire_stale_entry_orders(
+            timestamp=timestamp,
+            broker_open_orders=broker_open_orders,
+        )
+        if expired_entry_broker_ids:
+            broker_open_orders = [
+                order for order in broker_open_orders
+                if order.broker_order_id not in expired_entry_broker_ids
+            ]
 
         # Load session state once and apply staleness check (Task 7).
         session_state = self._load_session_state(
@@ -1644,6 +1657,156 @@ class RuntimeSupervisor:
             )
             for position in self._load_position_records()
         ]
+
+    def _expire_stale_entry_orders(
+        self,
+        *,
+        timestamp: datetime,
+        broker_open_orders: list[object],
+    ) -> set[str]:
+        """Cancel live entry orders after their replay-equivalent one-bar window."""
+        if not broker_open_orders or not hasattr(self.runtime.order_store, "list_by_status"):
+            return set()
+
+        broker_by_id = {
+            order.broker_order_id: order
+            for order in broker_open_orders
+            if getattr(order, "broker_order_id", None)
+        }
+        broker_by_client_id = {
+            order.client_order_id: order
+            for order in broker_open_orders
+            if getattr(order, "client_order_id", None)
+        }
+        if not broker_by_id and not broker_by_client_id:
+            return set()
+
+        store_lock = getattr(self.runtime, "store_lock", None)
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            active_orders = self.runtime.order_store.list_by_status(
+                trading_mode=self.settings.trading_mode,
+                strategy_version=self.settings.strategy_version,
+                statuses=list(ACTIVE_ENTRY_STATUSES),
+            )
+
+        max_age = timedelta(minutes=self.settings.entry_timeframe_minutes)
+        timestamp_utc = (
+            timestamp.replace(tzinfo=timezone.utc)
+            if timestamp.tzinfo is None
+            else timestamp.astimezone(timezone.utc)
+        )
+        expired_broker_ids: set[str] = set()
+        for order in active_orders:
+            if order.intent_type != "entry":
+                continue
+            broker_order = None
+            if order.broker_order_id:
+                broker_order = broker_by_id.get(order.broker_order_id)
+            if broker_order is None:
+                broker_order = broker_by_client_id.get(order.client_order_id)
+            if broker_order is None:
+                continue
+
+            signal_ts = order.signal_timestamp or order.created_at
+            if signal_ts is None:
+                continue
+            if signal_ts.tzinfo is None:
+                signal_ts = signal_ts.replace(tzinfo=timezone.utc)
+            age = timestamp_utc - signal_ts.astimezone(timezone.utc)
+            if age < max_age:
+                continue
+
+            broker_order_id = getattr(broker_order, "broker_order_id", None) or order.broker_order_id
+            if not broker_order_id:
+                continue
+
+            try:
+                self.broker.cancel_order(broker_order_id)
+            except Exception as exc:
+                self._append_audit(
+                    AuditEvent(
+                        event_type="entry_order_next_bar_expiry_cancel_failed",
+                        symbol=order.symbol,
+                        payload={
+                            "client_order_id": order.client_order_id,
+                            "broker_order_id": broker_order_id,
+                            "age_seconds": age.total_seconds(),
+                            "max_age_seconds": max_age.total_seconds(),
+                            "error": str(exc),
+                            "timestamp": timestamp.isoformat(),
+                        },
+                        created_at=timestamp,
+                    )
+                )
+                continue
+
+            fill_price = getattr(broker_order, "fill_price", None)
+            if fill_price is None:
+                fill_price = order.fill_price
+            filled_quantity = getattr(broker_order, "filled_quantity", None)
+            if filled_quantity is None:
+                filled_quantity = order.filled_quantity
+            final_status = (
+                "canceled"
+                if filled_quantity is not None and filled_quantity > 0
+                else "expired"
+            )
+
+            with store_lock if store_lock is not None else contextlib.nullcontext():
+                try:
+                    self.runtime.order_store.save(
+                        OrderRecord(
+                            client_order_id=order.client_order_id,
+                            symbol=order.symbol,
+                            side=order.side,
+                            intent_type=order.intent_type,
+                            status=final_status,
+                            quantity=order.quantity,
+                            trading_mode=order.trading_mode,
+                            strategy_version=order.strategy_version,
+                            strategy_name=order.strategy_name,
+                            created_at=order.created_at,
+                            updated_at=timestamp,
+                            stop_price=order.stop_price,
+                            limit_price=order.limit_price,
+                            initial_stop_price=order.initial_stop_price,
+                            broker_order_id=broker_order_id,
+                            signal_timestamp=order.signal_timestamp,
+                            fill_price=fill_price,
+                            filled_quantity=filled_quantity,
+                            reconciliation_miss_count=order.reconciliation_miss_count,
+                        ),
+                        commit=False,
+                    )
+                    self.runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="entry_order_expired_next_bar",
+                            symbol=order.symbol,
+                            payload={
+                                "client_order_id": order.client_order_id,
+                                "broker_order_id": broker_order_id,
+                                "previous_status": order.status,
+                                "broker_status": getattr(broker_order, "status", None),
+                                "final_status": final_status,
+                                "signal_timestamp": signal_ts.isoformat(),
+                                "age_seconds": age.total_seconds(),
+                                "max_age_seconds": max_age.total_seconds(),
+                                "timestamp": timestamp.isoformat(),
+                            },
+                            created_at=timestamp,
+                        ),
+                        commit=False,
+                    )
+                    self.runtime.connection.commit()
+                except Exception:
+                    try:
+                        self.runtime.connection.rollback()
+                    except Exception:
+                        pass
+                    raise
+            expired_broker_ids.add(broker_order_id)
+
+        return expired_broker_ids
 
     def _load_position_records(self) -> list[PositionRecord]:
         if self.runtime.position_store is None or not hasattr(self.runtime.position_store, "list_all"):

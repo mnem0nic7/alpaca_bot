@@ -310,6 +310,7 @@ class FakeBroker:
         self.open_position_calls = 0
         self.clock_calls = 0
         self.fractionable_symbol_calls: list[tuple[str, ...]] = []
+        self.cancel_calls: list[str] = []
 
     def get_account(self) -> BrokerAccount:
         self.account_calls += 1
@@ -322,6 +323,9 @@ class FakeBroker:
     def list_open_positions(self) -> list[BrokerPosition]:
         self.open_position_calls += 1
         return list(self.open_positions)
+
+    def cancel_order(self, order_id: str) -> None:
+        self.cancel_calls.append(order_id)
 
     def get_fractionable_symbols(self, symbols) -> frozenset:
         self.fractionable_symbol_calls.append(tuple(symbols))
@@ -3439,6 +3443,157 @@ def test_entry_symbols_excludes_ignored_but_market_data_includes_all(monkeypatch
     symbols_arg = cycle_calls[0]["symbols"]
     assert "TSLA" not in symbols_arg
     assert "AAPL" in symbols_arg
+
+
+def test_run_cycle_once_cancels_stale_live_entry_before_evaluation(monkeypatch) -> None:
+    """Live entry orders should expire after the next-bar window, matching replay."""
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings({"SYMBOLS": "AAPL"})
+    signal_ts = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes)
+    entry_order = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:stale",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="accepted",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=signal_ts,
+        updated_at=signal_ts,
+        stop_price=101.0,
+        limit_price=101.1,
+        initial_stop_price=99.5,
+        broker_order_id="broker-entry-stale",
+        signal_timestamp=signal_ts,
+    )
+    order_store = RecordingOrderStore([entry_order])
+    runtime = make_runtime_context(settings, order_store=order_store)
+    broker = FakeBroker(
+        open_orders=[
+            BrokerOrder(
+                client_order_id=entry_order.client_order_id,
+                broker_order_id="broker-entry-stale",
+                symbol="AAPL",
+                side="buy",
+                status="accepted",
+                quantity=10,
+            )
+        ],
+    )
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    cycle_calls: list[dict] = []
+
+    def fake_run_cycle(**kwargs):
+        cycle_calls.append(kwargs)
+        return SimpleNamespace(intents=[])
+
+    monkeypatch.setattr(module, "run_cycle", fake_run_cycle)
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **_: {"submitted_count": 0})
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    assert broker.cancel_calls == ["broker-entry-stale"]
+    expired = [
+        order for order in order_store.saved
+        if getattr(order, "client_order_id", None) == entry_order.client_order_id
+    ]
+    assert expired[-1].status == "expired"
+    assert "AAPL" not in cycle_calls[0]["working_order_symbols"]
+    assert any(
+        event.event_type == "entry_order_expired_next_bar"
+        and event.symbol == "AAPL"
+        for event in runtime.audit_event_store.appended
+    )
+
+
+def test_run_cycle_once_keeps_fresh_live_entry_until_next_bar(monkeypatch) -> None:
+    """A live entry remains active during its intended next-bar window."""
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings({"SYMBOLS": "AAPL"})
+    signal_ts = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes) - timedelta(seconds=1)
+    entry_order = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:fresh",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="accepted",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=signal_ts,
+        updated_at=signal_ts,
+        stop_price=101.0,
+        limit_price=101.1,
+        initial_stop_price=99.5,
+        broker_order_id="broker-entry-fresh",
+        signal_timestamp=signal_ts,
+    )
+    order_store = RecordingOrderStore([entry_order])
+    runtime = make_runtime_context(settings, order_store=order_store)
+    broker = FakeBroker(
+        open_orders=[
+            BrokerOrder(
+                client_order_id=entry_order.client_order_id,
+                broker_order_id="broker-entry-fresh",
+                symbol="AAPL",
+                side="buy",
+                status="accepted",
+                quantity=10,
+            )
+        ],
+    )
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    cycle_calls: list[dict] = []
+
+    def fake_run_cycle(**kwargs):
+        cycle_calls.append(kwargs)
+        return SimpleNamespace(intents=[])
+
+    monkeypatch.setattr(module, "run_cycle", fake_run_cycle)
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **_: {"submitted_count": 0})
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    assert broker.cancel_calls == []
+    saved_for_entry = [
+        order for order in order_store.saved
+        if getattr(order, "client_order_id", None) == entry_order.client_order_id
+    ]
+    assert all(order.status not in {"expired", "canceled"} for order in saved_for_entry)
+    assert not any(
+        event.event_type == "entry_order_expired_next_bar"
+        for event in runtime.audit_event_store.appended
+    )
+    assert "AAPL" in cycle_calls[0]["working_order_symbols"]
 
 
 # ---------------------------------------------------------------------------

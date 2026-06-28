@@ -4,7 +4,7 @@ import contextlib
 import logging
 import re
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 
 from alpaca_bot.config import Settings
@@ -158,6 +158,68 @@ def dispatch_pending_orders(
                                     "client_order_id": order.client_order_id,
                                     "signal_date": signal_date_et.isoformat(),
                                     "session_date": session_date_et.isoformat(),
+                                },
+                                created_at=timestamp,
+                            ),
+                            commit=False,
+                        )
+                        runtime.connection.commit()
+                    except Exception:
+                        try:
+                            runtime.connection.rollback()
+                        except Exception:
+                            pass
+                        raise
+                continue
+            timestamp_utc = (
+                timestamp.replace(tzinfo=timezone.utc)
+                if timestamp.tzinfo is None
+                else timestamp.astimezone(timezone.utc)
+            )
+            max_age = timedelta(minutes=settings.entry_timeframe_minutes)
+            age = timestamp_utc - sig_ts.astimezone(timezone.utc)
+            if age >= max_age:
+                logger.warning(
+                    "order_dispatch: expiring next-bar entry order for %s "
+                    "(signal age %.1fs, max %.1fs)",
+                    order.symbol,
+                    age.total_seconds(),
+                    max_age.total_seconds(),
+                )
+                with lock_ctx:
+                    try:
+                        runtime.order_store.save(
+                            OrderRecord(
+                                client_order_id=order.client_order_id,
+                                symbol=order.symbol,
+                                side=order.side,
+                                intent_type=order.intent_type,
+                                status="expired",
+                                quantity=order.quantity,
+                                trading_mode=order.trading_mode,
+                                strategy_version=order.strategy_version,
+                                strategy_name=order.strategy_name,
+                                created_at=order.created_at,
+                                updated_at=timestamp,
+                                stop_price=order.stop_price,
+                                limit_price=order.limit_price,
+                                initial_stop_price=order.initial_stop_price,
+                                broker_order_id=order.broker_order_id,
+                                signal_timestamp=order.signal_timestamp,
+                            ),
+                            commit=False,
+                        )
+                        runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="entry_order_expired_next_bar",
+                                symbol=order.symbol,
+                                payload={
+                                    "client_order_id": order.client_order_id,
+                                    "broker_order_id": order.broker_order_id,
+                                    "signal_timestamp": sig_ts.isoformat(),
+                                    "age_seconds": age.total_seconds(),
+                                    "max_age_seconds": max_age.total_seconds(),
+                                    "timestamp": timestamp.isoformat(),
                                 },
                                 created_at=timestamp,
                             ),

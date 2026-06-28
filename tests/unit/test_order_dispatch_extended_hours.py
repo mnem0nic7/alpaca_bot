@@ -36,7 +36,12 @@ def _settings() -> Settings:
     })
 
 
-def _pending_entry_order(stop_price: float = 100.0) -> OrderRecord:
+def _pending_entry_order(
+    stop_price: float = 100.0,
+    *,
+    signal_timestamp: datetime | None = None,
+) -> OrderRecord:
+    signal_timestamp = signal_timestamp or datetime(2026, 4, 28, 10, 0, tzinfo=timezone.utc)
     return OrderRecord(
         client_order_id="test:v1:2026-04-28:AAPL:entry:2026-04-28T06:00:00+00:00",
         symbol="AAPL",
@@ -47,12 +52,12 @@ def _pending_entry_order(stop_price: float = 100.0) -> OrderRecord:
         trading_mode="paper",
         strategy_version="v1",
         strategy_name="breakout",
-        created_at=datetime(2026, 4, 28, 10, 0, tzinfo=timezone.utc),
-        updated_at=datetime(2026, 4, 28, 10, 0, tzinfo=timezone.utc),
+        created_at=signal_timestamp,
+        updated_at=signal_timestamp,
         stop_price=stop_price,
         limit_price=stop_price * 1.001,
         initial_stop_price=stop_price * 0.99,
-        signal_timestamp=datetime(2026, 4, 28, 10, 0, tzinfo=timezone.utc),
+        signal_timestamp=signal_timestamp,
     )
 
 
@@ -122,9 +127,9 @@ def _fake_broker():
 
 def test_regular_session_uses_stop_limit_entry():
     settings = _settings()
-    runtime, saved, _ = _fake_runtime([_pending_entry_order()])
     broker = _fake_broker()
     now = datetime(2026, 4, 28, 14, 0, tzinfo=timezone.utc)  # 10am ET = regular
+    runtime, saved, _ = _fake_runtime([_pending_entry_order(signal_timestamp=now)])
 
     dispatch_pending_orders(
         settings=settings,
@@ -157,9 +162,9 @@ def test_pre_market_uses_limit_entry():
 
 def test_after_hours_uses_limit_entry():
     settings = _settings()
-    runtime, saved, _ = _fake_runtime([_pending_entry_order()])
     broker = _fake_broker()
     now = datetime(2026, 4, 28, 21, 0, tzinfo=timezone.utc)  # 5pm ET = after hours
+    runtime, saved, _ = _fake_runtime([_pending_entry_order(signal_timestamp=now)])
 
     dispatch_pending_orders(
         settings=settings,
