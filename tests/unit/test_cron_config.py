@@ -1074,6 +1074,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "latest_completed_session=" in script
     assert "current_market_date=" in script
     assert "scoring_end_date=" in script
+    assert "paper proof local exposure:" in script
+    assert "positions={local_open_positions} active_orders={local_active_orders}" in script
+    assert "'pending_submit'" in script
+    assert "'partially_filled'" in script
     assert "latest_market_date" not in script
 
 

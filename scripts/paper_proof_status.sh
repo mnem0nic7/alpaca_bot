@@ -174,6 +174,43 @@ try:
         )
         scheduled_checks = cur.fetchall()
 
+        cur.execute(
+            """
+            SELECT
+              (
+                SELECT COUNT(*)::int
+                FROM positions
+                WHERE trading_mode = %s
+                  AND strategy_version = %s
+              ) AS open_positions,
+              (
+                SELECT COUNT(*)::int
+                FROM orders
+                WHERE trading_mode = %s
+                  AND strategy_version = %s
+                  AND status IN (
+                    'pending_submit',
+                    'submitting',
+                    'new',
+                    'accepted',
+                    'submitted',
+                    'partially_filled',
+                    'held',
+                    'pending_new'
+                  )
+              ) AS active_orders
+            """,
+            (
+                trading_mode.value,
+                strategy_version,
+                trading_mode.value,
+                strategy_version,
+            ),
+        )
+        exposure_row = cur.fetchone()
+        local_open_positions = int(exposure_row[0] or 0) if exposure_row else 0
+        local_active_orders = int(exposure_row[1] or 0) if exposure_row else 0
+
     order_store = OrderStore(conn)
     trades = []
     if proof_end >= proof_start:
@@ -220,6 +257,10 @@ proof_window = (
 )
 
 print(f"paper proof active strategies: {active_strategies or 'none'}")
+print(
+    "paper proof local exposure: "
+    f"positions={local_open_positions} active_orders={local_active_orders}"
+)
 if calendar_warning:
     print(f"paper proof calendar warning: {calendar_warning}")
 print(
