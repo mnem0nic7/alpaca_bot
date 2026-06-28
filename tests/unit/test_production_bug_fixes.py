@@ -207,10 +207,19 @@ def test_active_stop_statuses_includes_nonterminal_alpaca_statuses() -> None:
     } <= set(ACTIVE_STOP_STATUSES)
 
 
-def test_active_entry_statuses_include_pending_submit() -> None:
+def test_active_entry_statuses_includes_nonterminal_alpaca_statuses() -> None:
     from alpaca_bot.runtime.supervisor import ACTIVE_ENTRY_STATUSES
 
-    assert "pending_submit" in ACTIVE_ENTRY_STATUSES
+    assert {
+        "pending_submit",
+        "submitting",
+        "pending_new",
+        "accepted_for_bidding",
+        "pending_replace",
+        "pending_cancel",
+        "stopped",
+        "suspended",
+    } <= set(ACTIVE_ENTRY_STATUSES)
 
 
 # ---------------------------------------------------------------------------
