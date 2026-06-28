@@ -1656,10 +1656,12 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "PAPER_ACTIVITY_WINDOW_MINUTES" in script
     assert 'PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"' in script
     assert 'PAPER_ACTIVITY_REQUIRE_DECISION_LOG="${PAPER_ACTIVITY_REQUIRE_DECISION_LOG:-true}"' in script
+    assert 'PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT="${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT:-true}"' in script
     assert 'PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE="${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE:-true}"' in script
     assert 'PAPER_ACTIVITY_READINESS_RUNNER="${PAPER_ACTIVITY_READINESS_RUNNER:-./scripts/run_locked_check_with_audit.sh}"' in script
     assert 'PAPER_ACTIVITY_READINESS_SCRIPT="${PAPER_ACTIVITY_READINESS_SCRIPT:-./scripts/paper_readiness_if_needed.sh}"' in script
     assert "PAPER_ACTIVITY_REQUIRE_DECISION_LOG must be true or false" in script
+    assert "PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT must be true or false" in script
     assert "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE must be true or false" in script
     assert 'PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
     assert "close_only_on_activity_failure" in script
@@ -1693,6 +1695,14 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "decision_log_summary" in script
     assert "reject_stage" in script
     assert "reject_reason" in script
+    assert "strategy_accepted_decisions" in script
+    assert "latest_accepted_decision_log" in script
+    assert "recent_entry_orders" in script
+    assert "recent_entry_order_status_summary" in script
+    assert "accepted_decisions=${strategy_accepted_decisions:-0}" in script
+    assert "recent_entry_orders=0" in script
+    assert "but recent_entry_orders=0" in script
+    assert "entry_order_status_summary" in script
     assert "strategy_evidence_records" in script
     assert "order_dispatch_failed" in script
     assert "order_dispatch_stop_price_rejected" in script
@@ -1736,8 +1746,15 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "emit_scheduled_context\n\n  if [[ \"${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE,,}\"" in script
     assert "emit_scheduled_context\n\nload_market_clock_status" in script
     assert "load_market_clock_status" in script
+    assert "load_broker_activity_status" in script
     assert "AlpacaExecutionAdapter.from_settings" in script
     assert "get_market_clock" in script
+    assert "broker.get_account()" in script
+    assert "broker.list_open_orders()" in script
+    assert "broker.list_positions()" in script
+    assert "broker account not tradable" in script
+    assert "broker_account_status=${broker_account_status:-unset}" in script
+    assert "require_broker_account=${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT,,}" in script
     assert "supervisor reported market_closed but Alpaca clock is" in script
     assert "market_closed" in script
     assert "no supervisor cycles" in script
@@ -1783,7 +1800,11 @@ def test_paper_activity_allows_low_record_count_when_stock_exposure_exists(tmp_p
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|accepted/none/none:1,skipped_no_signal/none/none:9|bull_flag|||3|0|0|0\\n'\n"
+        "if printf '%s\\n' \"$*\" | grep -q -- '--entrypoint python admin'; then\n"
+        "  printf 'ok|100000.00|200000.00|5000.00|false|1|3|DASH|DASH\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|accepted/none/none:1,skipped_no_signal/none/none:9|1|2026-06-29 16:00:00+00|0||bull_flag|||3|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1808,8 +1829,73 @@ def test_paper_activity_allows_low_record_count_when_stock_exposure_exists(tmp_p
     ) in result.stdout
     assert "stock_open_positions=3" in result.stdout
     assert "active_stock_orders=0" in result.stdout
+    assert "require_broker_account=true" in result.stdout
+    assert "broker_account_status=ok" in result.stdout
+    assert "broker_open_orders=1" in result.stdout
+    assert "broker_open_positions=3" in result.stdout
+    assert "broker_open_order_symbols=DASH" in result.stdout
+    assert "broker_open_position_symbols=DASH" in result.stdout
     assert "dispatch_failures=0" in result.stdout
     assert "stream_issues=0" in result.stdout
+    assert not docker_marker.exists()
+
+
+def test_paper_activity_fails_when_accepted_decisions_do_not_materialize_orders(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    docker_marker = tmp_path / "docker_close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin close-only'; then\n"
+        f"  touch {docker_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|accepted/none/none:1,skipped_no_signal/none/none:9|1|2026-06-29 16:00:00+00|0||bull_flag|||0|0|0|0\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE": "false",
+            "PAPER_ACTIVITY_MIN_DECISION_RECORDS": "0",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "accepted_decisions=1 but recent_entry_orders=0" in result.stderr
+    assert "latest_accepted_decision_log=2026-06-29 16:00:00+00" in result.stderr
     assert not docker_marker.exists()
 
 
@@ -1896,7 +1982,11 @@ def test_paper_activity_allows_recovered_disabled_cycles(tmp_path: Path) -> None
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '12|4|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|4|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7838,rejected/vwap_filter/below_vwap:2|bull_flag|paper_readiness_check_missing:4|paper_readiness_check_missing:4|0|0|0|0\\n'\n"
+        "if printf '%s\\n' \"$*\" | grep -q -- '--entrypoint python admin'; then\n"
+        "  printf 'ok|100000.00|200000.00|5000.00|false|0|0|none|none\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '12|4|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|4|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7838,rejected/vwap_filter/below_vwap:2|0||0||bull_flag|paper_readiness_check_missing:4|paper_readiness_check_missing:4|0|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1923,6 +2013,71 @@ def test_paper_activity_allows_recovered_disabled_cycles(tmp_path: Path) -> None
     ) in result.stdout
     assert "dispatch_failures=0" in result.stdout
     assert "stream_issues=0" in result.stdout
+    assert "broker_account_status=ok" in result.stdout
+    assert "broker_open_orders=0" in result.stdout
+    assert "broker_open_positions=0" in result.stdout
+    assert not docker_marker.exists()
+
+
+def test_paper_activity_fails_when_broker_account_is_blocked(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    docker_marker = tmp_path / "docker_close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin close-only'; then\n"
+        f"  touch {docker_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "if printf '%s\\n' \"$*\" | grep -q -- '--entrypoint python admin'; then\n"
+        "  printf 'blocked|100000.00|1000.00|5000.00|true|0|0|none|none\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '12|0|8|1000|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|1000|0|8|1000|2026-06-29 14:15:00+00|skipped_no_signal/none/none:1000|0||0||bull_flag|||0|0|0|0\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE": "false",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "broker account not tradable" in result.stderr
+    assert "buying_power=1000.00" in result.stderr
+    assert "minimum_required=5000.00" in result.stderr
+    assert "trading_blocked=true" in result.stderr
     assert not docker_marker.exists()
 
 
@@ -1961,7 +2116,7 @@ def test_paper_activity_fails_on_recent_dispatch_failures(tmp_path: Path) -> Non
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7840|bull_flag|||0|0|2|0\\n'\n"
+        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7840|0||0||bull_flag|||0|0|2|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -2017,7 +2172,7 @@ def test_paper_activity_fails_on_recent_stream_issues(tmp_path: Path) -> None:
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7840|bull_flag|||0|0|0|2\\n'\n"
+        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7840|0||0||bull_flag|||0|0|0|2\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -2073,7 +2228,7 @@ def test_paper_activity_diagnostic_failure_does_not_apply_close_only(tmp_path: P
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '0|0|0|0|0||false||false|||0|0|0|0|0|0|||bull_flag|||0|0|0|0\\n'\n"
+        "printf '0|0|0|0|0||false||false|||0|0|0|0|0|0|||0||0||bull_flag|||0|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 

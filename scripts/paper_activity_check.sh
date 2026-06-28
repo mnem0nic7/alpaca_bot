@@ -28,6 +28,7 @@ capture_env_overrides \
   PAPER_ACTIVITY_WINDOW_MINUTES \
   PAPER_ACTIVITY_MIN_DECISION_RECORDS \
   PAPER_ACTIVITY_REQUIRE_DECISION_LOG \
+  PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT \
   PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE \
   PAPER_ACTIVITY_READINESS_RUNNER \
   PAPER_ACTIVITY_READINESS_SCRIPT \
@@ -49,6 +50,7 @@ restore_env_overrides
 PAPER_ACTIVITY_WINDOW_MINUTES="${PAPER_ACTIVITY_WINDOW_MINUTES:-90}"
 PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"
 PAPER_ACTIVITY_REQUIRE_DECISION_LOG="${PAPER_ACTIVITY_REQUIRE_DECISION_LOG:-true}"
+PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT="${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT:-true}"
 PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE="${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE:-true}"
 PAPER_ACTIVITY_READINESS_RUNNER="${PAPER_ACTIVITY_READINESS_RUNNER:-./scripts/run_locked_check_with_audit.sh}"
 PAPER_ACTIVITY_READINESS_SCRIPT="${PAPER_ACTIVITY_READINESS_SCRIPT:-./scripts/paper_readiness_if_needed.sh}"
@@ -130,6 +132,14 @@ case "${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,}" in
     ;;
 esac
 
+case "${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT,,}" in
+  true|false) ;;
+  *)
+    echo "PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT must be true or false" >&2
+    exit 1
+    ;;
+esac
+
 set +e
 PAPER_READINESS_AUTO_RESUME=false \
   PAPER_READINESS_AUTO_RESET_WEIGHTS=false \
@@ -174,6 +184,42 @@ else:
         f"next_open={clock.next_open.isoformat()} "
         f"next_close={clock.next_close.isoformat()}"
     )
+PY
+}
+
+load_broker_activity_status() {
+  "${compose[@]}" run -T --rm \
+    --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+
+settings = Settings.from_env()
+broker = AlpacaExecutionAdapter.from_settings(settings)
+account = broker.get_account()
+open_orders = broker.list_open_orders()
+open_positions = broker.list_positions()
+equity = float(account.equity)
+buying_power = float(account.buying_power)
+minimum_buying_power = equity * float(settings.max_position_pct)
+trading_blocked = bool(account.trading_blocked)
+account_status = (
+    "blocked"
+    if trading_blocked or equity <= 0 or buying_power < minimum_buying_power
+    else "ok"
+)
+open_order_symbols = ",".join(
+    sorted({getattr(order, "symbol", "") for order in open_orders if getattr(order, "symbol", "")})
+) or "none"
+open_position_symbols = ",".join(
+    sorted({getattr(position, "symbol", "") for position in open_positions if getattr(position, "symbol", "")})
+) or "none"
+print(
+    f"{account_status}|{equity:.2f}|{buying_power:.2f}|{minimum_buying_power:.2f}|"
+    f"{str(trading_blocked).lower()}|{len(open_orders)}|{len(open_positions)}|"
+    f"{open_order_symbols}|{open_position_symbols}"
+)
 PY
 }
 
@@ -315,6 +361,40 @@ SELECT
       GROUP BY decision_key
     ) decision_counts
   ), ''),
+  COALESCE((
+    SELECT COUNT(*)::int
+    FROM recent_decisions
+    WHERE strategy_name = :'paper_activity_strategy'
+      AND decision = 'accepted'
+  ), 0)::int,
+  COALESCE((
+    SELECT MAX(cycle_at)::text
+    FROM recent_decisions
+    WHERE strategy_name = :'paper_activity_strategy'
+      AND decision = 'accepted'
+  ), ''),
+  COALESCE((
+    SELECT COUNT(*)::int
+    FROM orders
+    WHERE trading_mode = 'paper'
+      AND strategy_version = :'strategy_version'
+      AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
+      AND intent_type = 'entry'
+      AND created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+  ), 0)::int,
+  COALESCE((
+    SELECT string_agg(status || ':' || status_count::text, ',' ORDER BY status)
+    FROM (
+      SELECT status, COUNT(*)::int AS status_count
+      FROM orders
+      WHERE trading_mode = 'paper'
+        AND strategy_version = :'strategy_version'
+        AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
+        AND intent_type = 'entry'
+        AND created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+      GROUP BY status
+    ) entry_status_counts
+  ), ''),
   array_to_string((SELECT names FROM enabled_strategies), ','),
   COALESCE((
     SELECT string_agg(reason || ':' || reason_count::text, ',' ORDER BY reason)
@@ -402,7 +482,9 @@ IFS='|' read -r supervisor_cycles disabled_cycles decision_cycles decision_recor
   latest_cycle_strategy_disabled_reasons latest_decision strategy_blocked_cycles \
   strategy_decision_cycles strategy_decision_records legacy_decision_cycles \
   strategy_decision_log_cycles strategy_decision_log_records latest_decision_log \
-  strategy_decision_log_summary active_strategy_names disabled_reasons strategy_disabled_reasons \
+  strategy_decision_log_summary strategy_accepted_decisions latest_accepted_decision_log \
+  recent_entry_orders recent_entry_order_status_summary \
+  active_strategy_names disabled_reasons strategy_disabled_reasons \
   stock_open_positions active_stock_orders dispatch_failures stream_issues <<< "$stats"
 
 strategy_evidence_cycles="${strategy_decision_cycles:-0}"
@@ -482,6 +564,13 @@ if [[ "${strategy_evidence_cycles:-0}" -eq 0 ]]; then
   exit 1
 fi
 
+if [[ "${strategy_accepted_decisions:-0}" -gt 0 \
+  && "${recent_entry_orders:-0}" -eq 0 \
+  && "$has_stock_exposure" != "true" ]]; then
+  echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY accepted_decisions=${strategy_accepted_decisions:-0} but recent_entry_orders=0 latest_accepted_decision_log=${latest_accepted_decision_log:-none} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
+  exit 1
+fi
+
 if [[ "${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,}" == "true" ]]; then
   if [[ "${strategy_decision_log_cycles:-0}" -eq 0 ]]; then
     echo "paper activity failed: no $PAPER_ACTIVITY_STRATEGY decision_log cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes audit_cycles=${strategy_decision_cycles:-0} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
@@ -499,4 +588,33 @@ if [[ "${strategy_evidence_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORD
   exit 1
 fi
 
-echo "paper activity ok: supervisor_cycles=$supervisor_cycles disabled_cycles=${disabled_cycles:-0} latest_cycle_entries_disabled=${latest_cycle_entries_disabled:-false} decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_blocked_cycles=${strategy_blocked_cycles:-0} latest_${PAPER_ACTIVITY_STRATEGY}_blocked=${latest_cycle_strategy_blocked:-false} dispatch_failures=${dispatch_failures:-0} stream_issues=${stream_issues:-0} ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_decision_log_summary=[${strategy_decision_log_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source require_decision_log=${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
+broker_account_status="skipped"
+broker_equity="none"
+broker_buying_power="none"
+broker_minimum_buying_power="none"
+broker_trading_blocked="none"
+broker_open_orders="none"
+broker_open_positions="none"
+broker_open_order_symbols="none"
+broker_open_position_symbols="none"
+if [[ "${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT,,}" == "true" ]]; then
+  set +e
+  broker_activity="$(load_broker_activity_status)"
+  broker_activity_rc="$?"
+  set -e
+  if [[ "$broker_activity_rc" -ne 0 ]]; then
+    echo "paper activity failed: broker account check failed" >&2
+    exit 1
+  fi
+  IFS='|' read -r broker_account_status broker_equity broker_buying_power \
+    broker_minimum_buying_power broker_trading_blocked broker_open_orders \
+    broker_open_positions broker_open_order_symbols broker_open_position_symbols \
+    <<< "$broker_activity"
+
+  if [[ "$broker_account_status" != "ok" ]]; then
+    echo "paper activity failed: broker account not tradable equity=${broker_equity:-unset} buying_power=${broker_buying_power:-unset} minimum_required=${broker_minimum_buying_power:-unset} trading_blocked=${broker_trading_blocked:-unset} open_orders=${broker_open_orders:-unset} open_positions=${broker_open_positions:-unset}" >&2
+    exit 1
+  fi
+fi
+
+echo "paper activity ok: supervisor_cycles=$supervisor_cycles disabled_cycles=${disabled_cycles:-0} latest_cycle_entries_disabled=${latest_cycle_entries_disabled:-false} decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_blocked_cycles=${strategy_blocked_cycles:-0} latest_${PAPER_ACTIVITY_STRATEGY}_blocked=${latest_cycle_strategy_blocked:-false} dispatch_failures=${dispatch_failures:-0} stream_issues=${stream_issues:-0} ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_decision_log_summary=[${strategy_decision_log_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_accepted_decisions=${strategy_accepted_decisions:-0} latest_${PAPER_ACTIVITY_STRATEGY}_accepted_decision_log=${latest_accepted_decision_log:-none} ${PAPER_ACTIVITY_STRATEGY}_recent_entry_orders=${recent_entry_orders:-0} ${PAPER_ACTIVITY_STRATEGY}_entry_order_status_summary=[${recent_entry_order_status_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source require_decision_log=${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,} require_broker_account=${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT,,} broker_account_status=${broker_account_status:-unset} broker_equity=${broker_equity:-unset} broker_buying_power=${broker_buying_power:-unset} broker_minimum_required=${broker_minimum_buying_power:-unset} broker_trading_blocked=${broker_trading_blocked:-unset} broker_open_orders=${broker_open_orders:-unset} broker_open_positions=${broker_open_positions:-unset} broker_open_order_symbols=${broker_open_order_symbols:-none} broker_open_position_symbols=${broker_open_position_symbols:-none} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
