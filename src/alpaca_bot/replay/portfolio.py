@@ -52,7 +52,7 @@ class _Lane:
     intraday: list[Bar]
     daily: list[Bar]
     daily_all_closes_positive: bool
-    cursor: int = 0
+    cursor: int = -1
     working_order: WorkingEntryOrder | None = None
     position: OpenPosition | None = None
 
@@ -101,12 +101,10 @@ class PortfolioReplayRunner:
         self.signal_evaluator = signal_evaluator
         self.strategy_name = strategy_name
         self._lanes: dict[str, _Lane] = {}
-        self._bars_by_timestamp: dict[datetime, list[tuple[str, int]]] = {}
         self._daily_slice_cache: dict[tuple[str, date], Sequence[Bar]] = {}
 
     def _index_scenarios(self, scenarios: list[ReplayScenario]) -> None:
         self._lanes = {}
-        self._bars_by_timestamp = {}
         self._daily_slice_cache = {}
         for sc in scenarios:
             if sc.symbol in self._lanes:
@@ -122,15 +120,16 @@ class PortfolioReplayRunner:
                 daily=daily,
                 daily_all_closes_positive=all(b.close > 0 for b in daily),
             )
-            for idx, bar in enumerate(intraday):
-                self._bars_by_timestamp.setdefault(bar.timestamp, []).append((sc.symbol, idx))
 
     def _build_timeline(self, scenarios: list[ReplayScenario]) -> list[datetime]:
-        if self._bars_by_timestamp:
-            return sorted(self._bars_by_timestamp)
         stamps: set[datetime] = set()
-        for sc in scenarios:
-            for bar in sc.intraday_bars:
+        source_bars = (
+            (lane.intraday for lane in self._lanes.values())
+            if self._lanes
+            else (sc.intraday_bars for sc in scenarios)
+        )
+        for bars in source_bars:
+            for bar in bars:
                 stamps.add(bar.timestamp)
         return sorted(stamps)
 
@@ -164,10 +163,11 @@ class PortfolioReplayRunner:
 
         for now in timeline:
             fresh: list[str] = []
-            for sym, idx in self._bars_by_timestamp.get(now, ()):
-                lane = self._lanes[sym]
-                lane.cursor = idx
-                fresh.append(sym)
+            for sym, lane in self._lanes.items():
+                nxt = lane.cursor + 1
+                if nxt < len(lane.intraday) and lane.intraday[nxt].timestamp == now:
+                    lane.cursor = nxt
+                    fresh.append(sym)
 
             # 1) Resolve fills/exits for fresh lanes (shared equity).
             for sym in fresh:
