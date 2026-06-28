@@ -2518,6 +2518,7 @@ def test_runtime_image_health_check_compares_deployed_package_to_workspace() -> 
     assert "supervisor" in script
     assert "RUNTIME_IMAGE_HEALTH_FILES" in script
     assert "runtime/supervisor.py" in script
+    assert "nightly/cli.py" in script
     assert "core/engine.py" in script
     assert "strategy/bull_flag.py" in script
     assert "storage/repositories.py" in script
