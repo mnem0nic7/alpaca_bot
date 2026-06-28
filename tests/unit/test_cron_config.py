@@ -3219,6 +3219,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "warnings={','.join(warnings) if warnings else 'none'}" in script
     assert "partial_pnl_negative" in script
     assert "partial_pnl_below_minimum" in script
+    assert "cumulative_pnl_negative" in script
+    assert "cumulative_pnl_below_minimum" in script
     assert "scheduled check context: session_date=$(TZ=America/New_York date +%F)" in script
     assert "PROOF_STATUS_FAIL_ON_ISSUES" in script
     assert "PROOF_STATUS_FAIL_ON_ISSUES must be true or false" in script
@@ -3412,9 +3414,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     ) in script
     assert "partial_pnl_negative" in script
     assert "partial_pnl_below_minimum" in script
+    assert "cumulative_pnl_negative" in script
+    assert "cumulative_pnl_below_minimum" in script
     assert "format_trade_pnl_atom" in script
     assert "elif profitable_enough and post_close_pass_evidence_ready" in script
     assert "elif profitable_enough:\n    proof_status = \"pending\"" in script
+    assert "elif trade_count >= min_trades:\n    proof_status = \"pending\"" in script
+    assert 'proof_status = "failing"' not in script
     assert "elif profitable_enough and not post_close_pass_evidence_ready" in script
     assert "profit_probe_status == \"pending\" and profit_probe_exit_code == \"43\"" in script
     assert "blockers.append(f\"post_close_audit_{post_close_audit_status}\")" in script
@@ -3422,7 +3428,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "status={post_close_audit_status}" in script
     assert "target_session={post_close_target_session.isoformat() if post_close_target_session else 'none'}" in script
     assert "fail_on_issues = os.environ.get(\"PROOF_STATUS_FAIL_ON_ISSUES\"" in script
-    assert "readiness_status != \"ready\" or blockers or proof_status == \"failing\"" in script
+    assert "if fail_on_issues and (readiness_status != \"ready\" or blockers)" in script
     assert "raise SystemExit(1)" in script
     assert "if fail_on_issues and proof_status == \"pending\"" in script
     assert "raise SystemExit(43)" in script

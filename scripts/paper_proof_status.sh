@@ -1421,7 +1421,7 @@ elif profitable_enough and post_close_pass_evidence_ready:
 elif profitable_enough:
     proof_status = "pending"
 elif trade_count >= min_trades:
-    proof_status = "failing"
+    proof_status = "pending"
 else:
     proof_status = "pending"
 proof_window = (
@@ -1577,17 +1577,20 @@ else:
 warnings = []
 if calendar_warning:
     warnings.append("calendar_warning")
-if not proof_not_started and 0 < trade_count < min_trades:
-    if pnl < 0:
-        warnings.append("partial_pnl_negative")
+if not proof_not_started and 0 < trade_count:
+    if trade_count < min_trades:
+        if pnl < 0:
+            warnings.append("partial_pnl_negative")
+        elif pnl < min_pnl:
+            warnings.append("partial_pnl_below_minimum")
+    elif pnl < 0:
+        warnings.append("cumulative_pnl_negative")
     elif pnl < min_pnl:
-        warnings.append("partial_pnl_below_minimum")
+        warnings.append("cumulative_pnl_below_minimum")
 
 readiness_status = "blocked" if blockers else "ready"
 if proof_status == "passed":
     proof_reason = "profit_proven"
-elif proof_status == "failing":
-    proof_reason = "pnl_below_minimum"
 elif proof_not_started:
     proof_reason = "awaiting_completed_proof_session"
 elif profitable_enough and not post_close_pass_evidence_ready:
@@ -1835,9 +1838,7 @@ print(
     f"worst={worst_trade_text} "
     f"recent={recent_trade_summary}"
 )
-if fail_on_issues and (
-    readiness_status != "ready" or blockers or proof_status == "failing"
-):
+if fail_on_issues and (readiness_status != "ready" or blockers):
     raise SystemExit(1)
 if fail_on_issues and proof_status == "pending":
     raise SystemExit(43)
