@@ -30,6 +30,7 @@ capture_env_overrides \
   PAPER_ACTIVITY_STRATEGY \
   PAPER_READINESS_MAX_PASS_AGE_MINUTES \
   PAPER_READINESS_SESSION_DATE \
+  POST_CLOSE_LOCK_MAX_AGE_MINUTES \
   PROFIT_PROBE_MIN_PNL \
   PROFIT_PROBE_MIN_TRADES \
   PROFIT_PROBE_START_DATE \
@@ -39,6 +40,8 @@ capture_env_overrides \
   PROOF_STATUS_MIN_TRADES \
   PROOF_STATUS_START_DATE \
   PROOF_STATUS_STRATEGY \
+  SESSION_GUARD_FAIL_BELOW_PNL \
+  SESSION_GUARD_MIN_TRADES \
   SESSION_GUARD_START_DATE \
   SESSION_GUARD_STRATEGY
 
@@ -421,6 +424,113 @@ PY
     | tail -n 1
 }
 
+load_latest_post_close_check_status() {
+  local check_name="$1"
+  local target_session="$2"
+  local proof_start="$3"
+  local strategy="$4"
+  local min_trades="${5:-}"
+  local min_pnl="${6:-}"
+  local lookup
+
+  lookup="$(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
+    -e POST_CLOSE_LOCK_CHECK_NAME="$check_name" \
+    -e POST_CLOSE_LOCK_SESSION_DATE="$target_session" \
+    -e POST_CLOSE_LOCK_PROOF_START="$proof_start" \
+    -e POST_CLOSE_LOCK_STRATEGY="$strategy" \
+    -e POST_CLOSE_LOCK_MIN_TRADES="$min_trades" \
+    -e POST_CLOSE_LOCK_MIN_PNL="$min_pnl" \
+    --entrypoint python admin <<'PY' || true
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import os
+
+from alpaca_bot.config import Settings
+from alpaca_bot.storage.db import connect_postgres
+
+check_name = os.environ["POST_CLOSE_LOCK_CHECK_NAME"]
+target_session = os.environ["POST_CLOSE_LOCK_SESSION_DATE"]
+proof_start = os.environ["POST_CLOSE_LOCK_PROOF_START"]
+strategy = os.environ["POST_CLOSE_LOCK_STRATEGY"]
+min_trades = os.environ.get("POST_CLOSE_LOCK_MIN_TRADES") or ""
+min_pnl = os.environ.get("POST_CLOSE_LOCK_MIN_PNL") or ""
+settings = Settings.from_env()
+
+conn = connect_postgres(settings.database_url)
+try:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+              COALESCE(payload->>'status', ''),
+              COALESCE(payload->>'exit_code', ''),
+              created_at,
+              to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+            FROM audit_events
+            WHERE event_type = 'scheduled_check_completed'
+              AND payload->>'check_name' = %s
+              AND payload->>'session_date' = %s
+              AND payload->>'proof_start' = %s
+              AND payload->>'trading_mode' = %s
+              AND payload->>'strategy_version' = %s
+              AND (NOT (payload ? 'strategy') OR payload->>'strategy' = %s)
+              AND (
+                %s = ''
+                OR NOT (payload ? 'min_trades')
+                OR payload->>'min_trades' = %s
+              )
+              AND (
+                %s = ''
+                OR NOT (payload ? 'min_pnl')
+                OR payload->>'min_pnl' = %s
+              )
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (
+                check_name,
+                target_session,
+                proof_start,
+                settings.trading_mode.value,
+                settings.strategy_version,
+                strategy,
+                min_trades,
+                min_trades,
+                min_pnl,
+                min_pnl,
+            ),
+        )
+        row = cur.fetchone()
+finally:
+    conn.close()
+
+status = row[0] if row else ""
+exit_code = row[1] if row else ""
+created_raw = row[2] if row else None
+created_at = row[3] if row else ""
+age_minutes = ""
+if created_raw is not None:
+    created_utc = created_raw
+    if created_utc.tzinfo is None:
+        created_utc = created_utc.replace(tzinfo=timezone.utc)
+    else:
+        created_utc = created_utc.astimezone(timezone.utc)
+    age_seconds = (datetime.now(timezone.utc) - created_utc).total_seconds()
+    age_minutes = str(max(0, int(age_seconds // 60)))
+
+print(
+    "post_close_check_latest="
+    f"{status}|{exit_code}|{created_at}|{age_minutes}"
+)
+PY
+)"
+
+  printf '%s\n' "$lookup" \
+    | sed -n 's/^post_close_check_latest=//p' \
+    | tail -n 1
+}
+
 case "$CHECK_NAME" in
   paper_readiness)
     PAPER_READINESS_MAX_PASS_AGE_MINUTES="${PAPER_READINESS_MAX_PASS_AGE_MINUTES:-180}"
@@ -472,10 +582,76 @@ case "$CHECK_NAME" in
     echo "scheduled check context: session_date=$session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}} reason=lock_busy"
     ;;
   session_guard)
-    echo "scheduled check context: session_date=$session_date proof_start=${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}} strategy=${SESSION_GUARD_STRATEGY:-bull_flag} reason=lock_busy"
+    post_close_lock_max_age="${POST_CLOSE_LOCK_MAX_AGE_MINUTES:-30}"
+    if [[ ! "$post_close_lock_max_age" =~ ^[0-9]+$ || "$post_close_lock_max_age" -le 0 ]]; then
+      echo "POST_CLOSE_LOCK_MAX_AGE_MINUTES must be a positive integer" >&2
+      exit 1
+    fi
+    guard_proof_start="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"
+    guard_strategy="${SESSION_GUARD_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
+    guard_min_trades="${SESSION_GUARD_MIN_TRADES:-10}"
+    guard_min_pnl="${SESSION_GUARD_FAIL_BELOW_PNL:-0}"
+    latest_guard="$(
+      load_latest_post_close_check_status \
+        session_guard \
+        "$session_date" \
+        "$guard_proof_start" \
+        "$guard_strategy" \
+        "$guard_min_trades" \
+        "$guard_min_pnl"
+    )"
+    latest_guard_status=""
+    latest_guard_exit_code=""
+    latest_guard_created_at=""
+    latest_guard_age_minutes=""
+    IFS='|' read -r latest_guard_status latest_guard_exit_code latest_guard_created_at latest_guard_age_minutes <<< "$latest_guard"
+    if [[ "$latest_guard_age_minutes" =~ ^[0-9]+$ ]] \
+      && (( 10#$latest_guard_age_minutes <= 10#$post_close_lock_max_age )) \
+      && [[ "$latest_guard_status" == "passed" && "$latest_guard_exit_code" == "0" ]]; then
+      echo "scheduled check context: session_date=$session_date proof_start=$guard_proof_start strategy=$guard_strategy min_trades=$guard_min_trades min_pnl=$guard_min_pnl reason=lock_busy_already_passed"
+      echo "session guard passed: lock busy after recent pass for session $session_date created_at=${latest_guard_created_at:-unknown} age_minutes=$latest_guard_age_minutes"
+      exit 0
+    fi
+    echo "scheduled check context: session_date=$session_date proof_start=$guard_proof_start strategy=$guard_strategy min_trades=$guard_min_trades min_pnl=$guard_min_pnl reason=lock_busy"
     ;;
   paper_profit_probe)
-    echo "scheduled check context: session_date=$session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=${PROFIT_PROBE_STRATEGY:-bull_flag} min_trades=${PROFIT_PROBE_MIN_TRADES:-10} min_pnl=${PROFIT_PROBE_MIN_PNL:-0.01} reason=lock_busy"
+    post_close_lock_max_age="${POST_CLOSE_LOCK_MAX_AGE_MINUTES:-30}"
+    if [[ ! "$post_close_lock_max_age" =~ ^[0-9]+$ || "$post_close_lock_max_age" -le 0 ]]; then
+      echo "POST_CLOSE_LOCK_MAX_AGE_MINUTES must be a positive integer" >&2
+      exit 1
+    fi
+    probe_proof_start="${PROFIT_PROBE_START_DATE:-2026-06-29}"
+    probe_strategy="${PROFIT_PROBE_STRATEGY:-bull_flag}"
+    probe_min_trades="${PROFIT_PROBE_MIN_TRADES:-10}"
+    probe_min_pnl="${PROFIT_PROBE_MIN_PNL:-0.01}"
+    latest_probe="$(
+      load_latest_post_close_check_status \
+        paper_profit_probe \
+        "$session_date" \
+        "$probe_proof_start" \
+        "$probe_strategy" \
+        "$probe_min_trades" \
+        "$probe_min_pnl"
+    )"
+    latest_probe_status=""
+    latest_probe_exit_code=""
+    latest_probe_created_at=""
+    latest_probe_age_minutes=""
+    IFS='|' read -r latest_probe_status latest_probe_exit_code latest_probe_created_at latest_probe_age_minutes <<< "$latest_probe"
+    if [[ "$latest_probe_age_minutes" =~ ^[0-9]+$ ]] \
+      && (( 10#$latest_probe_age_minutes <= 10#$post_close_lock_max_age )); then
+      if [[ "$latest_probe_status" == "passed" && "$latest_probe_exit_code" == "0" ]]; then
+        echo "scheduled check context: session_date=$session_date proof_start=$probe_proof_start strategy=$probe_strategy min_trades=$probe_min_trades min_pnl=$probe_min_pnl reason=lock_busy_already_passed"
+        echo "paper profit probe passed: lock busy after recent pass for session $session_date created_at=${latest_probe_created_at:-unknown} age_minutes=$latest_probe_age_minutes"
+        exit 0
+      fi
+      if [[ "$latest_probe_status" == "pending" && "$latest_probe_exit_code" == "43" ]]; then
+        echo "scheduled check context: session_date=$session_date proof_start=$probe_proof_start strategy=$probe_strategy min_trades=$probe_min_trades min_pnl=$probe_min_pnl reason=lock_busy_already_pending"
+        echo "paper profit probe pending: lock busy after recent pending result for session $session_date created_at=${latest_probe_created_at:-unknown} age_minutes=$latest_probe_age_minutes"
+        exit 43
+      fi
+    fi
+    echo "scheduled check context: session_date=$session_date proof_start=$probe_proof_start strategy=$probe_strategy min_trades=$probe_min_trades min_pnl=$probe_min_pnl reason=lock_busy"
     ;;
   paper_proof_status)
     proof_start="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"

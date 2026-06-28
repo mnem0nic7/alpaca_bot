@@ -154,7 +154,7 @@ if [[ ! "$SESSION_GUARD_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   exit 1
 fi
 
-echo "scheduled check context: session_date=$SESSION_GUARD_DATE proof_start=$SESSION_GUARD_START_DATE strategy=$SESSION_GUARD_STRATEGY"
+echo "scheduled check context: session_date=$SESSION_GUARD_DATE proof_start=$SESSION_GUARD_START_DATE strategy=$SESSION_GUARD_STRATEGY min_trades=$SESSION_GUARD_MIN_TRADES min_pnl=$SESSION_GUARD_FAIL_BELOW_PNL"
 
 if [[ "$SESSION_GUARD_DATE" < "$SESSION_GUARD_START_DATE" ]]; then
   echo \

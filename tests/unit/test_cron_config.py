@@ -789,8 +789,15 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "paper_activity)" in lock_skip
     assert "proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=${PAPER_ACTIVITY_STRATEGY" in lock_skip
     assert "session_guard)" in lock_skip
-    assert "proof_start=${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}} strategy=${SESSION_GUARD_STRATEGY" in lock_skip
+    assert "POST_CLOSE_LOCK_MAX_AGE_MINUTES" in lock_skip
+    assert "load_latest_post_close_check_status" in lock_skip
+    assert "guard_min_trades=\"${SESSION_GUARD_MIN_TRADES:-10}\"" in lock_skip
+    assert "guard_min_pnl=\"${SESSION_GUARD_FAIL_BELOW_PNL:-0}\"" in lock_skip
+    assert "reason=lock_busy_already_passed" in lock_skip
+    assert "session guard passed: lock busy after recent pass" in lock_skip
     assert "paper_profit_probe)" in lock_skip
+    assert "reason=lock_busy_already_pending" in lock_skip
+    assert "paper profit probe pending: lock busy after recent pending result" in lock_skip
     assert "paper_proof_status)" in lock_skip
     assert "load_latest_proof_status" in lock_skip
     assert "paper_proof_status_latest=" in lock_skip
@@ -1011,6 +1018,150 @@ def test_proof_status_lock_skip_fails_without_recent_evidence(tmp_path: Path) ->
     assert result.returncode == 48
     assert "reason=lock_busy" in result.stdout
     assert "scheduled check lock busy: check=paper_proof_status" in result.stderr
+
+
+def test_session_guard_lock_skip_uses_recent_post_close_pass(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "echo 'post_close_check_latest=passed|0|2026-06-29T21:10:00.000000Z|0'\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "PROFIT_PROBE_STRATEGY=bull_flag",
+            ]
+        )
+    )
+    lock_file = tmp_path / "session-guard.lock"
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "session_guard",
+            str(lock_file),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "SESSION_GUARD_START_DATE": "2026-07-06",
+            "SESSION_GUARD_STRATEGY": "custom_flag",
+            "SESSION_GUARD_MIN_TRADES": "12",
+            "SESSION_GUARD_FAIL_BELOW_PNL": "1.23",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "proof_start=2026-07-06" in result.stdout
+    assert "strategy=custom_flag" in result.stdout
+    assert "min_trades=12" in result.stdout
+    assert "min_pnl=1.23" in result.stdout
+    assert "reason=lock_busy_already_passed" in result.stdout
+    assert "session guard passed: lock busy after recent pass" in result.stdout
+
+
+def test_profit_probe_lock_skip_uses_recent_post_close_pending(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "echo 'post_close_check_latest=pending|43|2026-06-29T21:20:00.000000Z|0'\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "PROFIT_PROBE_STRATEGY=bull_flag",
+                "PROFIT_PROBE_MIN_TRADES=10",
+                "PROFIT_PROBE_MIN_PNL=0.01",
+            ]
+        )
+    )
+    lock_file = tmp_path / "profit-probe.lock"
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_profit_probe",
+            str(lock_file),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PROFIT_PROBE_START_DATE": "2026-07-06",
+            "PROFIT_PROBE_STRATEGY": "custom_flag",
+            "PROFIT_PROBE_MIN_TRADES": "12",
+            "PROFIT_PROBE_MIN_PNL": "2.34",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+    assert "proof_start=2026-07-06" in result.stdout
+    assert "strategy=custom_flag" in result.stdout
+    assert "min_trades=12" in result.stdout
+    assert "min_pnl=2.34" in result.stdout
+    assert "reason=lock_busy_already_pending" in result.stdout
+    assert "paper profit probe pending: lock busy after recent pending result" in result.stdout
+
+
+def test_post_close_lock_skip_fails_without_recent_evidence(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "echo 'post_close_check_latest=passed|0|2026-06-29T21:10:00.000000Z|31'\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("")
+    lock_file = tmp_path / "session-guard.lock"
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "session_guard",
+            str(lock_file),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "POST_CLOSE_LOCK_MAX_AGE_MINUTES": "30",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 48
+    assert "reason=lock_busy" in result.stdout
+    assert "scheduled check lock busy: check=session_guard" in result.stderr
 
 
 def test_locked_check_wrapper_preserves_wrapped_check_exit_code(tmp_path: Path) -> None:
@@ -2954,6 +3105,8 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "session_eval_args+=(--fail-on-diagnostics)" in profit_probe
     assert "paper profit probe pending: latest completed session" in profit_probe
     assert "scheduled check context: session_date=$PROFIT_PROBE_DATE proof_start=$PROFIT_PROBE_START_DATE" in profit_probe
+    assert "min_trades=$SESSION_GUARD_MIN_TRADES" in session_guard
+    assert "min_pnl=$SESSION_GUARD_FAIL_BELOW_PNL" in session_guard
     assert 'PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE' in profit_probe
     assert "paper proof pending" in profit_probe
     assert "paper proof pending ${PROFIT_PROBE_START_DATE}: broker exposure remains before proof start" in profit_probe
