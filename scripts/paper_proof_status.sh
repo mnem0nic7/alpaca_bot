@@ -1232,11 +1232,23 @@ readiness_decision_dry_run_active_value = parse_int_or_none(
 readiness_decision_dry_run_records_value = parse_int_or_none(
     readiness_decision_dry_run_records
 )
+readiness_decision_dry_run_accepted_value = parse_int_or_none(
+    readiness_decision_dry_run_accepted
+)
+readiness_decision_dry_run_entry_intents_value = parse_int_or_none(
+    readiness_decision_dry_run_entry_intents
+)
 readiness_decision_dry_run_min_records_value = parse_int_or_none(
     readiness_decision_dry_run_min_records
 )
 readiness_decision_dry_run_evaluations_value = parse_int_or_none(
     readiness_decision_dry_run_evaluations
+)
+readiness_decision_dry_run_max_accepted_value = parse_int_or_none(
+    readiness_decision_dry_run_max_accepted
+)
+readiness_decision_dry_run_max_entry_intents_value = parse_int_or_none(
+    readiness_decision_dry_run_max_entry_intents
 )
 readiness_decision_dry_run_status = "ok"
 if not (
@@ -1244,6 +1256,8 @@ if not (
     and readiness_decision_dry_run_as_of
     and readiness_decision_dry_run_active
     and readiness_decision_dry_run_records
+    and readiness_decision_dry_run_accepted
+    and readiness_decision_dry_run_entry_intents
 ):
     readiness_decision_dry_run_status = "missing"
 elif readiness_decision_dry_run_strategy != strategy_name:
@@ -1251,6 +1265,8 @@ elif readiness_decision_dry_run_strategy != strategy_name:
 elif (
     readiness_decision_dry_run_active_value is None
     or readiness_decision_dry_run_records_value is None
+    or readiness_decision_dry_run_accepted_value is None
+    or readiness_decision_dry_run_entry_intents_value is None
 ):
     readiness_decision_dry_run_status = "invalid"
 elif readiness_decision_dry_run_active_value < min_watchlist_symbols:
@@ -1267,6 +1283,22 @@ elif (
     and readiness_decision_dry_run_min_records_value < min_decision_dry_run_records
 ):
     readiness_decision_dry_run_status = "sample_records_under_minimum"
+elif (
+    max(
+        readiness_decision_dry_run_accepted_value,
+        readiness_decision_dry_run_max_accepted_value or 0,
+    )
+    <= 0
+):
+    readiness_decision_dry_run_status = "accepted_under_minimum"
+elif (
+    max(
+        readiness_decision_dry_run_entry_intents_value,
+        readiness_decision_dry_run_max_entry_intents_value or 0,
+    )
+    <= 0
+):
+    readiness_decision_dry_run_status = "entry_intents_under_minimum"
 activity_due = False
 activity_due_after = "none"
 activity_required_since = None
