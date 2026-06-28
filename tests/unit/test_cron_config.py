@@ -674,6 +674,19 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "proof_start=${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}} strategy=${SESSION_GUARD_STRATEGY" in lock_skip
     assert "paper_profit_probe)" in lock_skip
     assert "paper_proof_status)" in lock_skip
+    assert "load_latest_proof_status" in lock_skip
+    assert "paper_proof_status_latest=" in lock_skip
+    assert "PROOF_STATUS_LOCK_STRATEGY" in lock_skip
+    assert "PROOF_STATUS_LOCK_MIN_TRADES" in lock_skip
+    assert "PROOF_STATUS_LOCK_MIN_PNL" in lock_skip
+    assert "payload->>'strategy' = %s" in lock_skip
+    assert "payload->>'min_trades' = %s" in lock_skip
+    assert "payload->>'min_pnl' = %s" in lock_skip
+    assert "PROOF_STATUS_LOCK_MAX_AGE_MINUTES" in lock_skip
+    assert "reason=lock_busy_already_reported" in lock_skip
+    assert "paper proof status check skipped:" in lock_skip
+    assert '"$latest_status" == "pending" && "$latest_exit_code" == "43" && "$latest_proof" == "pending"' in lock_skip
+    assert '"$latest_status" == "passed" && "$latest_exit_code" == "0" && "$latest_proof" == "passed"' in lock_skip
     assert "PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}" in lock_skip
     assert "PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}" in lock_skip
     assert "exit 48" in lock_skip
@@ -690,6 +703,75 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "reason=stale_by_age" in readiness_if_needed
     assert "PAPER_READINESS_FORCE_REFRESH" in readiness_if_needed
     assert "reason=force_refresh" in readiness_if_needed
+
+
+def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|2026-06-28T06:37:20.499132Z|0'\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("")
+    lock_file = tmp_path / "proof-status.lock"
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_proof_status",
+            str(lock_file),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "reason=lock_busy_already_reported" in result.stdout
+    assert "paper proof status check skipped:" in result.stdout
+
+
+def test_proof_status_lock_skip_fails_without_recent_evidence(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|2026-06-28T06:37:20.499132Z|31'\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("")
+    lock_file = tmp_path / "proof-status.lock"
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_proof_status",
+            str(lock_file),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PROOF_STATUS_LOCK_MAX_AGE_MINUTES": "30",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 48
+    assert "reason=lock_busy" in result.stdout
+    assert "scheduled check lock busy: check=paper_proof_status" in result.stderr
 
 
 def test_locked_check_wrapper_preserves_wrapped_check_exit_code(tmp_path: Path) -> None:
@@ -723,6 +805,46 @@ def test_locked_check_wrapper_preserves_wrapped_check_exit_code(tmp_path: Path) 
     )
 
     assert result.returncode == 43
+
+
+def test_run_check_with_audit_marks_proof_status_lock_skip_as_skipped(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    audit_status_file = tmp_path / "audit-status.txt"
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "printf '%s\\n' \"$AUDIT_STATUS\" > \"$AUDIT_STATUS_FILE\"\n"
+        "exit 0\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("")
+
+    result = subprocess.run(
+        [
+            "scripts/run_check_with_audit.sh",
+            "paper_proof_status",
+            str(env_file),
+            "bash",
+            "-c",
+            "echo 'paper proof status check skipped: lock busy after recent proof status pending'",
+        ],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "AUDIT_STATUS_FILE": str(audit_status_file),
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert audit_status_file.read_text().strip() == "skipped"
 
 
 def test_run_check_with_audit_records_scheduled_check_result() -> None:
@@ -769,11 +891,12 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'paper readiness check skipped' in script
     assert 'paper activity check skipped' in script
     assert 'paper activity skipped:' in script
+    assert 'paper proof status check skipped:' in script
     assert 'status="skipped"' in script
     assert '43)' in script
     assert 'status="pending"' in script
-    assert 'tee "$output_file"' in script
-    assert 'tee -a "$output_file" >&2' in script
+    assert '"$@" > "$output_file" 2>&1' in script
+    assert 'cat "$output_file"' in script
     assert 'docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm' in script
     assert "AuditEventStore(conn).append" in script
     assert '"trading_mode": settings.trading_mode.value' in script

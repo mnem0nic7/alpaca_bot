@@ -42,13 +42,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$@" > >(tee "$output_file") 2> >(tee -a "$output_file" >&2)
+"$@" > "$output_file" 2>&1
 rc=$?
+cat "$output_file"
 
 status="failed"
 case "$rc" in
   0)
-    if grep -Eqi "^(paper readiness check skipped|paper activity check skipped|paper activity skipped:)" "$output_file"; then
+    if grep -Eqi "^(paper readiness check skipped|paper activity check skipped|paper activity skipped:|paper proof status check skipped:)" "$output_file"; then
       status="skipped"
     else
       status="passed"
