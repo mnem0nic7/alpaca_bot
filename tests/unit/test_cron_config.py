@@ -926,6 +926,64 @@ def test_paper_activity_readiness_lock_busy_is_pending_without_close_only(tmp_pa
     assert "docker should not be called" not in result.stderr
 
 
+def test_session_guard_pending_before_proof_start_does_not_close_only(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+            ]
+        )
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    session_eval_marker = tmp_path / "session_eval_called"
+    close_only_marker = tmp_path / "close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "args=\"$*\"\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'alpaca-bot-session-eval'; then\n"
+        f"  touch {session_eval_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "if printf '%s\\n' \"$args\" | grep -q ' admin close-only'; then\n"
+        f"  touch {close_only_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'BROKER_FLAT_CONTEXT'; then\n"
+        "  printf 'bull_flag session guard pending 2026-06-29 broker exposure ok: open_orders=0 open_positions=0\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '2026-06-26\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/session_guard.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+    assert (
+        "scheduled check context: session_date=2026-06-26 "
+        "proof_start=2026-06-29 strategy=bull_flag"
+    ) in result.stdout
+    assert (
+        "session guard pending: latest completed session 2026-06-26 "
+        "is before proof start 2026-06-29"
+    ) in result.stdout
+    assert "broker exposure ok: open_orders=0 open_positions=0" in result.stdout
+    assert not session_eval_marker.exists()
+    assert not close_only_marker.exists()
+
+
 def test_post_close_checks_fail_on_open_positions() -> None:
     session_guard = Path("scripts/session_guard.sh").read_text()
     profit_probe = Path("scripts/paper_profit_probe.sh").read_text()
