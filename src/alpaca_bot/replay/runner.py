@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 import json
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Sequence
 
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType, evaluate_cycle
@@ -37,6 +37,29 @@ class ReplayState:
     def __post_init__(self) -> None:
         if self.traded_symbols is None:
             self.traded_symbols = set()
+
+
+class _BarPrefix(Sequence[Bar]):
+    def __init__(self, bars: list[Bar], length: int) -> None:
+        self._bars = bars
+        self._length = length
+
+    def __len__(self) -> int:
+        return self._length
+
+    def __getitem__(self, index: int | slice) -> Bar | list[Bar]:
+        if isinstance(index, slice):
+            start, stop, step = index.indices(self._length)
+            return [self._bars[i] for i in range(start, stop, step)]
+        if index < 0:
+            index += self._length
+        if index < 0 or index >= self._length:
+            raise IndexError(index)
+        return self._bars[index]
+
+
+class _KnownCleanBarPrefix(_BarPrefix):
+    all_closes_positive = True
 
 
 class ReplayRunner:
@@ -77,10 +100,18 @@ class ReplayRunner:
     def run(self, scenario: ReplayScenario) -> ReplayResult:
         bars = sorted(scenario.intraday_bars, key=lambda bar: bar.timestamp)
         sorted_daily = sorted(scenario.daily_bars, key=lambda bar: bar.timestamp)
+        intraday_prefix_type = (
+            _KnownCleanBarPrefix if all(bar.close > 0 for bar in bars) else _BarPrefix
+        )
+        daily_prefix_type = (
+            _KnownCleanBarPrefix
+            if all(bar.close > 0 for bar in sorted_daily)
+            else _BarPrefix
+        )
         state = ReplayState(equity=scenario.starting_equity)
         events: list[ReplayEvent] = []
         current_day: date | None = None
-        daily_slice: list[Bar] = []
+        daily_slice: Sequence[Bar] = []
 
         for index, bar in enumerate(bars):
             # --- Simulation mechanics: fill or expire working entry order ---
@@ -101,7 +132,7 @@ class ReplayRunner:
             # --- Strategy decisions via evaluate_cycle() ---
             # Pass bars up to and including the current bar so that
             # signal_index == len(bars_slice) - 1 matches the engine contract.
-            bars_slice = bars[: index + 1]
+            bars_slice = intraday_prefix_type(bars, index + 1)
             intraday_by_symbol = {bar.symbol: bars_slice}
             # Mirror live data shape: the supervisor fetches daily bars with
             # end = midnight ET of the session date, so the series the engine
@@ -109,11 +140,15 @@ class ReplayRunner:
             day = session_day(bar.timestamp, self.settings)
             if day != current_day:
                 current_day = day
-                daily_slice = [
-                    b
-                    for b in sorted_daily
-                    if b.timestamp.astimezone(self.settings.market_timezone).date() < day
-                ]
+                daily_prefix_length = 0
+                for daily_bar in sorted_daily:
+                    if (
+                        daily_bar.timestamp.astimezone(self.settings.market_timezone).date()
+                        >= day
+                    ):
+                        break
+                    daily_prefix_length += 1
+                daily_slice = daily_prefix_type(sorted_daily, daily_prefix_length)
             daily_by_symbol = {bar.symbol: daily_slice}
             working_order_symbols: set[str] = (
                 {state.working_order.symbol} if state.working_order is not None else set()
