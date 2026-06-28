@@ -46,6 +46,11 @@ export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-quiet}"
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 trading_mode="${TRADING_MODE:-paper}"
+cron_health_status="ok"
+if ! cron_health_detail="$(./scripts/cron_health_check.sh 2>&1)"; then
+  cron_health_status="failed"
+fi
+cron_health_detail="${cron_health_detail//$'\n'/; }"
 
 echo "paper proof status context: proof_start=$PROOF_STATUS_START_DATE mode=$trading_mode strategy_version=$STRATEGY_VERSION strategy=$PROOF_STATUS_STRATEGY min_trades=$PROOF_STATUS_MIN_TRADES min_pnl=$PROOF_STATUS_MIN_PNL"
 echo "paper proof trading status:"
@@ -62,6 +67,8 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_MIN_PNL="$PROOF_STATUS_MIN_PNL" \
   -e PROOF_STATUS_START_DATE="$PROOF_STATUS_START_DATE" \
   -e PROOF_STATUS_END_DATE="$PROOF_STATUS_END_DATE" \
+  -e PROOF_STATUS_CRON_HEALTH_STATUS="$cron_health_status" \
+  -e PROOF_STATUS_CRON_HEALTH_DETAIL="$cron_health_detail" \
   --entrypoint python admin <<'PY'
 from __future__ import annotations
 
@@ -158,6 +165,8 @@ strategy_version = os.environ["STRATEGY_VERSION"]
 strategy_name = os.environ["PROOF_STATUS_STRATEGY"]
 min_trades = int(os.environ["PROOF_STATUS_MIN_TRADES"])
 min_pnl = float(os.environ["PROOF_STATUS_MIN_PNL"])
+cron_health_status = os.environ.get("PROOF_STATUS_CRON_HEALTH_STATUS", "unknown")
+cron_health_detail = os.environ.get("PROOF_STATUS_CRON_HEALTH_DETAIL", "").strip()
 proof_start = parse_date(os.environ["PROOF_STATUS_START_DATE"], name="PROOF_STATUS_START_DATE")
 end_value = os.environ.get("PROOF_STATUS_END_DATE", "")
 current_market_date = datetime.now(settings.market_timezone).date()
@@ -326,6 +335,8 @@ if strategy_status != "ok":
     blockers.append("strategy_disabled")
 if posture_status != "ok":
     blockers.append("posture_drifted")
+if cron_health_status != "ok":
+    blockers.append("cron_health_failed")
 if local_open_positions > 0:
     blockers.append("local_open_positions")
 if local_active_orders > 0:
@@ -365,6 +376,11 @@ print(
     f"warnings={','.join(warnings) if warnings else 'none'}"
 )
 
+print(
+    "paper proof automation: "
+    f"cron_status={cron_health_status} "
+    f"cron_detail={cron_health_detail or 'none'}"
+)
 print(f"paper proof active strategies: {active_strategies or 'none'}")
 print(
     "paper proof strategy status: "

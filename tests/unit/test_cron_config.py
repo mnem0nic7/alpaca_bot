@@ -1080,6 +1080,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "reason={proof_reason}" in script
     assert "blockers={','.join(blockers) if blockers else 'none'}" in script
     assert "warnings={','.join(warnings) if warnings else 'none'}" in script
+    assert "./scripts/cron_health_check.sh 2>&1" in script
+    assert "PROOF_STATUS_CRON_HEALTH_STATUS" in script
+    assert "PROOF_STATUS_CRON_HEALTH_DETAIL" in script
+    assert "cron_health_failed" in script
+    assert "paper proof automation:" in script
+    assert "cron_status={cron_health_status}" in script
+    assert "cron_detail={cron_health_detail or 'none'}" in script
     assert "strategy_disabled" in script
     assert "posture_drifted" in script
     assert "broker_account_blocked" in script
