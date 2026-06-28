@@ -7,7 +7,8 @@ from typing import TYPE_CHECKING
 
 from alpaca_bot.config import Settings
 from alpaca_bot.domain.models import ReplayScenario
-from alpaca_bot.replay.report import BacktestReport
+from alpaca_bot.replay.portfolio import PortfolioReplayRunner
+from alpaca_bot.replay.report import BacktestReport, report_from_records
 from alpaca_bot.replay.runner import ReplayRunner
 
 if TYPE_CHECKING:
@@ -218,6 +219,28 @@ def _aggregate_reports(reports: list[BacktestReport | None]) -> BacktestReport |
     )
 
 
+def _pooled_report(
+    *,
+    scenarios: list[ReplayScenario],
+    settings: Settings,
+    signal_evaluator: "StrategySignalEvaluator | None" = None,
+) -> BacktestReport | None:
+    """Replay scenarios as one cross-sectional portfolio and report pooled trades."""
+
+    if not scenarios:
+        return None
+    trades = PortfolioReplayRunner(
+        settings,
+        signal_evaluator=signal_evaluator,
+        strategy_name="pooled",
+    ).run(scenarios)
+    return report_from_records(
+        trades,
+        starting_equity=float(scenarios[0].starting_equity),
+        strategy_name="pooled",
+    )
+
+
 def run_sweep(
     *,
     scenario: ReplayScenario,
@@ -276,10 +299,12 @@ def run_multi_scenario_sweep(
 ) -> list[TuningCandidate]:
     """Run a parameter grid sweep across multiple scenarios.
 
-    Each combination is evaluated against every scenario. The final score is
-    the aggregate (min or mean) of per-scenario scores. A combination is
-    disqualified (score=None) if ANY scenario yields fewer than
-    min_trades_per_scenario trades.
+    Each combination is evaluated against every scenario. With aggregate="min"
+    or aggregate="mean", the final score is based on per-scenario scores and a
+    combination is disqualified if ANY scenario yields fewer than
+    min_trades_per_scenario trades. With aggregate="pooled", all scenarios are
+    replayed as one cross-sectional portfolio and min_trades_per_scenario is
+    interpreted as a minimum total trade count for the pooled report.
     """
     effective_grid = grid if grid is not None else DEFAULT_GRID
     keys = list(effective_grid.keys())
@@ -298,6 +323,27 @@ def run_multi_scenario_sweep(
         try:
             settings = Settings.from_env(merged_env)
         except ValueError:
+            continue
+
+        if aggregate == "pooled":
+            agg_report = _pooled_report(
+                scenarios=scenarios,
+                settings=settings,
+                signal_evaluator=signal_evaluator,
+            )
+            agg_score = (
+                score_report(
+                    agg_report,
+                    min_trades=min_trades_per_scenario,
+                    max_drawdown_pct=max_drawdown_pct,
+                    max_trades=max_trades,
+                )
+                if agg_report is not None
+                else None
+            )
+            candidates.append(
+                TuningCandidate(params=overrides, report=agg_report, score=agg_score)
+            )
             continue
 
         per_scenario_reports: list[BacktestReport | None] = []
@@ -347,6 +393,7 @@ def evaluate_candidates_oos(
     """Score each candidate against OOS scenarios; returns a parallel list of scores.
 
     None means disqualified (< min_trades in at least one OOS scenario).
+    With aggregate="pooled", min_trades applies to the total pooled OOS report.
     Does not produce new TuningCandidate objects — read-only scoring pass.
     """
     scores: list[float | None] = []
@@ -356,6 +403,23 @@ def evaluate_candidates_oos(
             settings = Settings.from_env(merged_env)
         except ValueError:
             scores.append(None)
+            continue
+        if aggregate == "pooled":
+            report = _pooled_report(
+                scenarios=oos_scenarios,
+                settings=settings,
+                signal_evaluator=signal_evaluator,
+            )
+            scores.append(
+                score_report(
+                    report,
+                    min_trades=min_trades,
+                    max_drawdown_pct=max_drawdown_pct,
+                    max_trades=max_trades,
+                )
+                if report is not None
+                else None
+            )
             continue
         runner = ReplayRunner(settings, signal_evaluator=signal_evaluator)
         per_scenario_scores: list[float | None] = []

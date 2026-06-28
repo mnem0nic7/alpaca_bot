@@ -125,15 +125,19 @@ def test_premarket_reads_settings_not_candidate_env(monkeypatch, tmp_path):
     _make_scenario_files(tmp_path)
     monkeypatch.setattr(module, "split_scenario", _fake_split)
 
-    captured_grids: list[dict] = []
+    captured_calls: list[dict] = []
+    oos_calls: list[dict] = []
 
     def fake_sweep(**kw):
-        captured_grids.append(dict(kw["grid"]))
+        captured_calls.append(kw)
         return [TuningCandidate(params=kw["grid"], report=None, score=0.3)]
 
+    def fake_oos(candidates, oos_scenarios, **kw):
+        oos_calls.append(kw)
+        return [0.25]
+
     monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
-    monkeypatch.setattr(module, "evaluate_candidates_oos",
-                        lambda candidates, oos_scenarios, **kw: [0.25])
+    monkeypatch.setattr(module, "evaluate_candidates_oos", fake_oos)
 
     monkeypatch.setattr(sys, "argv", [
         "premarket", "--scenario-dir", str(tmp_path),
@@ -142,12 +146,16 @@ def test_premarket_reads_settings_not_candidate_env(monkeypatch, tmp_path):
     module.main()
 
     # At least one strategy has RELATIVE_VOLUME_THRESHOLD in its grid
+    captured_grids = [dict(call["grid"]) for call in captured_calls]
     rvt_grids = [g for g in captured_grids if "RELATIVE_VOLUME_THRESHOLD" in g]
     assert rvt_grids, "At least one strategy grid must include RELATIVE_VOLUME_THRESHOLD"
     for g in rvt_grids:
         assert g["RELATIVE_VOLUME_THRESHOLD"] == ["2.0"], (
             "Constrained grid must use env var value '2.0', not default '1.5'"
         )
+    assert all(call["aggregate"] == "pooled" for call in captured_calls)
+    assert all(call["min_trades_per_scenario"] == 3 for call in captured_calls)
+    assert all(call["aggregate"] == "pooled" for call in oos_calls)
 
 
 def test_premarket_oos_gate_ratio_respected(monkeypatch, tmp_path):

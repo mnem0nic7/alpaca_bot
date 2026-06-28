@@ -12,6 +12,7 @@ from alpaca_bot.tuning.sweep import (
     DEFAULT_GRID,
     ParameterGrid,
     TuningCandidate,
+    evaluate_candidates_oos,
     run_multi_scenario_sweep,
     run_sweep,
     score_report,
@@ -294,6 +295,51 @@ def test_run_multi_scenario_sweep_aggregated_report_sums_trades() -> None:
     assert candidates[0].report.total_trades == 2
 
 
+def test_run_multi_scenario_sweep_pooled_scores_total_report(monkeypatch) -> None:
+    """aggregate='pooled' scores the portfolio report instead of each sparse symbol."""
+    import alpaca_bot.tuning.sweep as sweep_module
+
+    quiet = _make_quiet_scenario()
+    calls = []
+
+    pooled = BacktestReport(
+        trades=(),
+        total_trades=4,
+        winning_trades=3,
+        losing_trades=1,
+        win_rate=0.75,
+        mean_return_pct=0.01,
+        max_drawdown_pct=0.01,
+        annualized_sharpe=1.25,
+        profit_factor=1.5,
+    )
+
+    def fake_pooled_report(**kwargs):
+        calls.append(kwargs)
+        return pooled
+
+    monkeypatch.setattr(sweep_module, "_pooled_report", fake_pooled_report)
+
+    small_grid: ParameterGrid = {
+        "BREAKOUT_LOOKBACK_BARS": ["20"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.5"],
+        "DAILY_SMA_PERIOD": ["20"],
+    }
+    candidates = run_multi_scenario_sweep(
+        scenarios=[quiet, quiet],
+        base_env=_base_env(),
+        grid=small_grid,
+        aggregate="pooled",
+        min_trades_per_scenario=3,
+    )
+
+    assert len(candidates) == 1
+    assert len(calls) == 1
+    assert calls[0]["scenarios"] == [quiet, quiet]
+    assert candidates[0].report is pooled
+    assert candidates[0].score == pytest.approx(1.25)
+
+
 # ---------------------------------------------------------------------------
 # STRATEGY_GRIDS
 # ---------------------------------------------------------------------------
@@ -501,8 +547,6 @@ def test_run_multi_scenario_sweep_respects_surrogate_ordering() -> None:
 
 def test_evaluate_candidates_oos_returns_parallel_scores() -> None:
     """OOS evaluation produces a score list parallel to the input candidates list."""
-    from alpaca_bot.tuning.sweep import evaluate_candidates_oos
-
     golden = _make_golden_scenario()
 
     params = {
@@ -523,6 +567,49 @@ def test_evaluate_candidates_oos_returns_parallel_scores() -> None:
     assert len(scores) == 2
     for s in scores:
         assert s is None or isinstance(s, float)
+
+
+def test_evaluate_candidates_oos_pooled_scores_total_report(monkeypatch) -> None:
+    """aggregate='pooled' applies min_trades to the whole OOS portfolio."""
+    import alpaca_bot.tuning.sweep as sweep_module
+
+    quiet = _make_quiet_scenario()
+    pooled = BacktestReport(
+        trades=(),
+        total_trades=5,
+        winning_trades=4,
+        losing_trades=1,
+        win_rate=0.8,
+        mean_return_pct=0.02,
+        max_drawdown_pct=0.01,
+        annualized_sharpe=1.75,
+        profit_factor=2.0,
+    )
+    monkeypatch.setattr(
+        sweep_module,
+        "_pooled_report",
+        lambda **kwargs: pooled,
+    )
+
+    candidate = TuningCandidate(
+        params={
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "DAILY_SMA_PERIOD": "20",
+        },
+        report=None,
+        score=1.0,
+    )
+
+    scores = evaluate_candidates_oos(
+        candidates=[candidate],
+        oos_scenarios=[quiet, quiet],
+        base_env=_base_env(),
+        min_trades=3,
+        aggregate="pooled",
+    )
+
+    assert scores == [pytest.approx(1.75)]
 
 
 def test_score_report_disqualifies_on_excessive_drawdown() -> None:

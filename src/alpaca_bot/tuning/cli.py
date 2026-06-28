@@ -40,8 +40,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--strategy", default="breakout",
                         choices=list(STRATEGY_REGISTRY),
                         help="Strategy to sweep (default: breakout)")
-    parser.add_argument("--aggregate", default="min", choices=["min", "mean"],
-                        help="Score aggregation across scenarios: min (default) or mean")
+    parser.add_argument(
+        "--aggregate",
+        default="min",
+        choices=["min", "mean", "pooled"],
+        help=(
+            "Score aggregation across scenarios: min (default), mean, or pooled "
+            "cross-sectional portfolio"
+        ),
+    )
     parser.add_argument("--no-db", action="store_true",
                         help="Skip DB persistence (just print results)")
     parser.add_argument("--validate-pct", type=float, default=0.0,

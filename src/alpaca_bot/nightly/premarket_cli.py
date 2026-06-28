@@ -104,6 +104,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             scenarios=is_scenarios,
             base_env=base_env,
             grid=constrained_grid,
+            aggregate="pooled",
+            min_trades_per_scenario=3,
             signal_evaluator=signal_evaluator,
         )
         if not candidates or candidates[0].score is None:
@@ -118,6 +120,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             oos_scenarios=oos_scenarios,
             base_env=base_env,
             min_trades=3,
+            aggregate="pooled",
             signal_evaluator=signal_evaluator,
         )
         oos_score = oos_scores_list[0] if oos_scores_list else None

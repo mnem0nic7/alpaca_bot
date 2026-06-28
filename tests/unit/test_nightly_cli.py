@@ -68,10 +68,21 @@ def test_nightly_cli_runs_evolve_and_writes_output_env(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "split_scenario", _fake_split)
 
     cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
-    monkeypatch.setattr(module, "run_multi_scenario_sweep", lambda **kw: [cand])
+    sweep_calls: list[dict] = []
+
+    def fake_sweep(**kw):
+        sweep_calls.append(kw)
+        return [cand]
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
     # OOS=0.4 >= IS=0.5 * 0.5=0.25 → held
-    monkeypatch.setattr(module, "evaluate_candidates_oos",
-                        lambda candidates, oos_scenarios, **kw: [0.4])
+    oos_calls: list[dict] = []
+
+    def fake_oos(candidates, oos_scenarios, **kw):
+        oos_calls.append(kw)
+        return [0.4]
+
+    monkeypatch.setattr(module, "evaluate_candidates_oos", fake_oos)
 
     output_env = tmp_path / "candidate.env"
     monkeypatch.setattr(sys, "argv", [
@@ -85,6 +96,9 @@ def test_nightly_cli_runs_evolve_and_writes_output_env(monkeypatch, tmp_path):
     assert result == 0
     assert output_env.exists()
     assert "BREAKOUT_LOOKBACK_BARS=20" in output_env.read_text()
+    assert sweep_calls[0]["aggregate"] == "pooled"
+    assert sweep_calls[0]["min_trades_per_scenario"] == 3
+    assert oos_calls[0]["aggregate"] == "pooled"
 
 
 def test_nightly_cli_dry_run_skips_backfill(monkeypatch, tmp_path):
