@@ -494,3 +494,33 @@ Decision: keep the deployed paper posture unchanged for the `2026-06-29` proof
 start. The latest code and deployed proof guardrails still show positive
 after-cost active-universe edge while the live system is ready, flat, and
 waiting only on completed paper trades from a `2026-06-29`-or-later session.
+
+Readiness dry-run sampling was widened after the `4051366` deploy because the
+single default `15:30` sample was conservative relative to the intraday entry
+path. A one-fetch, six-sample dry run against the latest completed session
+(`2026-06-26`) showed that earlier regular-session samples reached the deployed
+K=3 entry cap:
+
+```bash
+PAPER_DECISION_DRY_RUN_SAMPLE_TIMES=10:30,11:30,12:30,13:30,14:30,15:30 \
+PAPER_DECISION_DRY_RUN_MIN_RECORDS=900 \
+  ./scripts/paper_decision_dry_run.sh /etc/alpaca_bot/alpaca-bot.env
+```
+
+Result:
+
+- active symbols: `980`
+- intraday coverage: `980/980`
+- daily coverage: `980/980`
+- best sample: `2026-06-26T11:30:00-04:00`
+- decision records at best sample: `941`
+- accepted entry records at best sample: `3`
+- entry intents at best sample: `3`
+- minimum decision records across all six samples: `929`
+- maximum accepted records across all six samples: `3`
+- sample accepted intent: `DASH:18.91931662370427@182.33`
+
+Decision: keep the trading posture unchanged, but make the readiness dry run
+sample `10:30,11:30,12:30,13:30,14:30,15:30` by default. This improves proof
+readiness evidence without loosening entry filters, raising risk, adding live
+orders, or changing the deployed strategy parameters.
