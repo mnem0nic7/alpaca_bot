@@ -24,7 +24,22 @@ if [[ ! -f "$ENV_FILE" ]]; then
     exit 1
 fi
 
-PAPER_PROOF_FREEZE="$(grep "^PAPER_PROOF_FREEZE=" "$ENV_FILE" | head -1 | cut -d= -f2- || true)"
+read_env_value() {
+    local key="$1"
+    awk -v key="$key" '
+        $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+            value=$0
+            sub("^[[:space:]]*" key "[[:space:]]*=", "", value)
+            sub(/[[:space:]]*#.*/, "", value)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            gsub(/^["\047]|["\047]$/, "", value)
+            print value
+            exit
+        }
+    ' "$ENV_FILE"
+}
+
+PAPER_PROOF_FREEZE="$(read_env_value PAPER_PROOF_FREEZE)"
 if [[ "${PAPER_PROOF_FREEZE,,}" == "true" ]]; then
     echo "$LOG_PREFIX PAPER_PROOF_FREEZE=true — skipping candidate auto-apply."
     exit 0
