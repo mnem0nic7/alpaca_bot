@@ -2466,6 +2466,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "payload->>'decision_dry_run_min_decision_records'" in script
     assert "payload->>'decision_dry_run_max_entry_intents'" in script
     assert "readiness_audit_rows = cur.fetchall()" in script
+    assert "LIMIT 32" in script
     assert "parse_int_or_none" in script
     assert "min_decision_dry_run_records" in script
     assert "min_decision_dry_run_evaluations" in script
@@ -2473,6 +2474,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS must be a positive integer" in script
     assert "latest_readiness_reason.startswith(\"lock_busy\")" in script
     assert "(row for row in readiness_audit_rows if row[0] == \"passed\")" in script
+    assert "def readiness_row_has_decision_dry_run" in script
+    assert "def readiness_row_is_current" in script
+    assert "readiness_decision_dry_run_row = readiness_audit_row" in script
+    assert "and readiness_row_has_decision_dry_run(row)" in script
+    assert "and readiness_row_is_current(row)" in script
+    assert "readiness_decision_dry_run_row[3]" in script
     assert "readiness_audit_status" in script
     assert "readiness_audit_status = \"stale\"" in script
     assert "readiness_audit_status = \"stale_by_age\"" in script

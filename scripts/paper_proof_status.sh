@@ -717,7 +717,7 @@ try:
               AND payload->>'session_date' = %s
               AND payload->>'proof_start' = %s
             ORDER BY created_at DESC, event_id DESC
-            LIMIT 8
+            LIMIT 32
             """,
             (
                 trading_mode.value,
@@ -942,6 +942,45 @@ if readiness_audit_rows:
             readiness_audit_row,
         )
 
+
+def readiness_row_age_minutes(row) -> int | None:
+    created_at = row[1]
+    if created_at is None:
+        return None
+    created_utc = created_at
+    if created_utc.tzinfo is None:
+        created_utc = created_utc.replace(tzinfo=timezone.utc)
+    else:
+        created_utc = created_utc.astimezone(timezone.utc)
+    return max(
+        0,
+        int((datetime.now(timezone.utc) - created_utc).total_seconds() // 60),
+    )
+
+
+def readiness_row_is_current(row) -> bool:
+    created_at = row[1]
+    if created_at is None:
+        return False
+    if (
+        latest_supervisor_started_at is not None
+        and created_at < latest_supervisor_started_at
+    ):
+        return False
+    age_minutes = readiness_row_age_minutes(row)
+    return age_minutes is not None and age_minutes <= readiness_max_pass_age_minutes
+
+
+def readiness_row_has_decision_dry_run(row) -> bool:
+    return (
+        len(row) >= 15
+        and bool(row[3])
+        and bool(row[4])
+        and bool(row[5])
+        and bool(row[6])
+    )
+
+
 readiness_audit_check_status = "missing"
 readiness_audit_created_at = None
 readiness_audit_age_minutes = None
@@ -1000,20 +1039,45 @@ readiness_decision_dry_run_evaluations = ""
 readiness_decision_dry_run_min_records = ""
 readiness_decision_dry_run_max_accepted = ""
 readiness_decision_dry_run_max_entry_intents = ""
-if readiness_audit_row and len(readiness_audit_row) >= 10:
-    readiness_decision_dry_run_strategy = readiness_audit_row[3] or ""
-    readiness_decision_dry_run_as_of = readiness_audit_row[4] or ""
-    readiness_decision_dry_run_active = readiness_audit_row[5] or ""
-    readiness_decision_dry_run_records = readiness_audit_row[6] or ""
-    readiness_decision_dry_run_accepted = readiness_audit_row[7] or ""
-    readiness_decision_dry_run_entry_intents = readiness_audit_row[8] or ""
-    readiness_decision_dry_run_sample = readiness_audit_row[9] or ""
-    if len(readiness_audit_row) >= 15:
-        readiness_decision_dry_run_sample_times = readiness_audit_row[10] or ""
-        readiness_decision_dry_run_evaluations = readiness_audit_row[11] or ""
-        readiness_decision_dry_run_min_records = readiness_audit_row[12] or ""
-        readiness_decision_dry_run_max_accepted = readiness_audit_row[13] or ""
-        readiness_decision_dry_run_max_entry_intents = readiness_audit_row[14] or ""
+readiness_decision_dry_run_row = readiness_audit_row
+if not (
+    readiness_decision_dry_run_row
+    and readiness_row_has_decision_dry_run(readiness_decision_dry_run_row)
+):
+    readiness_decision_dry_run_row = next(
+        (
+            row
+            for row in readiness_audit_rows
+            if row[0] == "passed"
+            and readiness_row_has_decision_dry_run(row)
+            and readiness_row_is_current(row)
+        ),
+        readiness_decision_dry_run_row,
+    )
+if readiness_decision_dry_run_row and len(readiness_decision_dry_run_row) >= 10:
+    readiness_decision_dry_run_strategy = readiness_decision_dry_run_row[3] or ""
+    readiness_decision_dry_run_as_of = readiness_decision_dry_run_row[4] or ""
+    readiness_decision_dry_run_active = readiness_decision_dry_run_row[5] or ""
+    readiness_decision_dry_run_records = readiness_decision_dry_run_row[6] or ""
+    readiness_decision_dry_run_accepted = readiness_decision_dry_run_row[7] or ""
+    readiness_decision_dry_run_entry_intents = readiness_decision_dry_run_row[8] or ""
+    readiness_decision_dry_run_sample = readiness_decision_dry_run_row[9] or ""
+    if len(readiness_decision_dry_run_row) >= 15:
+        readiness_decision_dry_run_sample_times = (
+            readiness_decision_dry_run_row[10] or ""
+        )
+        readiness_decision_dry_run_evaluations = (
+            readiness_decision_dry_run_row[11] or ""
+        )
+        readiness_decision_dry_run_min_records = (
+            readiness_decision_dry_run_row[12] or ""
+        )
+        readiness_decision_dry_run_max_accepted = (
+            readiness_decision_dry_run_row[13] or ""
+        )
+        readiness_decision_dry_run_max_entry_intents = (
+            readiness_decision_dry_run_row[14] or ""
+        )
 readiness_decision_dry_run_active_value = parse_int_or_none(
     readiness_decision_dry_run_active
 )
