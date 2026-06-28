@@ -1203,6 +1203,9 @@ posture_status = (
     if (
         abs(float(settings.relative_volume_threshold) - 2.0) < 1e-9
         and int(settings.max_open_positions) == 3
+        and abs(float(settings.bull_flag_min_run_pct) - 0.02) < 1e-9
+        and abs(float(settings.bull_flag_consolidation_volume_ratio) - 0.6) < 1e-9
+        and abs(float(settings.bull_flag_consolidation_range_pct) - 0.5) < 1e-9
         and bool(settings.enable_vwap_entry_filter)
         and not bool(settings.enable_vix_filter)
         and not bool(settings.enable_sector_filter)
@@ -1392,6 +1395,9 @@ print(
     f"status={posture_status} "
     f"relative_volume_threshold={settings.relative_volume_threshold:g} "
     f"max_open_positions={settings.max_open_positions} "
+    f"bull_flag_min_run_pct={settings.bull_flag_min_run_pct:g} "
+    f"bull_flag_consolidation_volume_ratio={settings.bull_flag_consolidation_volume_ratio:g} "
+    f"bull_flag_consolidation_range_pct={settings.bull_flag_consolidation_range_pct:g} "
     f"vwap_filter={str(settings.enable_vwap_entry_filter).lower()} "
     f"vix_filter={str(settings.enable_vix_filter).lower()} "
     f"sector_filter={str(settings.enable_sector_filter).lower()} "

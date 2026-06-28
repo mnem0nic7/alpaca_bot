@@ -2593,6 +2593,18 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "max_open_positions={settings.max_open_positions}" in script
     assert "abs(float(settings.relative_volume_threshold) - 2.0)" in script
     assert "int(settings.max_open_positions) == 3" in script
+    assert "abs(float(settings.bull_flag_min_run_pct) - 0.02)" in script
+    assert "abs(float(settings.bull_flag_consolidation_volume_ratio) - 0.6)" in script
+    assert "abs(float(settings.bull_flag_consolidation_range_pct) - 0.5)" in script
+    assert "bull_flag_min_run_pct={settings.bull_flag_min_run_pct:g}" in script
+    assert (
+        "bull_flag_consolidation_volume_ratio="
+        "{settings.bull_flag_consolidation_volume_ratio:g}"
+    ) in script
+    assert (
+        "bull_flag_consolidation_range_pct="
+        "{settings.bull_flag_consolidation_range_pct:g}"
+    ) in script
     assert "bool(settings.enable_vwap_entry_filter)" in script
     assert "not bool(settings.enable_vix_filter)" in script
     assert "not bool(settings.enable_sector_filter)" in script

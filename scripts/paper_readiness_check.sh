@@ -379,6 +379,9 @@ require_env_value_or_unset ATR_PERIOD 14
 require_env_value_or_unset ATR_STOP_MULTIPLIER 1.0
 require_env_value TRAILING_STOP_ATR_MULTIPLIER 1.5
 require_env_value_or_unset TRAILING_STOP_PROFIT_TRIGGER_R 1.0
+require_env_value_or_unset BULL_FLAG_MIN_RUN_PCT 0.02
+require_env_value_or_unset BULL_FLAG_CONSOLIDATION_VOLUME_RATIO 0.6
+require_env_value_or_unset BULL_FLAG_CONSOLIDATION_RANGE_PCT 0.5
 require_env_value INTRADAY_CONSECUTIVE_LOSS_GATE 0
 require_env_value ENTRY_WINDOW_START 10:00
 require_env_value ENTRY_WINDOW_END 15:30
@@ -446,6 +449,9 @@ check("atr_period", settings.atr_period, 14)
 check("atr_stop_multiplier", settings.atr_stop_multiplier, 1.0)
 check("trailing_stop_atr_multiplier", settings.trailing_stop_atr_multiplier, 1.5)
 check("trailing_stop_profit_trigger_r", settings.trailing_stop_profit_trigger_r, 1.0)
+check("bull_flag_min_run_pct", settings.bull_flag_min_run_pct, 0.02)
+check("bull_flag_consolidation_volume_ratio", settings.bull_flag_consolidation_volume_ratio, 0.6)
+check("bull_flag_consolidation_range_pct", settings.bull_flag_consolidation_range_pct, 0.5)
 check("entry_window_start", as_hhmm(settings.entry_window_start), "10:00")
 check("entry_window_end", as_hhmm(settings.entry_window_end), "15:30")
 check("flatten_time", as_hhmm(settings.flatten_time), "15:45")
