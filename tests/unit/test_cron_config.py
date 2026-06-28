@@ -31,7 +31,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
         "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=false "
         "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1655"
     )
-    early_activity = "20 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1020"
+    early_activity = "25 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1025"
     activity = "0 16,17 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1200"
     session_guard = "10 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1710"
     profit_probe = "20 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1720"
@@ -92,7 +92,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in install_cron
     assert "Runs weekdays on New York wall time" in install_cron
     assert "paper readiness 09:20/09:55/09:58/10:02/12:45/14:25/16:55" in install_cron
-    assert "paper activity 10:20/12:00" in install_cron
+    assert "paper activity 10:25/12:00" in install_cron
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
     assert "expected HHMM must be a valid 24-hour time" in run_if_ny_time
     assert "date returned invalid HHMM" in run_if_ny_time
