@@ -2576,6 +2576,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "  printf 'paper proof post-close audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 17:25 America/New_York session_guard=passed:0:2026-06-29T21:10:00+00:00 paper_profit_probe=pending:43:2026-06-29T21:20:00+00:00\\n'\n"
         "  printf 'paper proof scheduled check: name=paper_profit_probe status=pending exit_code=43 session_date=2026-06-26 proof_start=2026-06-29 created_at=2026-06-27T22:00:00.000000Z\\n'\n"
         "  printf 'paper proof progress: status=pending closed_trades=3 required_trades=10 pnl=12.34 required_pnl=0.01 window=2026-06-29..2026-06-29 first_exit_session=2026-06-29 latest_exit_session=2026-06-29\\n'\n"
+        "  printf 'paper proof trade quality: wins=2 losses=1 flats=0 win_rate=66.7%% avg_pnl=4.11 best=AVBP:10.00@2026-06-29 worst=DASH:-1.00@2026-06-29 recent=AVBP:10.00@2026-06-29,DASH:-1.00@2026-06-29,WDFC:3.34@2026-06-29\\n'\n"
         "  exit 0\n"
         "fi\n"
         "printf 'unexpected docker call: %s\\n' \"$args\" >&2\n"
@@ -2618,6 +2619,8 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "paper proof progress: status=pending closed_trades=3 "
         "required_trades=10 pnl=12.34 required_pnl=0.01"
     ) in result.stdout
+    assert "paper proof trade quality: wins=2 losses=1 flats=0" in result.stdout
+    assert "win_rate=66.7% avg_pnl=4.11" in result.stdout
     assert not mutating_marker.exists()
     calls = docker_calls.read_text()
     assert "close-only" not in calls
@@ -2659,6 +2662,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "reason={proof_reason}" in script
     assert "blockers={','.join(blockers) if blockers else 'none'}" in script
     assert "warnings={','.join(warnings) if warnings else 'none'}" in script
+    assert "partial_pnl_negative" in script
+    assert "partial_pnl_below_minimum" in script
     assert "scheduled check context: session_date=$(TZ=America/New_York date +%F)" in script
     assert "PROOF_STATUS_FAIL_ON_ISSUES" in script
     assert "PROOF_STATUS_FAIL_ON_ISSUES must be true or false" in script
@@ -2838,6 +2843,17 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "post_close_audit_status = \"ok\"" in script
     assert "session_guard_status == \"passed\" and profit_probe_status == \"passed\"" in script
     assert "profitable_enough = trade_count >= min_trades and pnl >= min_pnl" in script
+    assert "trade_pnl_rows = [" in script
+    assert "wins = sum(1 for _, trade_pnl in trade_pnl_rows if trade_pnl > 0)" in script
+    assert "losses = sum(1 for _, trade_pnl in trade_pnl_rows if trade_pnl < 0)" in script
+    assert "win_rate_text = f\"{win_rate:.1f}%\" if win_rate is not None else \"none\"" in script
+    assert (
+        "avg_trade_pnl_text = f\"{avg_trade_pnl:.2f}\" "
+        "if avg_trade_pnl is not None else \"none\""
+    ) in script
+    assert "partial_pnl_negative" in script
+    assert "partial_pnl_below_minimum" in script
+    assert "format_trade_pnl_atom" in script
     assert "elif profitable_enough and post_close_pass_evidence_ready" in script
     assert "elif profitable_enough:\n    proof_status = \"pending\"" in script
     assert "elif profitable_enough and not post_close_pass_evidence_ready" in script
@@ -3012,6 +3028,15 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "viability_min_hold_minutes={settings.viability_min_hold_minutes}" in script
     assert "max_loss_per_trade_dollars=" in script
     assert "replay_slippage_bps={settings.replay_slippage_bps:g}" in script
+    assert "paper proof trade quality:" in script
+    assert "wins={wins}" in script
+    assert "losses={losses}" in script
+    assert "flats={flats}" in script
+    assert "win_rate={win_rate_text}" in script
+    assert "avg_pnl={avg_trade_pnl_text}" in script
+    assert "best={best_trade_text}" in script
+    assert "worst={worst_trade_text}" in script
+    assert "recent={recent_trade_summary}" in script
     assert "paper proof local exposure:" in script
     assert "positions={local_open_positions}" in script
     assert "active_orders={local_active_orders}" in script

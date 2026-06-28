@@ -260,6 +260,16 @@ def format_problem_summary(problems: dict[str, list[str]]) -> str:
     return ";".join(parts) if parts else "none"
 
 
+def format_trade_pnl_atom(trade: dict, pnl: float) -> str:
+    symbol = str(trade.get("symbol") or "unknown")
+    exit_time = trade.get("exit_time")
+    if isinstance(exit_time, datetime):
+        exit_session = exit_time.astimezone(settings.market_timezone).date().isoformat()
+    else:
+        exit_session = "unknown"
+    return f"{symbol}:{pnl:.2f}@{exit_session}"
+
+
 def load_scenario_coverage(
     *,
     symbols: list[str],
@@ -979,8 +989,36 @@ scenario_status, scenario_problem_summary = load_scenario_coverage(
     expected_date=scenario_expected_session,
     require_scenarios=require_scenarios,
 )
-pnl = sum((trade["exit_fill"] - trade["entry_fill"]) * trade["qty"] for trade in trades)
+trade_pnl_rows = [
+    (trade, (trade["exit_fill"] - trade["entry_fill"]) * trade["qty"])
+    for trade in trades
+]
+pnl = sum(trade_pnl for _, trade_pnl in trade_pnl_rows)
 trade_count = len(trades)
+wins = sum(1 for _, trade_pnl in trade_pnl_rows if trade_pnl > 0)
+losses = sum(1 for _, trade_pnl in trade_pnl_rows if trade_pnl < 0)
+flats = trade_count - wins - losses
+avg_trade_pnl = pnl / trade_count if trade_count else None
+win_rate = wins / trade_count * 100 if trade_count else None
+best_trade = max(trade_pnl_rows, key=lambda row: row[1]) if trade_pnl_rows else None
+worst_trade = min(trade_pnl_rows, key=lambda row: row[1]) if trade_pnl_rows else None
+win_rate_text = f"{win_rate:.1f}%" if win_rate is not None else "none"
+avg_trade_pnl_text = f"{avg_trade_pnl:.2f}" if avg_trade_pnl is not None else "none"
+best_trade_text = (
+    format_trade_pnl_atom(best_trade[0], best_trade[1]) if best_trade else "none"
+)
+worst_trade_text = (
+    format_trade_pnl_atom(worst_trade[0], worst_trade[1]) if worst_trade else "none"
+)
+recent_trade_rows = sorted(
+    trade_pnl_rows,
+    key=lambda row: row[0].get("exit_time") or datetime.min.replace(tzinfo=timezone.utc),
+)[-5:]
+recent_trade_summary = (
+    ",".join(format_trade_pnl_atom(trade, trade_pnl) for trade, trade_pnl in recent_trade_rows)
+    if recent_trade_rows
+    else "none"
+)
 exit_sessions = [
     trade["exit_time"].astimezone(settings.market_timezone).date()
     for trade in trades
@@ -1507,6 +1545,11 @@ else:
 warnings = []
 if calendar_warning:
     warnings.append("calendar_warning")
+if not proof_not_started and 0 < trade_count < min_trades:
+    if pnl < 0:
+        warnings.append("partial_pnl_negative")
+    elif pnl < min_pnl:
+        warnings.append("partial_pnl_below_minimum")
 
 readiness_status = "blocked" if blockers else "ready"
 if proof_status == "passed":
@@ -1748,6 +1791,17 @@ print(
     f"window={proof_window} "
     f"first_exit_session={first_exit_session or 'none'} "
     f"latest_exit_session={latest_exit_session or 'none'}"
+)
+print(
+    "paper proof trade quality: "
+    f"wins={wins} "
+    f"losses={losses} "
+    f"flats={flats} "
+    f"win_rate={win_rate_text} "
+    f"avg_pnl={avg_trade_pnl_text} "
+    f"best={best_trade_text} "
+    f"worst={worst_trade_text} "
+    f"recent={recent_trade_summary}"
 )
 if fail_on_issues and (
     readiness_status != "ready" or blockers or proof_status == "failing"
