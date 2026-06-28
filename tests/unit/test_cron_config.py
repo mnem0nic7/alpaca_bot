@@ -3370,8 +3370,8 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert script.index('source "$ENV_FILE"') < script.index("\nrestore_env_overrides\n")
     assert 'PAPER_DECISION_DRY_RUN_STRATEGY="${PAPER_DECISION_DRY_RUN_STRATEGY:-bull_flag}"' in script
     assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}"' in script
-    assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_DECISION_DRY_RUN_MIN_RECORDS:-1}"' in script
-    assert 'PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="${PAPER_DECISION_DRY_RUN_SAMPLE_TIMES:-}"' in script
+    assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_DECISION_DRY_RUN_MIN_RECORDS:-900}"' in script
+    assert 'PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="${PAPER_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}"' in script
     assert "PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED must be true or false" in script
     assert "PAPER_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in script
     assert "PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS must be a positive integer" in script
