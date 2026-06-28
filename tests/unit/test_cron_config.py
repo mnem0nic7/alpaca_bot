@@ -955,6 +955,9 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "strategy_decision_log_cycles" in script
     assert "strategy_decision_log_records" in script
     assert "strategy_evidence_records" in script
+    assert "order_dispatch_failed" in script
+    assert "dispatch_failures" in script
+    assert "paper activity failed: order_dispatch_failed events" in script
     assert "stock_open_positions" in script
     assert "active_stock_orders" in script
     assert "has_stock_exposure" in script
@@ -1028,7 +1031,7 @@ def test_paper_activity_allows_low_record_count_when_stock_exposure_exists(tmp_p
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|bull_flag|||3|0\\n'\n"
+        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|bull_flag|||3|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1049,6 +1052,7 @@ def test_paper_activity_allows_low_record_count_when_stock_exposure_exists(tmp_p
     assert "bull_flag_decision_log_records=10" in result.stdout
     assert "stock_open_positions=3" in result.stdout
     assert "active_stock_orders=0" in result.stdout
+    assert "dispatch_failures=0" in result.stdout
     assert not docker_marker.exists()
 
 
@@ -1086,7 +1090,7 @@ def test_paper_activity_allows_recovered_disabled_cycles(tmp_path: Path) -> None
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '12|4|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|4|8|7840|0|8|7840|2026-06-29 14:15:00+00|bull_flag|paper_readiness_check_missing:4|paper_readiness_check_missing:4|0|0\\n'\n"
+        "printf '12|4|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|4|8|7840|0|8|7840|2026-06-29 14:15:00+00|bull_flag|paper_readiness_check_missing:4|paper_readiness_check_missing:4|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1107,6 +1111,63 @@ def test_paper_activity_allows_recovered_disabled_cycles(tmp_path: Path) -> None
     assert "disabled_cycles=4" in result.stdout
     assert "latest_cycle_entries_disabled=false" in result.stdout
     assert "bull_flag_decision_log_records=7840" in result.stdout
+    assert "dispatch_failures=0" in result.stdout
+    assert not docker_marker.exists()
+
+
+def test_paper_activity_fails_on_recent_dispatch_failures(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    docker_marker = tmp_path / "docker_close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin close-only'; then\n"
+        f"  touch {docker_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|bull_flag|||0|0|2\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE": "false",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "order_dispatch_failed events" in result.stderr
+    assert "count=2" in result.stderr
     assert not docker_marker.exists()
 
 
@@ -1144,7 +1205,7 @@ def test_paper_activity_diagnostic_failure_does_not_apply_close_only(tmp_path: P
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '0|0|0|0|0||false||false|||0|0|0|0|0|0||bull_flag|||0|0\\n'\n"
+        "printf '0|0|0|0|0||false||false|||0|0|0|0|0|0||bull_flag|||0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
