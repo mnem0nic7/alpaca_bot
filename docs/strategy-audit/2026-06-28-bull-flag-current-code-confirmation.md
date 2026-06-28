@@ -459,3 +459,38 @@ decision evidence for the 10:25/12:00 paper-activity checks. The three thin
 symbols are sparse-data names, not infrastructure failures, and the proof
 status remains `ready` / `pending` with no blockers until live paper execution
 starts on or after `2026-06-29`.
+
+Current-head replay confirmation after option-exposure proof hardening at
+commit `4051366` used the exact latest-120-day active proof universe:
+
+- active paper symbols: `980`
+- exact active latest-120-day scenario files: `980`
+- deployed proof posture: `bull_flag`, `RELATIVE_VOLUME_THRESHOLD=2.0`,
+  `MAX_OPEN_POSITIONS=3`, `REPLAY_SLIPPAGE_BPS=2.0`, floor-sized starting
+  equity `$17,247.795`
+- strict proof status after redeploy: `readiness=ready`, `proof=pending`,
+  `blockers=none`, `warnings=none`, `proof_status_rc=43`
+- exposure: local stock positions `0`, local active stock orders `0`, local
+  option net-open `0`, local active option orders `0`, broker open orders `0`,
+  broker open positions `0`
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+PYTHONPATH=src python3 -m alpaca_bot.replay.cli portfolio-audit \
+  --scenario-dir /tmp/alpaca-active-120d-scenarios \
+  --strategy bull_flag \
+  --slippage-bps 2 \
+  --max-open-positions 3 \
+  --starting-equity 17247.795 \
+  --output /tmp/alpaca-bull-flag-120d-current-4051366.md \
+  --jsonl /tmp/alpaca-bull-flag-120d-current-4051366.jsonl
+```
+
+| scenarios | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(mean<=0) | frictionless P&L | cost drag | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---|
+| 980 | 417 | 74.8% | 1.75 | 1067.75 | 2.5605 | 5.83 | [1.1926, 3.8842] | 0.0000 | 1283.93 | 216.18 | positive-edge |
+
+Decision: keep the deployed paper posture unchanged for the `2026-06-29` proof
+start. The latest code and deployed proof guardrails still show positive
+after-cost active-universe edge while the live system is ready, flat, and
+waiting only on completed paper trades from a `2026-06-29`-or-later session.
