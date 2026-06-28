@@ -30,6 +30,24 @@ case "${PROFIT_PROBE_FAIL_ON_DIAGNOSTICS,,}" in
     ;;
 esac
 
+if [[ ! "$PROFIT_PROBE_STRATEGY" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+  echo "PROFIT_PROBE_STRATEGY contains unsupported characters" >&2
+  exit 1
+fi
+if [[ ! "$PROFIT_PROBE_START_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "PROFIT_PROBE_START_DATE must use YYYY-MM-DD" >&2
+  exit 1
+fi
+if [[ ! "$PROFIT_PROBE_MIN_TRADES" =~ ^[0-9]+$ ]] \
+  || [[ "$PROFIT_PROBE_MIN_TRADES" -lt 1 ]]; then
+  echo "PROFIT_PROBE_MIN_TRADES must be a positive integer" >&2
+  exit 1
+fi
+if [[ ! "$PROFIT_PROBE_MIN_PNL" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+  echo "PROFIT_PROBE_MIN_PNL must be a number" >&2
+  exit 1
+fi
+
 fallback_session_date() {
   local dow
   local hhmm
@@ -100,6 +118,10 @@ default_session_date() {
 }
 
 PROFIT_PROBE_DATE="${PROFIT_PROBE_DATE:-$(default_session_date)}"
+if [[ ! "$PROFIT_PROBE_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "PROFIT_PROBE_DATE must use YYYY-MM-DD" >&2
+  exit 1
+fi
 
 echo "scheduled check context: session_date=$PROFIT_PROBE_DATE proof_start=$PROFIT_PROBE_START_DATE strategy=$PROFIT_PROBE_STRATEGY min_trades=$PROFIT_PROBE_MIN_TRADES min_pnl=$PROFIT_PROBE_MIN_PNL"
 

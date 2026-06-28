@@ -1198,6 +1198,7 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert 'SESSION_GUARD_FAIL_ON_DIAGNOSTICS="${SESSION_GUARD_FAIL_ON_DIAGNOSTICS:-true}"' in session_guard
     assert 'SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"' in session_guard
     assert "SESSION_GUARD_FAIL_ON_DIAGNOSTICS must be true or false" in session_guard
+    assert "SESSION_GUARD_STRATEGY contains unsupported characters" in session_guard
     assert "load_latest_completed_session_date" in session_guard
     assert "AlpacaExecutionAdapter.from_settings" in session_guard
     assert "get_market_calendar" in session_guard
@@ -1205,6 +1206,8 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "session guard warning: market calendar lookup failed; using weekday fallback" in session_guard
     assert "SESSION_GUARD_DATE must use YYYY-MM-DD" in session_guard
     assert "SESSION_GUARD_START_DATE must use YYYY-MM-DD" in session_guard
+    assert "SESSION_GUARD_MIN_TRADES must be a non-negative integer" in session_guard
+    assert "SESSION_GUARD_FAIL_BELOW_PNL must be a number" in session_guard
     assert "session guard pending: latest completed session" in session_guard
     assert "session guard pending ${SESSION_GUARD_START_DATE}: broker exposure remains before proof start" in session_guard
     assert "scheduled check context: session_date=$SESSION_GUARD_DATE proof_start=$SESSION_GUARD_START_DATE" in session_guard
@@ -1224,6 +1227,11 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"' in profit_probe
     assert 'PROFIT_PROBE_FAIL_ON_DIAGNOSTICS="${PROFIT_PROBE_FAIL_ON_DIAGNOSTICS:-true}"' in profit_probe
     assert "PROFIT_PROBE_FAIL_ON_DIAGNOSTICS must be true or false" in profit_probe
+    assert "PROFIT_PROBE_STRATEGY contains unsupported characters" in profit_probe
+    assert "PROFIT_PROBE_START_DATE must use YYYY-MM-DD" in profit_probe
+    assert "PROFIT_PROBE_MIN_TRADES must be a positive integer" in profit_probe
+    assert "PROFIT_PROBE_MIN_PNL must be a number" in profit_probe
+    assert "PROFIT_PROBE_DATE must use YYYY-MM-DD" in profit_probe
     assert "session_eval_args=(" in profit_probe
     assert "session_eval_args+=(--fail-on-diagnostics)" in profit_probe
     assert "paper profit probe pending: latest completed session" in profit_probe
@@ -1260,3 +1268,67 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "paper profit probe warning: funnel diagnostic failed" in profit_probe
     assert "paper profit probe failed: could not apply close-only guard" in profit_probe
     assert "exit 45" in profit_probe
+
+
+def test_paper_profit_probe_validates_thresholds_before_docker(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "PROFIT_PROBE_STRATEGY=bull_flag",
+                "PROFIT_PROBE_MIN_TRADES=0",
+                "PROFIT_PROBE_MIN_PNL=0.01",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text("#!/usr/bin/env bash\nprintf 'docker should not run\\n'\nexit 99\n")
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_profit_probe.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "PROFIT_PROBE_MIN_TRADES must be a positive integer" in result.stderr
+    assert "docker should not run" not in result.stdout
+
+
+def test_session_guard_validates_start_date_before_docker(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "SESSION_GUARD_START_DATE=2026/06/29",
+                "SESSION_GUARD_STRATEGY=bull_flag",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text("#!/usr/bin/env bash\nprintf 'docker should not run\\n'\nexit 99\n")
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/session_guard.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "SESSION_GUARD_START_DATE must use YYYY-MM-DD" in result.stderr
+    assert "docker should not run" not in result.stdout

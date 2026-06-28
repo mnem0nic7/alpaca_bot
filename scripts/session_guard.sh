@@ -31,6 +31,23 @@ case "${SESSION_GUARD_FAIL_ON_DIAGNOSTICS,,}" in
     ;;
 esac
 
+if [[ ! "$SESSION_GUARD_STRATEGY" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+  echo "SESSION_GUARD_STRATEGY contains unsupported characters" >&2
+  exit 1
+fi
+if [[ ! "$SESSION_GUARD_START_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "SESSION_GUARD_START_DATE must use YYYY-MM-DD" >&2
+  exit 1
+fi
+if [[ ! "$SESSION_GUARD_MIN_TRADES" =~ ^[0-9]+$ ]]; then
+  echo "SESSION_GUARD_MIN_TRADES must be a non-negative integer" >&2
+  exit 1
+fi
+if [[ ! "$SESSION_GUARD_FAIL_BELOW_PNL" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+  echo "SESSION_GUARD_FAIL_BELOW_PNL must be a number" >&2
+  exit 1
+fi
+
 fallback_session_date() {
   local dow
   local hhmm
@@ -103,10 +120,6 @@ default_session_date() {
 SESSION_GUARD_DATE="${SESSION_GUARD_DATE:-$(default_session_date)}"
 if [[ ! "$SESSION_GUARD_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   echo "SESSION_GUARD_DATE must use YYYY-MM-DD" >&2
-  exit 1
-fi
-if [[ ! "$SESSION_GUARD_START_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-  echo "SESSION_GUARD_START_DATE must use YYYY-MM-DD" >&2
   exit 1
 fi
 
