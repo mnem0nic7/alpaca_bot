@@ -524,3 +524,10 @@ Decision: keep the trading posture unchanged, but make the readiness dry run
 sample `10:30,11:30,12:30,13:30,14:30,15:30` by default. This improves proof
 readiness evidence without loosening entry filters, raising risk, adding live
 orders, or changing the deployed strategy parameters.
+
+Deploy-time paper proof smoke was aligned with the same read-only multi-sample
+dry-run gate at commit `673dc0e`. The deploy script now defaults its
+decision dry run to the readiness strategy, `900` minimum records, and the
+six-sample regular-session window. This keeps deploy output consistent with
+proof readiness and avoids falling back to the single conservative `15:30`
+sample during a redeploy.
