@@ -19,7 +19,7 @@ cycle loop that drives entries/exits is layered on in a later task.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -153,15 +153,23 @@ class PortfolioReplayRunner:
 
     # --- main loop -------------------------------------------------------
 
-    def run(self, scenarios) -> list[ReplayTradeRecord]:
+    def run(
+        self,
+        scenarios,
+        *,
+        on_progress: Callable[[str], None] | None = None,
+        progress_label: str | None = None,
+    ) -> list[ReplayTradeRecord]:
         self._index_scenarios(scenarios)
         timeline = self._build_timeline(scenarios)
         equity = float(getattr(scenarios[0], "starting_equity", 100000.0)) if scenarios else 100000.0
 
         trades: list[ReplayTradeRecord] = []
         traded_symbols: set[tuple[str, date]] = set()
+        progress_every = max(1, len(timeline) // 20) if on_progress else 0
+        label = progress_label or self.strategy_name
 
-        for now in timeline:
+        for timeline_index, now in enumerate(timeline, start=1):
             fresh: list[str] = []
             for sym, lane in self._lanes.items():
                 nxt = lane.cursor + 1
@@ -238,6 +246,16 @@ class PortfolioReplayRunner:
                             lane.position.trailing_active = True
                 elif intent.intent_type == CycleIntentType.ENTRY:
                     self._place_order(lane, intent)
+
+            if (
+                on_progress is not None
+                and (timeline_index == len(timeline) or timeline_index % progress_every == 0)
+            ):
+                pct = timeline_index / len(timeline) * 100 if timeline else 100.0
+                on_progress(
+                    f"{label}: replay {pct:.0f}% "
+                    f"({timeline_index}/{len(timeline)} timestamps, trades={len(trades)})"
+                )
 
         return trades
 
@@ -352,7 +370,11 @@ class PortfolioReplayRunner:
 
 
 def portfolio_pooled_trades(
-    scenarios: Sequence[ReplayScenario], settings: Settings, strategy_name: str
+    scenarios: Sequence[ReplayScenario],
+    settings: Settings,
+    strategy_name: str,
+    *,
+    on_progress: Callable[[str], None] | None = None,
 ) -> list[ReplayTradeRecord]:
     """PooledTradesFn-compatible adapter: ONE shared-equity portfolio sim over all
     scenarios. Drop-in for run_audit / run_break_even_sweep so the bootstrap CI
@@ -361,7 +383,11 @@ def portfolio_pooled_trades(
     runner = PortfolioReplayRunner(
         settings, signal_evaluator=evaluator, strategy_name=strategy_name
     )
-    return runner.run(list(scenarios))
+    return runner.run(
+        list(scenarios),
+        on_progress=on_progress,
+        progress_label=f"{strategy_name} {settings.replay_slippage_bps:g}bps",
+    )
 
 
 def _sorted_bars(bars: list[Bar]) -> list[Bar]:

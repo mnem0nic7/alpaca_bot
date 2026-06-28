@@ -57,6 +57,24 @@ def test_portfolio_pooled_trades_matches_pooledtradesfn_shape(monkeypatch):
     assert all(hasattr(t, "pnl") for t in trades)
 
 
+def test_portfolio_pooled_trades_reports_progress(monkeypatch):
+    _fake_registry(monkeypatch)
+    settings = Settings.from_env(ENV)
+    messages: list[str] = []
+
+    portfolio_pooled_trades(
+        [_scn("AAA"), _scn("BBB")],
+        settings,
+        "breakout",
+        on_progress=messages.append,
+    )
+
+    assert messages
+    assert messages[-1].startswith(f"breakout {settings.replay_slippage_bps:g}bps")
+    assert "replay 100%" in messages[-1]
+    assert "timestamps" in messages[-1]
+
+
 def test_injectable_into_run_audit(monkeypatch):
     _fake_registry(monkeypatch)
     settings = Settings.from_env(ENV)

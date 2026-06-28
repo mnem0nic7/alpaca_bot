@@ -466,6 +466,17 @@ def _cmd_portfolio_audit(args: argparse.Namespace) -> int:
             f"Scenario starting equity override: ${args.starting_equity:,.2f}.",
             "",
         ])
+    def emit_progress(msg: str) -> None:
+        print(f"[portfolio-audit] {msg}", file=sys.stderr)
+
+    def portfolio_pooled_trades_with_progress(scenarios, settings, strategy_name):
+        return portfolio_pooled_trades(
+            scenarios,
+            settings,
+            strategy_name,
+            on_progress=emit_progress,
+        )
+
     for k in ks:
         ksettings = dataclasses.replace(settings, max_open_positions=k)
         rows = run_audit(
@@ -473,8 +484,8 @@ def _cmd_portfolio_audit(args: argparse.Namespace) -> int:
             settings=ksettings,
             strategies=args.strategy,
             slippage_bps=bps,
-            pooled_trades_fn=portfolio_pooled_trades,
-            on_progress=lambda msg: print(f"[portfolio-audit] {msg}", file=sys.stderr),
+            pooled_trades_fn=portfolio_pooled_trades_with_progress,
+            on_progress=emit_progress,
         )
         blocks.append(f"## K={k} (max_open_positions)")
         blocks.append("")
