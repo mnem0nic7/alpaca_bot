@@ -245,6 +245,10 @@ def parse_int_or_none(raw: str) -> int | None:
         return None
 
 
+def as_hhmm(value: time) -> str:
+    return value.strftime("%H:%M")
+
+
 def format_problem_summary(problems: dict[str, list[str]]) -> str:
     parts = []
     for name, values in problems.items():
@@ -1201,12 +1205,33 @@ target_sharpe = (
 posture_status = (
     "ok"
     if (
-        abs(float(settings.relative_volume_threshold) - 2.0) < 1e-9
+        settings.market_data_feed.value == "iex"
+        and int(settings.daily_sma_period) == 20
+        and int(settings.breakout_lookback_bars) == 20
+        and int(settings.relative_volume_lookback_bars) == 20
+        and abs(float(settings.relative_volume_threshold) - 2.0) < 1e-9
+        and int(settings.entry_timeframe_minutes) == 15
+        and abs(float(settings.risk_per_trade_pct) - 0.01) < 1e-9
+        and abs(float(settings.max_position_pct) - 0.05) < 1e-9
         and int(settings.max_open_positions) == 3
+        and abs(float(settings.max_portfolio_exposure_pct) - 0.30) < 1e-9
+        and abs(float(settings.daily_loss_limit_pct) - 0.01) < 1e-9
+        and int(settings.atr_period) == 14
+        and abs(float(settings.atr_stop_multiplier) - 1.0) < 1e-9
+        and abs(float(settings.trailing_stop_atr_multiplier) - 1.5) < 1e-9
+        and abs(float(settings.trailing_stop_profit_trigger_r) - 1.0) < 1e-9
         and abs(float(settings.bull_flag_min_run_pct) - 0.02) < 1e-9
         and abs(float(settings.bull_flag_consolidation_volume_ratio) - 0.6) < 1e-9
         and abs(float(settings.bull_flag_consolidation_range_pct) - 0.5) < 1e-9
+        and as_hhmm(settings.entry_window_start) == "10:00"
+        and as_hhmm(settings.entry_window_end) == "15:30"
+        and as_hhmm(settings.flatten_time) == "15:45"
         and bool(settings.enable_vwap_entry_filter)
+        and bool(settings.enable_profit_trail)
+        and abs(float(settings.profit_trail_pct) - 0.95) < 1e-9
+        and bool(settings.enable_breakeven_stop)
+        and abs(float(settings.breakeven_trigger_pct) - 0.0025) < 1e-9
+        and abs(float(settings.breakeven_trail_pct) - 0.002) < 1e-9
         and not bool(settings.enable_vix_filter)
         and not bool(settings.enable_sector_filter)
         and not bool(settings.enable_regime_filter)
@@ -1215,8 +1240,18 @@ posture_status = (
         and not bool(settings.enable_options_trading)
         and not bool(settings.option_chain_symbols)
         and not bool(settings.extended_hours_enabled)
+        and not bool(settings.enable_profit_target)
+        and not bool(settings.enable_trend_filter_exit)
+        and not bool(settings.enable_vwap_breakdown_exit)
+        and abs(float(settings.per_symbol_loss_limit_pct) - 0.0) < 1e-9
+        and abs(float(settings.min_position_notional) - 0.0) < 1e-9
+        and abs(float(settings.max_stop_pct) - 0.05) < 1e-9
+        and int(settings.viability_daily_bar_max_age_days) == 5
+        and int(settings.viability_min_hold_minutes) == 0
+        and settings.max_loss_per_trade_dollars is None
         and bool(settings.paper_proof_freeze)
         and int(settings.intraday_consecutive_loss_gate) == 0
+        and abs(float(settings.replay_slippage_bps) - 2.0) < 1e-9
     )
     else "drifted"
 )
@@ -1398,12 +1433,33 @@ print(
 print(
     "paper proof posture: "
     f"status={posture_status} "
+    f"market_data_feed={settings.market_data_feed.value} "
+    f"daily_sma_period={settings.daily_sma_period} "
+    f"breakout_lookback_bars={settings.breakout_lookback_bars} "
+    f"relative_volume_lookback_bars={settings.relative_volume_lookback_bars} "
     f"relative_volume_threshold={settings.relative_volume_threshold:g} "
+    f"entry_timeframe_minutes={settings.entry_timeframe_minutes} "
+    f"risk_per_trade_pct={settings.risk_per_trade_pct:g} "
+    f"max_position_pct={settings.max_position_pct:g} "
     f"max_open_positions={settings.max_open_positions} "
+    f"max_portfolio_exposure_pct={settings.max_portfolio_exposure_pct:g} "
+    f"daily_loss_limit_pct={settings.daily_loss_limit_pct:g} "
+    f"atr_period={settings.atr_period} "
+    f"atr_stop_multiplier={settings.atr_stop_multiplier:g} "
+    f"trailing_stop_atr_multiplier={settings.trailing_stop_atr_multiplier:g} "
+    f"trailing_stop_profit_trigger_r={settings.trailing_stop_profit_trigger_r:g} "
     f"bull_flag_min_run_pct={settings.bull_flag_min_run_pct:g} "
     f"bull_flag_consolidation_volume_ratio={settings.bull_flag_consolidation_volume_ratio:g} "
     f"bull_flag_consolidation_range_pct={settings.bull_flag_consolidation_range_pct:g} "
+    f"entry_window_start={as_hhmm(settings.entry_window_start)} "
+    f"entry_window_end={as_hhmm(settings.entry_window_end)} "
+    f"flatten_time={as_hhmm(settings.flatten_time)} "
     f"vwap_filter={str(settings.enable_vwap_entry_filter).lower()} "
+    f"profit_trail={str(settings.enable_profit_trail).lower()} "
+    f"profit_trail_pct={settings.profit_trail_pct:g} "
+    f"breakeven_stop={str(settings.enable_breakeven_stop).lower()} "
+    f"breakeven_trigger_pct={settings.breakeven_trigger_pct:g} "
+    f"breakeven_trail_pct={settings.breakeven_trail_pct:g} "
     f"vix_filter={str(settings.enable_vix_filter).lower()} "
     f"sector_filter={str(settings.enable_sector_filter).lower()} "
     f"regime_filter={str(settings.enable_regime_filter).lower()} "
@@ -1412,8 +1468,18 @@ print(
     f"options_trading={str(settings.enable_options_trading).lower()} "
     f"option_chain_symbols={','.join(settings.option_chain_symbols) if settings.option_chain_symbols else 'none'} "
     f"extended_hours={str(settings.extended_hours_enabled).lower()} "
+    f"profit_target={str(settings.enable_profit_target).lower()} "
+    f"trend_filter_exit={str(settings.enable_trend_filter_exit).lower()} "
+    f"vwap_breakdown_exit={str(settings.enable_vwap_breakdown_exit).lower()} "
+    f"per_symbol_loss_limit_pct={settings.per_symbol_loss_limit_pct:g} "
+    f"min_position_notional={settings.min_position_notional:g} "
+    f"max_stop_pct={settings.max_stop_pct:g} "
+    f"viability_daily_bar_max_age_days={settings.viability_daily_bar_max_age_days} "
+    f"viability_min_hold_minutes={settings.viability_min_hold_minutes} "
+    f"max_loss_per_trade_dollars={settings.max_loss_per_trade_dollars if settings.max_loss_per_trade_dollars is not None else 'none'} "
     f"paper_proof_freeze={str(settings.paper_proof_freeze).lower()} "
-    f"intraday_consecutive_loss_gate={settings.intraday_consecutive_loss_gate}"
+    f"intraday_consecutive_loss_gate={settings.intraday_consecutive_loss_gate} "
+    f"replay_slippage_bps={settings.replay_slippage_bps:g}"
 )
 print(
     "paper proof local exposure: "

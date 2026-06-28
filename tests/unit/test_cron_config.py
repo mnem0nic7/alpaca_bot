@@ -2601,13 +2601,57 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "status={strategy_status} target={strategy_name}" in script
     assert "paper proof posture:" in script
     assert "status={posture_status}" in script
+    assert "market_data_feed={settings.market_data_feed.value}" in script
+    assert "daily_sma_period={settings.daily_sma_period}" in script
+    assert "breakout_lookback_bars={settings.breakout_lookback_bars}" in script
+    assert (
+        "relative_volume_lookback_bars="
+        "{settings.relative_volume_lookback_bars}"
+    ) in script
     assert "relative_volume_threshold={settings.relative_volume_threshold:g}" in script
+    assert "entry_timeframe_minutes={settings.entry_timeframe_minutes}" in script
+    assert "risk_per_trade_pct={settings.risk_per_trade_pct:g}" in script
+    assert "max_position_pct={settings.max_position_pct:g}" in script
     assert "max_open_positions={settings.max_open_positions}" in script
+    assert (
+        "max_portfolio_exposure_pct="
+        "{settings.max_portfolio_exposure_pct:g}"
+    ) in script
+    assert "daily_loss_limit_pct={settings.daily_loss_limit_pct:g}" in script
+    assert "atr_period={settings.atr_period}" in script
+    assert "atr_stop_multiplier={settings.atr_stop_multiplier:g}" in script
+    assert (
+        "trailing_stop_atr_multiplier="
+        "{settings.trailing_stop_atr_multiplier:g}"
+    ) in script
+    assert (
+        "trailing_stop_profit_trigger_r="
+        "{settings.trailing_stop_profit_trigger_r:g}"
+    ) in script
+    assert "entry_window_start={as_hhmm(settings.entry_window_start)}" in script
+    assert "entry_window_end={as_hhmm(settings.entry_window_end)}" in script
+    assert "flatten_time={as_hhmm(settings.flatten_time)}" in script
     assert "abs(float(settings.relative_volume_threshold) - 2.0)" in script
+    assert 'settings.market_data_feed.value == "iex"' in script
+    assert "int(settings.daily_sma_period) == 20" in script
+    assert "int(settings.breakout_lookback_bars) == 20" in script
+    assert "int(settings.relative_volume_lookback_bars) == 20" in script
+    assert "int(settings.entry_timeframe_minutes) == 15" in script
+    assert "abs(float(settings.risk_per_trade_pct) - 0.01)" in script
+    assert "abs(float(settings.max_position_pct) - 0.05)" in script
     assert "int(settings.max_open_positions) == 3" in script
+    assert "abs(float(settings.max_portfolio_exposure_pct) - 0.30)" in script
+    assert "abs(float(settings.daily_loss_limit_pct) - 0.01)" in script
+    assert "int(settings.atr_period) == 14" in script
+    assert "abs(float(settings.atr_stop_multiplier) - 1.0)" in script
+    assert "abs(float(settings.trailing_stop_atr_multiplier) - 1.5)" in script
+    assert "abs(float(settings.trailing_stop_profit_trigger_r) - 1.0)" in script
     assert "abs(float(settings.bull_flag_min_run_pct) - 0.02)" in script
     assert "abs(float(settings.bull_flag_consolidation_volume_ratio) - 0.6)" in script
     assert "abs(float(settings.bull_flag_consolidation_range_pct) - 0.5)" in script
+    assert 'as_hhmm(settings.entry_window_start) == "10:00"' in script
+    assert 'as_hhmm(settings.entry_window_end) == "15:30"' in script
+    assert 'as_hhmm(settings.flatten_time) == "15:45"' in script
     assert "bull_flag_min_run_pct={settings.bull_flag_min_run_pct:g}" in script
     assert (
         "bull_flag_consolidation_volume_ratio="
@@ -2618,6 +2662,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "{settings.bull_flag_consolidation_range_pct:g}"
     ) in script
     assert "bool(settings.enable_vwap_entry_filter)" in script
+    assert "bool(settings.enable_profit_trail)" in script
+    assert "abs(float(settings.profit_trail_pct) - 0.95)" in script
+    assert "bool(settings.enable_breakeven_stop)" in script
+    assert "abs(float(settings.breakeven_trigger_pct) - 0.0025)" in script
+    assert "abs(float(settings.breakeven_trail_pct) - 0.002)" in script
     assert "not bool(settings.enable_vix_filter)" in script
     assert "not bool(settings.enable_sector_filter)" in script
     assert "not bool(settings.enable_regime_filter)" in script
@@ -2626,13 +2675,41 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "not bool(settings.enable_options_trading)" in script
     assert "not bool(settings.option_chain_symbols)" in script
     assert "not bool(settings.extended_hours_enabled)" in script
+    assert "not bool(settings.enable_profit_target)" in script
+    assert "not bool(settings.enable_trend_filter_exit)" in script
+    assert "not bool(settings.enable_vwap_breakdown_exit)" in script
+    assert "abs(float(settings.per_symbol_loss_limit_pct) - 0.0)" in script
+    assert "abs(float(settings.min_position_notional) - 0.0)" in script
+    assert "abs(float(settings.max_stop_pct) - 0.05)" in script
+    assert "int(settings.viability_daily_bar_max_age_days) == 5" in script
+    assert "int(settings.viability_min_hold_minutes) == 0" in script
+    assert "settings.max_loss_per_trade_dollars is None" in script
     assert "bool(settings.paper_proof_freeze)" in script
     assert "int(settings.intraday_consecutive_loss_gate) == 0" in script
+    assert "abs(float(settings.replay_slippage_bps) - 2.0)" in script
+    assert "profit_trail={str(settings.enable_profit_trail).lower()}" in script
+    assert "profit_trail_pct={settings.profit_trail_pct:g}" in script
+    assert "breakeven_stop={str(settings.enable_breakeven_stop).lower()}" in script
+    assert "breakeven_trigger_pct={settings.breakeven_trigger_pct:g}" in script
+    assert "breakeven_trail_pct={settings.breakeven_trail_pct:g}" in script
     assert "regime_filter={str(settings.enable_regime_filter).lower()}" in script
     assert "news_filter={str(settings.enable_news_filter).lower()}" in script
     assert "spread_filter={str(settings.enable_spread_filter).lower()}" in script
     assert "options_trading={str(settings.enable_options_trading).lower()}" in script
     assert "option_chain_symbols={','.join(settings.option_chain_symbols) if settings.option_chain_symbols else 'none'}" in script
+    assert "profit_target={str(settings.enable_profit_target).lower()}" in script
+    assert "trend_filter_exit={str(settings.enable_trend_filter_exit).lower()}" in script
+    assert "vwap_breakdown_exit={str(settings.enable_vwap_breakdown_exit).lower()}" in script
+    assert "per_symbol_loss_limit_pct={settings.per_symbol_loss_limit_pct:g}" in script
+    assert "min_position_notional={settings.min_position_notional:g}" in script
+    assert "max_stop_pct={settings.max_stop_pct:g}" in script
+    assert (
+        "viability_daily_bar_max_age_days="
+        "{settings.viability_daily_bar_max_age_days}"
+    ) in script
+    assert "viability_min_hold_minutes={settings.viability_min_hold_minutes}" in script
+    assert "max_loss_per_trade_dollars=" in script
+    assert "replay_slippage_bps={settings.replay_slippage_bps:g}" in script
     assert "paper proof local exposure:" in script
     assert "positions={local_open_positions} active_orders={local_active_orders}" in script
     assert "paper proof option exposure:" in script
