@@ -44,12 +44,6 @@ from alpaca_bot.strategy import STRATEGY_REGISTRY, StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import session_day
 
 
-class _KnownCleanBars(tuple):
-    """Tuple of bars already checked to have positive closes."""
-
-    all_closes_positive = True
-
-
 @dataclass
 class _Lane:
     """Per-symbol replay state in the shared-equity portfolio run."""
@@ -57,6 +51,7 @@ class _Lane:
     symbol: str
     intraday: list[Bar]
     daily: list[Bar]
+    daily_all_closes_positive: bool
     cursor: int = 0
     working_order: WorkingEntryOrder | None = None
     position: OpenPosition | None = None
@@ -89,6 +84,12 @@ class _BarPrefix(Sequence[Bar]):
         return self._bars[index]
 
 
+class _KnownCleanBarPrefix(_BarPrefix):
+    """Prefix view over bars whose closes are all positive."""
+
+    all_closes_positive = True
+
+
 class PortfolioReplayRunner:
     def __init__(
         self,
@@ -113,17 +114,24 @@ class PortfolioReplayRunner:
                     "PortfolioReplayRunner requires one scenario per symbol; "
                     f"duplicate symbol: {sc.symbol}"
                 )
-            intraday = sorted(sc.intraday_bars, key=lambda b: b.timestamp)
-            daily = sorted(sc.daily_bars, key=lambda b: b.timestamp)
-            self._lanes[sc.symbol] = _Lane(symbol=sc.symbol, intraday=intraday, daily=daily)
+            intraday = _sorted_bars(sc.intraday_bars)
+            daily = _sorted_bars(sc.daily_bars)
+            self._lanes[sc.symbol] = _Lane(
+                symbol=sc.symbol,
+                intraday=intraday,
+                daily=daily,
+                daily_all_closes_positive=all(b.close > 0 for b in daily),
+            )
             for idx, bar in enumerate(intraday):
                 self._bars_by_timestamp.setdefault(bar.timestamp, []).append((sc.symbol, idx))
 
     def _build_timeline(self, scenarios: list[ReplayScenario]) -> list[datetime]:
+        if self._bars_by_timestamp:
+            return sorted(self._bars_by_timestamp)
         stamps: set[datetime] = set()
         for sc in scenarios:
-            for b in sc.intraday_bars:
-                stamps.add(b.timestamp)
+            for bar in sc.intraday_bars:
+                stamps.add(bar.timestamp)
         return sorted(stamps)
 
     def _daily_slice_for(self, symbol: str, now: datetime) -> Sequence[Bar]:
@@ -134,11 +142,13 @@ class PortfolioReplayRunner:
         if cached is not None:
             return cached
         tz = self.settings.market_timezone
-        daily_slice: Sequence[Bar] = tuple(
-            b for b in lane.daily if b.timestamp.astimezone(tz).date() < day
-        )
-        if all(b.close > 0 for b in daily_slice):
-            daily_slice = _KnownCleanBars(daily_slice)
+        prefix_length = 0
+        for bar in lane.daily:
+            if bar.timestamp.astimezone(tz).date() >= day:
+                break
+            prefix_length += 1
+        prefix_type = _KnownCleanBarPrefix if lane.daily_all_closes_positive else _BarPrefix
+        daily_slice: Sequence[Bar] = prefix_type(lane.daily, prefix_length)
         self._daily_slice_cache[cache_key] = daily_slice
         return daily_slice
 
@@ -352,3 +362,11 @@ def portfolio_pooled_trades(
         settings, signal_evaluator=evaluator, strategy_name=strategy_name
     )
     return runner.run(list(scenarios))
+
+
+def _sorted_bars(bars: list[Bar]) -> list[Bar]:
+    """Return bars in timestamp order, reusing an already-sorted list."""
+
+    if all(bars[i - 1].timestamp <= bars[i].timestamp for i in range(1, len(bars))):
+        return bars
+    return sorted(bars, key=lambda b: b.timestamp)

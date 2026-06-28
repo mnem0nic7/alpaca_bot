@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import _filter_valid_bars
 from alpaca_bot.domain.models import Bar, ReplayScenario
-from alpaca_bot.replay.portfolio import PortfolioReplayRunner
+from alpaca_bot.replay.portfolio import PortfolioReplayRunner, _BarPrefix
 
 
 def _settings() -> Settings:
@@ -60,6 +60,8 @@ def test_portfolio_daily_slice_marks_known_clean_bars_for_engine_fast_path() -> 
     clean_slice = runner._daily_slice_for("AAA", datetime(2026, 1, 4, 14, 30, tzinfo=timezone.utc))
 
     assert getattr(clean_slice, "all_closes_positive", False) is True
+    assert isinstance(clean_slice, _BarPrefix)
+    assert clean_slice._bars is daily
     assert _filter_valid_bars(clean_slice, label="AAA") is clean_slice
 
 
@@ -83,5 +85,53 @@ def test_portfolio_daily_slice_does_not_mark_dirty_bars_clean() -> None:
     filtered = _filter_valid_bars(dirty_slice, label="AAA")
 
     assert getattr(dirty_slice, "all_closes_positive", False) is False
+    assert isinstance(dirty_slice, _BarPrefix)
+    assert dirty_slice._bars is daily
     assert len(filtered) == 1
     assert filtered[0].close == 100.0
+
+
+def test_portfolio_index_reuses_already_sorted_bar_lists() -> None:
+    settings = _settings()
+    runner = PortfolioReplayRunner(settings)
+    intraday = [
+        _bar("AAA", datetime(2026, 1, 4, 14, 30, tzinfo=timezone.utc)),
+        _bar("AAA", datetime(2026, 1, 4, 14, 45, tzinfo=timezone.utc)),
+    ]
+    daily = [
+        _bar("AAA", datetime(2026, 1, 2, tzinfo=timezone.utc)),
+        _bar("AAA", datetime(2026, 1, 3, tzinfo=timezone.utc)),
+    ]
+    scenario = ReplayScenario(
+        name="AAA",
+        symbol="AAA",
+        starting_equity=100_000.0,
+        daily_bars=daily,
+        intraday_bars=intraday,
+    )
+
+    runner._index_scenarios([scenario])
+    lane = runner._lanes["AAA"]
+
+    assert lane.intraday is intraday
+    assert lane.daily is daily
+
+
+def test_portfolio_index_sorts_unsorted_bar_lists() -> None:
+    settings = _settings()
+    runner = PortfolioReplayRunner(settings)
+    later = _bar("AAA", datetime(2026, 1, 4, 14, 45, tzinfo=timezone.utc))
+    earlier = _bar("AAA", datetime(2026, 1, 4, 14, 30, tzinfo=timezone.utc))
+    scenario = ReplayScenario(
+        name="AAA",
+        symbol="AAA",
+        starting_equity=100_000.0,
+        daily_bars=[later, earlier],
+        intraday_bars=[later, earlier],
+    )
+
+    runner._index_scenarios([scenario])
+    lane = runner._lanes["AAA"]
+
+    assert lane.intraday == [earlier, later]
+    assert lane.daily == [earlier, later]
