@@ -271,3 +271,28 @@ Decision: keep the deployed paper posture unchanged for the 2026-06-29 proof
 start. The current head still clears the exact live-universe latest-120-day
 replay with positive after-cost edge, and the proof stack remains ready but
 pending a completed proof session.
+
+Structured proof-status audit dry run:
+
+```bash
+PROOF_STATUS_FAIL_ON_ISSUES=true \
+  ./scripts/run_locked_check_with_audit.sh \
+    paper_proof_status \
+    /var/lock/alpaca-bot-proof-status.lock \
+    /etc/alpaca_bot/alpaca-bot.env \
+    ./scripts/paper_proof_status.sh \
+    /etc/alpaca_bot/alpaca-bot.env
+```
+
+Result before the proof window opened:
+
+- wrapper exit: `43`
+- audit status: `pending`
+- audit exit code: `43`
+- structured fields: `proof_status=pending`, `proof_closed_trades=0`,
+  `proof_pnl=0.00`
+- proof summary: `readiness=ready`, `blockers=none`,
+  `reason=awaiting_completed_proof_session`
+
+Alpaca calendar check confirmed the proof start is the next market session:
+`2026-06-29`, open `09:30` ET and close `16:00` ET.
