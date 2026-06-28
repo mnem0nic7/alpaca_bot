@@ -113,6 +113,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "paper readiness 09:20/09:55/09:58/10:02/12:45/14:25/16:55" in install_cron
     assert "paper activity 10:25/12:00" in install_cron
     assert "proof status 17:28" in install_cron
+    assert "scripts/apply_candidate.sh" in cron_text
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
     assert "expected HHMM must be a valid 24-hour time" in run_if_ny_time
     assert "date returned invalid HHMM" in run_if_ny_time
@@ -150,6 +151,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "session_guard.sh" in cron_health
     assert "paper_profit_probe.sh" in cron_health
     assert "paper_proof_status.sh" in cron_health
+    assert "apply_candidate.sh" in cron_health
     assert "runtime_image_health_check.sh" in cron_health
     assert "cron health ok" in cron_health
 
@@ -2210,6 +2212,12 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "broker_flat_failed=true\n  rc=44" in session_guard
     assert "broker_flat_failed=true\n  rc=44" in profit_probe
     assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"' in profit_probe
+    assert profit_probe.index('source "$ENV_FILE"') < profit_probe.index(
+        'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"'
+    )
+    assert profit_probe.index('source "$ENV_FILE"') < profit_probe.index(
+        'PROFIT_PROBE_STRATEGY="${PROFIT_PROBE_STRATEGY:-bull_flag}"'
+    )
     assert 'PROFIT_PROBE_FAIL_ON_DIAGNOSTICS="${PROFIT_PROBE_FAIL_ON_DIAGNOSTICS:-true}"' in profit_probe
     assert "PROFIT_PROBE_FAIL_ON_DIAGNOSTICS must be true or false" in profit_probe
     assert "PROFIT_PROBE_STRATEGY contains unsupported characters" in profit_probe

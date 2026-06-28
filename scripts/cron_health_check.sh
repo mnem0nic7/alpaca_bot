@@ -114,6 +114,7 @@ for script in \
   session_guard.sh \
   paper_profit_probe.sh \
   paper_proof_status.sh \
+  apply_candidate.sh \
   runtime_image_health_check.sh
 do
   path="$ROOT_DIR/scripts/$script"
