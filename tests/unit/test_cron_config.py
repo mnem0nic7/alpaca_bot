@@ -502,6 +502,7 @@ def test_paper_readiness_lock_skip_does_not_block_after_pass(tmp_path: Path) -> 
         "#!/usr/bin/env bash\n"
         "printf 'paper_readiness_session_date=2026-07-06\\n'\n"
         "printf 'paper_readiness_latest_status=passed|2026-06-27T18:07:44.000000Z|2026-06-27T18:07:43.000000Z\\n'\n"
+        "printf 'paper_readiness_latest_decision_dry_run=paper decision dry run ok: strategy=bull_flag as_of=2026-06-26T11:30:00-04:00 active=980 decision_records=941 accepted=3 entry_intents=3 sample_times=10:30,11:30,12:30,13:30,14:30,15:30 evaluations=6 min_decision_records=929 max_accepted=3 max_entry_intents=3\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -523,6 +524,9 @@ def test_paper_readiness_lock_skip_does_not_block_after_pass(tmp_path: Path) -> 
         "scheduled check context: session_date=2026-07-06 "
         "proof_start=2026-06-29 reason=lock_busy_already_passed"
     ) in result.stdout
+    assert "paper decision dry run ok: strategy=bull_flag" in result.stdout
+    assert "decision_records=941" in result.stdout
+    assert "evaluations=6" in result.stdout
     assert "paper readiness lock busy after prior pass for session 2026-07-06" in result.stdout
     assert "paper readiness check skipped" not in result.stdout
 
@@ -776,6 +780,9 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "reason=lock_busy_already_passed" in lock_skip
     assert "paper_readiness_session_date=" in lock_skip
     assert "paper_readiness_latest_status=" in lock_skip
+    assert "load_latest_readiness_decision_dry_run" in lock_skip
+    assert "paper_readiness_latest_decision_dry_run=" in lock_skip
+    assert "paper decision dry run ok:" in lock_skip
     assert "proof_start = settings.profit_probe_start_date.isoformat()" in lock_skip
     assert "payload->>'proof_start' = %s" in lock_skip
     assert "paper_readiness)" in lock_skip
@@ -876,6 +883,42 @@ def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -
         "paper proof scenarios: status=ok active=980 "
         "expected_session=2026-06-26 problems=none"
     ) in result.stdout
+    assert "paper proof status check skipped:" in result.stdout
+
+
+def test_proof_status_lock_skip_accepts_recent_skipped_proof_status_audit(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "echo 'paper_proof_status_latest=skipped|0|pending|ready|none|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|2026-06-28T06:37:20.499132Z|0'\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("")
+    lock_file = tmp_path / "proof-status.lock"
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_proof_status",
+            str(lock_file),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "reason=lock_busy_already_reported" in result.stdout
+    assert "paper proof summary: readiness=ready proof=pending" in result.stdout
     assert "paper proof status check skipped:" in result.stdout
 
 

@@ -205,6 +205,116 @@ PY
     | tail -n 1
 }
 
+load_latest_readiness_decision_dry_run() {
+  local readiness_session_date="$1"
+  local lookup
+
+  lookup="$(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
+    -e READINESS_SESSION_DATE="$readiness_session_date" \
+    --entrypoint python admin <<'PY' || true
+from __future__ import annotations
+
+import os
+
+from alpaca_bot.config import Settings
+from alpaca_bot.storage.db import connect_postgres
+
+settings = Settings.from_env()
+session_date = os.environ["READINESS_SESSION_DATE"]
+proof_start = settings.profit_probe_start_date.isoformat()
+
+conn = connect_postgres(settings.database_url)
+try:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+              COALESCE(payload->>'decision_dry_run_strategy', ''),
+              COALESCE(payload->>'decision_dry_run_as_of', ''),
+              COALESCE(payload->>'decision_dry_run_active', ''),
+              COALESCE(payload->>'decision_dry_run_ignored', ''),
+              COALESCE(payload->>'decision_dry_run_fractionable', ''),
+              COALESCE(payload->>'decision_dry_run_intraday', ''),
+              COALESCE(payload->>'decision_dry_run_completed_intraday', ''),
+              COALESCE(payload->>'decision_dry_run_daily', ''),
+              COALESCE(payload->>'decision_dry_run_thin_completed_lt20', ''),
+              COALESCE(payload->>'decision_dry_run_records', ''),
+              COALESCE(payload->>'decision_dry_run_accepted', ''),
+              COALESCE(payload->>'decision_dry_run_rejected', ''),
+              COALESCE(payload->>'decision_dry_run_skipped_no_signal', ''),
+              COALESCE(payload->>'decision_dry_run_entry_intents', ''),
+              COALESCE(payload->>'decision_dry_run_equity', ''),
+              COALESCE(payload->>'decision_dry_run_sample', ''),
+              COALESCE(payload->>'decision_dry_run_sample_times', ''),
+              COALESCE(payload->>'decision_dry_run_evaluations', ''),
+              COALESCE(payload->>'decision_dry_run_min_decision_records', ''),
+              COALESCE(payload->>'decision_dry_run_max_accepted', ''),
+              COALESCE(payload->>'decision_dry_run_max_entry_intents', '')
+            FROM audit_events
+            WHERE event_type = 'scheduled_check_completed'
+              AND payload->>'check_name' = 'paper_readiness'
+              AND payload->>'status' = 'passed'
+              AND payload->>'session_date' = %s
+              AND payload->>'proof_start' = %s
+              AND payload->>'trading_mode' = %s
+              AND payload->>'strategy_version' = %s
+              AND payload ? 'decision_dry_run_strategy'
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (
+                session_date,
+                proof_start,
+                settings.trading_mode.value,
+                settings.strategy_version,
+            ),
+        )
+        dry_run_row = cur.fetchone()
+finally:
+    conn.close()
+
+if dry_run_row and dry_run_row[0]:
+    keys = (
+        "strategy",
+        "as_of",
+        "active",
+        "ignored",
+        "fractionable",
+        "intraday",
+        "completed_intraday",
+        "daily",
+        "thin_completed_lt20",
+        "decision_records",
+        "accepted",
+        "rejected",
+        "skipped_no_signal",
+        "entry_intents",
+        "equity",
+        "sample",
+        "sample_times",
+        "evaluations",
+        "min_decision_records",
+        "max_accepted",
+        "max_entry_intents",
+    )
+    fields = [
+        f"{key}={value}"
+        for key, value in zip(keys, dry_run_row)
+        if value
+    ]
+    print(
+        "paper_readiness_latest_decision_dry_run="
+        "paper decision dry run ok: "
+        + " ".join(fields)
+    )
+PY
+)"
+
+  printf '%s\n' "$lookup" \
+    | sed -n 's/^paper_readiness_latest_decision_dry_run=//p' \
+    | tail -n 1
+}
+
 load_latest_proof_status() {
   local proof_start="$1"
   local proof_strategy="$2"
@@ -338,7 +448,11 @@ case "$CHECK_NAME" in
       fi
     fi
     if [[ "$latest_readiness_status" == "passed" && "$readiness_is_current" == "true" && "$readiness_is_recent" == "true" ]]; then
+      latest_decision_dry_run_line="$(load_latest_readiness_decision_dry_run "$readiness_session_date")"
       echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy_already_passed"
+      if [[ -n "$latest_decision_dry_run_line" ]]; then
+        echo "$latest_decision_dry_run_line"
+      fi
       echo "paper readiness lock busy after prior pass for session $readiness_session_date; not blocking entries"
       exit 0
     fi
@@ -405,6 +519,8 @@ case "$CHECK_NAME" in
       if [[ "$latest_status" == "pending" && "$latest_exit_code" == "43" && "$latest_proof" == "pending" ]]; then
         proof_lock_has_current_evidence=true
       elif [[ "$latest_status" == "passed" && "$latest_exit_code" == "0" && "$latest_proof" == "passed" ]]; then
+        proof_lock_has_current_evidence=true
+      elif [[ "$latest_status" == "skipped" && "$latest_exit_code" == "0" && ( "$latest_proof" == "pending" || "$latest_proof" == "passed" ) ]]; then
         proof_lock_has_current_evidence=true
       fi
     fi
