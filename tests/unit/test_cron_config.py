@@ -1346,6 +1346,74 @@ def test_paper_profit_probe_pending_before_proof_start_does_not_close_only(tmp_p
     assert not close_only_marker.exists()
 
 
+def test_paper_profit_probe_insufficient_trades_after_start_stays_pending(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+            ]
+        )
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    session_eval_marker = tmp_path / "session_eval_called"
+    funnel_marker = tmp_path / "funnel_called"
+    close_only_marker = tmp_path / "close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "args=\"$*\"\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'alpaca-bot-session-eval'; then\n"
+        f"  touch {session_eval_marker}\n"
+        "  printf 'Session Evaluation: 2026-06-29..2026-06-29\\n'\n"
+        "  printf 'Trades:   3\\n'\n"
+        "  printf 'Total PnL: $12.34\\n'\n"
+        "  printf 'Proof incomplete: 3 closed trades below required 10.\\n'\n"
+        "  exit 43\n"
+        "fi\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'alpaca-bot-funnel-report'; then\n"
+        f"  touch {funnel_marker}\n"
+        "  printf 'funnel diagnostic ok\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if printf '%s\\n' \"$args\" | grep -q ' admin close-only'; then\n"
+        f"  touch {close_only_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'BROKER_FLAT_CONTEXT'; then\n"
+        "  printf 'bull_flag paper proof 2026-06-29..2026-06-29 broker exposure ok: open_orders=0 open_positions=0\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '2026-06-29\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_profit_probe.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 strategy=bull_flag min_trades=10 min_pnl=0.01"
+    ) in result.stdout
+    assert "Proof incomplete: 3 closed trades below required 10." in result.stdout
+    assert "broker exposure ok: open_orders=0 open_positions=0" in result.stdout
+    assert session_eval_marker.exists()
+    assert funnel_marker.exists()
+    assert not close_only_marker.exists()
+
+
 def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     env_file.write_text(
