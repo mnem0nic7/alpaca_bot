@@ -24,22 +24,38 @@ if ! cmp -s "$EXPECTED_CRON" "$INSTALLED_CRON"; then
   exit 1
 fi
 
-while read -r log_file; do
-  [[ -n "$log_file" ]] || continue
+while read -r cron_user log_file; do
+  [[ -n "$cron_user" && -n "$log_file" ]] || continue
   if [[ -e "$log_file" ]]; then
-    if [[ ! -f "$log_file" || ! -w "$log_file" ]]; then
+    if [[ ! -f "$log_file" ]]; then
+      fail "scheduled log target is not a file: $log_file"
+    fi
+    if [[ "$cron_user" != "root" && ! -w "$log_file" ]]; then
       fail "scheduled log target is not writable: $log_file"
     fi
     continue
   fi
 
   log_dir="$(dirname "$log_file")"
-  if [[ ! -d "$log_dir" || ! -w "$log_dir" ]]; then
+  if [[ ! -d "$log_dir" ]]; then
+    fail "scheduled log directory is missing: $log_dir"
+  fi
+  if [[ "$cron_user" != "root" && ! -w "$log_dir" ]]; then
     fail "scheduled log directory is not writable: $log_dir"
   fi
 done < <(
-  grep -Eo '>>[[:space:]]+/[^[:space:]]+' "$EXPECTED_CRON" \
-    | awk '{print $2}' \
+  awk '
+    NF > 0 && $1 !~ /^#/ {
+      user = $6
+      for (i = 7; i <= NF; i++) {
+        if ($i == ">>" && (i + 1) <= NF && $(i + 1) ~ /^\//) {
+          print user, $(i + 1)
+        } else if ($i ~ /^>>\//) {
+          print user, substr($i, 3)
+        }
+      }
+    }
+  ' "$EXPECTED_CRON" \
     | sort -u
 )
 

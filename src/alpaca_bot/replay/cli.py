@@ -666,3 +666,7 @@ def _compare_row(report: BacktestReport) -> dict:
         "profit_target_losses": report.profit_target_losses,
         "expectancy_pct": report.expectancy_pct,
     }
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

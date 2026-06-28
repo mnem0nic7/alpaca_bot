@@ -3,7 +3,10 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -688,6 +691,42 @@ _AUDIT_ENV = {
 def _set_audit_env(monkeypatch) -> None:
     for key, value in _AUDIT_ENV.items():
         monkeypatch.setenv(key, value)
+
+
+def test_replay_cli_module_executes_as_main() -> None:
+    env = os.environ.copy()
+    env.update(_AUDIT_ENV)
+    root = Path(__file__).resolve().parents[2]
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = (
+        str(root / "src")
+        if not existing_pythonpath
+        else f"{root / 'src'}{os.pathsep}{existing_pythonpath}"
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "alpaca_bot.replay.cli",
+            "run",
+            "--scenario",
+            str(_GOLDEN_SCENARIO),
+            "--strategy",
+            "breakout",
+            "--format",
+            "json",
+        ],
+        check=False,
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["strategy"] == "breakout"
+    assert payload["total_trades"] == 1
 
 
 def test_audit_subcommand_writes_markdown_and_json(tmp_path, monkeypatch):

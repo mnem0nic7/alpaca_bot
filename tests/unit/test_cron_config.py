@@ -78,9 +78,13 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert 'EXPECTED_CRON="$ROOT_DIR/deploy/cron.d/alpaca-bot"' in cron_health
     assert 'INSTALLED_CRON="${ALPACA_BOT_CRON_FILE:-/etc/cron.d/alpaca-bot}"' in cron_health
     assert 'cmp -s "$EXPECTED_CRON" "$INSTALLED_CRON"' in cron_health
+    assert 'while read -r cron_user log_file' in cron_health
+    assert 'user = $6' in cron_health
+    assert '"$cron_user" != "root"' in cron_health
+    assert "scheduled log target is not a file" in cron_health
+    assert "scheduled log directory is missing" in cron_health
     assert "scheduled log target is not writable" in cron_health
     assert "scheduled log directory is not writable" in cron_health
-    assert "grep -Eo '>>[[:space:]]+/[^[:space:]]+'" in cron_health
     assert "systemctl is-active --quiet cron" in cron_health
     assert "ps -eo comm=" in cron_health
     assert "run_locked_check_with_audit.sh" in cron_health
@@ -932,6 +936,18 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "missing env file: $ENV_FILE" in session_guard
     assert 'SESSION_GUARD_FAIL_ON_DIAGNOSTICS="${SESSION_GUARD_FAIL_ON_DIAGNOSTICS:-true}"' in session_guard
     assert "SESSION_GUARD_FAIL_ON_DIAGNOSTICS must be true or false" in session_guard
+    assert "load_latest_completed_session_date" in session_guard
+    assert "AlpacaExecutionAdapter.from_settings" in session_guard
+    assert "get_market_calendar" in session_guard
+    assert "close_at + timedelta(minutes=30)" in session_guard
+    assert "session guard warning: market calendar lookup failed; using weekday fallback" in session_guard
+    assert "SESSION_GUARD_DATE must use YYYY-MM-DD" in session_guard
+    assert 'hhmm="$(TZ=America/New_York date +%H%M)"' in session_guard
+    assert '"$hhmm" -ge 1630' in session_guard
+    assert '1) TZ=America/New_York date -d "3 days ago" +%F ;;' in session_guard
+    assert '6) TZ=America/New_York date -d "1 day ago" +%F ;;' in session_guard
+    assert '7) TZ=America/New_York date -d "2 days ago" +%F ;;' in session_guard
+    assert '*) TZ=America/New_York date -d "1 day ago" +%F ;;' in session_guard
     assert "session_eval_args+=(--fail-on-diagnostics)" in session_guard
     assert "scheduled check context: session_date=$SESSION_GUARD_DATE strategy=$SESSION_GUARD_STRATEGY" in session_guard
     assert "./scripts/broker_flat_check.sh" in session_guard
