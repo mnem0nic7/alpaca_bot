@@ -236,3 +236,38 @@ Decision: keep the deployed paper posture unchanged. The current commit still
 clears the exact live-universe 2 bps replay with positive after-cost edge, and
 the live proof stack is waiting on a completed 2026-06-29-or-later proof session
 rather than a configuration or exposure blocker.
+
+Current-head confirmation at commit `f743e93` rechecked the live paper universe
+against the latest-120-day replay directory before the proof window:
+
+- live active paper symbols: `980`
+- scenario files: `980`
+- live/scenario symbol diff: `0`
+- only enabled paper strategy: `bull_flag`
+- deployed posture: `RELATIVE_VOLUME_THRESHOLD=2.0`,
+  `MAX_OPEN_POSITIONS=3`, `ENABLE_VWAP_ENTRY_FILTER=true`,
+  `PAPER_PROOF_FREEZE=true`, `REPLAY_SLIPPAGE_BPS=2.0`
+
+The exact active-universe portfolio audit was rerun with the deployed proof
+posture and floor-sized equity:
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+python3 -m alpaca_bot.replay.cli portfolio-audit \
+  --scenario-dir /tmp/alpaca-active-120d-scenarios \
+  --strategy bull_flag \
+  --slippage-bps 2 \
+  --max-open-positions 3 \
+  --starting-equity 17247.795 \
+  --output /tmp/alpaca-bull-flag-120d-current-f743e93.md \
+  --jsonl /tmp/alpaca-bull-flag-120d-current-f743e93.jsonl
+```
+
+| scenarios | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(mean<=0) | frictionless P&L | cost drag | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---|
+| 980 | 417 | 74.8% | 1.75 | 1067.75 | 2.5605 | 5.83 | [1.1926, 3.8842] | 0.0000 | 1283.93 | 216.18 | positive-edge |
+
+Decision: keep the deployed paper posture unchanged for the 2026-06-29 proof
+start. The current head still clears the exact live-universe latest-120-day
+replay with positive after-cost edge, and the proof stack remains ready but
+pending a completed proof session.
