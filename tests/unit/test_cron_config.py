@@ -667,6 +667,8 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "reason=lock_busy_already_passed" in lock_skip
     assert "paper_readiness_session_date=" in lock_skip
     assert "paper_readiness_latest_status=" in lock_skip
+    assert "proof_start = settings.profit_probe_start_date.isoformat()" in lock_skip
+    assert "payload->>'proof_start' = %s" in lock_skip
     assert "paper_readiness)" in lock_skip
     assert "paper_activity)" in lock_skip
     assert "proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=${PAPER_ACTIVITY_STRATEGY" in lock_skip
@@ -701,6 +703,8 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES" in lock_skip
     assert "payload ? 'trading_mode'" in readiness_if_needed
     assert "payload ? 'strategy_version'" in readiness_if_needed
+    assert "proof_start = settings.profit_probe_start_date.isoformat()" in readiness_if_needed
+    assert "payload->>'proof_start' = %s" in readiness_if_needed
     assert "settings.trading_mode.value, settings.strategy_version" in readiness_if_needed
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES" in readiness_if_needed
     assert "PAPER_READINESS_FORCE_REFRESH" in readiness_if_needed

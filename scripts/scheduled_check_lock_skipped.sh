@@ -96,6 +96,7 @@ from alpaca_bot.storage.db import connect_postgres
 
 settings = Settings.from_env()
 session_date = os.environ["READINESS_SESSION_DATE"]
+proof_start = settings.profit_probe_start_date.isoformat()
 
 conn = connect_postgres(settings.database_url)
 try:
@@ -110,6 +111,7 @@ try:
             WHERE event_type = 'scheduled_check_completed'
               AND payload->>'check_name' = 'paper_readiness'
               AND payload->>'session_date' = %s
+              AND payload->>'proof_start' = %s
               AND payload->>'trading_mode' = %s
               AND payload->>'strategy_version' = %s
             ORDER BY created_at DESC, event_id DESC
@@ -117,6 +119,7 @@ try:
             """,
             (
                 session_date,
+                proof_start,
                 settings.trading_mode.value,
                 settings.strategy_version,
             ),
