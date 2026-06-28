@@ -216,6 +216,9 @@ case "$CHECK_NAME" in
   paper_profit_probe)
     echo "scheduled check context: session_date=$session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=${PROFIT_PROBE_STRATEGY:-bull_flag} min_trades=${PROFIT_PROBE_MIN_TRADES:-10} min_pnl=${PROFIT_PROBE_MIN_PNL:-0.01} reason=lock_busy"
     ;;
+  paper_proof_status)
+    echo "scheduled check context: session_date=$session_date proof_start=${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}} strategy=${PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}} min_trades=${PROOF_STATUS_MIN_TRADES:-${PROFIT_PROBE_MIN_TRADES:-10}} min_pnl=${PROOF_STATUS_MIN_PNL:-${PROFIT_PROBE_MIN_PNL:-0.01}} reason=lock_busy"
+    ;;
   *)
     echo "scheduled check context: session_date=$session_date reason=lock_busy"
     ;;

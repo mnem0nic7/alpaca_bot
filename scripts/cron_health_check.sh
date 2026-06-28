@@ -18,9 +18,33 @@ if [[ ! -f "$INSTALLED_CRON" ]]; then
   fail "missing installed cron file: $INSTALLED_CRON"
 fi
 
-if ! cmp -s "$EXPECTED_CRON" "$INSTALLED_CRON"; then
-  echo "cron health failed: installed cron differs from repo schedule" >&2
-  diff -u "$EXPECTED_CRON" "$INSTALLED_CRON" >&2 || true
+normalize_cron_for_required_drift() {
+  awk '
+    NF > 0 && $1 !~ /^#/ && $0 ~ /\/scripts\/paper_proof_status\.sh/ {
+      print $1, $2, $3, $4, $5, $6, "<paper_proof_status_command>"
+      next
+    }
+    { print }
+  ' "$1"
+}
+
+if ! cmp -s <(normalize_cron_for_required_drift "$EXPECTED_CRON") <(normalize_cron_for_required_drift "$INSTALLED_CRON"); then
+  echo "cron health failed: installed cron differs from repo required schedule" >&2
+  diff -u <(normalize_cron_for_required_drift "$EXPECTED_CRON") <(normalize_cron_for_required_drift "$INSTALLED_CRON") >&2 || true
+  exit 1
+fi
+
+expected_proof_status_line="$(grep -F '/scripts/paper_proof_status.sh' "$EXPECTED_CRON" | tail -n 1 || true)"
+installed_proof_status_line="$(grep -F '/scripts/paper_proof_status.sh' "$INSTALLED_CRON" | tail -n 1 || true)"
+if [[ -z "$expected_proof_status_line" ]]; then
+  fail "repo schedule is missing paper proof status cron command"
+fi
+if [[ "$installed_proof_status_line" != "$expected_proof_status_line" ]]; then
+  echo "cron health failed: installed paper proof status command differs from repo schedule" >&2
+  diff -u \
+    <(printf '%s\n' "$expected_proof_status_line") \
+    <(printf '%s\n' "$installed_proof_status_line") \
+    >&2 || true
   exit 1
 fi
 

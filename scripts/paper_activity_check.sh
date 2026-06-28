@@ -325,7 +325,15 @@ SELECT
         'done_for_day'
       )
   ), 0),
-  COUNT(*) FILTER (WHERE event_type = 'order_dispatch_failed')::int
+  COUNT(*) FILTER (WHERE event_type = 'order_dispatch_failed')::int,
+  COUNT(*) FILTER (
+    WHERE event_type IN (
+      'stream_heartbeat_stale',
+      'stream_restart_failed',
+      'trade_update_stream_failed',
+      'trade_update_failed'
+    )
+  )::int
 FROM recent;
 SQL
 )"
@@ -337,7 +345,7 @@ IFS='|' read -r supervisor_cycles disabled_cycles decision_cycles decision_recor
   strategy_decision_cycles strategy_decision_records legacy_decision_cycles \
   strategy_decision_log_cycles strategy_decision_log_records latest_decision_log \
   active_strategy_names disabled_reasons strategy_disabled_reasons \
-  stock_open_positions active_stock_orders dispatch_failures <<< "$stats"
+  stock_open_positions active_stock_orders dispatch_failures stream_issues <<< "$stats"
 
 strategy_evidence_cycles="${strategy_decision_cycles:-0}"
 if [[ "${strategy_decision_log_cycles:-0}" -gt "$strategy_evidence_cycles" ]]; then
@@ -401,6 +409,11 @@ if [[ "${dispatch_failures:-0}" -gt 0 ]]; then
   exit 1
 fi
 
+if [[ "${stream_issues:-0}" -gt 0 ]]; then
+  echo "paper activity failed: trade update stream issues in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes count=$stream_issues" >&2
+  exit 1
+fi
+
 if [[ "${decision_cycles:-0}" -eq 0 && "${strategy_evidence_cycles:-0}" -eq 0 ]]; then
   echo "paper activity failed: no decision cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes" >&2
   exit 1
@@ -428,4 +441,4 @@ if [[ "${strategy_evidence_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORD
   exit 1
 fi
 
-echo "paper activity ok: supervisor_cycles=$supervisor_cycles disabled_cycles=${disabled_cycles:-0} latest_cycle_entries_disabled=${latest_cycle_entries_disabled:-false} decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_blocked_cycles=${strategy_blocked_cycles:-0} latest_${PAPER_ACTIVITY_STRATEGY}_blocked=${latest_cycle_strategy_blocked:-false} dispatch_failures=${dispatch_failures:-0} ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source require_decision_log=${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
+echo "paper activity ok: supervisor_cycles=$supervisor_cycles disabled_cycles=${disabled_cycles:-0} latest_cycle_entries_disabled=${latest_cycle_entries_disabled:-false} decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_blocked_cycles=${strategy_blocked_cycles:-0} latest_${PAPER_ACTIVITY_STRATEGY}_blocked=${latest_cycle_strategy_blocked:-false} dispatch_failures=${dispatch_failures:-0} stream_issues=${stream_issues:-0} ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source require_decision_log=${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"

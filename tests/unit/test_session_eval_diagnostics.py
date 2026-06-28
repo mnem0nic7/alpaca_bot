@@ -282,6 +282,13 @@ def test_build_session_diagnostics_cycle_errors(monkeypatch):
     assert any("since" in call for call in call_log)
     assert all(call["trading_mode"] is TradingMode.PAPER for call in call_log)
     assert all(call["strategy_version"] == "v1" for call in call_log)
+    stream_calls = [
+        call
+        for call in call_log
+        if "trade_update_stream_failed" in call.get("event_types", [])
+    ]
+    assert stream_calls
+    assert "trade_update_failed" in stream_calls[0]["event_types"]
 
 
 def test_build_session_diagnostics_open_positions(monkeypatch):

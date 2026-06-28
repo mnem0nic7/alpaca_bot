@@ -411,7 +411,12 @@ def _build_session_diagnostics(
         ),
         failed_entries=failed_entries,
         stream_issues=audit_store.list_by_event_types(
-            event_types=["stream_heartbeat_stale", "stream_restart_failed", "trade_update_stream_failed"],
+            event_types=[
+                "stream_heartbeat_stale",
+                "stream_restart_failed",
+                "trade_update_stream_failed",
+                "trade_update_failed",
+            ],
             since=session_start,
             until=session_end,
             limit=100,

@@ -8,6 +8,7 @@ PROOF_STATUS_MIN_PNL="${PROOF_STATUS_MIN_PNL:-${PROFIT_PROBE_MIN_PNL:-0.01}}"
 PROOF_STATUS_START_DATE="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"
 PROOF_STATUS_END_DATE="${PROOF_STATUS_END_DATE:-}"
 PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT="${PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT:-./scripts/runtime_image_health_check.sh}"
+PROOF_STATUS_FAIL_ON_ISSUES="${PROOF_STATUS_FAIL_ON_ISSUES:-false}"
 
 cd "$(dirname "$0")/.."
 
@@ -63,6 +64,13 @@ if [[ ! "$PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" =~ ^[0-9]+$ || "$PROOF_ST
   echo "PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES must be a positive integer" >&2
   exit 1
 fi
+case "${PROOF_STATUS_FAIL_ON_ISSUES,,}" in
+  true|false) ;;
+  *)
+    echo "PROOF_STATUS_FAIL_ON_ISSUES must be true or false" >&2
+    exit 1
+    ;;
+esac
 
 export COMPOSE_ANSI="${COMPOSE_ANSI:-never}"
 export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-quiet}"
@@ -101,6 +109,7 @@ if ! runtime_image_health_detail="$("$PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT" 
 fi
 runtime_image_health_detail="$(compact_check_detail "$runtime_image_health_detail")"
 
+echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) proof_start=$PROOF_STATUS_START_DATE strategy=$PROOF_STATUS_STRATEGY min_trades=$PROOF_STATUS_MIN_TRADES min_pnl=$PROOF_STATUS_MIN_PNL"
 echo "paper proof status context: proof_start=$PROOF_STATUS_START_DATE mode=$trading_mode strategy_version=$STRATEGY_VERSION strategy=$PROOF_STATUS_STRATEGY min_trades=$PROOF_STATUS_MIN_TRADES min_pnl=$PROOF_STATUS_MIN_PNL"
 echo "paper proof trading status:"
 "${compose[@]}" run -T --rm admin \
@@ -126,6 +135,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_OPS_HEALTH_DETAIL="$ops_health_detail" \
   -e PROOF_STATUS_RUNTIME_IMAGE_HEALTH_STATUS="$runtime_image_health_status" \
   -e PROOF_STATUS_RUNTIME_IMAGE_HEALTH_DETAIL="$runtime_image_health_detail" \
+  -e PROOF_STATUS_FAIL_ON_ISSUES="$PROOF_STATUS_FAIL_ON_ISSUES" \
   --entrypoint python admin <<'PY'
 from __future__ import annotations
 
@@ -246,6 +256,7 @@ stream_start_grace_seconds = int(os.environ["PROOF_STATUS_STREAM_START_GRACE_SEC
 readiness_max_pass_age_minutes = int(
     os.environ["PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES"]
 )
+fail_on_issues = os.environ.get("PROOF_STATUS_FAIL_ON_ISSUES", "false").lower() == "true"
 cron_health_status = os.environ.get("PROOF_STATUS_CRON_HEALTH_STATUS", "unknown")
 cron_health_detail = os.environ.get("PROOF_STATUS_CRON_HEALTH_DETAIL", "").strip()
 ops_health_status = os.environ.get("PROOF_STATUS_OPS_HEALTH_STATUS", "unknown")
@@ -448,6 +459,7 @@ try:
                 'trade_update_stream_started',
                 'trade_update_stream_stopped',
                 'trade_update_stream_failed',
+                'trade_update_failed',
                 'stream_heartbeat_stale',
                 'stream_restart_failed'
               )
@@ -624,6 +636,7 @@ if latest_stream_started_at is None:
 stream_issue_status_by_event_type = {
     "trade_update_stream_failed": "failed",
     "trade_update_stream_stopped": "stopped",
+    "trade_update_failed": "trade_update_failed",
     "stream_heartbeat_stale": "heartbeat_stale",
     "stream_restart_failed": "restart_failed",
 }
@@ -1050,4 +1063,8 @@ print(
     f"first_exit_session={first_exit_session or 'none'} "
     f"latest_exit_session={latest_exit_session or 'none'}"
 )
+if fail_on_issues and (
+    readiness_status != "ready" or blockers or proof_status == "failing"
+):
+    raise SystemExit(1)
 PY

@@ -38,7 +38,10 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     activity = "0 16,17 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1200"
     session_guard = "10 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1710"
     profit_probe = "20 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1720"
-    proof_status = "28 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1728"
+    proof_status = (
+        "28 21,22 * * 1-5 root PROOF_STATUS_FAIL_ON_ISSUES=true "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1728"
+    )
     nightly = "30 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1730"
 
     assert readiness in cron_text
@@ -68,7 +71,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(proof_status) < cron_text.index(nightly)
     assert cron_text.index(profit_probe) < cron_text.index(nightly)
     assert cron_text.count("scripts/run_if_ny_time.sh") == 13
-    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 11
+    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 12
     assert "flock -n /var/lock/alpaca-bot-nightly.lock" in cron_text
     assert "flock -n /var/lock/alpaca-bot-paper" not in cron_text
     assert "flock -n /var/lock/alpaca-bot-session-guard.lock" not in cron_text
@@ -98,6 +101,9 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "run_locked_check_with_audit.sh paper_profit_probe" in cron_text
     assert "/var/log/alpaca-bot-profit-probe.log" in cron_text
     assert "scripts/paper_proof_status.sh" in cron_text
+    assert "run_locked_check_with_audit.sh paper_proof_status" in cron_text
+    assert "/var/lock/alpaca-bot-proof-status.lock" in cron_text
+    assert "PROOF_STATUS_FAIL_ON_ISSUES=true" in cron_text
     assert "/var/log/alpaca-bot-proof-status.log" in cron_text
     assert "run_locked_check_with_audit.sh session_guard" in cron_text
     assert 'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"' in install_cron
@@ -117,7 +123,13 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert 'exec "$@"' in run_if_ny_time
     assert 'EXPECTED_CRON="$ROOT_DIR/deploy/cron.d/alpaca-bot"' in cron_health
     assert 'INSTALLED_CRON="${ALPACA_BOT_CRON_FILE:-/etc/cron.d/alpaca-bot}"' in cron_health
-    assert 'cmp -s "$EXPECTED_CRON" "$INSTALLED_CRON"' in cron_health
+    assert "normalize_cron_for_required_drift()" in cron_health
+    assert "<paper_proof_status_command>" in cron_health
+    assert "installed cron differs from repo required schedule" in cron_health
+    assert 'cmp -s <(normalize_cron_for_required_drift "$EXPECTED_CRON")' in cron_health
+    assert "expected_proof_status_line=" in cron_health
+    assert "installed_proof_status_line=" in cron_health
+    assert "installed paper proof status command differs from repo schedule" in cron_health
     assert 'while read -r cron_user log_file' in cron_health
     assert 'user = $6' in cron_health
     assert '"$cron_user" != "root"' in cron_health
@@ -661,6 +673,9 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "session_guard)" in lock_skip
     assert "proof_start=${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}} strategy=${SESSION_GUARD_STRATEGY" in lock_skip
     assert "paper_profit_probe)" in lock_skip
+    assert "paper_proof_status)" in lock_skip
+    assert "PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}" in lock_skip
+    assert "PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}" in lock_skip
     assert "exit 48" in lock_skip
     assert "payload ? 'trading_mode'" in lock_skip
     assert "payload ? 'strategy_version'" in lock_skip
@@ -966,6 +981,12 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "order_dispatch_failed" in script
     assert "dispatch_failures" in script
     assert "paper activity failed: order_dispatch_failed events" in script
+    assert "stream_heartbeat_stale" in script
+    assert "stream_restart_failed" in script
+    assert "trade_update_stream_failed" in script
+    assert "trade_update_failed" in script
+    assert "stream_issues" in script
+    assert "paper activity failed: trade update stream issues" in script
     assert "stock_open_positions" in script
     assert "active_stock_orders" in script
     assert "has_stock_exposure" in script
@@ -1039,7 +1060,7 @@ def test_paper_activity_allows_low_record_count_when_stock_exposure_exists(tmp_p
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|bull_flag|||3|0|0\\n'\n"
+        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|bull_flag|||3|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1061,6 +1082,7 @@ def test_paper_activity_allows_low_record_count_when_stock_exposure_exists(tmp_p
     assert "stock_open_positions=3" in result.stdout
     assert "active_stock_orders=0" in result.stdout
     assert "dispatch_failures=0" in result.stdout
+    assert "stream_issues=0" in result.stdout
     assert not docker_marker.exists()
 
 
@@ -1098,7 +1120,7 @@ def test_paper_activity_allows_recovered_disabled_cycles(tmp_path: Path) -> None
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '12|4|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|4|8|7840|0|8|7840|2026-06-29 14:15:00+00|bull_flag|paper_readiness_check_missing:4|paper_readiness_check_missing:4|0|0|0\\n'\n"
+        "printf '12|4|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|4|8|7840|0|8|7840|2026-06-29 14:15:00+00|bull_flag|paper_readiness_check_missing:4|paper_readiness_check_missing:4|0|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1120,6 +1142,7 @@ def test_paper_activity_allows_recovered_disabled_cycles(tmp_path: Path) -> None
     assert "latest_cycle_entries_disabled=false" in result.stdout
     assert "bull_flag_decision_log_records=7840" in result.stdout
     assert "dispatch_failures=0" in result.stdout
+    assert "stream_issues=0" in result.stdout
     assert not docker_marker.exists()
 
 
@@ -1157,7 +1180,7 @@ def test_paper_activity_fails_on_recent_dispatch_failures(tmp_path: Path) -> Non
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|bull_flag|||0|0|2\\n'\n"
+        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|bull_flag|||0|0|2|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1175,6 +1198,62 @@ def test_paper_activity_fails_on_recent_dispatch_failures(tmp_path: Path) -> Non
 
     assert result.returncode == 1
     assert "order_dispatch_failed events" in result.stderr
+    assert "count=2" in result.stderr
+    assert not docker_marker.exists()
+
+
+def test_paper_activity_fails_on_recent_stream_issues(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    docker_marker = tmp_path / "docker_close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin close-only'; then\n"
+        f"  touch {docker_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|bull_flag|||0|0|0|2\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE": "false",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "trade update stream issues" in result.stderr
     assert "count=2" in result.stderr
     assert not docker_marker.exists()
 
@@ -1213,7 +1292,7 @@ def test_paper_activity_diagnostic_failure_does_not_apply_close_only(tmp_path: P
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '0|0|0|0|0||false||false|||0|0|0|0|0|0||bull_flag|||0|0|0\\n'\n"
+        "printf '0|0|0|0|0||false||false|||0|0|0|0|0|0||bull_flag|||0|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1606,6 +1685,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "reason={proof_reason}" in script
     assert "blockers={','.join(blockers) if blockers else 'none'}" in script
     assert "warnings={','.join(warnings) if warnings else 'none'}" in script
+    assert "scheduled check context: session_date=$(TZ=America/New_York date +%F)" in script
+    assert "PROOF_STATUS_FAIL_ON_ISSUES" in script
+    assert "PROOF_STATUS_FAIL_ON_ISSUES must be true or false" in script
+    assert "-e PROOF_STATUS_FAIL_ON_ISSUES=\"$PROOF_STATUS_FAIL_ON_ISSUES\"" in script
     assert "./scripts/cron_health_check.sh 2>&1" in script
     assert "PROOF_STATUS_CRON_HEALTH_STATUS" in script
     assert "PROOF_STATUS_CRON_HEALTH_DETAIL" in script
@@ -1650,10 +1733,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "'trade_update_stream_started'" in script
     assert "'trade_update_stream_stopped'" in script
     assert "'trade_update_stream_failed'" in script
+    assert "'trade_update_failed'" in script
     assert "'stream_heartbeat_stale'" in script
     assert "'stream_restart_failed'" in script
     assert "latest_stream_started_at" in script
     assert "stream_issue_status_by_event_type" in script
+    assert '"trade_update_failed": "trade_update_failed"' in script
     assert '"stream_heartbeat_stale": "heartbeat_stale"' in script
     assert '"stream_restart_failed": "restart_failed"' in script
     assert "stream_status = \"missing\"" in script
@@ -1716,6 +1801,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "paper proof post-close audit:" in script
     assert "status={post_close_audit_status}" in script
     assert "target_session={post_close_target_session.isoformat() if post_close_target_session else 'none'}" in script
+    assert "fail_on_issues = os.environ.get(\"PROOF_STATUS_FAIL_ON_ISSUES\"" in script
+    assert "readiness_status != \"ready\" or blockers or proof_status == \"failing\"" in script
+    assert "raise SystemExit(1)" in script
     assert "due={str(post_close_due).lower()}" in script
     assert "session_guard={post_close_check_statuses['session_guard']}" in script
     assert "paper_profit_probe={post_close_check_statuses['paper_profit_probe']}" in script
