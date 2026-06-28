@@ -62,6 +62,29 @@ def test_run_audit_pools_and_computes_cost_drag():
     assert row.win_rate == 1.0
 
 
+def test_run_audit_reports_replay_phase_progress():
+    def fake_pooled(scenarios, settings, strategy_name):
+        per_trade = 10.0 if settings.replay_slippage_bps == 0.0 else 8.0
+        return [_trade(per_trade, day=d) for d in range(1, 7)]
+
+    progress = []
+
+    run_audit(
+        scenarios=["s1", "s2"],
+        settings=make_settings(),
+        strategies=["breakout"],
+        slippage_bps=5.0,
+        pooled_trades_fn=fake_pooled,
+        on_progress=progress.append,
+    )
+
+    assert progress == [
+        "breakout: costed replay complete (6 trades)",
+        "breakout: frictionless replay complete (6 trades)",
+        "breakout: 6 trades, verdict=positive-edge",
+    ]
+
+
 def test_run_audit_insufficient_data():
     def fake_pooled(scenarios, settings, strategy_name):
         return [_trade(1.0)] * 3
