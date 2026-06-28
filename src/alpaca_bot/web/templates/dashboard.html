@@ -310,6 +310,47 @@
         </div>
       </section>
 
+      {% if snapshot.latest_paper_proof_check %}
+      {% set proof_payload = snapshot.latest_paper_proof_check.payload %}
+      {% set proof_status = proof_payload.get("proof_status", "unknown") %}
+      {% set proof_readiness = proof_payload.get("proof_readiness", "unknown") %}
+      {% set proof_blockers = proof_payload.get("proof_blockers", "unknown") %}
+      <div class="panel" style="margin-bottom: 1rem;">
+        <h2>Paper Proof</h2>
+        <div class="status-grid">
+          <div>
+            <p class="eyebrow">Proof Status</p>
+            <p class="value"><span class="pill">{{ proof_status }}</span></p>
+          </div>
+          <div>
+            <p class="eyebrow">Readiness</p>
+            <p class="value {{ 'warn' if proof_readiness != 'ready' else '' }}">{{ proof_readiness }}</p>
+          </div>
+          <div>
+            <p class="eyebrow">Closed Trades</p>
+            <p class="value mono">{{ proof_payload.get("proof_closed_trades", "unknown") }}/{{ proof_payload.get("proof_required_trades", "?") }}</p>
+          </div>
+          <div>
+            <p class="eyebrow">Proof P&L</p>
+            <p class="value mono">{{ proof_payload.get("proof_pnl", "unknown") }} / {{ proof_payload.get("proof_required_pnl", "?") }}</p>
+          </div>
+          <div>
+            <p class="eyebrow">Reason</p>
+            <p class="value mono">{{ proof_payload.get("proof_reason", proof_payload.get("reason", "unknown")) }}</p>
+          </div>
+          <div>
+            <p class="eyebrow">Blockers</p>
+            <p class="value mono {{ 'warn' if proof_blockers != 'none' else '' }}">{{ proof_blockers }}</p>
+          </div>
+        </div>
+        <p class="muted mono" style="margin-top: 0.75rem;">
+          proof={{ proof_payload.get("proof_start", "unknown") }}
+          strategy={{ proof_payload.get("strategy", "unknown") }}
+          updated={{ format_timestamp(snapshot.latest_paper_proof_check.created_at) }}
+        </p>
+      </div>
+      {% endif %}
+
       {% if snapshot.scheduled_checks %}
       <div class="panel" style="margin-bottom: 1rem;">
         <h2>Scheduled Checks</h2>

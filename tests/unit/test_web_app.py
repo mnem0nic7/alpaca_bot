@@ -136,10 +136,33 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
         },
         created_at=now,
     )
+    proof_check = SimpleNamespace(
+        event_type="scheduled_check_completed",
+        symbol=None,
+        payload={
+            "check_name": "paper_proof_status",
+            "session_date": "2026-06-29",
+            "proof_start": "2026-06-29",
+            "strategy": "bull_flag",
+            "min_trades": "10",
+            "min_pnl": "0.01",
+            "status": "skipped",
+            "exit_code": 0,
+            "proof_status": "pending",
+            "proof_readiness": "ready",
+            "proof_reason": "awaiting_min_trades",
+            "proof_blockers": "none",
+            "proof_closed_trades": "3",
+            "proof_required_trades": "10",
+            "proof_pnl": "12.34",
+            "proof_required_pnl": "0.01",
+        },
+        created_at=now,
+    )
 
     def list_audit_by_event_types(**kwargs):
         if kwargs.get("event_types") == ["scheduled_check_completed"]:
-            return [scheduled_check]
+            return [proof_check, scheduled_check]
         return []
 
     app = create_app(
@@ -217,7 +240,9 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "AAPL" in response.text
     assert "supervisor_cycle" in response.text
     assert "Scheduled Checks" in response.text
+    assert "Paper Proof" in response.text
     assert "paper_profit_probe" in response.text
+    assert "paper_proof_status" in response.text
     assert "2026-06-29" in response.text
     assert "strategy=bull_flag" in response.text
     assert "proof=2026-06-29" in response.text
@@ -226,6 +251,12 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "blockers=none" in response.text
     assert "closed=3/10" in response.text
     assert "proof_pnl=12.34" in response.text
+    assert "Proof Status" in response.text
+    assert "Readiness" in response.text
+    assert "Closed Trades" in response.text
+    assert "Proof P&L" in response.text
+    assert "awaiting_min_trades" in response.text
+    assert "12.34 / 0.01" in response.text
     assert "trades&gt;=10" in response.text
     assert "pnl&gt;=0.01" in response.text
     assert "failed" in response.text

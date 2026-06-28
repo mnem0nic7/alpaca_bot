@@ -180,6 +180,7 @@ class DashboardSnapshot:
     worker_health: WorkerHealth
     strategy_flags: list[tuple[str, StrategyFlag | None]]
     scheduled_checks: list[AuditEvent] = dc_field(default_factory=list)
+    latest_paper_proof_check: AuditEvent | None = None
     strategy_entries_disabled: dict[str, bool] = dc_field(default_factory=dict)
     latest_prices: dict[str, float] = dc_field(default_factory=dict)
     realized_pnl: float | None = None
@@ -246,6 +247,15 @@ def load_dashboard_snapshot(
         )
         if callable(scheduled_check_loader)
         else []
+    )
+    latest_paper_proof_check = next(
+        (
+            event
+            for event in scheduled_checks
+            if event.payload.get("check_name") == "paper_proof_status"
+            and event.payload.get("proof_status")
+        ),
+        None,
     )
 
     flags_by_name = {
@@ -350,6 +360,7 @@ def load_dashboard_snapshot(
         ),
         recent_events=recent_events,
         scheduled_checks=scheduled_checks,
+        latest_paper_proof_check=latest_paper_proof_check,
         worker_health=_load_worker_health(
             audit_event_store=audit_event_store,
             recent_events=recent_events,

@@ -194,10 +194,31 @@ def test_load_dashboard_snapshot_loads_recent_scheduled_checks() -> None:
         "status": "failed",
         "exit_code": 46,
     }
+    proof_event = make_event(
+        "scheduled_check_completed",
+        datetime(2026, 6, 29, 21, 28, tzinfo=timezone.utc),
+    )
+    proof_event.payload = {
+        "check_name": "paper_proof_status",
+        "session_date": "2026-06-29",
+        "proof_start": "2026-06-29",
+        "strategy": "bull_flag",
+        "min_trades": "10",
+        "min_pnl": "0.01",
+        "status": "pending",
+        "exit_code": 43,
+        "proof_status": "pending",
+        "proof_readiness": "ready",
+        "proof_blockers": "none",
+        "proof_closed_trades": "3",
+        "proof_required_trades": "10",
+        "proof_pnl": "12.34",
+        "proof_required_pnl": "0.01",
+    }
 
     def recording_list_by_event_types(**kwargs: object) -> list:
         calls.append(kwargs)
-        return [check_event]
+        return [proof_event, check_event]
 
     snapshot = load_dashboard_snapshot(
         settings=make_settings(),
@@ -214,7 +235,8 @@ def test_load_dashboard_snapshot_loads_recent_scheduled_checks() -> None:
         strategy_flag_store=SimpleNamespace(list_all=lambda **_: []),
     )
 
-    assert snapshot.scheduled_checks == [check_event]
+    assert snapshot.scheduled_checks == [proof_event, check_event]
+    assert snapshot.latest_paper_proof_check == proof_event
     assert calls == [{
         "event_types": ["scheduled_check_completed"],
         "limit": 20,
