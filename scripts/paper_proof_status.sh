@@ -34,6 +34,8 @@ capture_env_overrides \
   PROOF_STATUS_FAIL_ON_ISSUES \
   PROOF_STATUS_MIN_WATCHLIST_SYMBOLS \
   PROOF_STATUS_MIN_CONFIDENCE_FLOOR \
+  PROOF_STATUS_REQUIRE_SCENARIOS \
+  PROOF_STATUS_SCENARIO_DIR \
   PROOF_STATUS_STREAM_START_GRACE_SECONDS \
   PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES
 
@@ -59,6 +61,8 @@ PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT="${PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SC
 PROOF_STATUS_FAIL_ON_ISSUES="${PROOF_STATUS_FAIL_ON_ISSUES:-false}"
 PROOF_STATUS_MIN_WATCHLIST_SYMBOLS="${PROOF_STATUS_MIN_WATCHLIST_SYMBOLS:-${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}}"
 PROOF_STATUS_MIN_CONFIDENCE_FLOOR="${PROOF_STATUS_MIN_CONFIDENCE_FLOOR:-${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}}"
+PROOF_STATUS_REQUIRE_SCENARIOS="${PROOF_STATUS_REQUIRE_SCENARIOS:-${PAPER_READINESS_REQUIRE_SCENARIOS:-true}}"
+PROOF_STATUS_SCENARIO_DIR="${PROOF_STATUS_SCENARIO_DIR:-${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}}"
 PROOF_STATUS_STREAM_START_GRACE_SECONDS="${PROOF_STATUS_STREAM_START_GRACE_SECONDS:-120}"
 PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES="${PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES:-${PAPER_READINESS_MAX_PASS_AGE_MINUTES:-180}}"
 
@@ -106,12 +110,23 @@ case "${PROOF_STATUS_FAIL_ON_ISSUES,,}" in
     exit 1
     ;;
 esac
+case "${PROOF_STATUS_REQUIRE_SCENARIOS,,}" in
+  true|false) ;;
+  *)
+    echo "PROOF_STATUS_REQUIRE_SCENARIOS must be true or false" >&2
+    exit 1
+    ;;
+esac
 
 export COMPOSE_ANSI="${COMPOSE_ANSI:-never}"
 export COMPOSE_PROGRESS="${COMPOSE_PROGRESS:-quiet}"
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 trading_mode="${TRADING_MODE:-paper}"
+scenario_volume_args=()
+if [[ "${PROOF_STATUS_REQUIRE_SCENARIOS,,}" == "true" && -d "$PROOF_STATUS_SCENARIO_DIR" ]]; then
+  scenario_volume_args=(-v "$PROOF_STATUS_SCENARIO_DIR:$PROOF_STATUS_SCENARIO_DIR:ro")
+fi
 
 compact_check_detail() {
   local detail
@@ -155,11 +170,14 @@ echo "paper proof trading status:"
 
 echo "paper proof evidence status:"
 "${compose[@]}" run -T --rm \
+  "${scenario_volume_args[@]}" \
   -e PROOF_STATUS_STRATEGY="$PROOF_STATUS_STRATEGY" \
   -e PROOF_STATUS_MIN_TRADES="$PROOF_STATUS_MIN_TRADES" \
   -e PROOF_STATUS_MIN_PNL="$PROOF_STATUS_MIN_PNL" \
   -e PROOF_STATUS_MIN_WATCHLIST_SYMBOLS="$PROOF_STATUS_MIN_WATCHLIST_SYMBOLS" \
   -e PROOF_STATUS_MIN_CONFIDENCE_FLOOR="$PROOF_STATUS_MIN_CONFIDENCE_FLOOR" \
+  -e PROOF_STATUS_REQUIRE_SCENARIOS="$PROOF_STATUS_REQUIRE_SCENARIOS" \
+  -e PROOF_STATUS_SCENARIO_DIR="$PROOF_STATUS_SCENARIO_DIR" \
   -e PROOF_STATUS_STREAM_START_GRACE_SECONDS="$PROOF_STATUS_STREAM_START_GRACE_SECONDS" \
   -e PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES="$PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" \
   -e PROOF_STATUS_START_DATE="$PROOF_STATUS_START_DATE" \
@@ -174,8 +192,10 @@ echo "paper proof evidence status:"
   --entrypoint python admin <<'PY'
 from __future__ import annotations
 
+import json
 import os
 from datetime import date, datetime, time, timedelta, timezone
+from pathlib import Path
 
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
@@ -195,6 +215,74 @@ def date_range(start: date, end: date):
     while current <= end:
         yield current
         current += timedelta(days=1)
+
+
+def parse_bar_date(raw: str) -> date:
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    return datetime.fromisoformat(raw).date()
+
+
+def format_problem_summary(problems: dict[str, list[str]]) -> str:
+    parts = []
+    for name, values in problems.items():
+        if values:
+            examples = ",".join(values[:10])
+            parts.append(f"{name}={len(values)} examples={examples}")
+    return ";".join(parts) if parts else "none"
+
+
+def load_scenario_coverage(
+    *,
+    symbols: list[str],
+    scenario_dir: Path,
+    expected_date: date,
+    require_scenarios: bool,
+) -> tuple[str, str]:
+    if not require_scenarios:
+        return "skipped", "disabled"
+    if not scenario_dir.is_dir():
+        return "missing", f"dir={scenario_dir}"
+
+    problems: dict[str, list[str]] = {
+        "missing": [],
+        "unreadable": [],
+        "empty_daily": [],
+        "empty_intraday": [],
+        "stale_daily": [],
+        "stale_intraday": [],
+    }
+    for symbol in symbols:
+        path = scenario_dir / f"{symbol}_252d.json"
+        if not path.exists():
+            problems["missing"].append(symbol)
+            continue
+        try:
+            payload = json.loads(path.read_text())
+            daily = payload.get("daily_bars") or []
+            intraday = payload.get("intraday_bars") or []
+            if not daily:
+                problems["empty_daily"].append(symbol)
+            else:
+                daily_max = max(parse_bar_date(str(bar["timestamp"])) for bar in daily)
+                if daily_max < expected_date:
+                    problems["stale_daily"].append(f"{symbol}:{daily_max.isoformat()}")
+            if not intraday:
+                problems["empty_intraday"].append(symbol)
+            else:
+                intraday_max = max(
+                    parse_bar_date(str(bar["timestamp"])) for bar in intraday
+                )
+                if intraday_max < expected_date:
+                    problems["stale_intraday"].append(
+                        f"{symbol}:{intraday_max.isoformat()}"
+                    )
+        except Exception as exc:
+            problems["unreadable"].append(f"{symbol}:{exc}")
+
+    if any(problems.values()):
+        return "failed", format_problem_summary(problems)
+    return "ok", "none"
 
 
 def load_latest_completed_session_date(settings: Settings) -> tuple[date | None, str | None]:
@@ -287,6 +375,8 @@ min_trades = int(os.environ["PROOF_STATUS_MIN_TRADES"])
 min_pnl = float(os.environ["PROOF_STATUS_MIN_PNL"])
 min_watchlist_symbols = int(os.environ["PROOF_STATUS_MIN_WATCHLIST_SYMBOLS"])
 min_confidence_floor = float(os.environ["PROOF_STATUS_MIN_CONFIDENCE_FLOOR"])
+require_scenarios = os.environ.get("PROOF_STATUS_REQUIRE_SCENARIOS", "true").lower() == "true"
+scenario_dir = Path(os.environ["PROOF_STATUS_SCENARIO_DIR"])
 stream_start_grace_seconds = int(os.environ["PROOF_STATUS_STREAM_START_GRACE_SECONDS"])
 readiness_max_pass_age_minutes = int(
     os.environ["PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES"]
@@ -402,7 +492,13 @@ try:
               COUNT(*) FILTER (WHERE enabled = TRUE)::int AS enabled_symbols,
               COUNT(*) FILTER (
                 WHERE enabled = TRUE AND COALESCE(ignored, FALSE) = TRUE
-              )::int AS ignored_symbols
+              )::int AS ignored_symbols,
+              COALESCE(
+                array_agg(symbol ORDER BY symbol) FILTER (
+                  WHERE enabled = TRUE AND COALESCE(ignored, FALSE) = FALSE
+                ),
+                ARRAY[]::text[]
+              ) AS active_symbol_names
             FROM symbol_watchlist
             WHERE trading_mode = %s
             """,
@@ -412,6 +508,7 @@ try:
         active_watchlist_symbols = int(watchlist_row[0] or 0) if watchlist_row else 0
         enabled_watchlist_symbols = int(watchlist_row[1] or 0) if watchlist_row else 0
         ignored_watchlist_symbols = int(watchlist_row[2] or 0) if watchlist_row else 0
+        active_watchlist_symbol_names = list(watchlist_row[3] or []) if watchlist_row else []
 
         cur.execute(
             """
@@ -642,6 +739,13 @@ try:
 finally:
     conn.close()
 
+scenario_expected_session = proof_end
+scenario_status, scenario_problem_summary = load_scenario_coverage(
+    symbols=active_watchlist_symbol_names,
+    scenario_dir=scenario_dir,
+    expected_date=scenario_expected_session,
+    require_scenarios=require_scenarios,
+)
 pnl = sum((trade["exit_fill"] - trade["entry_fill"]) * trade["qty"] for trade in trades)
 trade_count = len(trades)
 exit_sessions = [
@@ -917,6 +1021,8 @@ if strategy_status != "ok":
     blockers.append("strategy_disabled")
 if watchlist_status != "ok":
     blockers.append("watchlist_under_minimum")
+if scenario_status not in {"ok", "skipped"}:
+    blockers.append(f"scenario_evidence_{scenario_status}")
 if sizing_status != "ok":
     blockers.append("sizing_drifted")
 if posture_status != "ok":
@@ -1037,6 +1143,14 @@ print(
     f"enabled={enabled_watchlist_symbols} "
     f"ignored={ignored_watchlist_symbols} "
     f"required_active={min_watchlist_symbols}"
+)
+print(
+    "paper proof scenarios: "
+    f"status={scenario_status} "
+    f"active={len(active_watchlist_symbol_names)} "
+    f"expected_session={scenario_expected_session.isoformat()} "
+    f"dir={scenario_dir} "
+    f"problems={scenario_problem_summary}"
 )
 print(
     "paper proof sizing: "

@@ -1859,6 +1859,69 @@ def test_session_guard_uses_profit_probe_start_after_sourcing_env(tmp_path: Path
     assert "broker exposure ok: open_orders=0 open_positions=0" in result.stdout
 
 
+def test_session_guard_preserves_invocation_overrides_after_env_source(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "SESSION_GUARD_STRATEGY=env_flag",
+                "SESSION_GUARD_MIN_TRADES=not-an-int",
+                "SESSION_GUARD_FAIL_BELOW_PNL=not-a-number",
+                "SESSION_GUARD_FAIL_ON_DIAGNOSTICS=maybe",
+                "SESSION_GUARD_START_DATE=2026-07-06",
+                "SESSION_GUARD_DATE=2026-07-05",
+            ]
+        )
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "args=\"$*\"\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'BROKER_FLAT_CONTEXT'; then\n"
+        "  printf 'custom_flag session guard pending 2026-07-07 broker exposure ok: open_orders=0 open_positions=0\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf 'unexpected docker call: %s\\n' \"$args\" >&2\n"
+        "exit 99\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/session_guard.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "SESSION_GUARD_STRATEGY": "custom_flag",
+            "SESSION_GUARD_MIN_TRADES": "4",
+            "SESSION_GUARD_FAIL_BELOW_PNL": "-1.25",
+            "SESSION_GUARD_FAIL_ON_DIAGNOSTICS": "false",
+            "SESSION_GUARD_START_DATE": "2026-07-07",
+            "SESSION_GUARD_DATE": "2026-07-06",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+    assert (
+        "scheduled check context: session_date=2026-07-06 "
+        "proof_start=2026-07-07 strategy=custom_flag"
+    ) in result.stdout
+    assert (
+        "session guard pending: latest completed session 2026-07-06 "
+        "is before proof start 2026-07-07"
+    ) in result.stdout
+    assert "custom_flag session guard pending 2026-07-07" in result.stdout
+
+
 def test_paper_profit_probe_pending_before_proof_start_does_not_close_only(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     env_file.write_text(
@@ -1921,6 +1984,68 @@ def test_paper_profit_probe_pending_before_proof_start_does_not_close_only(tmp_p
     assert not session_eval_marker.exists()
     assert not funnel_marker.exists()
     assert not close_only_marker.exists()
+
+
+def test_paper_profit_probe_preserves_invocation_overrides_after_env_source(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_STRATEGY=env_flag",
+                "PROFIT_PROBE_MIN_TRADES=not-an-int",
+                "PROFIT_PROBE_MIN_PNL=not-a-number",
+                "PROFIT_PROBE_START_DATE=2026-07-06",
+                "PROFIT_PROBE_FAIL_ON_DIAGNOSTICS=maybe",
+                "PROFIT_PROBE_DATE=2026-07-05",
+            ]
+        )
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "args=\"$*\"\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'BROKER_FLAT_CONTEXT'; then\n"
+        "  printf 'custom_flag paper proof pending 2026-07-07 broker exposure ok: open_orders=0 open_positions=0\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf 'unexpected docker call: %s\\n' \"$args\" >&2\n"
+        "exit 99\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_profit_probe.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PROFIT_PROBE_STRATEGY": "custom_flag",
+            "PROFIT_PROBE_MIN_TRADES": "12",
+            "PROFIT_PROBE_MIN_PNL": "2.34",
+            "PROFIT_PROBE_START_DATE": "2026-07-07",
+            "PROFIT_PROBE_FAIL_ON_DIAGNOSTICS": "false",
+            "PROFIT_PROBE_DATE": "2026-07-06",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+    assert (
+        "scheduled check context: session_date=2026-07-06 "
+        "proof_start=2026-07-07 strategy=custom_flag min_trades=12 min_pnl=2.34"
+    ) in result.stdout
+    assert (
+        "paper profit probe pending: latest completed session 2026-07-06 "
+        "is before proof start 2026-07-07"
+    ) in result.stdout
+    assert "custom_flag paper proof pending 2026-07-07" in result.stdout
 
 
 def test_paper_profit_probe_insufficient_trades_after_start_stays_pending(
@@ -2138,6 +2263,14 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_MIN_CONFIDENCE_FLOOR" in script
     assert "PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25" in script
     assert "PROOF_STATUS_MIN_CONFIDENCE_FLOOR must be a non-negative number" in script
+    assert "PROOF_STATUS_REQUIRE_SCENARIOS" in script
+    assert "PAPER_READINESS_REQUIRE_SCENARIOS:-true" in script
+    assert "PROOF_STATUS_REQUIRE_SCENARIOS must be true or false" in script
+    assert "PROOF_STATUS_SCENARIO_DIR" in script
+    assert "PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios" in script
+    assert 'scenario_volume_args=(-v "$PROOF_STATUS_SCENARIO_DIR:$PROOF_STATUS_SCENARIO_DIR:ro")' in script
+    assert "-e PROOF_STATUS_REQUIRE_SCENARIOS=\"$PROOF_STATUS_REQUIRE_SCENARIOS\"" in script
+    assert "-e PROOF_STATUS_SCENARIO_DIR=\"$PROOF_STATUS_SCENARIO_DIR\"" in script
     assert "PROOF_STATUS_STREAM_START_GRACE_SECONDS" in script
     assert "PROOF_STATUS_STREAM_START_GRACE_SECONDS must be a non-negative integer" in script
     assert "PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" in script
@@ -2259,8 +2392,18 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "sizing_drifted" in script
     assert "symbol_watchlist" in script
     assert "active_watchlist_symbols" in script
+    assert "active_symbol_names" in script
+    assert "active_watchlist_symbol_names" in script
     assert "watchlist_status = (" in script
     assert "active_watchlist_symbols >= min_watchlist_symbols" in script
+    assert "load_scenario_coverage" in script
+    assert 'scenario_dir / f"{symbol}_252d.json"' in script
+    assert "scenario_expected_session = proof_end" in script
+    assert "blockers.append(f\"scenario_evidence_{scenario_status}\")" in script
+    assert "paper proof scenarios:" in script
+    assert "status={scenario_status}" in script
+    assert "expected_session={scenario_expected_session.isoformat()}" in script
+    assert "problems={scenario_problem_summary}" in script
     assert "paper proof watchlist:" in script
     assert "status={watchlist_status}" in script
     assert "active={active_watchlist_symbols}" in script
@@ -2369,6 +2512,11 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "--fail-on-open-positions" in profit_probe
     assert 'if [[ ! -f "$ENV_FILE" ]]' in session_guard
     assert "missing env file: $ENV_FILE" in session_guard
+    assert "capture_env_overrides" in session_guard
+    assert "restore_env_overrides" in session_guard
+    assert session_guard.index('source "$ENV_FILE"') < session_guard.index("\nrestore_env_overrides\n")
+    assert "SESSION_GUARD_DATE" in session_guard
+    assert "SESSION_GUARD_FAIL_ON_DIAGNOSTICS \\" in session_guard
     assert 'SESSION_GUARD_FAIL_ON_DIAGNOSTICS="${SESSION_GUARD_FAIL_ON_DIAGNOSTICS:-true}"' in session_guard
     assert 'SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"' in session_guard
     assert session_guard.index('source "$ENV_FILE"') < session_guard.index(
@@ -2404,6 +2552,11 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "broker exposure remains after close" in profit_probe
     assert "broker_flat_failed=true\n  rc=44" in session_guard
     assert "broker_flat_failed=true\n  rc=44" in profit_probe
+    assert "capture_env_overrides" in profit_probe
+    assert "restore_env_overrides" in profit_probe
+    assert profit_probe.index('source "$ENV_FILE"') < profit_probe.index("\nrestore_env_overrides\n")
+    assert "PROFIT_PROBE_DATE" in profit_probe
+    assert "PROFIT_PROBE_FAIL_ON_DIAGNOSTICS \\" in profit_probe
     assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"' in profit_probe
     assert profit_probe.index('source "$ENV_FILE"') < profit_probe.index(
         'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"'

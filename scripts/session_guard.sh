@@ -3,6 +3,35 @@ set -uo pipefail
 
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 
+_preserved_env_names=()
+_preserved_env_values=()
+
+capture_env_overrides() {
+  local name
+  for name in "$@"; do
+    if [[ -n "${!name+x}" ]]; then
+      _preserved_env_names+=("$name")
+      _preserved_env_values+=("${!name}")
+    fi
+  done
+}
+
+restore_env_overrides() {
+  local index
+  for index in "${!_preserved_env_names[@]}"; do
+    printf -v "${_preserved_env_names[$index]}" '%s' "${_preserved_env_values[$index]}"
+    export "${_preserved_env_names[$index]}"
+  done
+}
+
+capture_env_overrides \
+  SESSION_GUARD_STRATEGY \
+  SESSION_GUARD_MIN_TRADES \
+  SESSION_GUARD_FAIL_BELOW_PNL \
+  SESSION_GUARD_FAIL_ON_DIAGNOSTICS \
+  SESSION_GUARD_START_DATE \
+  SESSION_GUARD_DATE
+
 cd "$(dirname "$0")/.."
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -14,6 +43,7 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+restore_env_overrides
 
 SESSION_GUARD_STRATEGY="${SESSION_GUARD_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
 SESSION_GUARD_MIN_TRADES="${SESSION_GUARD_MIN_TRADES:-10}"
