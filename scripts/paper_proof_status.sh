@@ -321,6 +321,49 @@ posture_status = (
     )
     else "drifted"
 )
+blockers = []
+if strategy_status != "ok":
+    blockers.append("strategy_disabled")
+if posture_status != "ok":
+    blockers.append("posture_drifted")
+if local_open_positions > 0:
+    blockers.append("local_open_positions")
+if local_active_orders > 0:
+    blockers.append("local_active_orders")
+if broker_exposure_warning:
+    blockers.append("broker_exposure_unknown")
+else:
+    if broker_open_orders and broker_open_orders > 0:
+        blockers.append("broker_open_orders")
+    if broker_open_positions and broker_open_positions > 0:
+        blockers.append("broker_open_positions")
+    if broker_account_status != "ok":
+        blockers.append("broker_account_blocked")
+
+warnings = []
+if calendar_warning:
+    warnings.append("calendar_warning")
+
+readiness_status = "blocked" if blockers else "ready"
+if proof_status == "passed":
+    proof_reason = "profit_proven"
+elif proof_status == "failing":
+    proof_reason = "pnl_below_minimum"
+elif proof_not_started:
+    proof_reason = "awaiting_completed_proof_session"
+elif trade_count < min_trades:
+    proof_reason = "awaiting_min_trades"
+else:
+    proof_reason = "awaiting_positive_pnl"
+
+print(
+    "paper proof summary: "
+    f"readiness={readiness_status} "
+    f"proof={proof_status} "
+    f"reason={proof_reason} "
+    f"blockers={','.join(blockers) if blockers else 'none'} "
+    f"warnings={','.join(warnings) if warnings else 'none'}"
+)
 
 print(f"paper proof active strategies: {active_strategies or 'none'}")
 print(

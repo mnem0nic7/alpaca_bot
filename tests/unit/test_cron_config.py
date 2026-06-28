@@ -1074,6 +1074,18 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "latest_completed_session=" in script
     assert "current_market_date=" in script
     assert "scoring_end_date=" in script
+    assert "paper proof summary:" in script
+    assert "readiness={readiness_status}" in script
+    assert "proof={proof_status}" in script
+    assert "reason={proof_reason}" in script
+    assert "blockers={','.join(blockers) if blockers else 'none'}" in script
+    assert "warnings={','.join(warnings) if warnings else 'none'}" in script
+    assert "strategy_disabled" in script
+    assert "posture_drifted" in script
+    assert "broker_account_blocked" in script
+    assert "awaiting_completed_proof_session" in script
+    assert "awaiting_min_trades" in script
+    assert "profit_proven" in script
     assert "paper proof strategy status:" in script
     assert "status={strategy_status} target={strategy_name}" in script
     assert "paper proof posture:" in script
