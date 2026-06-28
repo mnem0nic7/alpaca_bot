@@ -162,7 +162,9 @@ def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -
     assert "paper readiness check skipped" not in result.stdout
 
 
-def test_paper_readiness_force_refresh_reruns_after_recent_pass(tmp_path: Path) -> None:
+def test_paper_readiness_force_refresh_reruns_after_recent_pass_without_age(
+    tmp_path: Path,
+) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     env_file.write_text(
         "\n".join(
@@ -296,7 +298,9 @@ def test_paper_readiness_final_retry_reruns_after_old_pass(tmp_path: Path) -> No
     assert "paper readiness already passed for session 2026-06-29" not in result.stdout
 
 
-def test_paper_readiness_force_refresh_reruns_after_recent_pass(tmp_path: Path) -> None:
+def test_paper_readiness_force_refresh_reruns_after_recent_pass_with_age(
+    tmp_path: Path,
+) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     env_file.write_text(
         "\n".join(
