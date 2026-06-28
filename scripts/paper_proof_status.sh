@@ -1209,6 +1209,11 @@ posture_status = (
         and bool(settings.enable_vwap_entry_filter)
         and not bool(settings.enable_vix_filter)
         and not bool(settings.enable_sector_filter)
+        and not bool(settings.enable_regime_filter)
+        and not bool(settings.enable_news_filter)
+        and not bool(settings.enable_spread_filter)
+        and not bool(settings.enable_options_trading)
+        and not bool(settings.option_chain_symbols)
         and not bool(settings.extended_hours_enabled)
         and bool(settings.paper_proof_freeze)
         and int(settings.intraday_consecutive_loss_gate) == 0
@@ -1401,6 +1406,11 @@ print(
     f"vwap_filter={str(settings.enable_vwap_entry_filter).lower()} "
     f"vix_filter={str(settings.enable_vix_filter).lower()} "
     f"sector_filter={str(settings.enable_sector_filter).lower()} "
+    f"regime_filter={str(settings.enable_regime_filter).lower()} "
+    f"news_filter={str(settings.enable_news_filter).lower()} "
+    f"spread_filter={str(settings.enable_spread_filter).lower()} "
+    f"options_trading={str(settings.enable_options_trading).lower()} "
+    f"option_chain_symbols={','.join(settings.option_chain_symbols) if settings.option_chain_symbols else 'none'} "
     f"extended_hours={str(settings.extended_hours_enabled).lower()} "
     f"paper_proof_freeze={str(settings.paper_proof_freeze).lower()} "
     f"intraday_consecutive_loss_gate={settings.intraday_consecutive_loss_gate}"

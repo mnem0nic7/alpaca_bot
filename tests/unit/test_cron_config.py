@@ -2620,9 +2620,19 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "bool(settings.enable_vwap_entry_filter)" in script
     assert "not bool(settings.enable_vix_filter)" in script
     assert "not bool(settings.enable_sector_filter)" in script
+    assert "not bool(settings.enable_regime_filter)" in script
+    assert "not bool(settings.enable_news_filter)" in script
+    assert "not bool(settings.enable_spread_filter)" in script
+    assert "not bool(settings.enable_options_trading)" in script
+    assert "not bool(settings.option_chain_symbols)" in script
     assert "not bool(settings.extended_hours_enabled)" in script
     assert "bool(settings.paper_proof_freeze)" in script
     assert "int(settings.intraday_consecutive_loss_gate) == 0" in script
+    assert "regime_filter={str(settings.enable_regime_filter).lower()}" in script
+    assert "news_filter={str(settings.enable_news_filter).lower()}" in script
+    assert "spread_filter={str(settings.enable_spread_filter).lower()}" in script
+    assert "options_trading={str(settings.enable_options_trading).lower()}" in script
+    assert "option_chain_symbols={','.join(settings.option_chain_symbols) if settings.option_chain_symbols else 'none'}" in script
     assert "paper proof local exposure:" in script
     assert "positions={local_open_positions} active_orders={local_active_orders}" in script
     assert "paper proof option exposure:" in script
