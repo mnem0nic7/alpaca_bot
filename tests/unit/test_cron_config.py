@@ -1109,6 +1109,65 @@ def test_paper_activity_allows_recovered_disabled_cycles(tmp_path: Path) -> None
     assert not docker_marker.exists()
 
 
+def test_paper_activity_diagnostic_failure_does_not_apply_close_only(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    docker_marker = tmp_path / "docker_close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin close-only'; then\n"
+        f"  touch {docker_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "printf '0|0|0|0|0||false||false|||0|0|0|0|0|0||bull_flag|||0|0\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE": "false",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "paper activity failed: no supervisor cycles" in result.stderr
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 strategy=bull_flag"
+    ) in result.stdout
+    assert not docker_marker.exists()
+
+
 def test_paper_activity_readiness_lock_busy_is_pending_without_close_only(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     env_file.write_text(
@@ -1303,6 +1362,12 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     fake_bin.mkdir()
     docker_calls = tmp_path / "docker_calls"
     mutating_marker = tmp_path / "mutating_call"
+    fake_runtime_health = tmp_path / "runtime_image_health_check.sh"
+    fake_runtime_health.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'runtime image health ok: service=web files=14\\n'\n"
+    )
+    fake_runtime_health.chmod(0o755)
     fake_docker = fake_bin / "docker"
     fake_docker.write_text(
         "#!/usr/bin/env bash\n"
@@ -1327,7 +1392,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "  printf 'paper proof active strategies: bull_flag\\n'\n"
         "  printf 'paper proof watchlist: status=ok active=980 enabled=986 ignored=6 required_active=900\\n'\n"
         "  printf 'paper proof sizing: status=ok confidence_floor=0.25 manual_baseline=0.25 set_by=operator required_floor=0.25 weight_status=ok active_weights=[bull_flag] stored_weights=[bull_flag] weight_sum=1 target_weight=1.0 target_sharpe=0.0\\n'\n"
-        "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh\\n'\n"
+        "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh image_status=ok image_detail=runtime image health ok: service=web files=14\\n'\n"
         "  printf 'paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00 latest_event=trade_update_stream_started:2026-06-29T12:59:59+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00 grace_seconds=120\\n'\n"
         "  printf 'paper proof readiness audit: status=ok target_session=2026-06-29 check_status=passed created_at=2026-06-29T13:20:00+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00\\n'\n"
         "  printf 'paper proof post-close audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 17:25 America/New_York session_guard=passed:0:2026-06-29T21:10:00+00:00 paper_profit_probe=pending:43:2026-06-29T21:20:00+00:00\\n'\n"
@@ -1346,6 +1411,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         env={
             "PATH": f"{fake_bin}:/usr/bin:/bin",
             "PROOF_STATUS_END_DATE": "2026-06-29",
+            "PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT": str(fake_runtime_health),
         },
         text=True,
         capture_output=True,
@@ -1361,6 +1427,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     assert "paper proof watchlist: status=ok active=980 enabled=986 ignored=6 required_active=900" in result.stdout
     assert "paper proof sizing: status=ok confidence_floor=0.25" in result.stdout
     assert "paper proof runtime: ops_status=ok" in result.stdout
+    assert "image_status=ok" in result.stdout
     assert "paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00" in result.stdout
     assert "paper proof readiness audit: status=ok target_session=2026-06-29" in result.stdout
     assert "paper proof post-close audit: status=ok target_session=2026-06-29" in result.stdout
@@ -1410,8 +1477,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "./scripts/ops_check.sh \"$ENV_FILE\" 2>&1" in script
     assert "PROOF_STATUS_OPS_HEALTH_STATUS" in script
     assert "PROOF_STATUS_OPS_HEALTH_DETAIL" in script
+    assert "PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT" in script
+    assert "runtime_image_health_check.sh" in script
+    assert "PROOF_STATUS_RUNTIME_IMAGE_HEALTH_STATUS" in script
+    assert "PROOF_STATUS_RUNTIME_IMAGE_HEALTH_DETAIL" in script
     assert "cron_health_failed" in script
     assert "ops_health_failed" in script
+    assert "runtime_image_health_failed" in script
     assert "compact_check_detail()" in script
     assert "paper proof automation:" in script
     assert "cron_status={cron_health_status}" in script
@@ -1419,6 +1491,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "paper proof runtime:" in script
     assert "ops_status={ops_health_status}" in script
     assert "ops_detail={ops_health_detail or 'none'}" in script
+    assert "image_status={runtime_image_health_status}" in script
+    assert "image_detail={runtime_image_health_detail or 'none'}" in script
     assert "readiness_target_session = next_market_session or current_market_date" in script
     assert "if readiness_target_session < proof_start" in script
     assert "event_type = 'supervisor_started'" in script
@@ -1558,6 +1632,24 @@ def test_paper_proof_checks_count_nonterminal_order_statuses_as_active() -> None
             "done_for_day",
         ):
             assert f"'{status}'" in script
+
+
+def test_runtime_image_health_check_compares_deployed_package_to_workspace() -> None:
+    script = Path("scripts/runtime_image_health_check.sh").read_text()
+
+    assert "RUNTIME_IMAGE_HEALTH_SERVICE" in script
+    assert "RUNTIME_IMAGE_HEALTH_FILES" in script
+    assert "runtime/supervisor.py" in script
+    assert "core/engine.py" in script
+    assert "strategy/bull_flag.py" in script
+    assert "storage/repositories.py" in script
+    assert 'local_path="src/alpaca_bot/$rel"' in script
+    assert "import alpaca_bot" in script
+    assert "Path(alpaca_bot.__file__).resolve().parent" in script
+    assert "hashlib.sha256(path.read_bytes()).hexdigest()" in script
+    assert 'diff -u "$host_hashes" "$image_hashes"' in script
+    assert "runtime image health ok:" in script
+    assert "deployed package differs from workspace" in script
 
 
 def test_post_close_checks_fail_on_open_positions() -> None:

@@ -7,6 +7,7 @@ PROOF_STATUS_MIN_TRADES="${PROOF_STATUS_MIN_TRADES:-${PROFIT_PROBE_MIN_TRADES:-1
 PROOF_STATUS_MIN_PNL="${PROOF_STATUS_MIN_PNL:-${PROFIT_PROBE_MIN_PNL:-0.01}}"
 PROOF_STATUS_START_DATE="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"
 PROOF_STATUS_END_DATE="${PROOF_STATUS_END_DATE:-}"
+PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT="${PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT:-./scripts/runtime_image_health_check.sh}"
 
 cd "$(dirname "$0")/.."
 
@@ -88,6 +89,12 @@ if ! ops_health_detail="$(./scripts/ops_check.sh "$ENV_FILE" 2>&1)"; then
 fi
 ops_health_detail="$(compact_check_detail "$ops_health_detail")"
 
+runtime_image_health_status="ok"
+if ! runtime_image_health_detail="$("$PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT" "$ENV_FILE" 2>&1)"; then
+  runtime_image_health_status="failed"
+fi
+runtime_image_health_detail="$(compact_check_detail "$runtime_image_health_detail")"
+
 echo "paper proof status context: proof_start=$PROOF_STATUS_START_DATE mode=$trading_mode strategy_version=$STRATEGY_VERSION strategy=$PROOF_STATUS_STRATEGY min_trades=$PROOF_STATUS_MIN_TRADES min_pnl=$PROOF_STATUS_MIN_PNL"
 echo "paper proof trading status:"
 "${compose[@]}" run -T --rm admin \
@@ -111,6 +118,8 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_CRON_HEALTH_DETAIL="$cron_health_detail" \
   -e PROOF_STATUS_OPS_HEALTH_STATUS="$ops_health_status" \
   -e PROOF_STATUS_OPS_HEALTH_DETAIL="$ops_health_detail" \
+  -e PROOF_STATUS_RUNTIME_IMAGE_HEALTH_STATUS="$runtime_image_health_status" \
+  -e PROOF_STATUS_RUNTIME_IMAGE_HEALTH_DETAIL="$runtime_image_health_detail" \
   --entrypoint python admin <<'PY'
 from __future__ import annotations
 
@@ -235,6 +244,12 @@ cron_health_status = os.environ.get("PROOF_STATUS_CRON_HEALTH_STATUS", "unknown"
 cron_health_detail = os.environ.get("PROOF_STATUS_CRON_HEALTH_DETAIL", "").strip()
 ops_health_status = os.environ.get("PROOF_STATUS_OPS_HEALTH_STATUS", "unknown")
 ops_health_detail = os.environ.get("PROOF_STATUS_OPS_HEALTH_DETAIL", "").strip()
+runtime_image_health_status = os.environ.get(
+    "PROOF_STATUS_RUNTIME_IMAGE_HEALTH_STATUS", "unknown"
+)
+runtime_image_health_detail = os.environ.get(
+    "PROOF_STATUS_RUNTIME_IMAGE_HEALTH_DETAIL", ""
+).strip()
 proof_start = parse_date(os.environ["PROOF_STATUS_START_DATE"], name="PROOF_STATUS_START_DATE")
 end_value = os.environ.get("PROOF_STATUS_END_DATE", "")
 current_market_datetime = datetime.now(settings.market_timezone)
@@ -763,6 +778,8 @@ if cron_health_status != "ok":
     blockers.append("cron_health_failed")
 if ops_health_status != "ok":
     blockers.append("ops_health_failed")
+if runtime_image_health_status != "ok":
+    blockers.append("runtime_image_health_failed")
 if stream_status != "ok":
     blockers.append(f"stream_{stream_status}")
 if readiness_audit_status != "ok":
@@ -818,7 +835,9 @@ print(
 print(
     "paper proof runtime: "
     f"ops_status={ops_health_status} "
-    f"ops_detail={ops_health_detail or 'none'}"
+    f"ops_detail={ops_health_detail or 'none'} "
+    f"image_status={runtime_image_health_status} "
+    f"image_detail={runtime_image_health_detail or 'none'}"
 )
 print(
     "paper proof stream: "
