@@ -2256,6 +2256,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     )
     assert "load_latest_completed_session_date" in script
     assert "load_next_market_session_date" in script
+    assert "load_previous_market_session_date" in script
     assert "AlpacaExecutionAdapter.from_settings" in script
     assert "get_market_calendar" in script
     assert "close_at + timedelta(minutes=30)" in script
@@ -2419,8 +2420,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "format_problem_summary" in script
     assert "re.sub(r\"[^A-Za-z0-9_.:+/-]\", \"_\", value)" in script
     assert 'parts.append(f"{name}:{len(values)}:{examples}")' in script
-    assert 'scenario_dir / f"{symbol}_252d.json"' in script
     assert "scenario_expected_session = proof_end" in script
+    assert "not end_value" in script
+    assert "latest_completed_session >= current_market_date" in script
+    assert "before_date=current_market_date" in script
+    assert "scenario_expected_session = previous_session" in script
+    assert 'scenario_dir / f"{symbol}_252d.json"' in script
     assert "blockers.append(f\"scenario_evidence_{scenario_status}\")" in script
     assert "paper proof scenarios:" in script
     assert "status={scenario_status}" in script

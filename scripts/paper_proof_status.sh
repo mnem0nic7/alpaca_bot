@@ -330,6 +330,27 @@ def load_next_market_session_date(settings: Settings) -> tuple[date | None, str 
     return min(upcoming), None
 
 
+def load_previous_market_session_date(
+    settings: Settings, *, before_date: date
+) -> tuple[date | None, str | None]:
+    try:
+        calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+            start=before_date - timedelta(days=14),
+            end=before_date - timedelta(days=1),
+        )
+    except Exception as exc:
+        return None, str(exc)
+
+    previous = [
+        session.session_date
+        for session in calendar
+        if session.session_date < before_date
+    ]
+    if not previous:
+        return None, f"no market session found before {before_date.isoformat()}"
+    return max(previous), None
+
+
 def load_broker_exposure(
     settings: Settings,
 ) -> tuple[
@@ -425,6 +446,23 @@ proof_end = (
     if end_value
     else latest_completed_session or current_market_date
 )
+scenario_expected_session = proof_end
+if (
+    not end_value
+    and latest_completed_session is not None
+    and latest_completed_session >= current_market_date
+):
+    previous_session, previous_session_warning = load_previous_market_session_date(
+        settings, before_date=current_market_date
+    )
+    if previous_session is not None:
+        scenario_expected_session = previous_session
+    elif previous_session_warning:
+        calendar_warning = (
+            f"{calendar_warning}; {previous_session_warning}"
+            if calendar_warning
+            else previous_session_warning
+        )
 post_close_target_session = proof_end if proof_end >= proof_start else None
 activity_target_session = None
 if current_market_date >= proof_start and (
@@ -742,7 +780,6 @@ try:
 finally:
     conn.close()
 
-scenario_expected_session = proof_end
 scenario_status, scenario_problem_summary = load_scenario_coverage(
     symbols=active_watchlist_symbol_names,
     scenario_dir=scenario_dir,
