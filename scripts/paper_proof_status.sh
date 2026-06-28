@@ -1398,15 +1398,15 @@ if post_close_target_session is not None:
         profit_probe_parts = post_close_check_statuses["paper_profit_probe"].split(":")
         profit_probe_status = profit_probe_parts[0]
         profit_probe_exit_code = profit_probe_parts[1] if len(profit_probe_parts) > 1 else ""
-        if session_guard_status != "missing" and not (
-            session_guard_status == "passed"
-            or (session_guard_status == "pending" and session_guard_exit_code == "43")
-        ):
+        session_guard_acceptable = session_guard_status == "passed" or (
+            session_guard_status == "pending" and session_guard_exit_code == "43"
+        )
+        profit_probe_acceptable = profit_probe_status == "passed" or (
+            profit_probe_status == "pending" and profit_probe_exit_code == "43"
+        )
+        if session_guard_status != "missing" and not session_guard_acceptable:
             failed_checks.append("session_guard")
-        if profit_probe_status != "missing" and not (
-            profit_probe_status == "passed"
-            or (profit_probe_status == "pending" and profit_probe_exit_code == "43")
-        ):
+        if profit_probe_status != "missing" and not profit_probe_acceptable:
             failed_checks.append("paper_profit_probe")
         if missing_checks:
             post_close_audit_status = "missing"
@@ -1415,7 +1415,7 @@ if post_close_target_session is not None:
         else:
             post_close_audit_status = "ok"
             post_close_pass_evidence_ready = (
-                session_guard_status == "passed" and profit_probe_status == "passed"
+                session_guard_acceptable and profit_probe_status == "passed"
             )
 proof_not_started = proof_end < proof_start
 profitable_enough = trade_count >= min_trades and pnl >= min_pnl

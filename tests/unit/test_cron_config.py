@@ -3535,7 +3535,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "session_guard_status == \"pending\" and session_guard_exit_code == \"43\""
         in script
     )
-    assert "session_guard_status == \"passed\" and profit_probe_status == \"passed\"" in script
+    assert "session_guard_acceptable = session_guard_status == \"passed\"" in script
+    assert "profit_probe_acceptable = profit_probe_status == \"passed\"" in script
+    assert "if session_guard_status != \"missing\" and not session_guard_acceptable" in script
+    assert "if profit_probe_status != \"missing\" and not profit_probe_acceptable" in script
+    assert "session_guard_acceptable and profit_probe_status == \"passed\"" in script
+    assert "session_guard_status == \"passed\" and profit_probe_status == \"passed\"" not in script
     assert "profitable_enough = trade_count >= min_trades and pnl >= min_pnl" in script
     assert "trade_pnl_rows = [" in script
     assert "wins = sum(1 for _, trade_pnl in trade_pnl_rows if trade_pnl > 0)" in script
