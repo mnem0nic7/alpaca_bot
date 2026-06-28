@@ -2527,6 +2527,41 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "latest_market_date" not in script
 
 
+def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
+    script = Path("scripts/paper_decision_dry_run.sh").read_text()
+
+    assert 'PAPER_DECISION_DRY_RUN_STRATEGY="${PAPER_DECISION_DRY_RUN_STRATEGY:-bull_flag}"' in script
+    assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-false}"' in script
+    assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_DECISION_DRY_RUN_MIN_RECORDS:-1}"' in script
+    assert "PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED must be true or false" in script
+    assert "PAPER_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in script
+    assert "PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS must be a positive integer" in script
+    assert "connect_postgres(settings.database_url)" in script
+    assert "WatchlistStore(conn)" in script
+    assert "StrategyFlagStore(conn)" in script
+    assert "list_enabled(settings.trading_mode.value)" in script
+    assert "list_ignored(settings.trading_mode.value)" in script
+    assert "active_symbols = tuple(symbol for symbol in enabled_symbols if symbol not in ignored_symbols)" in script
+    assert "AlpacaExecutionAdapter.from_settings(settings)" in script
+    assert "AlpacaMarketDataAdapter.from_settings(settings)" in script
+    assert "get_fractionable_symbols(active_symbols)" in script
+    assert "replace(settings, fractionable_symbols=fractionable_symbols)" in script
+    assert "get_stock_bars(" in script
+    assert "get_daily_bars(" in script
+    assert "evaluate_cycle(" in script
+    assert "signal_evaluator=STRATEGY_REGISTRY[strategy_name]" in script
+    assert "open_positions=()" in script
+    assert "working_order_symbols=set()" in script
+    assert "traded_symbols_today=set()" in script
+    assert "session_type=SessionType.REGULAR" in script
+    assert "paper decision dry run ok:" in script
+    assert "decision_records={len(records)}" in script
+    assert "accepted={len(accepted)}" in script
+    assert "submit_order" not in script
+    assert "bulk_insert" not in script
+    assert ".save(" not in script
+
+
 def test_paper_proof_checks_count_nonterminal_order_statuses_as_active() -> None:
     scripts = [
         Path("scripts/paper_readiness_check.sh").read_text(),

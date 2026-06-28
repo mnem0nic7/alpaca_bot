@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
+
+cd "$(dirname "$0")/.."
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "missing env file: $ENV_FILE" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+PAPER_DECISION_DRY_RUN_STRATEGY="${PAPER_DECISION_DRY_RUN_STRATEGY:-bull_flag}"
+PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-false}"
+PAPER_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_DECISION_DRY_RUN_MIN_RECORDS:-1}"
+PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS="${PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS:-5}"
+PAPER_DECISION_DRY_RUN_SAMPLE_TIME="${PAPER_DECISION_DRY_RUN_SAMPLE_TIME:-15:30}"
+PAPER_DECISION_DRY_RUN_AS_OF="${PAPER_DECISION_DRY_RUN_AS_OF:-}"
+PAPER_DECISION_DRY_RUN_SESSION_DATE="${PAPER_DECISION_DRY_RUN_SESSION_DATE:-}"
+PAPER_DECISION_DRY_RUN_EQUITY="${PAPER_DECISION_DRY_RUN_EQUITY:-}"
+
+if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
+  echo "paper decision dry run skipped for TRADING_MODE=${TRADING_MODE:-unset}"
+  exit 0
+fi
+
+case "${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED,,}" in
+  true|false) ;;
+  *)
+    echo "PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED must be true or false" >&2
+    exit 1
+    ;;
+esac
+
+if ! [[ "$PAPER_DECISION_DRY_RUN_MIN_RECORDS" =~ ^[0-9]+$ ]]; then
+  echo "PAPER_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" >&2
+  exit 1
+fi
+
+if ! [[ "$PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS must be a positive integer" >&2
+  exit 1
+fi
+
+compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
+
+"${compose[@]}" run -T --rm \
+  -e PAPER_DECISION_DRY_RUN_STRATEGY="$PAPER_DECISION_DRY_RUN_STRATEGY" \
+  -e PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED" \
+  -e PAPER_DECISION_DRY_RUN_MIN_RECORDS="$PAPER_DECISION_DRY_RUN_MIN_RECORDS" \
+  -e PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS="$PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS" \
+  -e PAPER_DECISION_DRY_RUN_SAMPLE_TIME="$PAPER_DECISION_DRY_RUN_SAMPLE_TIME" \
+  -e PAPER_DECISION_DRY_RUN_AS_OF="$PAPER_DECISION_DRY_RUN_AS_OF" \
+  -e PAPER_DECISION_DRY_RUN_SESSION_DATE="$PAPER_DECISION_DRY_RUN_SESSION_DATE" \
+  -e PAPER_DECISION_DRY_RUN_EQUITY="$PAPER_DECISION_DRY_RUN_EQUITY" \
+  --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+import os
+import sys
+from dataclasses import replace
+from datetime import date, datetime, time, timedelta, timezone
+
+from alpaca_bot.config import Settings
+from alpaca_bot.core.engine import CycleIntentType, evaluate_cycle
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter, AlpacaMarketDataAdapter
+from alpaca_bot.storage.db import connect_postgres
+from alpaca_bot.storage.repositories import StrategyFlagStore, WatchlistStore
+from alpaca_bot.strategy import STRATEGY_REGISTRY
+from alpaca_bot.strategy.session import SessionType
+
+
+def _parse_bool(name: str) -> bool:
+    value = (os.environ.get(name) or "").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    print(f"{name} must be true or false", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def _parse_sample_time(value: str) -> time:
+    try:
+        hour_s, minute_s = value.split(":", 1)
+        return time(hour=int(hour_s), minute=int(minute_s))
+    except Exception:
+        print("PAPER_DECISION_DRY_RUN_SAMPLE_TIME must use HH:MM", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def _parse_session_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        print("PAPER_DECISION_DRY_RUN_SESSION_DATE must use YYYY-MM-DD", file=sys.stderr)
+        raise SystemExit(1)
+
+
+def _parse_as_of(settings: Settings, value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        print("PAPER_DECISION_DRY_RUN_AS_OF must be an ISO datetime", file=sys.stderr)
+        raise SystemExit(1)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=settings.market_timezone)
+    return parsed.astimezone(settings.market_timezone)
+
+
+def _latest_completed_session_date(
+    *,
+    broker: AlpacaExecutionAdapter,
+    settings: Settings,
+) -> date:
+    today = datetime.now(settings.market_timezone).date()
+    calendar = broker.get_market_calendar(start=today - timedelta(days=14), end=today)
+    previous_sessions = [day.session_date for day in calendar if day.session_date < today]
+    if previous_sessions:
+        return max(previous_sessions)
+    sessions = [day.session_date for day in calendar if day.session_date <= today]
+    if sessions:
+        return max(sessions)
+    print("paper decision dry run failed: no completed market session found", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def _resolve_as_of(
+    *,
+    broker: AlpacaExecutionAdapter,
+    settings: Settings,
+) -> datetime:
+    as_of_env = (os.environ.get("PAPER_DECISION_DRY_RUN_AS_OF") or "").strip()
+    if as_of_env:
+        return _parse_as_of(settings, as_of_env)
+
+    session_env = (os.environ.get("PAPER_DECISION_DRY_RUN_SESSION_DATE") or "").strip()
+    session_date = (
+        _parse_session_date(session_env)
+        if session_env
+        else _latest_completed_session_date(broker=broker, settings=settings)
+    )
+    sample_time = _parse_sample_time(os.environ.get("PAPER_DECISION_DRY_RUN_SAMPLE_TIME", "15:30"))
+    return datetime.combine(session_date, sample_time, tzinfo=settings.market_timezone)
+
+
+def _completed_intraday_bars_by_symbol(
+    bars_by_symbol,
+    *,
+    timestamp: datetime,
+    timeframe_minutes: int,
+):
+    cutoff = timestamp.astimezone(timezone.utc)
+    timeframe = timedelta(minutes=timeframe_minutes)
+    completed = {}
+    for symbol, bars in bars_by_symbol.items():
+        symbol_completed = []
+        for bar in bars:
+            bar_ts = (
+                bar.timestamp.replace(tzinfo=timezone.utc)
+                if bar.timestamp.tzinfo is None
+                else bar.timestamp.astimezone(timezone.utc)
+            )
+            if bar_ts + timeframe <= cutoff:
+                symbol_completed.append(bar)
+        completed[symbol] = symbol_completed
+    return completed
+
+
+settings = Settings.from_env()
+strategy_name = os.environ.get("PAPER_DECISION_DRY_RUN_STRATEGY", "bull_flag")
+if strategy_name not in STRATEGY_REGISTRY:
+    print(f"paper decision dry run failed: unknown strategy={strategy_name}", file=sys.stderr)
+    raise SystemExit(1)
+
+min_records = int(os.environ.get("PAPER_DECISION_DRY_RUN_MIN_RECORDS", "1"))
+lookback_days = int(os.environ.get("PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS", "5"))
+require_accepted = _parse_bool("PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED")
+
+conn = connect_postgres(settings.database_url)
+try:
+    watchlist_store = WatchlistStore(conn)
+    strategy_flag_store = StrategyFlagStore(conn)
+    enabled_symbols = tuple(watchlist_store.list_enabled(settings.trading_mode.value))
+    ignored_symbols = set(watchlist_store.list_ignored(settings.trading_mode.value))
+    active_symbols = tuple(symbol for symbol in enabled_symbols if symbol not in ignored_symbols)
+    strategy_flag = strategy_flag_store.load(
+        strategy_name=strategy_name,
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+    )
+finally:
+    conn.close()
+
+if strategy_flag is not None and not strategy_flag.enabled:
+    print(f"paper decision dry run failed: strategy disabled: {strategy_name}", file=sys.stderr)
+    raise SystemExit(1)
+
+if not active_symbols:
+    print("paper decision dry run failed: active watchlist is empty", file=sys.stderr)
+    raise SystemExit(1)
+
+broker = AlpacaExecutionAdapter.from_settings(settings)
+market_data = AlpacaMarketDataAdapter.from_settings(settings)
+as_of = _resolve_as_of(broker=broker, settings=settings)
+account = broker.get_account()
+equity_env = (os.environ.get("PAPER_DECISION_DRY_RUN_EQUITY") or "").strip()
+equity = float(equity_env) if equity_env else account.equity
+fractionable_symbols = broker.get_fractionable_symbols(active_symbols)
+settings = replace(settings, fractionable_symbols=fractionable_symbols)
+
+daily_end = datetime.combine(
+    as_of.astimezone(settings.market_timezone).date(),
+    datetime.min.time(),
+    tzinfo=settings.market_timezone,
+)
+daily_start = as_of - timedelta(
+    days=max(
+        settings.daily_sma_period * 3,
+        60,
+        settings.high_watermark_lookback_days + 10,
+    )
+)
+intraday_bars = market_data.get_stock_bars(
+    symbols=list(active_symbols),
+    start=as_of - timedelta(days=lookback_days),
+    end=as_of,
+    timeframe_minutes=settings.entry_timeframe_minutes,
+)
+completed_intraday_bars = _completed_intraday_bars_by_symbol(
+    intraday_bars,
+    timestamp=as_of,
+    timeframe_minutes=settings.entry_timeframe_minutes,
+)
+daily_bars = market_data.get_daily_bars(
+    symbols=list(active_symbols),
+    start=daily_start,
+    end=daily_end,
+)
+regime_bars = None
+if settings.enable_regime_filter:
+    if settings.regime_symbol in daily_bars:
+        regime_bars = daily_bars.get(settings.regime_symbol)
+    else:
+        regime_daily = market_data.get_daily_bars(
+            symbols=[settings.regime_symbol],
+            start=as_of - timedelta(days=max(settings.regime_sma_period * 3, 60)),
+            end=daily_end,
+        )
+        regime_bars = regime_daily.get(settings.regime_symbol)
+
+result = evaluate_cycle(
+    settings=settings,
+    now=as_of,
+    equity=equity,
+    intraday_bars_by_symbol=completed_intraday_bars,
+    daily_bars_by_symbol=daily_bars,
+    open_positions=(),
+    working_order_symbols=set(),
+    traded_symbols_today=set(),
+    entries_disabled=False,
+    signal_evaluator=STRATEGY_REGISTRY[strategy_name],
+    strategy_name=strategy_name,
+    global_open_count=0,
+    symbols=active_symbols,
+    session_type=SessionType.REGULAR,
+    regime_bars=regime_bars,
+)
+
+records = tuple(result.decision_records)
+accepted = [record for record in records if record.decision == "accepted"]
+rejected = [record for record in records if record.decision == "rejected"]
+skipped_no_signal = [record for record in records if record.decision == "skipped_no_signal"]
+entry_intents = [
+    intent for intent in result.intents if intent.intent_type == CycleIntentType.ENTRY
+]
+
+if len(records) < min_records:
+    print(
+        "paper decision dry run failed: "
+        f"decision_records={len(records)} below min_records={min_records}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+if require_accepted and not accepted:
+    print(
+        "paper decision dry run failed: "
+        f"accepted=0 require_accepted=true decision_records={len(records)}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+sample = "none"
+if accepted:
+    first = accepted[0]
+    sample = f"{first.symbol}:{first.quantity}@{first.limit_price}"
+
+intraday_covered = sum(1 for symbol in active_symbols if intraday_bars.get(symbol))
+completed_covered = sum(1 for symbol in active_symbols if completed_intraday_bars.get(symbol))
+daily_covered = sum(1 for symbol in active_symbols if daily_bars.get(symbol))
+thin_completed = sum(
+    1
+    for symbol in active_symbols
+    if len(completed_intraday_bars.get(symbol, ())) < settings.relative_volume_lookback_bars
+)
+
+print(
+    "paper decision dry run ok: "
+    f"strategy={strategy_name} "
+    f"as_of={as_of.isoformat()} "
+    f"active={len(active_symbols)} "
+    f"ignored={len(ignored_symbols)} "
+    f"fractionable={len(fractionable_symbols)} "
+    f"intraday={intraday_covered}/{len(active_symbols)} "
+    f"completed_intraday={completed_covered}/{len(active_symbols)} "
+    f"daily={daily_covered}/{len(active_symbols)} "
+    f"thin_completed_lt{settings.relative_volume_lookback_bars}={thin_completed} "
+    f"decision_records={len(records)} "
+    f"accepted={len(accepted)} "
+    f"rejected={len(rejected)} "
+    f"skipped_no_signal={len(skipped_no_signal)} "
+    f"entry_intents={len(entry_intents)} "
+    f"equity={equity:.2f} "
+    f"sample={sample}"
+)
+PY
