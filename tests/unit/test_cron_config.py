@@ -3021,7 +3021,11 @@ def test_runtime_image_health_check_compares_deployed_package_to_workspace() -> 
     assert "runtime/supervisor.py" in script
     assert "nightly/cli.py" in script
     assert "core/engine.py" in script
+    assert "storage/models.py" in script
     assert "strategy/bull_flag.py" in script
+    assert "strategy/__init__.py" in script
+    assert "strategy/breakout.py" in script
+    assert "strategy/session.py" in script
     assert "storage/repositories.py" in script
     assert "web/templates/dashboard.html" in script
     assert 'local_path="src/alpaca_bot/$rel"' in script

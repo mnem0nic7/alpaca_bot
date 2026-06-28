@@ -4,7 +4,7 @@ set -euo pipefail
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 RUNTIME_IMAGE_HEALTH_SERVICE="${RUNTIME_IMAGE_HEALTH_SERVICE:-web}"
 RUNTIME_IMAGE_HEALTH_SERVICES="${RUNTIME_IMAGE_HEALTH_SERVICES:-$RUNTIME_IMAGE_HEALTH_SERVICE:supervisor}"
-RUNTIME_IMAGE_HEALTH_FILES="${RUNTIME_IMAGE_HEALTH_FILES:-config/__init__.py:core/engine.py:domain/enums.py:domain/models.py:execution/alpaca.py:nightly/cli.py:risk/sizing.py:runtime/cycle.py:runtime/cycle_intent_execution.py:runtime/order_dispatch.py:runtime/supervisor.py:runtime/trade_update_stream.py:runtime/trade_updates.py:storage/repositories.py:strategy/bull_flag.py:web/templates/dashboard.html}"
+RUNTIME_IMAGE_HEALTH_FILES="${RUNTIME_IMAGE_HEALTH_FILES:-config/__init__.py:core/engine.py:domain/enums.py:domain/models.py:execution/alpaca.py:nightly/cli.py:risk/sizing.py:runtime/cycle.py:runtime/cycle_intent_execution.py:runtime/order_dispatch.py:runtime/supervisor.py:runtime/trade_update_stream.py:runtime/trade_updates.py:storage/models.py:storage/repositories.py:strategy/__init__.py:strategy/breakout.py:strategy/bull_flag.py:strategy/session.py:web/templates/dashboard.html}"
 
 cd "$(dirname "$0")/.."
 
