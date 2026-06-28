@@ -92,3 +92,35 @@ Decision: restore the paper proof posture to
 universe shows lower total P&L, lower profit factor, lower Sharpe, and weaker
 bootstrap CI. The stricter threshold still produced enough historical portfolio
 activity for proof throughput while preserving the strongest edge.
+
+## Actual Proof-Pass Horizon
+
+The live paper proof gate is cumulative from `PROFIT_PROBE_START_DATE`: it does
+not fail permanently when the first 10 closed trades are negative. It can pass
+later after more closed trades if cumulative P&L recovers above `$0.01`.
+
+To match that behavior, the full active scenario universe was replayed again
+with the deployed posture (`RELATIVE_VOLUME_THRESHOLD=2.0`,
+`MAX_OPEN_POSITIONS=3`, 2 bps/side slippage), then every historical session was
+treated as a possible proof start.
+
+| metric | value |
+|---|---:|
+| historical starts checked | 269 |
+| starts that eventually reached proof gate | 264 |
+| starts not proven by data end | 5 |
+| eventual pass rate | 98.14% |
+| first-10-trade pass rate | 60.30% |
+| first-10 failures that later recovered | 103 |
+| median sessions to proof pass | 3 |
+| p90 sessions to proof pass | 15 |
+| p95 sessions to proof pass | 22 |
+| slowest observed pass | 46 sessions |
+
+The only starts not proven by data end were the final sessions in the replay
+sample (`2026-06-22` through `2026-06-26`), where future recovery data is not
+available. Decision: keep the deployed posture unchanged. The first-10-trade
+window is useful as a stress view, but the cumulative proof horizon better
+matches live proof semantics and supports waiting for post-`2026-06-29` paper
+evidence rather than loosening entries, raising exposure, or truncating the
+entry window.
