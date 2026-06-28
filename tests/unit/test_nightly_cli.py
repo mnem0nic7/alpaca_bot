@@ -180,6 +180,59 @@ def test_nightly_cli_excludes_ignored_watchlist_symbols(monkeypatch, tmp_path):
     assert seen_symbols == ["AAPL", "MSFT"]
 
 
+def test_nightly_cli_evolves_only_active_watchlist_scenarios(monkeypatch, tmp_path):
+    """Leftover ignored-symbol scenario files must not influence nightly sweeps."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    (tmp_path / "HEIA_252d.json").write_text(json.dumps({
+        "name": "HEIA_252d", "symbol": "HEIA",
+        "starting_equity": 100000.0, "daily_bars": [], "intraday_bars": [],
+    }))
+    monkeypatch.setattr(module, "connect_postgres", lambda url: object())
+
+    class FakeWatchlistStore:
+        def __init__(self, conn): pass
+        def list_enabled(self, trading_mode): return ["AAPL", "MSFT", "HEIA"]
+        def list_ignored(self, trading_mode): return ["HEIA"]
+
+    monkeypatch.setattr(module, "WatchlistStore", FakeWatchlistStore)
+
+    class FakeOrderStore:
+        def __init__(self, conn): pass
+        def list_closed_trades(self, **kw): return []
+
+    monkeypatch.setattr(module, "OrderStore", FakeOrderStore)
+
+    class FakeDailySessionStateStore:
+        def __init__(self, conn): pass
+        def load(self, **kw): return None
+
+    monkeypatch.setattr(module, "DailySessionStateStore", FakeDailySessionStateStore)
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    swept_symbols: list[str] = []
+
+    def fake_sweep(**kw):
+        swept_symbols.extend(s.symbol for s in kw["scenarios"])
+        return [TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)]
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [None])
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db", "--output-dir", str(tmp_path),
+        "--strategies", "breakout",
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert swept_symbols == ["AAPL", "MSFT"]
+
+
 def test_nightly_cli_no_held_candidates_continues_to_live_report(monkeypatch, tmp_path):
     """No OOS-held candidates → exit 0 (not 1), live report still runs."""
     from alpaca_bot.nightly import cli as module

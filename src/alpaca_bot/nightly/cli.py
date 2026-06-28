@@ -128,11 +128,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         # ── Evolve ───────────────────────────────────────────────────────────
         if symbols:
             print("\n── Evolve ───────────────────────────────────────────────────────────")
-            files = sorted(output_dir.glob("*.json"))
+            files, missing_scenario_symbols = _scenario_files_for_symbols(
+                output_dir, symbols
+            )
+            if missing_scenario_symbols:
+                examples = ", ".join(missing_scenario_symbols[:20])
+                examples_suffix = f" ({examples})" if examples else ""
+                print(
+                    f"Error: missing active-symbol scenario files in {output_dir}: "
+                    f"{len(missing_scenario_symbols)} missing{examples_suffix}. "
+                    "Run without --dry-run or refresh scenario files.",
+                    file=sys.stderr,
+                )
+                return 1
             if len(files) < 2:
                 print(
-                    f"Error: need at least 2 scenario files in {output_dir}; "
-                    f"found {len(files)}. Run without --dry-run or add scenario files.",
+                    f"Error: need at least 2 active-symbol scenario files in {output_dir}; "
+                    f"found {len(files)} for {len(symbols)} active symbols. "
+                    "Run without --dry-run or refresh scenario files.",
                     file=sys.stderr,
                 )
                 return 1
@@ -350,6 +363,22 @@ def _weekdays_back(n: int) -> list[date]:
             result.append(d)
         d -= timedelta(days=1)
     return result
+
+
+def _scenario_files_for_symbols(
+    output_dir: Path, symbols: Sequence[str]
+) -> tuple[list[Path], list[str]]:
+    """Return scenario files for active watchlist symbols and any missing symbols."""
+
+    files: list[Path] = []
+    missing: list[str] = []
+    for symbol in symbols:
+        path = output_dir / f"{symbol}_252d.json"
+        if path.exists():
+            files.append(path)
+        else:
+            missing.append(symbol)
+    return files, missing
 
 
 def _resolve_strategies(strategies_arg: str) -> list[str]:
