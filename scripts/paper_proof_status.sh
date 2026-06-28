@@ -855,7 +855,9 @@ if stream_status != "ok":
     blockers.append(f"stream_{stream_status}")
 if readiness_audit_status != "ok":
     blockers.append(f"readiness_audit_{readiness_audit_status}")
-if activity_audit_status in {"missing", "failed"}:
+if activity_audit_status in {"missing", "failed"} or (
+    activity_due and activity_audit_status == "pending"
+):
     blockers.append(f"activity_audit_{activity_audit_status}")
 if post_close_audit_status in {"missing", "failed"}:
     blockers.append(f"post_close_audit_{post_close_audit_status}")
