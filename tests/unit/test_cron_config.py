@@ -1210,8 +1210,12 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert script.index("run_container_settings_posture_check") < script.index("run_market_data_smoke_check")
     assert "AlpacaMarketDataAdapter.from_settings" in script
     assert "adapter.get_daily_bars" in script
+    assert "adapter.get_stock_bars" in script
     assert "paper readiness failed: market data daily-bars smoke failed" in script
     assert "paper readiness failed: market data daily-bars smoke returned no bars" in script
+    assert "paper readiness failed: market data intraday-bars smoke failed" in script
+    assert "paper readiness failed: market data intraday-bars smoke returned no bars" in script
+    assert "timeframe_minutes={settings.entry_timeframe_minutes}" in script
     assert "paper readiness market data ok" in script
     assert "paper readiness market data check skipped" in script
     assert "active option orders" in script

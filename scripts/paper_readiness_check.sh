@@ -483,8 +483,27 @@ except Exception as exc:
     )
     raise SystemExit(1) from exc
 
+try:
+    intraday_bars_by_symbol = adapter.get_stock_bars(
+        symbols=symbols,
+        start=start,
+        end=end,
+        timeframe_minutes=settings.entry_timeframe_minutes,
+    )
+except Exception as exc:
+    print(
+        "paper readiness failed: market data intraday-bars smoke failed "
+        f"for {','.join(symbols)}: {exc}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from exc
+
 bar_counts = {
     symbol: len(bars_by_symbol.get(symbol, []))
+    for symbol in symbols
+}
+intraday_bar_counts = {
+    symbol: len(intraday_bars_by_symbol.get(symbol, []))
     for symbol in symbols
 }
 
@@ -496,10 +515,23 @@ if not any(bar_counts.values()):
     )
     raise SystemExit(1)
 
-summary = ",".join(f"{symbol}:{bar_counts[symbol]}" for symbol in symbols)
+if not any(intraday_bar_counts.values()):
+    print(
+        "paper readiness failed: market data intraday-bars smoke returned no bars "
+        f"for {','.join(symbols)} over {lookback_days} days",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+daily_summary = ",".join(f"{symbol}:{bar_counts[symbol]}" for symbol in symbols)
+intraday_summary = ",".join(
+    f"{symbol}:{intraday_bar_counts[symbol]}" for symbol in symbols
+)
 print(
     "paper readiness market data ok: "
-    f"daily_bars={summary} feed={settings.market_data_feed.value} "
+    f"daily_bars={daily_summary} intraday_bars={intraday_summary} "
+    f"feed={settings.market_data_feed.value} "
+    f"timeframe_minutes={settings.entry_timeframe_minutes} "
     f"lookback_days={lookback_days}"
 )
 PY
