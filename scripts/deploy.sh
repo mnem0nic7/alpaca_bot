@@ -71,6 +71,7 @@ docker compose -f "$COMPOSE_FILE" run --rm migrate
 docker compose -f "$COMPOSE_FILE" up -d --force-recreate web
 
 if credentials_ready; then
+  docker compose -f "$COMPOSE_FILE" rm -sf supervisor >/dev/null 2>&1 || true
   docker compose -f "$COMPOSE_FILE" up -d --force-recreate supervisor
   docker compose -f "$COMPOSE_FILE" run --rm --entrypoint alpaca-bot-ops-check admin \
     --url http://web:8080/healthz \
