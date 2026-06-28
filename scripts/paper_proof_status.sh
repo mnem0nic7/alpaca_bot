@@ -1231,12 +1231,32 @@ elif (
     readiness_decision_dry_run_status = "sample_records_under_minimum"
 activity_due = False
 activity_due_after = "none"
+activity_required_since = None
+activity_required_since_text = "none"
 activity_check_status = "missing"
 activity_check_exit_code = "unknown"
 activity_check_created_text = "none"
 activity_audit_status = "not_started"
 if activity_target_session is not None:
-    activity_due_time = time(10, 35)
+    activity_first_due_time = time(10, 35)
+    activity_first_check_time = time(10, 25)
+    activity_late_check_time = time(14, 35)
+    activity_late_due_time = time(14, 45)
+    if current_market_datetime.date() > activity_target_session or (
+        current_market_datetime.date() == activity_target_session
+        and current_market_datetime.time() >= activity_late_due_time
+    ):
+        activity_due_time = activity_late_due_time
+        activity_required_since_time = activity_late_check_time
+    else:
+        activity_due_time = activity_first_due_time
+        activity_required_since_time = activity_first_check_time
+    activity_required_since = datetime.combine(
+        activity_target_session,
+        activity_required_since_time,
+        settings.market_timezone,
+    ).astimezone(timezone.utc)
+    activity_required_since_text = activity_required_since.isoformat()
     activity_due_after = (
         f"{activity_target_session.isoformat()} "
         f"{activity_due_time.strftime('%H:%M')} {settings.market_timezone.key}"
@@ -1254,7 +1274,15 @@ if activity_target_session is not None:
             activity_created_at.isoformat() if activity_created_at is not None else "none"
         )
         if activity_check_status == "passed":
-            activity_audit_status = "ok"
+            if (
+                activity_due
+                and activity_required_since is not None
+                and activity_created_at is not None
+                and activity_created_at < activity_required_since
+            ):
+                activity_audit_status = "stale"
+            else:
+                activity_audit_status = "ok"
         elif activity_check_status == "skipped":
             activity_audit_status = "skipped" if activity_due else "ok"
         elif activity_check_status == "pending":
@@ -1452,7 +1480,7 @@ if readiness_audit_status != "ok":
     blockers.append(f"readiness_audit_{readiness_audit_status}")
 elif readiness_decision_dry_run_status != "ok":
     blockers.append(f"readiness_decision_dry_run_{readiness_decision_dry_run_status}")
-if activity_audit_status in {"missing", "failed", "skipped"} or (
+if activity_audit_status in {"missing", "failed", "skipped", "stale"} or (
     activity_due and activity_audit_status == "pending"
 ):
     blockers.append(f"activity_audit_{activity_audit_status}")
@@ -1560,6 +1588,7 @@ print(
     f"target_session={activity_target_session.isoformat() if activity_target_session else 'none'} "
     f"due={str(activity_due).lower()} "
     f"due_after={activity_due_after} "
+    f"required_since={activity_required_since_text} "
     f"check={activity_check_status}:{activity_check_exit_code}:{activity_check_created_text}"
 )
 print(

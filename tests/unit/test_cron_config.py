@@ -2800,20 +2800,27 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "reject_reasons={readiness_decision_dry_run_reject_reasons or 'none'}" in script
     assert "sample={readiness_decision_dry_run_sample or 'none'}" in script
     assert "activity_target_session = None" in script
-    assert "activity_due_time = time(10, 35)" in script
+    assert "activity_first_due_time = time(10, 35)" in script
+    assert "activity_first_check_time = time(10, 25)" in script
+    assert "activity_late_check_time = time(14, 35)" in script
+    assert "activity_late_due_time = time(14, 45)" in script
+    assert "activity_required_since = datetime.combine" in script
+    assert "activity_required_since_text = activity_required_since.isoformat()" in script
     assert "payload->>'check_name' = 'paper_activity'" in script
     assert "activity_audit_status = \"not_due\"" in script
     assert "activity_audit_status = \"missing\"" in script
     assert "activity_audit_status = \"failed\"" in script
+    assert "activity_audit_status = \"stale\"" in script
     assert "activity_check_status == \"skipped\"" in script
     assert "activity_audit_status = \"skipped\" if activity_due else \"ok\"" in script
-    assert "activity_audit_status in {\"missing\", \"failed\", \"skipped\"}" in script
+    assert "activity_audit_status in {\"missing\", \"failed\", \"skipped\", \"stale\"}" in script
     assert "activity_due and activity_audit_status == \"pending\"" in script
     assert "blockers.append(f\"activity_audit_{activity_audit_status}\")" in script
     assert "paper proof activity audit:" in script
     assert "status={activity_audit_status}" in script
     assert "target_session={activity_target_session.isoformat() if activity_target_session else 'none'}" in script
     assert "due={str(activity_due).lower()}" in script
+    assert "required_since={activity_required_since_text}" in script
     assert "check={activity_check_status}:{activity_check_exit_code}:{activity_check_created_text}" in script
     assert "from datetime import date, datetime, time, timedelta, timezone" in script
     assert "post_close_target_session = proof_end if proof_end >= proof_start else None" in script
