@@ -414,11 +414,73 @@ class TestProtectiveStopOnPartialFill:
         assert stop_saves[-1].status == "accepted"
         assert any(
             event.event_type == "protective_stop_quantity_replaced"
+            and event.payload["trading_mode"] == "paper"
+            and event.payload["strategy_version"] == "v1-breakout"
             and event.payload["old_quantity"] == 7
             and event.payload["new_quantity"] == 10
             for event in runtime.audit_event_store.appended
         )
         assert result["protective_stop_quantity_replaced"] is True
+
+    def test_broker_backed_stop_resize_failure_audit_carries_runtime_tags(self):
+        entry_order = _make_entry_order()
+        entry_order = OrderRecord(
+            client_order_id=entry_order.client_order_id,
+            symbol=entry_order.symbol,
+            side=entry_order.side,
+            intent_type=entry_order.intent_type,
+            status="partially_filled",
+            quantity=entry_order.quantity,
+            trading_mode=entry_order.trading_mode,
+            strategy_version=entry_order.strategy_version,
+            strategy_name=entry_order.strategy_name,
+            created_at=entry_order.created_at,
+            updated_at=entry_order.updated_at,
+            initial_stop_price=entry_order.initial_stop_price,
+            broker_order_id="broker-entry-1",
+            signal_timestamp=entry_order.signal_timestamp,
+            fill_price=112.0,
+            filled_quantity=7,
+        )
+        accepted_stop = OrderRecord(
+            client_order_id=_expected_stop_order_id(entry_order.client_order_id),
+            symbol="AAPL",
+            side="sell",
+            intent_type="stop",
+            status="accepted",
+            quantity=7,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            strategy_name="breakout",
+            created_at=NOW,
+            updated_at=NOW,
+            stop_price=entry_order.initial_stop_price,
+            initial_stop_price=entry_order.initial_stop_price,
+            broker_order_id="broker-stop-1",
+            signal_timestamp=NOW,
+        )
+        runtime = _make_runtime(orders=[entry_order, accepted_stop])
+
+        result = _apply(
+            runtime,
+            _make_trade_update(
+                status="filled",
+                qty=10,
+                filled_qty=10,
+                filled_avg_price=112.25,
+            ),
+        )
+
+        failure_events = [
+            event
+            for event in runtime.audit_event_store.appended
+            if event.event_type == "protective_stop_quantity_replace_failed"
+        ]
+        assert len(failure_events) == 1
+        assert failure_events[0].payload["trading_mode"] == "paper"
+        assert failure_events[0].payload["strategy_version"] == "v1-breakout"
+        assert failure_events[0].payload["error"] == "broker_not_available"
+        assert result["protective_stop_quantity_replace_failed"] is True
 
     def test_existing_pending_stop_quantity_not_saved_when_already_matching(self):
         """When an existing pending stop's quantity already matches filled_qty, no redundant save."""

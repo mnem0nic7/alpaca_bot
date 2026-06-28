@@ -91,6 +91,7 @@ def apply_trade_update(
         )
     result.update(
         _replace_broker_backed_stop_quantities(
+            settings=settings,
             runtime=runtime,
             broker=broker,
             replacements=pending_stop_replacements,
@@ -546,6 +547,7 @@ def _enum_str(value: Any) -> str:
 
 def _replace_broker_backed_stop_quantities(
     *,
+    settings: Settings,
     runtime: RuntimeProtocol,
     broker: BrokerProtocol | None,
     replacements: list[ProtectiveStopQuantityReplace],
@@ -569,6 +571,8 @@ def _replace_broker_backed_stop_quantities(
                             event_type="protective_stop_quantity_replace_failed",
                             symbol=stop_order.symbol,
                             payload={
+                                "trading_mode": settings.trading_mode.value,
+                                "strategy_version": settings.strategy_version,
                                 "client_order_id": stop_order.client_order_id,
                                 "broker_order_id": stop_order.broker_order_id,
                                 "entry_client_order_id": replacement.entry_client_order_id,
@@ -603,6 +607,8 @@ def _replace_broker_backed_stop_quantities(
                             event_type="protective_stop_quantity_replace_failed",
                             symbol=stop_order.symbol,
                             payload={
+                                "trading_mode": settings.trading_mode.value,
+                                "strategy_version": settings.strategy_version,
                                 "client_order_id": stop_order.client_order_id,
                                 "broker_order_id": stop_order.broker_order_id,
                                 "entry_client_order_id": replacement.entry_client_order_id,
@@ -655,6 +661,8 @@ def _replace_broker_backed_stop_quantities(
                         event_type="protective_stop_quantity_replaced",
                         symbol=stop_order.symbol,
                         payload={
+                            "trading_mode": settings.trading_mode.value,
+                            "strategy_version": settings.strategy_version,
                             "client_order_id": stop_order.client_order_id,
                             "broker_order_id": stop_order.broker_order_id,
                             "replacement_broker_order_id": new_broker_order_id,
