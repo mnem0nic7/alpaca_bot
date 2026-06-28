@@ -72,6 +72,10 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "MAX_OPEN_POSITIONS=3" in env_text
     assert "REPLAY_SLIPPAGE_BPS=2.0" in env_text
     assert "PAPER_PROOF_FREEZE=true" in env_text
+    assert "PROFIT_PROBE_START_DATE=2026-06-29" in env_text
+    assert "PROFIT_PROBE_STRATEGY=bull_flag" in env_text
+    assert "PROFIT_PROBE_MIN_TRADES=10" in env_text
+    assert "PROFIT_PROBE_MIN_PNL=0.01" in env_text
     assert "RISK_PER_TRADE_PCT=0.01" in env_text
     assert "MAX_POSITION_PCT=0.05" in env_text
     assert "MAX_PORTFOLIO_EXPOSURE_PCT=0.30" in env_text
@@ -101,6 +105,10 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert 'RELATIVE_VOLUME_THRESHOLD="2.0"' in script
     assert 'REPLAY_SLIPPAGE_BPS="2.0"' in script
     assert 'PAPER_PROOF_FREEZE="true"' in script
+    assert "PROFIT_PROBE_START_DATE=2026-06-29" in script
+    assert "PROFIT_PROBE_STRATEGY=bull_flag" in script
+    assert "PROFIT_PROBE_MIN_TRADES=10" in script
+    assert "PROFIT_PROBE_MIN_PNL=0.01" in script
     assert "INTRADAY_CONSECUTIVE_LOSS_GATE=0" in script
     assert "ATR_PERIOD=14" in script
     assert "ATR_STOP_MULTIPLIER=1.0" in script
