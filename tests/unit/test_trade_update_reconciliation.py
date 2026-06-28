@@ -59,12 +59,28 @@ class RecordingOrderStore:
 
 
 class RecordingPositionStore:
-    def __init__(self) -> None:
+    def __init__(self, existing_positions: list[PositionRecord] | None = None) -> None:
+        self.existing_positions = existing_positions or []
         self.saved: list[PositionRecord] = []
         self.deleted: list[dict[str, object]] = []
 
     def save(self, position: PositionRecord, *, commit: bool = True) -> None:
         self.saved.append(position)
+
+    def list_all(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        strategy_name: str | None = None,
+    ) -> list[PositionRecord]:
+        return [
+            position
+            for position in self.existing_positions
+            if position.trading_mode == trading_mode
+            and position.strategy_version == strategy_version
+            and (strategy_name is None or position.strategy_name == strategy_name)
+        ]
 
     def delete(self, *, symbol: str, trading_mode: TradingMode, strategy_version: str, strategy_name: str = "breakout", commit: bool = True) -> None:
         self.deleted.append(
@@ -683,3 +699,94 @@ def test_apply_trade_update_for_filled_exit_removes_matching_position() -> None:
     assert runtime.order_store.saved[-1].status == "filled"
     assert report["position_updated"] is True
     assert report["position_cleared"] is True
+
+
+def test_apply_trade_update_for_partial_exit_reduces_matching_position_by_fill_delta() -> None:
+    apply_trade_update = load_trade_update_api()
+    settings = make_settings()
+    opened_at = datetime(2026, 4, 24, 14, 15, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 4, 24, 19, 58, tzinfo=timezone.utc)
+    exit_client_order_id = (
+        "bull_flag:v1-breakout:2026-04-24:AAPL:exit:2026-04-24T19:45:00+00:00"
+    )
+    existing_position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        quantity=45,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=opened_at,
+        updated_at=opened_at,
+    )
+    existing_order = OrderRecord(
+        client_order_id=exit_client_order_id,
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="partially_filled",
+        quantity=45,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=timestamp,
+        updated_at=timestamp,
+        initial_stop_price=109.89,
+        broker_order_id="broker-exit-1",
+        signal_timestamp=datetime(2026, 4, 24, 19, 45, tzinfo=timezone.utc),
+        fill_price=112.00,
+        filled_quantity=10,
+    )
+    runtime = SimpleNamespace(
+        connection=SimpleNamespace(commit=lambda: None),
+        order_store=RecordingOrderStore(existing_order),
+        position_store=RecordingPositionStore(existing_positions=[existing_position]),
+        audit_event_store=RecordingAuditEventStore(),
+    )
+    update = {
+        "event": "partial_fill",
+        "client_order_id": exit_client_order_id,
+        "broker_order_id": "broker-exit-1",
+        "symbol": "AAPL",
+        "side": "sell",
+        "status": "PARTIALLY_FILLED",
+        "qty": 45,
+        "filled_qty": 25,
+        "filled_avg_price": 112.10,
+        "timestamp": timestamp.isoformat(),
+    }
+
+    report = apply_trade_update(
+        settings=settings,
+        runtime=runtime,  # type: ignore[arg-type]
+        update=update,
+        now=timestamp,
+    )
+
+    assert runtime.position_store.deleted == []
+    assert runtime.position_store.saved == [
+        PositionRecord(
+            symbol="AAPL",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            strategy_name="bull_flag",
+            quantity=30,
+            entry_price=111.02,
+            stop_price=109.89,
+            initial_stop_price=109.89,
+            opened_at=opened_at,
+            updated_at=timestamp,
+        )
+    ]
+    assert runtime.order_store.saved[-1].status == "partially_filled"
+    assert runtime.order_store.saved[-1].filled_quantity == 25
+    assert runtime.order_store.saved[-1].fill_price == 112.10
+    assert (
+        runtime.audit_event_store.appended[-1].payload["position_remaining_quantity"]
+        == 30
+    )
+    assert "position_cleared" not in runtime.audit_event_store.appended[-1].payload
+    assert report["position_updated"] is True
+    assert report["position_cleared"] is False
