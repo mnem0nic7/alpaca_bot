@@ -153,6 +153,8 @@ DECISION_DRY_RUN_FIELDS = {
     "rejected": "decision_dry_run_rejected",
     "skipped_no_signal": "decision_dry_run_skipped_no_signal",
     "entry_intents": "decision_dry_run_entry_intents",
+    "reject_stages": "decision_dry_run_reject_stages",
+    "reject_reasons": "decision_dry_run_reject_reasons",
     "equity": "decision_dry_run_equity",
     "sample": "decision_dry_run_sample",
     "sample_times": "decision_dry_run_sample_times",

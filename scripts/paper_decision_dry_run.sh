@@ -98,6 +98,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections import Counter
 from dataclasses import replace
 from datetime import date, datetime, time, timedelta, timezone
 
@@ -244,6 +245,19 @@ def _completed_intraday_bars_by_symbol(
                 symbol_completed.append(bar)
         completed[symbol] = symbol_completed
     return completed
+
+
+def _summary_counts(records, field_name: str) -> str:
+    counts = Counter(
+        (getattr(record, field_name, None) or "none")
+        for record in records
+    )
+    if not counts:
+        return "none"
+    return ",".join(
+        f"{key}:{count}"
+        for key, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    )
 
 
 settings = Settings.from_env()
@@ -413,6 +427,8 @@ accepted = best["accepted"]
 rejected = best["rejected"]
 skipped_no_signal = best["skipped_no_signal"]
 entry_intents = best["entry_intents"]
+reject_stages = _summary_counts(rejected, "reject_stage")
+reject_reasons = _summary_counts(rejected, "reject_reason")
 
 sample = "none"
 if accepted:
@@ -453,6 +469,8 @@ print(
     f"rejected={len(rejected)} "
     f"skipped_no_signal={len(skipped_no_signal)} "
     f"entry_intents={len(entry_intents)} "
+    f"reject_stages={reject_stages} "
+    f"reject_reasons={reject_reasons} "
     f"equity={equity:.2f} "
     f"sample={sample}"
     f"{multi_sample_fields}"

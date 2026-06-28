@@ -709,7 +709,9 @@ try:
               COALESCE(payload->>'decision_dry_run_evaluations', '') AS decision_dry_run_evaluations,
               COALESCE(payload->>'decision_dry_run_min_decision_records', '') AS decision_dry_run_min_records,
               COALESCE(payload->>'decision_dry_run_max_accepted', '') AS decision_dry_run_max_accepted,
-              COALESCE(payload->>'decision_dry_run_max_entry_intents', '') AS decision_dry_run_max_entry_intents
+              COALESCE(payload->>'decision_dry_run_max_entry_intents', '') AS decision_dry_run_max_entry_intents,
+              COALESCE(payload->>'decision_dry_run_reject_stages', '') AS decision_dry_run_reject_stages,
+              COALESCE(payload->>'decision_dry_run_reject_reasons', '') AS decision_dry_run_reject_reasons
             FROM audit_events
             WHERE event_type = 'scheduled_check_completed'
               AND payload->>'trading_mode' = %s
@@ -1041,6 +1043,8 @@ readiness_decision_dry_run_evaluations = ""
 readiness_decision_dry_run_min_records = ""
 readiness_decision_dry_run_max_accepted = ""
 readiness_decision_dry_run_max_entry_intents = ""
+readiness_decision_dry_run_reject_stages = ""
+readiness_decision_dry_run_reject_reasons = ""
 readiness_decision_dry_run_row = readiness_audit_row
 if not (
     readiness_decision_dry_run_row
@@ -1079,6 +1083,13 @@ if readiness_decision_dry_run_row and len(readiness_decision_dry_run_row) >= 10:
         )
         readiness_decision_dry_run_max_entry_intents = (
             readiness_decision_dry_run_row[14] or ""
+        )
+    if len(readiness_decision_dry_run_row) >= 17:
+        readiness_decision_dry_run_reject_stages = (
+            readiness_decision_dry_run_row[15] or ""
+        )
+        readiness_decision_dry_run_reject_reasons = (
+            readiness_decision_dry_run_row[16] or ""
         )
 readiness_decision_dry_run_active_value = parse_int_or_none(
     readiness_decision_dry_run_active
@@ -1442,7 +1453,9 @@ print(
     f"required_evaluations={min_decision_dry_run_evaluations} "
     f"min_decision_records={readiness_decision_dry_run_min_records or 'none'} "
     f"max_accepted={readiness_decision_dry_run_max_accepted or 'none'} "
-    f"max_entry_intents={readiness_decision_dry_run_max_entry_intents or 'none'}"
+    f"max_entry_intents={readiness_decision_dry_run_max_entry_intents or 'none'} "
+    f"reject_stages={readiness_decision_dry_run_reject_stages or 'none'} "
+    f"reject_reasons={readiness_decision_dry_run_reject_reasons or 'none'}"
 )
 print(
     "paper proof activity audit: "

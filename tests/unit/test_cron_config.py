@@ -848,6 +848,10 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "load_latest_readiness_decision_dry_run" in lock_skip
     assert "paper_readiness_latest_decision_dry_run=" in lock_skip
     assert "paper decision dry run ok:" in lock_skip
+    assert "decision_dry_run_reject_stages" in lock_skip
+    assert "decision_dry_run_reject_reasons" in lock_skip
+    assert "decision_dry_run_reject_stages" in readiness_if_needed
+    assert "decision_dry_run_reject_reasons" in readiness_if_needed
     assert "proof_start = settings.profit_probe_start_date.isoformat()" in lock_skip
     assert "payload->>'proof_start' = %s" in lock_skip
     assert "paper_readiness)" in lock_skip
@@ -1357,6 +1361,8 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"min_decision_records": "decision_dry_run_min_decision_records"' in script
     assert '"max_accepted": "decision_dry_run_max_accepted"' in script
     assert '"max_entry_intents": "decision_dry_run_max_entry_intents"' in script
+    assert '"reject_stages": "decision_dry_run_reject_stages"' in script
+    assert '"reject_reasons": "decision_dry_run_reject_reasons"' in script
     assert "parse_prefixed_fields" in script
     assert '"session_date"' in script
     assert '"previous_session_date"' in script
@@ -2740,6 +2746,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "payload->>'decision_dry_run_evaluations'" in script
     assert "payload->>'decision_dry_run_min_decision_records'" in script
     assert "payload->>'decision_dry_run_max_entry_intents'" in script
+    assert "payload->>'decision_dry_run_reject_stages'" in script
+    assert "payload->>'decision_dry_run_reject_reasons'" in script
     assert "readiness_audit_rows = cur.fetchall()" in script
     assert "LIMIT 32" in script
     assert "parse_int_or_none" in script
@@ -2785,6 +2793,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "min_decision_records={readiness_decision_dry_run_min_records or 'none'}" in script
     assert "max_accepted={readiness_decision_dry_run_max_accepted or 'none'}" in script
     assert "max_entry_intents={readiness_decision_dry_run_max_entry_intents or 'none'}" in script
+    assert "reject_stages={readiness_decision_dry_run_reject_stages or 'none'}" in script
+    assert "reject_reasons={readiness_decision_dry_run_reject_reasons or 'none'}" in script
     assert "sample={readiness_decision_dry_run_sample or 'none'}" in script
     assert "activity_target_session = None" in script
     assert "activity_due_time = time(10, 35)" in script
@@ -3041,6 +3051,8 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "AlpacaMarketDataAdapter.from_settings(settings)" in script
     assert "get_fractionable_symbols(active_symbols)" in script
     assert "replace(settings, fractionable_symbols=fractionable_symbols)" in script
+    assert "from collections import Counter" in script
+    assert "def _summary_counts" in script
     assert "get_stock_bars(" in script
     assert "get_daily_bars(" in script
     assert "_resolve_as_ofs" in script
@@ -3056,6 +3068,8 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "accepted={len(accepted)}" in script
     assert "sample_times={sample_times_text}" in script
     assert "max_entry_intents=" in script
+    assert "reject_stages={reject_stages}" in script
+    assert "reject_reasons={reject_reasons}" in script
     assert "submit_order" not in script
     assert "bulk_insert" not in script
     assert ".save(" not in script

@@ -183,7 +183,9 @@ try:
               COALESCE(payload->>'decision_dry_run_evaluations', ''),
               COALESCE(payload->>'decision_dry_run_min_decision_records', ''),
               COALESCE(payload->>'decision_dry_run_max_accepted', ''),
-              COALESCE(payload->>'decision_dry_run_max_entry_intents', '')
+              COALESCE(payload->>'decision_dry_run_max_entry_intents', ''),
+              COALESCE(payload->>'decision_dry_run_reject_stages', ''),
+              COALESCE(payload->>'decision_dry_run_reject_reasons', '')
             FROM audit_events
             WHERE event_type = 'scheduled_check_completed'
               AND payload->>'check_name' = 'paper_readiness'
@@ -250,6 +252,8 @@ if dry_run_row and dry_run_row[0]:
         "min_decision_records",
         "max_accepted",
         "max_entry_intents",
+        "reject_stages",
+        "reject_reasons",
     )
     fields = [
         f"{key}={value}"
