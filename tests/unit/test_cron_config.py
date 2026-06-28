@@ -1022,8 +1022,13 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "  printf 'status=enabled kill_switch=false reason=proof running\\n'\n"
         "  exit 0\n"
         "fi\n"
+        "if [[ \"$args\" == *'alpaca-bot-ops-check admin'* ]]; then\n"
+        "  printf 'status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh\\n'\n"
+        "  exit 0\n"
+        "fi\n"
         "if [[ \"$args\" == *'--entrypoint python admin'* ]]; then\n"
         "  printf 'paper proof active strategies: bull_flag\\n'\n"
+        "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh\\n'\n"
         "  printf 'paper proof scheduled check: name=paper_profit_probe status=pending exit_code=43 session_date=2026-06-26 proof_start=2026-06-29 created_at=2026-06-27T22:00:00.000000Z\\n'\n"
         "  printf 'paper proof progress: status=pending closed_trades=3 required_trades=10 pnl=12.34 required_pnl=0.01 window=2026-06-29..2026-06-29 first_exit_session=2026-06-29 latest_exit_session=2026-06-29\\n'\n"
         "  exit 0\n"
@@ -1051,6 +1056,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     ) in result.stdout
     assert "  status=enabled kill_switch=false reason=proof running" in result.stdout
     assert "paper proof active strategies: bull_flag" in result.stdout
+    assert "paper proof runtime: ops_status=ok" in result.stdout
     assert "paper proof scheduled check: name=paper_profit_probe status=pending" in result.stdout
     assert (
         "paper proof progress: status=pending closed_trades=3 "
@@ -1083,10 +1089,18 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "./scripts/cron_health_check.sh 2>&1" in script
     assert "PROOF_STATUS_CRON_HEALTH_STATUS" in script
     assert "PROOF_STATUS_CRON_HEALTH_DETAIL" in script
+    assert "./scripts/ops_check.sh \"$ENV_FILE\" 2>&1" in script
+    assert "PROOF_STATUS_OPS_HEALTH_STATUS" in script
+    assert "PROOF_STATUS_OPS_HEALTH_DETAIL" in script
     assert "cron_health_failed" in script
+    assert "ops_health_failed" in script
+    assert "compact_check_detail()" in script
     assert "paper proof automation:" in script
     assert "cron_status={cron_health_status}" in script
     assert "cron_detail={cron_health_detail or 'none'}" in script
+    assert "paper proof runtime:" in script
+    assert "ops_status={ops_health_status}" in script
+    assert "ops_detail={ops_health_detail or 'none'}" in script
     assert "strategy_disabled" in script
     assert "posture_drifted" in script
     assert "broker_account_blocked" in script
