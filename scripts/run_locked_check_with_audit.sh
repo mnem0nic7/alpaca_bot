@@ -17,12 +17,14 @@ if [[ "$#" -eq 0 ]]; then
   exit 2
 fi
 
-if flock -n -E 75 "$LOCK_FILE" \
-  "$ROOT_DIR/scripts/run_check_with_audit.sh" "$CHECK_NAME" "$ENV_FILE" "$@"; then
+flock -n -E 75 "$LOCK_FILE" \
+  "$ROOT_DIR/scripts/run_check_with_audit.sh" "$CHECK_NAME" "$ENV_FILE" "$@"
+rc="$?"
+
+if [[ "$rc" -eq 0 ]]; then
   exit 0
 fi
 
-rc="$?"
 if [[ "$rc" -eq 75 ]]; then
   "$ROOT_DIR/scripts/run_check_with_audit.sh" \
     "$CHECK_NAME" \

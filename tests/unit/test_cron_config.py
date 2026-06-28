@@ -692,6 +692,39 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "reason=force_refresh" in readiness_if_needed
 
 
+def test_locked_check_wrapper_preserves_wrapped_check_exit_code(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text("#!/usr/bin/env bash\nexit 0\n")
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("")
+    lock_file = tmp_path / "scheduled-check.lock"
+
+    result = subprocess.run(
+        [
+            "scripts/run_locked_check_with_audit.sh",
+            "paper_proof_status",
+            str(lock_file),
+            str(env_file),
+            "bash",
+            "-c",
+            "exit 43",
+        ],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "RUN_CHECK_REQUIRE_AUDIT": "false",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+
+
 def test_run_check_with_audit_records_scheduled_check_result() -> None:
     script_path = Path("scripts/run_check_with_audit.sh")
     script = script_path.read_text()
