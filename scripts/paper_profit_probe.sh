@@ -171,7 +171,7 @@ if ! BROKER_FLAT_CONTEXT="${PROFIT_PROBE_STRATEGY} paper proof ${PROFIT_PROBE_ST
   rc=44
 fi
 
-if [[ "$rc" -eq 42 || "$rc" -eq 43 ]]; then
+if [[ "$rc" -eq 42 || "$rc" -eq 43 || "$rc" -eq 46 ]]; then
   if ! "${compose[@]}" run -T --rm \
     --entrypoint alpaca-bot-funnel-report admin \
     --start "$PROFIT_PROBE_START_DATE" \

@@ -1334,9 +1334,11 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "open positions remain after close" in session_guard
     assert "session guard failed ${SESSION_GUARD_DATE}: operational diagnostics contain proof-blocking issues" in session_guard
     assert "session guard failed: could not apply close-only guard" in session_guard
+    assert "session guard warning: funnel diagnostic failed" in session_guard
+    assert '--strategy "$SESSION_GUARD_STRATEGY"' in session_guard
     assert "exit 45" in session_guard
     assert '"$rc" -eq 42 || "$rc" -eq 44 || "$rc" -eq 46' in profit_probe
-    assert '"$rc" -eq 42 || "$rc" -eq 43' in profit_probe
+    assert '"$rc" -eq 42 || "$rc" -eq 43 || "$rc" -eq 46' in profit_probe
     assert "paper proof failed" in profit_probe
     assert "paper proof incomplete ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: fewer than ${PROFIT_PROBE_MIN_TRADES} closed trades" not in profit_probe
     assert "paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: operational diagnostics contain proof-blocking issues" in profit_probe

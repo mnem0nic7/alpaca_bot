@@ -170,6 +170,17 @@ if ! BROKER_FLAT_CONTEXT="${SESSION_GUARD_STRATEGY} session guard ${SESSION_GUAR
   rc=44
 fi
 
+if [[ "$rc" -eq 42 || "$rc" -eq 46 ]]; then
+  if ! "${compose[@]}" run -T --rm \
+    --entrypoint alpaca-bot-funnel-report admin \
+    --start "$SESSION_GUARD_DATE" \
+    --end "$SESSION_GUARD_DATE" \
+    --strategy "$SESSION_GUARD_STRATEGY" \
+    --mode "${TRADING_MODE:-paper}"; then
+    echo "session guard warning: funnel diagnostic failed" >&2
+  fi
+fi
+
 if [[ "$rc" -eq 42 || "$rc" -eq 44 || "$rc" -eq 46 ]]; then
   case "$rc" in
     42)
