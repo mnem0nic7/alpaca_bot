@@ -1057,10 +1057,17 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     assert "alpaca-bot-session-eval" not in calls
 
 
-def test_paper_proof_status_labels_pre_start_window_as_current_date() -> None:
+def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> None:
     script = Path("scripts/paper_proof_status.sh").read_text()
 
-    assert "not_started(current_market_date=" in script
+    assert "load_latest_completed_session_date" in script
+    assert "AlpacaExecutionAdapter.from_settings" in script
+    assert "get_market_calendar" in script
+    assert "close_at + timedelta(minutes=30)" in script
+    assert "not_started(" in script
+    assert "latest_completed_session=" in script
+    assert "current_market_date=" in script
+    assert "scoring_end_date=" in script
     assert "latest_market_date" not in script
 
 

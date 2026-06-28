@@ -55,7 +55,7 @@ echo "paper proof trading status:"
   --strategy-version "$STRATEGY_VERSION" \
   | sed 's/^/  /'
 
-echo "paper proof database status:"
+echo "paper proof evidence status:"
 "${compose[@]}" run -T --rm \
   -e PROOF_STATUS_STRATEGY="$PROOF_STATUS_STRATEGY" \
   -e PROOF_STATUS_MIN_TRADES="$PROOF_STATUS_MIN_TRADES" \
@@ -69,6 +69,7 @@ import os
 from datetime import date, datetime, timedelta
 
 from alpaca_bot.config import Settings, TradingMode
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
 from alpaca_bot.storage.db import connect_postgres
 from alpaca_bot.storage.repositories import OrderStore
 
@@ -87,6 +88,30 @@ def date_range(start: date, end: date):
         current += timedelta(days=1)
 
 
+def load_latest_completed_session_date(settings: Settings) -> tuple[date | None, str | None]:
+    now = datetime.now(settings.market_timezone)
+    try:
+        calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+            start=now.date() - timedelta(days=14),
+            end=now.date(),
+        )
+    except Exception as exc:
+        return None, str(exc)
+
+    completed = []
+    for session in calendar:
+        close_at = session.close_at
+        if close_at.tzinfo is None:
+            close_at = close_at.replace(tzinfo=settings.market_timezone)
+        else:
+            close_at = close_at.astimezone(settings.market_timezone)
+        if now >= close_at + timedelta(minutes=30):
+            completed.append(session.session_date)
+    if not completed:
+        return None, "no completed market sessions found"
+    return max(completed), None
+
+
 settings = Settings.from_env()
 trading_mode = TradingMode(os.environ.get("TRADING_MODE", "paper"))
 strategy_version = os.environ["STRATEGY_VERSION"]
@@ -95,10 +120,12 @@ min_trades = int(os.environ["PROOF_STATUS_MIN_TRADES"])
 min_pnl = float(os.environ["PROOF_STATUS_MIN_PNL"])
 proof_start = parse_date(os.environ["PROOF_STATUS_START_DATE"], name="PROOF_STATUS_START_DATE")
 end_value = os.environ.get("PROOF_STATUS_END_DATE", "")
+current_market_date = datetime.now(settings.market_timezone).date()
+latest_completed_session, calendar_warning = load_latest_completed_session_date(settings)
 proof_end = (
     parse_date(end_value, name="PROOF_STATUS_END_DATE")
     if end_value
-    else datetime.now(settings.market_timezone).date()
+    else latest_completed_session or current_market_date
 )
 market_timezone = settings.market_timezone.key
 
@@ -184,10 +211,23 @@ else:
 proof_window = (
     f"{proof_start.isoformat()}..{proof_end.isoformat()}"
     if not proof_not_started
-    else f"not_started(current_market_date={proof_end.isoformat()})"
+    else (
+        "not_started("
+        f"latest_completed_session={latest_completed_session.isoformat() if latest_completed_session else 'unknown'} "
+        f"current_market_date={current_market_date.isoformat()}"
+        ")"
+    )
 )
 
 print(f"paper proof active strategies: {active_strategies or 'none'}")
+if calendar_warning:
+    print(f"paper proof calendar warning: {calendar_warning}")
+print(
+    "paper proof calendar: "
+    f"current_market_date={current_market_date.isoformat()} "
+    f"latest_completed_session={latest_completed_session.isoformat() if latest_completed_session else 'unknown'} "
+    f"scoring_end_date={proof_end.isoformat()}"
+)
 if scheduled_checks:
     for check_name, status, exit_code, session_date, check_proof_start, created_at in scheduled_checks:
         print(
