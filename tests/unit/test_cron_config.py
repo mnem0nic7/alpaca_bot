@@ -164,6 +164,8 @@ def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -
                 "TRADING_MODE=paper",
                 "PROFIT_PROBE_START_DATE=2026-06-29",
                 "STRATEGY_VERSION=v1-breakout",
+                "PAPER_READINESS_CHECK_SCRIPT=/bin/false",
+                "PAPER_READINESS_FORCE_REFRESH=false",
             ]
         )
     )
@@ -238,6 +240,67 @@ def test_paper_readiness_force_refresh_reruns_after_recent_pass_without_age(
     assert "paper readiness force refresh requested" in result.stdout
     assert "fresh readiness ran" in result.stdout
     assert "paper readiness already passed for session 2026-06-29" not in result.stdout
+
+
+def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+                "PAPER_READINESS_AUTO_RESUME=true",
+                "PAPER_READINESS_REQUIRE_FLAT=true",
+                "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=true",
+                "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180",
+                "PAPER_READINESS_PREVIOUS_SESSION_DATE=2026-06-26",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_latest_status=2026-06-29|failed|2026-06-29T16:55:00.000000Z|2026-06-29T14:01:00.000000Z|5\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+    fake_readiness = tmp_path / "paper_readiness_check.sh"
+    fake_readiness.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'auto=%s flat=%s session_unblocked=%s max_age=%s previous_session=%s\\n' "
+        '"${PAPER_READINESS_AUTO_RESUME:-}" '
+        '"${PAPER_READINESS_REQUIRE_FLAT:-}" '
+        '"${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED:-}" '
+        '"${PAPER_READINESS_MAX_PASS_AGE_MINUTES:-}" '
+        '"${PAPER_READINESS_PREVIOUS_SESSION_DATE:-}"\n'
+    )
+    fake_readiness.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_readiness_if_needed.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_READINESS_CHECK_SCRIPT": str(fake_readiness),
+            "PAPER_READINESS_AUTO_RESUME": "false",
+            "PAPER_READINESS_REQUIRE_FLAT": "false",
+            "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED": "false",
+            "PAPER_READINESS_MAX_PASS_AGE_MINUTES": "5",
+            "PAPER_READINESS_PREVIOUS_SESSION_DATE": "2026-06-25",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "auto=false flat=false session_unblocked=false max_age=5 "
+        "previous_session=2026-06-25"
+    ) in result.stdout
 
 
 def test_paper_readiness_final_retry_reruns_after_supervisor_restart(tmp_path: Path) -> None:
@@ -708,6 +771,9 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "proof_start = settings.profit_probe_start_date.isoformat()" in readiness_if_needed
     assert "payload->>'proof_start' = %s" in readiness_if_needed
     assert "settings.trading_mode.value, settings.strategy_version" in readiness_if_needed
+    assert "capture_env_overrides" in readiness_if_needed
+    assert "restore_env_overrides" in readiness_if_needed
+    assert readiness_if_needed.index('source "$ENV_FILE"') < readiness_if_needed.index("\nrestore_env_overrides\n")
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES" in readiness_if_needed
     assert "PAPER_READINESS_FORCE_REFRESH" in readiness_if_needed
     assert "reason=force_refresh" in readiness_if_needed
@@ -931,6 +997,11 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     script = Path("scripts/paper_readiness_check.sh").read_text()
     broker_flat = Path("scripts/broker_flat_check.sh").read_text()
 
+    assert "capture_env_overrides" in script
+    assert "restore_env_overrides" in script
+    assert script.index('source "$ENV_FILE"') < script.index("\nrestore_env_overrides\n")
+    assert "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED \\" in script
+    assert "PAPER_READINESS_PREVIOUS_SESSION_DATE \\" in script
     assert 'PAPER_READINESS_AUTO_RESUME="${PAPER_READINESS_AUTO_RESUME:-true}"' in script
     assert 'PAPER_READINESS_AUTO_RESET_WEIGHTS="${PAPER_READINESS_AUTO_RESET_WEIGHTS:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_FLAT="${PAPER_READINESS_REQUIRE_FLAT:-true}"' in script
@@ -940,8 +1011,10 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_REQUIRE_SCENARIOS="${PAPER_READINESS_REQUIRE_SCENARIOS:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS="${PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS:-true}"' in script
     assert 'PAPER_READINESS_CLOSE_ONLY_ON_FAILURE="${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE:-true}"' in script
+    assert "PAPER_READINESS_PRIOR_PROOF_START_DATE \\" in script
     assert 'PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-}"' in script
     assert 'PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"' in script
+    assert "PAPER_READINESS_LOSING_STREAK_N \\" in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"' in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-${LOSING_STREAK_N:-3}}"' in script
     assert 'PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"' in script
@@ -1132,6 +1205,10 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
 def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     script = Path("scripts/paper_activity_check.sh").read_text()
 
+    assert "capture_env_overrides" in script
+    assert "restore_env_overrides" in script
+    assert script.index('source "$ENV_FILE"') < script.index("\nrestore_env_overrides\n")
+    assert "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE \\" in script
     assert "PAPER_ACTIVITY_WINDOW_MINUTES" in script
     assert 'PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"' in script
     assert 'PAPER_ACTIVITY_REQUIRE_DECISION_LOG="${PAPER_ACTIVITY_REQUIRE_DECISION_LOG:-true}"' in script
@@ -1343,6 +1420,7 @@ def test_paper_activity_fails_on_recent_dispatch_failures(tmp_path: Path) -> Non
                 "TRADING_MODE=paper",
                 "STRATEGY_VERSION=v1-breakout",
                 "PROFIT_PROBE_START_DATE=2026-06-29",
+                "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE=true",
                 "POSTGRES_USER=postgres",
                 "POSTGRES_DB=postgres",
             ]
@@ -1812,6 +1890,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
                 "TRADING_MODE=paper",
                 "STRATEGY_VERSION=v1-breakout",
                 "PROFIT_PROBE_START_DATE=2026-06-29",
+                "PROOF_STATUS_FAIL_ON_ISSUES=maybe",
             ]
         )
     )
@@ -1870,6 +1949,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         env={
             "PATH": f"{fake_bin}:/usr/bin:/bin",
             "PROOF_STATUS_END_DATE": "2026-06-29",
+            "PROOF_STATUS_FAIL_ON_ISSUES": "false",
             "PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT": str(fake_runtime_health),
         },
         text=True,
@@ -1911,6 +1991,10 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
 def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> None:
     script = Path("scripts/paper_proof_status.sh").read_text()
 
+    assert "capture_env_overrides" in script
+    assert "restore_env_overrides" in script
+    assert script.index('source "$ENV_FILE"') < script.index("\nrestore_env_overrides\n")
+    assert "PROOF_STATUS_FAIL_ON_ISSUES \\" in script
     assert script.index('source "$ENV_FILE"') < script.index(
         'PROOF_STATUS_STRATEGY="${PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"'
     )

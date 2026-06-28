@@ -2,12 +2,36 @@
 set -euo pipefail
 
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
-PAPER_ACTIVITY_WINDOW_MINUTES="${PAPER_ACTIVITY_WINDOW_MINUTES:-90}"
-PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"
-PAPER_ACTIVITY_REQUIRE_DECISION_LOG="${PAPER_ACTIVITY_REQUIRE_DECISION_LOG:-true}"
-PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE="${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE:-true}"
-PAPER_ACTIVITY_READINESS_RUNNER="${PAPER_ACTIVITY_READINESS_RUNNER:-./scripts/run_locked_check_with_audit.sh}"
-PAPER_ACTIVITY_READINESS_SCRIPT="${PAPER_ACTIVITY_READINESS_SCRIPT:-./scripts/paper_readiness_if_needed.sh}"
+
+_preserved_env_names=()
+_preserved_env_values=()
+
+capture_env_overrides() {
+  local name
+  for name in "$@"; do
+    if [[ -n "${!name+x}" ]]; then
+      _preserved_env_names+=("$name")
+      _preserved_env_values+=("${!name}")
+    fi
+  done
+}
+
+restore_env_overrides() {
+  local index
+  for index in "${!_preserved_env_names[@]}"; do
+    printf -v "${_preserved_env_names[$index]}" '%s' "${_preserved_env_values[$index]}"
+    export "${_preserved_env_names[$index]}"
+  done
+}
+
+capture_env_overrides \
+  PAPER_ACTIVITY_WINDOW_MINUTES \
+  PAPER_ACTIVITY_MIN_DECISION_RECORDS \
+  PAPER_ACTIVITY_REQUIRE_DECISION_LOG \
+  PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE \
+  PAPER_ACTIVITY_READINESS_RUNNER \
+  PAPER_ACTIVITY_READINESS_SCRIPT \
+  PAPER_ACTIVITY_STRATEGY
 
 cd "$(dirname "$0")/.."
 
@@ -20,7 +44,14 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+restore_env_overrides
 
+PAPER_ACTIVITY_WINDOW_MINUTES="${PAPER_ACTIVITY_WINDOW_MINUTES:-90}"
+PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"
+PAPER_ACTIVITY_REQUIRE_DECISION_LOG="${PAPER_ACTIVITY_REQUIRE_DECISION_LOG:-true}"
+PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE="${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE:-true}"
+PAPER_ACTIVITY_READINESS_RUNNER="${PAPER_ACTIVITY_READINESS_RUNNER:-./scripts/run_locked_check_with_audit.sh}"
+PAPER_ACTIVITY_READINESS_SCRIPT="${PAPER_ACTIVITY_READINESS_SCRIPT:-./scripts/paper_readiness_if_needed.sh}"
 PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
 
 if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then

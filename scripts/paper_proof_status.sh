@@ -2,9 +2,40 @@
 set -euo pipefail
 
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
-PROOF_STATUS_END_DATE="${PROOF_STATUS_END_DATE:-}"
-PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT="${PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT:-./scripts/runtime_image_health_check.sh}"
-PROOF_STATUS_FAIL_ON_ISSUES="${PROOF_STATUS_FAIL_ON_ISSUES:-false}"
+
+_preserved_env_names=()
+_preserved_env_values=()
+
+capture_env_overrides() {
+  local name
+  for name in "$@"; do
+    if [[ -n "${!name+x}" ]]; then
+      _preserved_env_names+=("$name")
+      _preserved_env_values+=("${!name}")
+    fi
+  done
+}
+
+restore_env_overrides() {
+  local index
+  for index in "${!_preserved_env_names[@]}"; do
+    printf -v "${_preserved_env_names[$index]}" '%s' "${_preserved_env_values[$index]}"
+    export "${_preserved_env_names[$index]}"
+  done
+}
+
+capture_env_overrides \
+  PROOF_STATUS_STRATEGY \
+  PROOF_STATUS_MIN_TRADES \
+  PROOF_STATUS_MIN_PNL \
+  PROOF_STATUS_START_DATE \
+  PROOF_STATUS_END_DATE \
+  PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT \
+  PROOF_STATUS_FAIL_ON_ISSUES \
+  PROOF_STATUS_MIN_WATCHLIST_SYMBOLS \
+  PROOF_STATUS_MIN_CONFIDENCE_FLOOR \
+  PROOF_STATUS_STREAM_START_GRACE_SECONDS \
+  PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES
 
 cd "$(dirname "$0")/.."
 
@@ -17,11 +48,15 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+restore_env_overrides
 
 PROOF_STATUS_STRATEGY="${PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
 PROOF_STATUS_MIN_TRADES="${PROOF_STATUS_MIN_TRADES:-${PROFIT_PROBE_MIN_TRADES:-10}}"
 PROOF_STATUS_MIN_PNL="${PROOF_STATUS_MIN_PNL:-${PROFIT_PROBE_MIN_PNL:-0.01}}"
 PROOF_STATUS_START_DATE="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"
+PROOF_STATUS_END_DATE="${PROOF_STATUS_END_DATE:-}"
+PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT="${PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT:-./scripts/runtime_image_health_check.sh}"
+PROOF_STATUS_FAIL_ON_ISSUES="${PROOF_STATUS_FAIL_ON_ISSUES:-false}"
 PROOF_STATUS_MIN_WATCHLIST_SYMBOLS="${PROOF_STATUS_MIN_WATCHLIST_SYMBOLS:-${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}}"
 PROOF_STATUS_MIN_CONFIDENCE_FLOOR="${PROOF_STATUS_MIN_CONFIDENCE_FLOOR:-${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}}"
 PROOF_STATUS_STREAM_START_GRACE_SECONDS="${PROOF_STATUS_STREAM_START_GRACE_SECONDS:-120}"

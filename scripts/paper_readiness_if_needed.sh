@@ -2,7 +2,51 @@
 set -euo pipefail
 
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
-PAPER_READINESS_CHECK_SCRIPT="${PAPER_READINESS_CHECK_SCRIPT:-./scripts/paper_readiness_check.sh}"
+
+_preserved_env_names=()
+_preserved_env_values=()
+
+capture_env_overrides() {
+  local name
+  for name in "$@"; do
+    if [[ -n "${!name+x}" ]]; then
+      _preserved_env_names+=("$name")
+      _preserved_env_values+=("${!name}")
+    fi
+  done
+}
+
+restore_env_overrides() {
+  local index
+  for index in "${!_preserved_env_names[@]}"; do
+    printf -v "${_preserved_env_names[$index]}" '%s' "${_preserved_env_values[$index]}"
+    export "${_preserved_env_names[$index]}"
+  done
+}
+
+capture_env_overrides \
+  PAPER_READINESS_AUTO_RESUME \
+  PAPER_READINESS_AUTO_RESET_WEIGHTS \
+  PAPER_READINESS_CHECK_SCRIPT \
+  PAPER_READINESS_CLOSE_ONLY_ON_FAILURE \
+  PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS \
+  PAPER_READINESS_DATA_SMOKE_SYMBOLS \
+  PAPER_READINESS_FORCE_REFRESH \
+  PAPER_READINESS_LOSING_STREAK_N \
+  PAPER_READINESS_MAX_PASS_AGE_MINUTES \
+  PAPER_READINESS_MIN_CONFIDENCE_FLOOR \
+  PAPER_READINESS_MIN_WATCHLIST_SYMBOLS \
+  PAPER_READINESS_PREVIOUS_SESSION_DATE \
+  PAPER_READINESS_PRIOR_PROOF_START_DATE \
+  PAPER_READINESS_REQUIRE_FLAT \
+  PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR \
+  PAPER_READINESS_REQUIRE_MARKET_DATA \
+  PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS \
+  PAPER_READINESS_REQUIRE_SCENARIOS \
+  PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED \
+  PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS \
+  PAPER_READINESS_SCENARIO_DIR \
+  PAPER_READINESS_SESSION_DATE
 
 cd "$(dirname "$0")/.."
 
@@ -15,12 +59,14 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+restore_env_overrides
 
 if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
   echo "paper readiness check skipped for TRADING_MODE=${TRADING_MODE:-unset}"
   exit 0
 fi
 
+PAPER_READINESS_CHECK_SCRIPT="${PAPER_READINESS_CHECK_SCRIPT:-./scripts/paper_readiness_check.sh}"
 PAPER_READINESS_MAX_PASS_AGE_MINUTES="${PAPER_READINESS_MAX_PASS_AGE_MINUTES:-180}"
 if [[ ! "$PAPER_READINESS_MAX_PASS_AGE_MINUTES" =~ ^[0-9]+$ || "$PAPER_READINESS_MAX_PASS_AGE_MINUTES" -le 0 ]]; then
   echo "PAPER_READINESS_MAX_PASS_AGE_MINUTES must be a positive integer" >&2
