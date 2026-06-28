@@ -31,6 +31,7 @@ capture_env_overrides \
   PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED \
   PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR \
   PAPER_READINESS_REQUIRE_MARKET_DATA \
+  PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE \
   PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS \
   PAPER_READINESS_REQUIRE_SCENARIOS \
   PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS \
@@ -39,6 +40,7 @@ capture_env_overrides \
   PAPER_READINESS_LOSING_STREAK_N \
   PAPER_READINESS_MIN_WATCHLIST_SYMBOLS \
   PAPER_READINESS_MIN_CONFIDENCE_FLOOR \
+  PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS \
   PAPER_READINESS_DATA_SMOKE_SYMBOLS \
   PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS \
   PAPER_READINESS_SCENARIO_DIR \
@@ -64,12 +66,14 @@ PAPER_READINESS_REQUIRE_FLAT="${PAPER_READINESS_REQUIRE_FLAT:-true}"
 PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED="${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED:-true}"
 PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR:-true}"
 PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"
+PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE="${PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE:-true}"
 PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS="${PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS:-true}"
 PAPER_READINESS_REQUIRE_SCENARIOS="${PAPER_READINESS_REQUIRE_SCENARIOS:-true}"
 PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS="${PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS:-true}"
 PAPER_READINESS_CLOSE_ONLY_ON_FAILURE="${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE:-true}"
 PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
 PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"
+PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS="${PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS:-0}"
 PAPER_READINESS_DATA_SMOKE_SYMBOLS="${PAPER_READINESS_DATA_SMOKE_SYMBOLS:-SPY,AAPL}"
 PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS="${PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS:-10}"
 PAPER_READINESS_SCENARIO_DIR="${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}"
@@ -87,6 +91,14 @@ case "${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE,,}" in
   true|false) ;;
   *)
     echo "PAPER_READINESS_CLOSE_ONLY_ON_FAILURE must be true or false" >&2
+    exit 1
+    ;;
+esac
+
+case "${PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE,,}" in
+  true|false) ;;
+  *)
+    echo "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE must be true or false" >&2
     exit 1
     ;;
 esac
@@ -238,6 +250,11 @@ fi
 
 if [[ ! "$PAPER_READINESS_MIN_CONFIDENCE_FLOOR" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
   echo "PAPER_READINESS_MIN_CONFIDENCE_FLOOR must be a non-negative number" >&2
+  exit 1
+fi
+
+if [[ ! "$PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS" =~ ^[0-9]+$ ]]; then
+  echo "PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS must be a non-negative integer" >&2
   exit 1
 fi
 
@@ -582,6 +599,109 @@ WHERE trading_mode = 'paper'
 ORDER BY symbol;
 SQL
 }
+
+run_active_data_coverage_check() {
+  local active_symbols
+  active_symbols="$(load_active_watchlist_symbols)"
+
+  "${compose[@]}" run -T --rm \
+      -e PAPER_READINESS_ACTIVE_SYMBOLS="$active_symbols" \
+      -e PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS="$PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS" \
+      -e PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS="$PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS" \
+      --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+import os
+import sys
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaMarketDataAdapter
+
+symbols = tuple(
+    dict.fromkeys(
+        symbol.strip().upper()
+        for symbol in os.environ.get("PAPER_READINESS_ACTIVE_SYMBOLS", "").splitlines()
+        if symbol.strip()
+    )
+)
+if not symbols:
+    print(
+        "paper readiness failed: active watchlist produced no symbols for data coverage check",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+lookback_days = int(os.environ["PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS"])
+max_missing = int(os.environ["PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS"])
+settings = Settings.from_env()
+adapter = AlpacaMarketDataAdapter.from_settings(settings)
+end = datetime.now(timezone.utc)
+start = end - timedelta(days=lookback_days)
+
+try:
+    daily_by_symbol = adapter.get_daily_bars(symbols=symbols, start=start, end=end)
+    intraday_by_symbol = adapter.get_stock_bars(
+        symbols=symbols,
+        start=start,
+        end=end,
+        timeframe_minutes=settings.entry_timeframe_minutes,
+    )
+except Exception as exc:
+    print(
+        "paper readiness failed: active watchlist market data coverage lookup failed: "
+        f"{exc}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from exc
+
+daily_counts = {symbol: len(daily_by_symbol.get(symbol, [])) for symbol in symbols}
+intraday_counts = {symbol: len(intraday_by_symbol.get(symbol, [])) for symbol in symbols}
+missing_daily = [symbol for symbol, count in daily_counts.items() if count <= 0]
+missing_intraday = [symbol for symbol, count in intraday_counts.items() if count <= 0]
+missing_symbols = sorted(set(missing_daily) | set(missing_intraday))
+thin_intraday = [
+    f"{symbol}:{count}"
+    for symbol, count in intraday_counts.items()
+    if 0 < count < 20
+]
+
+if len(missing_symbols) > max_missing:
+    print(
+        "paper readiness failed: active watchlist market data coverage below threshold "
+        f"active={len(symbols)} missing={len(missing_symbols)} max_missing={max_missing}",
+        file=sys.stderr,
+    )
+    if missing_daily:
+        print("  missing_daily: " + ",".join(missing_daily[:50]), file=sys.stderr)
+    if missing_intraday:
+        print("  missing_intraday: " + ",".join(missing_intraday[:50]), file=sys.stderr)
+    raise SystemExit(1)
+
+print(
+    "paper readiness active data coverage ok: "
+    f"active={len(symbols)} "
+    f"daily={len(symbols) - len(missing_daily)}/{len(symbols)} "
+    f"intraday={len(symbols) - len(missing_intraday)}/{len(symbols)} "
+    f"missing={len(missing_symbols)} max_missing={max_missing} "
+    f"thin_intraday_lt20={len(thin_intraday)} "
+    f"feed={settings.market_data_feed.value} "
+    f"timeframe_minutes={settings.entry_timeframe_minutes} "
+    f"lookback_days={lookback_days}"
+)
+if thin_intraday:
+    print(
+        "paper readiness active data thin intraday symbols: "
+        + ",".join(thin_intraday[:50])
+    )
+PY
+}
+
+if [[ "${PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE,,}" == "true" ]]; then
+  run_active_data_coverage_check
+else
+  echo "paper readiness active data coverage check skipped"
+fi
 
 run_watchlist_asset_check() {
   local active_symbols

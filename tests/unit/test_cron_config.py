@@ -263,6 +263,8 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
                 "PAPER_READINESS_AUTO_RESUME=true",
                 "PAPER_READINESS_REQUIRE_FLAT=true",
                 "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=true",
+                "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE=true",
+                "PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS=0",
                 "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180",
                 "PAPER_READINESS_PREVIOUS_SESSION_DATE=2026-06-26",
             ]
@@ -285,6 +287,9 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
         '"${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED:-}" '
         '"${PAPER_READINESS_MAX_PASS_AGE_MINUTES:-}" '
         '"${PAPER_READINESS_PREVIOUS_SESSION_DATE:-}"\n'
+        "printf 'active_data=%s max_missing=%s\\n' "
+        '"${PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE:-}" '
+        '"${PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS:-}"\n'
     )
     fake_readiness.chmod(0o755)
 
@@ -297,6 +302,8 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
             "PAPER_READINESS_AUTO_RESUME": "false",
             "PAPER_READINESS_REQUIRE_FLAT": "false",
             "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED": "false",
+            "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE": "false",
+            "PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS": "3",
             "PAPER_READINESS_MAX_PASS_AGE_MINUTES": "5",
             "PAPER_READINESS_PREVIOUS_SESSION_DATE": "2026-06-25",
         },
@@ -309,6 +316,7 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
         "auto=false flat=false session_unblocked=false max_age=5 "
         "previous_session=2026-06-25"
     ) in result.stdout
+    assert "active_data=false max_missing=3" in result.stdout
 
 
 def test_paper_readiness_final_retry_reruns_after_supervisor_restart(tmp_path: Path) -> None:
@@ -792,6 +800,8 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert readiness_if_needed.index('source "$ENV_FILE"') < readiness_if_needed.index("\nrestore_env_overrides\n")
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES" in readiness_if_needed
     assert "PAPER_READINESS_FORCE_REFRESH" in readiness_if_needed
+    assert "PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS" in readiness_if_needed
+    assert "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE" in readiness_if_needed
     assert "reason=force_refresh" in readiness_if_needed
     assert "reason=stale_by_age" in readiness_if_needed
     assert "PAPER_READINESS_FORCE_REFRESH" in readiness_if_needed
@@ -1093,6 +1103,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED="${PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"' in script
+    assert 'PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE="${PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_SCENARIOS="${PAPER_READINESS_REQUIRE_SCENARIOS:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS="${PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS:-true}"' in script
     assert 'PAPER_READINESS_CLOSE_ONLY_ON_FAILURE="${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE:-true}"' in script
@@ -1104,9 +1115,12 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-${LOSING_STREAK_N:-3}}"' in script
     assert 'PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"' in script
     assert 'PAPER_READINESS_MIN_CONFIDENCE_FLOOR="${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}"' in script
+    assert 'PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS="${PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS:-0}"' in script
     assert 'PAPER_READINESS_DATA_SMOKE_SYMBOLS="${PAPER_READINESS_DATA_SMOKE_SYMBOLS:-SPY,AAPL}"' in script
     assert 'PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS="${PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS:-10}"' in script
     assert 'PAPER_READINESS_SCENARIO_DIR="${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}"' in script
+    assert "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE must be true or false" in script
+    assert "PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS must be a non-negative integer" in script
     assert "PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS must be a positive integer" in script
     assert "PAPER_READINESS_PRIOR_PROOF_START_DATE must be YYYY-MM-DD" in script
     assert "PAPER_READINESS_CLOSE_ONLY_ON_FAILURE must be true or false" in script
@@ -1156,6 +1170,12 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "COALESCE(ignored, FALSE) = FALSE" in script
     assert "entry watchlist has" in script
     assert "paper readiness watchlist ok" in script
+    assert "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE" in script
+    assert "run_active_data_coverage_check" in script
+    assert "paper readiness active data coverage ok" in script
+    assert "paper readiness active data coverage check skipped" in script
+    assert "active watchlist market data coverage below threshold" in script
+    assert "thin_intraday_lt20" in script
     assert "PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS" in script
     assert "run_watchlist_asset_check" in script
     assert "load_active_watchlist_symbols" in script
