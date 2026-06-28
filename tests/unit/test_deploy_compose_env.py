@@ -54,6 +54,23 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
     assert "ENABLE_SPREAD_FILTER: ${ENABLE_SPREAD_FILTER:-false}" in compose_text
 
 
+def test_nightly_compose_sweeps_enabled_strategy_flags() -> None:
+    compose_text = Path("deploy/compose.yaml").read_text()
+    nightly = re.search(r"(?ms)^  nightly:\n(?P<body>.*?)(?=^  [a-z][a-z0-9_-]*:\n|\Z)", compose_text)
+
+    assert nightly is not None
+    assert (
+        "    command:\n"
+        "      - alpaca-bot-nightly\n"
+        "      - --output-dir\n"
+        "      - /data/scenarios\n"
+        "      - --output-env\n"
+        "      - /data/candidate.env\n"
+        "      - --strategies\n"
+        "      - enabled\n"
+    ) in nightly.group("body")
+
+
 def test_deploy_ops_check_enforces_paper_readiness() -> None:
     deploy_text = Path("scripts/deploy.sh").read_text()
 

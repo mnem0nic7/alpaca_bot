@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 
 def _patch_env(monkeypatch):
@@ -33,7 +36,7 @@ def _fake_split(scenario, *, in_sample_ratio):
 
 
 def _patch_common_db(monkeypatch, module, symbols=("AAPL", "MSFT")):
-    """Patch connect_postgres, WatchlistStore, OrderStore, DailySessionStateStore."""
+    """Patch DB-backed stores used by nightly tests."""
     monkeypatch.setattr(module, "connect_postgres", lambda url: object())
 
     class FakeWatchlistStore:
@@ -42,6 +45,13 @@ def _patch_common_db(monkeypatch, module, symbols=("AAPL", "MSFT")):
         def list_ignored(self, trading_mode): return []
 
     monkeypatch.setattr(module, "WatchlistStore", FakeWatchlistStore)
+
+    class FakeStrategyFlagStore:
+        def __init__(self, conn): pass
+        def list_all(self, *, trading_mode, strategy_version):
+            return [SimpleNamespace(strategy_name="breakout", enabled=True)]
+
+    monkeypatch.setattr(module, "StrategyFlagStore", FakeStrategyFlagStore)
 
     class FakeOrderStore:
         def __init__(self, conn): pass
@@ -126,6 +136,7 @@ def test_nightly_cli_dry_run_skips_backfill(monkeypatch, tmp_path):
 
     monkeypatch.setattr(sys, "argv", [
         "nightly", "--dry-run", "--no-db", "--output-dir", str(tmp_path),
+        "--strategies", "breakout",
     ])
 
     result = module.main()
@@ -262,6 +273,13 @@ def test_nightly_cli_no_held_candidates_continues_to_live_report(monkeypatch, tm
         def list_enabled(self, trading_mode): return ["AAPL", "MSFT"]
 
     monkeypatch.setattr(module, "WatchlistStore", FakeWatchlistStore)
+
+    class FakeStrategyFlagStore:
+        def __init__(self, conn): pass
+        def list_all(self, *, trading_mode, strategy_version):
+            return [SimpleNamespace(strategy_name="breakout", enabled=True)]
+
+    monkeypatch.setattr(module, "StrategyFlagStore", FakeStrategyFlagStore)
 
     live_report_called = []
 
@@ -529,6 +547,203 @@ def test_nightly_multi_strategy_sweeps_all_grids(monkeypatch, tmp_path):
     assert len(sweep_calls) == len(STRATEGY_GRIDS), (
         f"Expected {len(STRATEGY_GRIDS)} sweep calls, got {len(sweep_calls)}"
     )
+
+
+def test_nightly_default_sweeps_enabled_strategy_flags(monkeypatch, tmp_path):
+    """Default --strategies enabled sweeps only enabled strategy flags."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import STRATEGY_GRIDS, TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    _patch_common_db(monkeypatch, module)
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    sweep_count = 0
+
+    def fake_sweep(**kw):
+        nonlocal sweep_count
+        sweep_count += 1
+        assert kw["grid"] == STRATEGY_GRIDS["breakout"]
+        return [TuningCandidate(params={"RELATIVE_VOLUME_THRESHOLD": "1.5"}, report=None, score=0.3)]
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [0.25])
+
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db", "--output-dir", str(tmp_path),
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert sweep_count == 1
+
+
+def test_nightly_enabled_strategy_falls_back_to_all_without_flags() -> None:
+    """Fresh installs with no strategy flags preserve the old all-strategy default."""
+    from alpaca_bot.nightly.cli import _resolve_strategies
+    from alpaca_bot.tuning.sweep import STRATEGY_GRIDS
+
+    assert _resolve_strategies("enabled", enabled_strategy_names=()) == list(STRATEGY_GRIDS)
+
+
+def test_nightly_publishes_enabled_winner_weights(monkeypatch, tmp_path):
+    """Normal nightly persists enabled held winners as runtime strategy weights."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    class FakeConn:
+        def __init__(self):
+            self.commits = 0
+            self.rollbacks = 0
+
+        def commit(self):
+            self.commits += 1
+
+        def rollback(self):
+            self.rollbacks += 1
+
+    conn = FakeConn()
+    monkeypatch.setattr(module, "connect_postgres", lambda url: conn)
+
+    class FakeWatchlistStore:
+        def __init__(self, conn): pass
+        def list_enabled(self, trading_mode): return ["AAPL", "MSFT"]
+        def list_ignored(self, trading_mode): return []
+
+    class FakeStrategyFlagStore:
+        def __init__(self, conn): pass
+        def list_all(self, *, trading_mode, strategy_version):
+            return [
+                SimpleNamespace(strategy_name="bull_flag", enabled=True),
+                SimpleNamespace(strategy_name="breakout", enabled=False),
+            ]
+
+    class FakeTuningResultStore:
+        def __init__(self, conn): pass
+        def load_all_scored(self, *, trading_mode, limit=5000): return []
+        def save_run(self, **kw): return "run-id"
+
+    class FakeOrderStore:
+        def __init__(self, conn): pass
+        def list_closed_trades(self, **kw): return []
+
+    class FakeDailySessionStateStore:
+        def __init__(self, conn): pass
+        def load(self, **kw): return None
+
+    upsert_calls: list[dict] = []
+
+    class FakeStrategyWeightStore:
+        def __init__(self, conn): pass
+        def upsert_many(self, **kw):
+            upsert_calls.append(kw)
+
+    events: list = []
+
+    class FakeAuditEventStore:
+        def __init__(self, conn): pass
+        def append(self, event, *, commit=True):
+            events.append(event)
+
+    monkeypatch.setattr(module, "WatchlistStore", FakeWatchlistStore)
+    monkeypatch.setattr(module, "StrategyFlagStore", FakeStrategyFlagStore)
+    monkeypatch.setattr(module, "TuningResultStore", FakeTuningResultStore)
+    monkeypatch.setattr(module, "OrderStore", FakeOrderStore)
+    monkeypatch.setattr(module, "DailySessionStateStore", FakeDailySessionStateStore)
+    monkeypatch.setattr(module, "StrategyWeightStore", FakeStrategyWeightStore)
+    monkeypatch.setattr(module, "AuditEventStore", FakeAuditEventStore)
+
+    cand = TuningCandidate(
+        params={
+            "BULL_FLAG_MIN_RUN_PCT": "0.02",
+            "BULL_FLAG_CONSOLIDATION_RANGE_PCT": "0.5",
+        },
+        report=None,
+        score=1.2,
+    )
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", lambda **kw: [cand])
+    monkeypatch.setattr(
+        module,
+        "evaluate_candidates_oos",
+        lambda candidates, oos_scenarios, **kw: [1.75],
+    )
+
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run",
+        "--output-dir", str(tmp_path),
+        "--strategies", "bull_flag",
+        "--prune-keep-days", "0",
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert len(upsert_calls) == 1
+    call = upsert_calls[0]
+    assert call["weights"] == {"bull_flag": 1.0}
+    assert call["sharpes"] == {"bull_flag": 1.75}
+    assert call["trading_mode"].value == "paper"
+    assert call["strategy_version"] == "v1"
+    assert call["commit"] is False
+    assert conn.commits == 1
+    updated = [e for e in events if e.event_type == "strategy_weights_updated"]
+    assert len(updated) == 1
+    assert updated[0].payload["source"] == "nightly_pooled_oos"
+    assert updated[0].payload["sharpes"] == {"bull_flag": 1.75}
+
+
+def test_publish_winner_weights_skips_when_enabled_strategy_lacks_winner(monkeypatch):
+    """Weight publishing must not delete active rows unless all enabled strategies won."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    settings = module.Settings.from_env(dict(os.environ))
+
+    class FakeStrategyFlagStore:
+        def __init__(self, conn): pass
+        def list_all(self, *, trading_mode, strategy_version):
+            return [
+                SimpleNamespace(strategy_name="breakout", enabled=True),
+                SimpleNamespace(strategy_name="momentum", enabled=True),
+            ]
+
+    class FailingStrategyWeightStore:
+        def __init__(self, conn):
+            raise AssertionError("StrategyWeightStore must not be used when a winner is missing")
+
+    events: list = []
+
+    class FakeAuditEventStore:
+        def __init__(self, conn): pass
+        def append(self, event, *, commit=True):
+            events.append(event)
+
+    monkeypatch.setattr(module, "StrategyFlagStore", FakeStrategyFlagStore)
+    monkeypatch.setattr(module, "StrategyWeightStore", FailingStrategyWeightStore)
+    monkeypatch.setattr(module, "AuditEventStore", FakeAuditEventStore)
+
+    cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
+    result = module._publish_winner_strategy_weights(
+        conn=object(),
+        settings=settings,
+        strategy_names=["breakout", "momentum"],
+        winners=[("breakout", cand, 0.4)],
+        computed_at=datetime(2026, 6, 28, tzinfo=timezone.utc),
+    )
+
+    assert result is False
+    assert len(events) == 1
+    assert events[0].event_type == "nightly_strategy_weights_skipped"
+    assert events[0].payload["reason"] == "active_strategy_without_held_winner"
+    assert events[0].payload["missing_strategies"] == ["momentum"]
 
 
 def test_nightly_composite_env_shared_params_from_highest_scorer(monkeypatch, tmp_path):

@@ -21,6 +21,8 @@ from alpaca_bot.storage.repositories import (
     DailySessionStateStore,
     DecisionLogStore,
     OrderStore,
+    StrategyFlagStore,
+    StrategyWeightStore,
     TuningResultStore,
     WatchlistStore,
 )
@@ -58,8 +60,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Maximum allowed IS/OOS drawdown to accept a candidate (0.0 = disabled)")
     parser.add_argument("--max-trades", type=int, default=0,
                         help="Maximum trades per scenario to accept a candidate (0 = disabled)")
-    parser.add_argument("--strategies", default="all",
-                        help="Comma-separated strategy names or 'all' (default: all)")
+    parser.add_argument(
+        "--strategies",
+        default="enabled",
+        help=(
+            "Comma-separated strategy names, 'all', or 'enabled' "
+            "(default: enabled; falls back to all when no flags exist)"
+        ),
+    )
     parser.add_argument("--no-db", action="store_true",
                         help="Skip persisting results to tuning_results")
     parser.add_argument("--prune-keep-days", type=int, default=30,
@@ -150,7 +158,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 return 1
 
-            strategy_names = _resolve_strategies(args.strategies)
+            enabled_strategy_names = (
+                _load_enabled_strategy_names(conn=conn, settings=settings)
+                if args.strategies.strip().lower() == "enabled"
+                else ()
+            )
+            strategy_names = _resolve_strategies(
+                args.strategies,
+                enabled_strategy_names=enabled_strategy_names,
+            )
             all_scenarios = [ReplayRunner.load_scenario(f) for f in files]
             is_scenarios = []
             oos_scenarios = []
@@ -243,6 +259,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                     winners.append((strat_name, best, best_oos))
 
             _print_strategy_results(winners, strategy_names, all_scenarios)
+
+            if not args.no_db and winners:
+                try:
+                    _publish_winner_strategy_weights(
+                        conn=conn,
+                        settings=settings,
+                        strategy_names=strategy_names,
+                        winners=winners,
+                        computed_at=now,
+                    )
+                except Exception as exc:
+                    rollback = getattr(conn, "rollback", None)
+                    if callable(rollback):
+                        rollback()
+                    print(
+                        f"Warning: could not publish nightly strategy weights: {exc}",
+                        file=sys.stderr,
+                    )
 
             env_written = False
             if winners:
@@ -384,15 +418,174 @@ def _scenario_files_for_symbols(
     return files, missing
 
 
-def _resolve_strategies(strategies_arg: str) -> list[str]:
-    """Resolve '--strategies all' or comma-separated names to a list."""
-    if strategies_arg.strip().lower() == "all":
+def _load_enabled_strategy_names(*, conn, settings: Settings) -> list[str]:
+    flags = StrategyFlagStore(conn).list_all(
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+    )
+    return [flag.strategy_name for flag in flags if flag.enabled]
+
+
+def _resolve_strategies(
+    strategies_arg: str,
+    *,
+    enabled_strategy_names: Sequence[str] = (),
+) -> list[str]:
+    """Resolve '--strategies all', 'enabled', or comma-separated names."""
+    raw = strategies_arg.strip().lower()
+    if raw == "all":
+        return list(STRATEGY_GRIDS.keys())
+    if raw == "enabled":
+        enabled = [name for name in enabled_strategy_names if name in STRATEGY_GRIDS]
+        if enabled:
+            return enabled
+        print(
+            "Warning: no enabled strategy flags found; falling back to all strategy grids",
+            file=sys.stderr,
+        )
         return list(STRATEGY_GRIDS.keys())
     names = [s.strip() for s in strategies_arg.split(",") if s.strip()]
     unknown = [n for n in names if n not in STRATEGY_GRIDS]
     if unknown:
         print(f"Warning: unknown strategies ignored: {unknown}", file=sys.stderr)
     return [n for n in names if n in STRATEGY_GRIDS]
+
+
+def _active_strategy_names_for_weight_publish(
+    *,
+    conn,
+    settings: Settings,
+    strategy_names: Sequence[str],
+) -> list[str]:
+    enabled_strategy_names = _load_enabled_strategy_names(conn=conn, settings=settings)
+    if enabled_strategy_names:
+        enabled = set(enabled_strategy_names)
+        return [name for name in strategy_names if name in enabled]
+    return [name for name in strategy_names if name in STRATEGY_GRIDS]
+
+
+def _publish_winner_strategy_weights(
+    *,
+    conn,
+    settings: Settings,
+    strategy_names: Sequence[str],
+    winners: Sequence[tuple[str, TuningCandidate, float]],
+    computed_at: datetime,
+) -> bool:
+    active_names = _active_strategy_names_for_weight_publish(
+        conn=conn,
+        settings=settings,
+        strategy_names=strategy_names,
+    )
+    if not active_names:
+        _append_strategy_weight_skip_event(
+            conn=conn,
+            computed_at=computed_at,
+            reason="no_active_enabled_strategies",
+            active_names=active_names,
+            winner_scores={},
+        )
+        print("Strategy weights unchanged: no enabled strategies were swept.")
+        return False
+
+    winner_scores = {
+        strategy_name: float(oos_score)
+        for strategy_name, _candidate, oos_score in winners
+        if strategy_name in active_names
+    }
+    missing = [name for name in active_names if name not in winner_scores]
+    if missing:
+        _append_strategy_weight_skip_event(
+            conn=conn,
+            computed_at=computed_at,
+            reason="active_strategy_without_held_winner",
+            active_names=active_names,
+            winner_scores=winner_scores,
+            missing=missing,
+        )
+        print(
+            "Strategy weights unchanged: active strategies without held winners: "
+            + ", ".join(missing)
+        )
+        return False
+
+    non_positive = [name for name in active_names if winner_scores[name] <= 0.0]
+    total_score = sum(max(winner_scores[name], 0.0) for name in active_names)
+    if non_positive or total_score <= 0.0:
+        _append_strategy_weight_skip_event(
+            conn=conn,
+            computed_at=computed_at,
+            reason="non_positive_pooled_oos_score",
+            active_names=active_names,
+            winner_scores=winner_scores,
+            missing=non_positive,
+        )
+        print(
+            "Strategy weights unchanged: non-positive pooled OOS scores for "
+            + ", ".join(non_positive or active_names)
+        )
+        return False
+
+    weights = {name: winner_scores[name] / total_score for name in active_names}
+    sharpes = {name: winner_scores[name] for name in active_names}
+    rounded_weights = {name: round(weight, 6) for name, weight in weights.items()}
+    rounded_sharpes = {name: round(sharpe, 6) for name, sharpe in sharpes.items()}
+
+    StrategyWeightStore(conn).upsert_many(
+        weights=weights,
+        sharpes=sharpes,
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        computed_at=computed_at,
+        commit=False,
+    )
+    AuditEventStore(conn).append(
+        AuditEvent(
+            event_type="strategy_weights_updated",
+            payload={
+                "source": "nightly_pooled_oos",
+                "active_strategies": list(active_names),
+                "weights": rounded_weights,
+                "sharpes": rounded_sharpes,
+            },
+            created_at=computed_at,
+        ),
+        commit=False,
+    )
+    commit = getattr(conn, "commit", None)
+    if callable(commit):
+        commit()
+    print(
+        "Strategy weights updated from pooled OOS scores: "
+        + ", ".join(f"{name}={weights[name]:.4f}" for name in active_names)
+    )
+    return True
+
+
+def _append_strategy_weight_skip_event(
+    *,
+    conn,
+    computed_at: datetime,
+    reason: str,
+    active_names: Sequence[str],
+    winner_scores: dict[str, float],
+    missing: Sequence[str] = (),
+) -> None:
+    AuditEventStore(conn).append(
+        AuditEvent(
+            event_type="nightly_strategy_weights_skipped",
+            payload={
+                "source": "nightly_pooled_oos",
+                "reason": reason,
+                "active_strategies": list(active_names),
+                "held_winner_scores": {
+                    name: round(score, 6) for name, score in winner_scores.items()
+                },
+                "missing_strategies": list(missing),
+            },
+            created_at=computed_at,
+        )
+    )
 
 
 def _build_composite_env(
