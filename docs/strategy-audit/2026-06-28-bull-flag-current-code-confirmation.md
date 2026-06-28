@@ -336,3 +336,35 @@ Scenario freshness scan before the proof start:
 Decision: no universe change. Sparse symbols remain current, were included in
 the positive-edge active-universe replay above, and the live proof stack already
 requires a fresh paper-readiness pass before regular-session entries.
+
+Current-head replay confirmation after proof-status readiness-window and env
+default hardening at commit `af84933`:
+
+- live active paper symbols: `980`
+- enabled paper symbols: `986`
+- ignored paper symbols: `6`
+- exact active latest-120-day scenario files: `980`
+- deployed proof posture: `bull_flag`, `RELATIVE_VOLUME_THRESHOLD=2.0`,
+  `MAX_OPEN_POSITIONS=3`, `REPLAY_SLIPPAGE_BPS=2.0`, floor-sized starting
+  equity `$17,247.795`
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+python3 -m alpaca_bot.replay.cli portfolio-audit \
+  --scenario-dir /tmp/alpaca-active-120d-scenarios \
+  --strategy bull_flag \
+  --slippage-bps 2 \
+  --max-open-positions 3 \
+  --starting-equity 17247.795 \
+  --output /tmp/alpaca-bull-flag-120d-current-af84933.md \
+  --jsonl /tmp/alpaca-bull-flag-120d-current-af84933.jsonl
+```
+
+| scenarios | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(mean<=0) | frictionless P&L | cost drag | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---|
+| 980 | 417 | 74.8% | 1.75 | 1067.75 | 2.5605 | 5.83 | [1.1926, 3.8842] | 0.0000 | 1283.93 | 216.18 | positive-edge |
+
+Decision: keep the deployed paper posture unchanged. Current head still clears
+the exact live-universe latest-120-day replay after the proof automation fixes,
+so the remaining proof dependency is live paper execution on or after the
+`2026-06-29` market session.
