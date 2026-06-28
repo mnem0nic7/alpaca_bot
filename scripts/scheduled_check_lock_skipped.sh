@@ -5,6 +5,43 @@ CHECK_NAME="${1:-}"
 LOCK_FILE="${2:-}"
 ENV_FILE="${3:-/etc/alpaca_bot/alpaca-bot.env}"
 
+_preserved_env_names=()
+_preserved_env_values=()
+
+capture_env_overrides() {
+  local name
+  for name in "$@"; do
+    if [[ -n "${!name+x}" ]]; then
+      _preserved_env_names+=("$name")
+      _preserved_env_values+=("${!name}")
+    fi
+  done
+}
+
+restore_env_overrides() {
+  local index
+  for index in "${!_preserved_env_names[@]}"; do
+    printf -v "${_preserved_env_names[$index]}" '%s' "${_preserved_env_values[$index]}"
+    export "${_preserved_env_names[$index]}"
+  done
+}
+
+capture_env_overrides \
+  PAPER_ACTIVITY_STRATEGY \
+  PAPER_READINESS_MAX_PASS_AGE_MINUTES \
+  PAPER_READINESS_SESSION_DATE \
+  PROFIT_PROBE_MIN_PNL \
+  PROFIT_PROBE_MIN_TRADES \
+  PROFIT_PROBE_START_DATE \
+  PROFIT_PROBE_STRATEGY \
+  PROOF_STATUS_LOCK_MAX_AGE_MINUTES \
+  PROOF_STATUS_MIN_PNL \
+  PROOF_STATUS_MIN_TRADES \
+  PROOF_STATUS_START_DATE \
+  PROOF_STATUS_STRATEGY \
+  SESSION_GUARD_START_DATE \
+  SESSION_GUARD_STRATEGY
+
 if [[ -z "$CHECK_NAME" || -z "$LOCK_FILE" ]]; then
   echo "usage: scheduled_check_lock_skipped.sh CHECK_NAME LOCK_FILE [ENV_FILE]" >&2
   exit 2
@@ -15,6 +52,7 @@ if [[ -f "$ENV_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
+  restore_env_overrides
 fi
 
 session_date="$(TZ=America/New_York date +%F)"

@@ -728,6 +728,9 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert 'exit "$rc"' in wrapper
     assert "scheduled check lock busy" in lock_skip
     assert "scheduled check context:" in lock_skip
+    assert "capture_env_overrides" in lock_skip
+    assert "restore_env_overrides" in lock_skip
+    assert lock_skip.index('source "$ENV_FILE"') < lock_skip.index("\n  restore_env_overrides\n")
     assert "reason=lock_busy" in lock_skip
     assert "reason=lock_busy_already_passed" in lock_skip
     assert "paper_readiness_session_date=" in lock_skip
@@ -821,6 +824,61 @@ def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -
         "pnl=0.00 required_pnl=0.01"
     ) in result.stdout
     assert "paper proof status check skipped:" in result.stdout
+
+
+def test_proof_status_lock_skip_preserves_invocation_overrides(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|awaiting_completed_proof_session|none|pending|0|12|0.00|2.34|none|none|2026-06-28T06:37:20.499132Z|0'\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "PROFIT_PROBE_STRATEGY=bull_flag",
+                "PROFIT_PROBE_MIN_TRADES=10",
+                "PROFIT_PROBE_MIN_PNL=0.01",
+            ]
+        )
+    )
+    lock_file = tmp_path / "proof-status.lock"
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_proof_status",
+            str(lock_file),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PROOF_STATUS_START_DATE": "2026-07-06",
+            "PROOF_STATUS_STRATEGY": "custom_flag",
+            "PROOF_STATUS_MIN_TRADES": "12",
+            "PROOF_STATUS_MIN_PNL": "2.34",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "scheduled check context: session_date="
+        in result.stdout
+    )
+    assert "proof_start=2026-07-06" in result.stdout
+    assert "strategy=custom_flag" in result.stdout
+    assert "min_trades=12" in result.stdout
+    assert "min_pnl=2.34" in result.stdout
+    assert "reason=lock_busy_already_reported" in result.stdout
 
 
 def test_proof_status_lock_skip_fails_without_recent_evidence(tmp_path: Path) -> None:
@@ -1224,6 +1282,8 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "post-open checks failed for strategy" in script
     assert "paper activity warning: failed to apply close-only after activity failure" in script
     assert "PAPER_READINESS_AUTO_RESUME=false" in script
+    assert "PAPER_READINESS_AUTO_RESET_WEIGHTS=false" in script
+    assert 'PAPER_READINESS_CLOSE_ONLY_ON_FAILURE="$PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE"' in script
     assert "PAPER_READINESS_REQUIRE_FLAT=false" in script
     assert '"$PAPER_ACTIVITY_READINESS_RUNNER"' in script
     assert "paper_readiness" in script
@@ -1350,6 +1410,55 @@ def test_paper_activity_allows_low_record_count_when_stock_exposure_exists(tmp_p
     assert "dispatch_failures=0" in result.stdout
     assert "stream_issues=0" in result.stdout
     assert not docker_marker.exists()
+
+
+def test_paper_activity_passes_diagnostic_mode_to_readiness_runner(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "PAPER_READINESS_AUTO_RESUME=true",
+                "PAPER_READINESS_AUTO_RESET_WEIGHTS=true",
+                "PAPER_READINESS_CLOSE_ONLY_ON_FAILURE=true",
+                "PAPER_READINESS_REQUIRE_FLAT=true",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'readiness_overrides auto_resume=%s auto_reset=%s close_only=%s require_flat=%s\\n' "
+        '"${PAPER_READINESS_AUTO_RESUME:-}" '
+        '"${PAPER_READINESS_AUTO_RESET_WEIGHTS:-}" '
+        '"${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE:-}" '
+        '"${PAPER_READINESS_REQUIRE_FLAT:-}"\n'
+        "exit 48\n"
+    )
+    fake_runner.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE": "false",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+    assert (
+        "readiness_overrides auto_resume=false auto_reset=false "
+        "close_only=false require_flat=false"
+    ) in result.stdout
+    assert "paper activity pending: readiness repair lock busy" in result.stdout
 
 
 def test_paper_activity_allows_recovered_disabled_cycles(tmp_path: Path) -> None:
