@@ -38,6 +38,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     activity = "0 16,17 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1200"
     session_guard = "10 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1710"
     profit_probe = "20 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1720"
+    proof_status = "28 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1728"
     nightly = "30 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1730"
 
     assert readiness in cron_text
@@ -51,6 +52,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert activity in cron_text
     assert session_guard in cron_text
     assert profit_probe in cron_text
+    assert proof_status in cron_text
     assert nightly in cron_text
     assert cron_text.index(readiness) < cron_text.index(readiness_retry)
     assert cron_text.index(readiness_retry) < cron_text.index(readiness_final)
@@ -62,8 +64,10 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(readiness_afternoon_refresh) < cron_text.index(readiness_post_close_refresh)
     assert cron_text.index(readiness_post_close_refresh) < cron_text.index(session_guard)
     assert cron_text.index(session_guard) < cron_text.index(profit_probe)
+    assert cron_text.index(profit_probe) < cron_text.index(proof_status)
+    assert cron_text.index(proof_status) < cron_text.index(nightly)
     assert cron_text.index(profit_probe) < cron_text.index(nightly)
-    assert cron_text.count("scripts/run_if_ny_time.sh") == 12
+    assert cron_text.count("scripts/run_if_ny_time.sh") == 13
     assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 11
     assert "flock -n /var/lock/alpaca-bot-nightly.lock" in cron_text
     assert "flock -n /var/lock/alpaca-bot-paper" not in cron_text
@@ -93,6 +97,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "scripts/paper_profit_probe.sh" in cron_text
     assert "run_locked_check_with_audit.sh paper_profit_probe" in cron_text
     assert "/var/log/alpaca-bot-profit-probe.log" in cron_text
+    assert "scripts/paper_proof_status.sh" in cron_text
+    assert "/var/log/alpaca-bot-proof-status.log" in cron_text
     assert "run_locked_check_with_audit.sh session_guard" in cron_text
     assert 'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"' in install_cron
     assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" /etc/cron.d/alpaca-bot' in install_cron
@@ -100,6 +106,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "Runs weekdays on New York wall time" in install_cron
     assert "paper readiness 09:20/09:55/09:58/10:02/12:45/14:25/16:55" in install_cron
     assert "paper activity 10:25/12:00" in install_cron
+    assert "proof status 17:28" in install_cron
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
     assert "expected HHMM must be a valid 24-hour time" in run_if_ny_time
     assert "date returned invalid HHMM" in run_if_ny_time
@@ -130,6 +137,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "paper_activity_check.sh" in cron_health
     assert "session_guard.sh" in cron_health
     assert "paper_profit_probe.sh" in cron_health
+    assert "paper_proof_status.sh" in cron_health
     assert "runtime_image_health_check.sh" in cron_health
     assert "cron health ok" in cron_health
 
@@ -1642,7 +1650,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "'trade_update_stream_started'" in script
     assert "'trade_update_stream_stopped'" in script
     assert "'trade_update_stream_failed'" in script
+    assert "'stream_heartbeat_stale'" in script
+    assert "'stream_restart_failed'" in script
     assert "latest_stream_started_at" in script
+    assert "stream_issue_status_by_event_type" in script
+    assert '"stream_heartbeat_stale": "heartbeat_stale"' in script
+    assert '"stream_restart_failed": "restart_failed"' in script
     assert "stream_status = \"missing\"" in script
     assert "stream_status = \"stale\"" in script
     assert "blockers.append(f\"stream_{stream_status}\")" in script

@@ -89,6 +89,7 @@ for script in \
   paper_activity_check.sh \
   session_guard.sh \
   paper_profit_probe.sh \
+  paper_proof_status.sh \
   runtime_image_health_check.sh
 do
   path="$ROOT_DIR/scripts/$script"

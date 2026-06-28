@@ -447,7 +447,9 @@ try:
             WHERE event_type IN (
                 'trade_update_stream_started',
                 'trade_update_stream_stopped',
-                'trade_update_stream_failed'
+                'trade_update_stream_failed',
+                'stream_heartbeat_stale',
+                'stream_restart_failed'
               )
               AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)
               AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)
@@ -619,12 +621,20 @@ latest_stream_event_text = (
 stream_status = "ok"
 if latest_stream_started_at is None:
     stream_status = "missing"
-elif (
-    latest_stream_event_type in {"trade_update_stream_failed", "trade_update_stream_stopped"}
+stream_issue_status_by_event_type = {
+    "trade_update_stream_failed": "failed",
+    "trade_update_stream_stopped": "stopped",
+    "stream_heartbeat_stale": "heartbeat_stale",
+    "stream_restart_failed": "restart_failed",
+}
+if (
+    stream_status == "ok"
+    and latest_stream_event_type in stream_issue_status_by_event_type
     and latest_stream_event_at is not None
+    and latest_stream_started_at is not None
     and latest_stream_event_at >= latest_stream_started_at
 ):
-    stream_status = latest_stream_event_type.removeprefix("trade_update_stream_")
+    stream_status = stream_issue_status_by_event_type[latest_stream_event_type]
 elif (
     latest_supervisor_started_at is not None
     and latest_stream_started_at
