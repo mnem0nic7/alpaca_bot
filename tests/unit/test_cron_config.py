@@ -79,6 +79,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
         "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1025"
     )
     activity = "0 16,17 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1200"
+    late_activity = "35 18,19 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1435"
     session_guard = "10 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1710"
     profit_probe = "20 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1720"
     proof_status = (
@@ -109,6 +110,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert readiness_pre_proof_refresh in cron_text
     assert early_activity in cron_text
     assert activity in cron_text
+    assert late_activity in cron_text
     assert session_guard in cron_text
     assert profit_probe in cron_text
     assert proof_status in cron_text
@@ -131,7 +133,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(readiness_stale_repair_1315) < cron_text.index(readiness_stale_repair_1345)
     assert cron_text.index(readiness_stale_repair_1345) < cron_text.index(readiness_stale_repair_1415)
     assert cron_text.index(readiness_stale_repair_1415) < cron_text.index(readiness_afternoon_refresh)
-    assert cron_text.index(readiness_afternoon_refresh) < cron_text.index(readiness_stale_repair_1445)
+    assert cron_text.index(readiness_afternoon_refresh) < cron_text.index(late_activity)
+    assert cron_text.index(late_activity) < cron_text.index(readiness_stale_repair_1445)
     assert cron_text.index(readiness_stale_repair_1445) < cron_text.index(readiness_stale_repair_1515)
     assert cron_text.index(readiness_stale_repair_1515) < cron_text.index(readiness_post_close_refresh)
     assert cron_text.index(readiness_afternoon_refresh) < cron_text.index(readiness_post_close_refresh)
@@ -142,8 +145,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(profit_probe) < cron_text.index(proof_status)
     assert cron_text.index(proof_status) < cron_text.index(nightly)
     assert cron_text.index(profit_probe) < cron_text.index(nightly)
-    assert cron_text.count("scripts/run_if_ny_time.sh") == 26
-    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 25
+    assert cron_text.count("scripts/run_if_ny_time.sh") == 27
+    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 26
     assert "flock -n /var/lock/alpaca-bot-nightly.lock" in cron_text
     assert "flock -n /var/lock/alpaca-bot-paper" not in cron_text
     assert "flock -n /var/lock/alpaca-bot-session-guard.lock" not in cron_text
@@ -162,7 +165,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "RUN_IF_NY_TIME_GRACE_MINUTES=1" in cron_text
     assert "/var/log/alpaca-bot-paper-readiness.log" in cron_text
     assert "scripts/paper_activity_check.sh" in cron_text
-    assert cron_text.count("scripts/paper_activity_check.sh") == 2
+    assert cron_text.count("scripts/paper_activity_check.sh") == 3
     assert cron_text.count("PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE=false") == 1
     assert cron_text.index("PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE=false") < cron_text.index(
         "run_if_ny_time.sh 1025"
@@ -184,7 +187,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "Runs weekdays on New York wall time" in install_cron
     assert "paper readiness 09:20/09:55/09:58/10:02/10:05/10:10 plus stale-repair checks from 10:15-15:15" in install_cron
     assert "force refresh 12:15/14:25/16:55/17:24" in install_cron
-    assert "paper activity 10:25/12:00" in install_cron
+    assert "paper activity 10:25/12:00/14:35" in install_cron
     assert "proof status 17:28" in install_cron
     assert "scripts/apply_candidate.sh" in cron_text
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
@@ -3003,10 +3006,15 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "max_loss_per_trade_dollars=" in script
     assert "replay_slippage_bps={settings.replay_slippage_bps:g}" in script
     assert "paper proof local exposure:" in script
-    assert "positions={local_open_positions} active_orders={local_active_orders}" in script
+    assert "positions={local_open_positions}" in script
+    assert "active_orders={local_active_orders}" in script
+    assert "position_symbols={local_open_position_symbols or 'none'}" in script
+    assert "active_order_symbols={local_active_order_symbols or 'none'}" in script
     assert "paper proof option exposure:" in script
     assert "net_open={local_open_option_positions}" in script
     assert "active_orders={local_active_option_orders}" in script
+    assert "net_open_symbols={local_open_option_symbols or 'none'}" in script
+    assert "active_order_symbols={local_active_option_order_symbols or 'none'}" in script
     assert "local_open_option_positions" in script
     assert "local_active_option_orders" in script
     assert "blockers.append(\"local_open_option_positions\")" in script
@@ -3016,7 +3024,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "broker.list_positions()" in script
     assert "broker.get_account()" in script
     assert "paper proof broker exposure:" in script
-    assert "open_orders={broker_open_orders} open_positions={broker_open_positions}" in script
+    assert "open_orders={broker_open_orders}" in script
+    assert "open_positions={broker_open_positions}" in script
+    assert "open_order_symbols={broker_open_order_symbols or 'none'}" in script
+    assert "open_position_symbols={broker_open_position_symbols or 'none'}" in script
     assert "paper proof broker account:" in script
     assert "status={broker_account_status}" in script
     assert "equity={broker_equity:.2f}" in script

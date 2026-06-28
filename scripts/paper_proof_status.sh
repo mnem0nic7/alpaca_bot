@@ -381,6 +381,8 @@ def load_broker_exposure(
 ) -> tuple[
     int | None,
     int | None,
+    str | None,
+    str | None,
     float | None,
     float | None,
     float | None,
@@ -394,7 +396,13 @@ def load_broker_exposure(
         open_positions = broker.list_positions()
         account = broker.get_account()
     except Exception as exc:
-        return None, None, None, None, None, None, None, str(exc)
+        return None, None, None, None, None, None, None, None, None, str(exc)
+    open_order_symbols = ",".join(
+        sorted({getattr(order, "symbol", "") for order in open_orders if getattr(order, "symbol", "")})
+    ) or "none"
+    open_position_symbols = ",".join(
+        sorted({getattr(position, "symbol", "") for position in open_positions if getattr(position, "symbol", "")})
+    ) or "none"
     equity = float(account.equity)
     buying_power = float(account.buying_power)
     minimum_buying_power = equity * float(settings.max_position_pct)
@@ -407,6 +415,8 @@ def load_broker_exposure(
     return (
         len(open_orders),
         len(open_positions),
+        open_order_symbols,
+        open_position_symbols,
         equity,
         buying_power,
         minimum_buying_power,
@@ -463,6 +473,8 @@ if readiness_target_session < proof_start:
 (
     broker_open_orders,
     broker_open_positions,
+    broker_open_order_symbols,
+    broker_open_position_symbols,
     broker_equity,
     broker_buying_power,
     broker_minimum_buying_power,
@@ -842,8 +854,89 @@ try:
                     'done_for_day'
                   )
               ) AS active_option_orders
+              ,
+              (
+                SELECT COALESCE(string_agg(DISTINCT symbol, ',' ORDER BY symbol), 'none')
+                FROM positions
+                WHERE trading_mode = %s
+                  AND strategy_version = %s
+              ) AS open_position_symbols,
+              (
+                SELECT COALESCE(string_agg(DISTINCT symbol, ',' ORDER BY symbol), 'none')
+                FROM orders
+                WHERE trading_mode = %s
+                  AND strategy_version = %s
+                  AND status IN (
+                    'pending_submit',
+                    'submitting',
+                    'pending_new',
+                    'new',
+                    'accepted',
+                    'accepted_for_bidding',
+                    'submitted',
+                    'partially_filled',
+                    'held',
+                    'pending_replace',
+                    'pending_cancel',
+                    'stopped',
+                    'suspended',
+                    'done_for_day'
+                  )
+              ) AS active_order_symbols,
+              (
+                WITH filled AS (
+                  SELECT
+                    occ_symbol,
+                    COALESCE(filled_quantity, quantity) AS fill_qty,
+                    side
+                  FROM option_orders
+                  WHERE trading_mode = %s
+                    AND strategy_version = %s
+                    AND status = 'filled'
+                ),
+                net AS (
+                  SELECT
+                    occ_symbol,
+                    SUM(CASE WHEN side = 'buy' THEN fill_qty ELSE -fill_qty END) AS net_qty
+                  FROM filled
+                  GROUP BY occ_symbol
+                  HAVING SUM(CASE WHEN side = 'buy' THEN fill_qty ELSE -fill_qty END) <> 0
+                )
+                SELECT COALESCE(string_agg(DISTINCT occ_symbol, ',' ORDER BY occ_symbol), 'none')
+                FROM net
+              ) AS open_option_symbols,
+              (
+                SELECT COALESCE(string_agg(DISTINCT occ_symbol, ',' ORDER BY occ_symbol), 'none')
+                FROM option_orders
+                WHERE trading_mode = %s
+                  AND strategy_version = %s
+                  AND status IN (
+                    'pending_submit',
+                    'submitting',
+                    'pending_new',
+                    'new',
+                    'accepted',
+                    'accepted_for_bidding',
+                    'submitted',
+                    'partially_filled',
+                    'held',
+                    'pending_replace',
+                    'pending_cancel',
+                    'stopped',
+                    'suspended',
+                    'done_for_day'
+                  )
+              ) AS active_option_order_symbols
             """,
             (
+                trading_mode.value,
+                strategy_version,
+                trading_mode.value,
+                strategy_version,
+                trading_mode.value,
+                strategy_version,
+                trading_mode.value,
+                strategy_version,
                 trading_mode.value,
                 strategy_version,
                 trading_mode.value,
@@ -859,6 +952,10 @@ try:
         local_active_orders = int(exposure_row[1] or 0) if exposure_row else 0
         local_open_option_positions = int(exposure_row[2] or 0) if exposure_row else 0
         local_active_option_orders = int(exposure_row[3] or 0) if exposure_row else 0
+        local_open_position_symbols = exposure_row[4] if exposure_row else "none"
+        local_active_order_symbols = exposure_row[5] if exposure_row else "none"
+        local_open_option_symbols = exposure_row[6] if exposure_row else "none"
+        local_active_option_order_symbols = exposure_row[7] if exposure_row else "none"
 
     order_store = OrderStore(conn)
     trades = []
@@ -1562,18 +1659,27 @@ print(
 )
 print(
     "paper proof local exposure: "
-    f"positions={local_open_positions} active_orders={local_active_orders}"
+    f"positions={local_open_positions} "
+    f"active_orders={local_active_orders} "
+    f"position_symbols={local_open_position_symbols or 'none'} "
+    f"active_order_symbols={local_active_order_symbols or 'none'}"
 )
 print(
     "paper proof option exposure: "
-    f"net_open={local_open_option_positions} active_orders={local_active_option_orders}"
+    f"net_open={local_open_option_positions} "
+    f"active_orders={local_active_option_orders} "
+    f"net_open_symbols={local_open_option_symbols or 'none'} "
+    f"active_order_symbols={local_active_option_order_symbols or 'none'}"
 )
 if broker_exposure_warning:
     print(f"paper proof broker exposure warning: {broker_exposure_warning}")
 else:
     print(
         "paper proof broker exposure: "
-        f"open_orders={broker_open_orders} open_positions={broker_open_positions}"
+        f"open_orders={broker_open_orders} "
+        f"open_positions={broker_open_positions} "
+        f"open_order_symbols={broker_open_order_symbols or 'none'} "
+        f"open_position_symbols={broker_open_position_symbols or 'none'}"
     )
     print(
         "paper proof broker account: "
