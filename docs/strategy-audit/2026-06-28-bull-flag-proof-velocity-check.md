@@ -55,3 +55,21 @@ and this recent-session dry-run check shows that the current K=3 posture has
 been consistently finding the maximum allowed entries in the latest completed
 sessions. The remaining proof dependency is live paper execution from a
 `2026-06-29`-or-later completed market session.
+
+## Follow-up: Relative Volume Threshold Adjustment
+
+Later on 2026-06-28, a cross-sectional portfolio replay checked whether the
+paper posture was strong enough after costs on the deterministic 100-symbol
+`proof` sample, using current paper equity and 2 bps/side replay slippage.
+
+| posture | trades | total P&L | profit factor | CI low | verdict |
+|---|---:|---:|---:|---:|---|
+| `RELATIVE_VOLUME_THRESHOLD=2.0` | 180 | `$1,487.72` | 1.4648 | -1.5272 | no-evidence |
+| `RELATIVE_VOLUME_THRESHOLD=1.8` | 225 | `$1,954.46` | 1.5524 | 0.6927 | positive-edge |
+| `RELATIVE_VOLUME_THRESHOLD=1.5`, VWAP off | 329 | `$1,488.19` | 1.2697 | -1.9491 | no-evidence |
+
+Decision: promote the paper proof posture from
+`RELATIVE_VOLUME_THRESHOLD=2.0` to `RELATIVE_VOLUME_THRESHOLD=1.8`. This keeps
+the VWAP entry filter enabled, preserves `MAX_OPEN_POSITIONS=3`, improves
+trade throughput, and moves the same proof sample from `no-evidence` to
+`positive-edge`.
