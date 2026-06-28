@@ -109,6 +109,7 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "PROFIT_PROBE_STRATEGY=bull_flag" in script
     assert "PROFIT_PROBE_MIN_TRADES=10" in script
     assert "PROFIT_PROBE_MIN_PNL=0.01" in script
+    assert "CONFIDENCE_FLOOR=0.25" in script
     assert "INTRADAY_CONSECUTIVE_LOSS_GATE=0" in script
     assert "ATR_PERIOD=14" in script
     assert "ATR_STOP_MULTIPLIER=1.0" in script
