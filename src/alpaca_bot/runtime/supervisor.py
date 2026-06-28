@@ -76,6 +76,7 @@ from alpaca_bot.storage.models import OptionOrderRecord
 
 STREAM_HEARTBEAT_TIMEOUT_SECONDS = 300
 ACTIVE_ENTRY_STATUSES = (
+    "pending_submit",
     "submitting",
     "pending_new",
     "new",
