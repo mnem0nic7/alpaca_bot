@@ -774,8 +774,58 @@ try:
                     'done_for_day'
                   )
               ) AS active_orders
+              ,
+              (
+                WITH filled AS (
+                  SELECT
+                    strategy_name,
+                    occ_symbol,
+                    COALESCE(filled_quantity, quantity) AS fill_qty,
+                    side
+                  FROM option_orders
+                  WHERE trading_mode = %s
+                    AND strategy_version = %s
+                    AND status = 'filled'
+                ),
+                net AS (
+                  SELECT
+                    strategy_name,
+                    occ_symbol,
+                    SUM(CASE WHEN side = 'buy' THEN fill_qty ELSE -fill_qty END) AS net_qty
+                  FROM filled
+                  GROUP BY strategy_name, occ_symbol
+                  HAVING SUM(CASE WHEN side = 'buy' THEN fill_qty ELSE -fill_qty END) <> 0
+                )
+                SELECT COUNT(*)::int FROM net
+              ) AS open_option_positions,
+              (
+                SELECT COUNT(*)::int
+                FROM option_orders
+                WHERE trading_mode = %s
+                  AND strategy_version = %s
+                  AND status IN (
+                    'pending_submit',
+                    'submitting',
+                    'pending_new',
+                    'new',
+                    'accepted',
+                    'accepted_for_bidding',
+                    'submitted',
+                    'partially_filled',
+                    'held',
+                    'pending_replace',
+                    'pending_cancel',
+                    'stopped',
+                    'suspended',
+                    'done_for_day'
+                  )
+              ) AS active_option_orders
             """,
             (
+                trading_mode.value,
+                strategy_version,
+                trading_mode.value,
+                strategy_version,
                 trading_mode.value,
                 strategy_version,
                 trading_mode.value,
@@ -785,6 +835,8 @@ try:
         exposure_row = cur.fetchone()
         local_open_positions = int(exposure_row[0] or 0) if exposure_row else 0
         local_active_orders = int(exposure_row[1] or 0) if exposure_row else 0
+        local_open_option_positions = int(exposure_row[2] or 0) if exposure_row else 0
+        local_active_option_orders = int(exposure_row[3] or 0) if exposure_row else 0
 
     order_store = OrderStore(conn)
     trades = []
@@ -1151,6 +1203,10 @@ if local_open_positions > 0:
     blockers.append("local_open_positions")
 if local_active_orders > 0:
     blockers.append("local_active_orders")
+if local_open_option_positions > 0:
+    blockers.append("local_open_option_positions")
+if local_active_option_orders > 0:
+    blockers.append("local_active_option_orders")
 if broker_exposure_warning:
     blockers.append("broker_exposure_unknown")
 else:
@@ -1298,6 +1354,10 @@ print(
 print(
     "paper proof local exposure: "
     f"positions={local_open_positions} active_orders={local_active_orders}"
+)
+print(
+    "paper proof option exposure: "
+    f"net_open={local_open_option_positions} active_orders={local_active_option_orders}"
 )
 if broker_exposure_warning:
     print(f"paper proof broker exposure warning: {broker_exposure_warning}")

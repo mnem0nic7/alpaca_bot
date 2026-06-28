@@ -2573,6 +2573,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "int(settings.intraday_consecutive_loss_gate) == 0" in script
     assert "paper proof local exposure:" in script
     assert "positions={local_open_positions} active_orders={local_active_orders}" in script
+    assert "paper proof option exposure:" in script
+    assert "net_open={local_open_option_positions}" in script
+    assert "active_orders={local_active_option_orders}" in script
+    assert "local_open_option_positions" in script
+    assert "local_active_option_orders" in script
+    assert "blockers.append(\"local_open_option_positions\")" in script
+    assert "blockers.append(\"local_active_option_orders\")" in script
     assert "load_broker_exposure" in script
     assert "broker.list_open_orders()" in script
     assert "broker.list_positions()" in script
