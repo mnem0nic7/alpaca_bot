@@ -50,6 +50,48 @@ paper_proof_enabled() {
   [[ "${TRADING_MODE:-}" == "paper" && "${paper_proof_freeze,,}" == "true" ]]
 }
 
+refresh_paper_readiness() {
+  "$ROOT_DIR/scripts/run_locked_check_with_audit.sh" \
+    paper_readiness \
+    /var/lock/alpaca-bot-paper-readiness.lock \
+    "$ENV_FILE" \
+    "$ROOT_DIR/scripts/paper_readiness_if_needed.sh" \
+    "$ENV_FILE"
+}
+
+verify_paper_proof_ready() {
+  local proof_status_output
+  local proof_summary
+
+  proof_status_output="$("$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE")"
+  printf '%s\n' "$proof_status_output"
+  proof_summary="$(
+    printf '%s\n' "$proof_status_output" \
+      | grep -E '^paper proof summary: ' \
+      | tail -n 1 \
+      || true
+  )"
+
+  if [[ "$proof_summary" == *"readiness_audit_stale"* ]]; then
+    echo "paper proof readiness stale after deploy; refreshing once" >&2
+    refresh_paper_readiness
+    proof_status_output="$("$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE")"
+    printf '%s\n' "$proof_status_output"
+    proof_summary="$(
+      printf '%s\n' "$proof_status_output" \
+        | grep -E '^paper proof summary: ' \
+        | tail -n 1 \
+        || true
+    )"
+  fi
+
+  if [[ "$proof_summary" != *"readiness=ready"* \
+    || "$proof_summary" != *"blockers=none"* ]]; then
+    echo "deploy failed: paper proof status not ready after deploy: ${proof_summary:-missing summary}" >&2
+    exit 1
+  fi
+}
+
 require_var POSTGRES_DB
 require_var POSTGRES_USER
 require_var POSTGRES_PASSWORD
@@ -83,12 +125,7 @@ if credentials_ready; then
     --expect-kill-switch false \
     --expect-only-enabled-strategy bull_flag
   if paper_proof_enabled; then
-    "$ROOT_DIR/scripts/run_locked_check_with_audit.sh" \
-      paper_readiness \
-      /var/lock/alpaca-bot-paper-readiness.lock \
-      "$ENV_FILE" \
-      "$ROOT_DIR/scripts/paper_readiness_if_needed.sh" \
-      "$ENV_FILE"
+    refresh_paper_readiness
   fi
 else
   docker compose -f "$COMPOSE_FILE" rm -sf supervisor >/dev/null 2>&1 || true
@@ -106,19 +143,7 @@ else
 fi
 
 if credentials_ready && paper_proof_enabled; then
-  proof_status_output="$("$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE")"
-  printf '%s\n' "$proof_status_output"
-  proof_summary="$(
-    printf '%s\n' "$proof_status_output" \
-      | grep -E '^paper proof summary: ' \
-      | tail -n 1 \
-      || true
-  )"
-  if [[ "$proof_summary" != *"readiness=ready"* \
-    || "$proof_summary" != *"blockers=none"* ]]; then
-    echo "deploy failed: paper proof status not ready after deploy: ${proof_summary:-missing summary}" >&2
-    exit 1
-  fi
+  verify_paper_proof_ready
 fi
 
 docker compose -f "$COMPOSE_FILE" ps

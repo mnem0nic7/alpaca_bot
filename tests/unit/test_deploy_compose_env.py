@@ -46,6 +46,8 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "--expect-only-enabled-strategy bull_flag" in deploy_text
     assert 'rm -sf supervisor >/dev/null 2>&1 || true' in deploy_text
     assert "paper_proof_enabled()" in deploy_text
+    assert "refresh_paper_readiness()" in deploy_text
+    assert "verify_paper_proof_ready()" in deploy_text
     assert '"${paper_proof_freeze,,}" == "true"' in deploy_text
     assert '"$ROOT_DIR/scripts/run_locked_check_with_audit.sh"' in deploy_text
     assert "paper_readiness" in deploy_text
@@ -54,6 +56,8 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert '"$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE"' in deploy_text
     assert "paper proof summary:" in deploy_text
     assert "|| true" in deploy_text
+    assert '"readiness_audit_stale"' in deploy_text
+    assert "paper proof readiness stale after deploy; refreshing once" in deploy_text
     assert '"readiness=ready"' in deploy_text
     assert '"blockers=none"' in deploy_text
     assert "${proof_summary:-missing summary}" in deploy_text
