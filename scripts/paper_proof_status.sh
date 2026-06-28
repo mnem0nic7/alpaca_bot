@@ -493,23 +493,26 @@ try:
             """
             SELECT
               COALESCE(payload->>'status', '') AS status,
-              created_at
+              created_at,
+              COALESCE(payload->>'reason', '') AS reason
             FROM audit_events
             WHERE event_type = 'scheduled_check_completed'
               AND payload->>'trading_mode' = %s
               AND payload->>'strategy_version' = %s
               AND payload->>'check_name' = 'paper_readiness'
               AND payload->>'session_date' = %s
+              AND payload->>'proof_start' = %s
             ORDER BY created_at DESC, event_id DESC
-            LIMIT 1
+            LIMIT 8
             """,
             (
                 trading_mode.value,
                 strategy_version,
                 readiness_target_session.isoformat(),
+                proof_start.isoformat(),
             ),
         )
-        readiness_audit_row = cur.fetchone()
+        readiness_audit_rows = cur.fetchall()
 
         post_close_audit_rows = []
         if post_close_target_session is not None:
@@ -654,6 +657,19 @@ elif (
     < latest_supervisor_started_at - timedelta(seconds=stream_start_grace_seconds)
 ):
     stream_status = "stale"
+readiness_audit_row = None
+if readiness_audit_rows:
+    readiness_audit_row = readiness_audit_rows[0]
+    latest_readiness_reason = readiness_audit_row[2] or ""
+    if (
+        readiness_audit_row[0] != "passed"
+        and latest_readiness_reason.startswith("lock_busy")
+    ):
+        readiness_audit_row = next(
+            (row for row in readiness_audit_rows if row[0] == "passed"),
+            readiness_audit_row,
+        )
+
 readiness_audit_check_status = "missing"
 readiness_audit_created_at = None
 readiness_audit_age_minutes = None

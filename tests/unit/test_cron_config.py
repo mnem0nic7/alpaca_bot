@@ -1937,6 +1937,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "grace_seconds={stream_start_grace_seconds}" in script
     assert "payload->>'check_name' = 'paper_readiness'" in script
     assert "payload->>'session_date' = %s" in script
+    assert "payload->>'proof_start' = %s" in script
+    assert "COALESCE(payload->>'reason', '') AS reason" in script
+    assert "readiness_audit_rows = cur.fetchall()" in script
+    assert "latest_readiness_reason.startswith(\"lock_busy\")" in script
+    assert "(row for row in readiness_audit_rows if row[0] == \"passed\")" in script
     assert "readiness_audit_status" in script
     assert "readiness_audit_status = \"stale\"" in script
     assert "readiness_audit_status = \"stale_by_age\"" in script
