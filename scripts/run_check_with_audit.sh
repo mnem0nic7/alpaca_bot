@@ -64,6 +64,7 @@ output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"
 context_line="$(grep -E '^scheduled check context: ' "$output_file" | tail -n 1 || true)"
 proof_summary_line="$(grep -E '^paper proof summary: ' "$output_file" | tail -n 1 || true)"
 proof_progress_line="$(grep -E '^paper proof progress: ' "$output_file" | tail -n 1 || true)"
+proof_scenarios_line="$(grep -E '^paper proof scenarios: ' "$output_file" | tail -n 1 || true)"
 
 export AUDIT_CHECK_NAME="$CHECK_NAME"
 export AUDIT_STATUS="$status"
@@ -72,6 +73,7 @@ export AUDIT_OUTPUT_TAIL="$output_tail"
 export AUDIT_CONTEXT_LINE="$context_line"
 export AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"
 export AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"
+export AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"
 
 audit_failed=false
 if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
@@ -82,6 +84,7 @@ if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_CONTEXT_LINE \
     -e AUDIT_PROOF_SUMMARY_LINE \
     -e AUDIT_PROOF_PROGRESS_LINE \
+    -e AUDIT_PROOF_SCENARIOS_LINE \
     --entrypoint python admin <<'PY'
 from __future__ import annotations
 
@@ -105,9 +108,10 @@ CONTEXT_KEYS = {
     "min_pnl",
 }
 CONTEXT_VALUE = re.compile(r"^[A-Za-z0-9_.:+-]+$")
-PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/-]+$")
+PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;-]+$")
 PROOF_SUMMARY_PREFIX = "paper proof summary: "
 PROOF_PROGRESS_PREFIX = "paper proof progress: "
+PROOF_SCENARIOS_PREFIX = "paper proof scenarios: "
 PROOF_SUMMARY_FIELDS = {
     "readiness": "proof_readiness",
     "proof": "proof_status",
@@ -123,6 +127,12 @@ PROOF_PROGRESS_FIELDS = {
     "required_pnl": "proof_required_pnl",
     "first_exit_session": "proof_first_exit_session",
     "latest_exit_session": "proof_latest_exit_session",
+}
+PROOF_SCENARIOS_FIELDS = {
+    "status": "proof_scenario_status",
+    "active": "proof_scenario_active",
+    "expected_session": "proof_scenario_expected_session",
+    "problems": "proof_scenario_problems",
 }
 
 
@@ -189,6 +199,13 @@ try:
             os.environ.get("AUDIT_PROOF_PROGRESS_LINE", ""),
             prefix=PROOF_PROGRESS_PREFIX,
             field_map=PROOF_PROGRESS_FIELDS,
+        )
+    )
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_PROOF_SCENARIOS_LINE", ""),
+            prefix=PROOF_SCENARIOS_PREFIX,
+            field_map=PROOF_SCENARIOS_FIELDS,
         )
     )
 

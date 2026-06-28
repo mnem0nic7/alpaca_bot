@@ -1005,6 +1005,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'AUDIT_CONTEXT_LINE="$context_line"' in script
     assert 'AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"' in script
     assert 'AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"' in script
+    assert 'AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"' in script
     assert "-e AUDIT_CHECK_NAME" in script
     assert "-e AUDIT_STATUS" in script
     assert "-e AUDIT_EXIT_CODE" in script
@@ -1012,17 +1013,25 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "-e AUDIT_CONTEXT_LINE" in script
     assert "-e AUDIT_PROOF_SUMMARY_LINE" in script
     assert "-e AUDIT_PROOF_PROGRESS_LINE" in script
+    assert "-e AUDIT_PROOF_SCENARIOS_LINE" in script
     assert 'output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"' in script
     assert 'context_line="$(grep -E' in script
     assert 'proof_summary_line="$(grep -E' in script
     assert 'proof_progress_line="$(grep -E' in script
+    assert 'proof_scenarios_line="$(grep -E' in script
     assert "scheduled check context: " in script
     assert "CONTEXT_KEYS" in script
     assert "PROOF_SUMMARY_FIELDS" in script
+    assert "PROOF_SCENARIOS_FIELDS" in script
+    assert 'PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;-]+$")' in script
     assert '"readiness": "proof_readiness"' in script
     assert '"proof": "proof_status"' in script
     assert '"closed_trades": "proof_closed_trades"' in script
     assert '"pnl": "proof_pnl"' in script
+    assert '"status": "proof_scenario_status"' in script
+    assert '"active": "proof_scenario_active"' in script
+    assert '"expected_session": "proof_scenario_expected_session"' in script
+    assert '"problems": "proof_scenario_problems"' in script
     assert "parse_prefixed_fields" in script
     assert '"session_date"' in script
     assert '"previous_session_date"' in script
@@ -1031,6 +1040,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "payload.update(parse_context" in script
     assert 'os.environ.get("AUDIT_PROOF_SUMMARY_LINE", "")' in script
     assert 'os.environ.get("AUDIT_PROOF_PROGRESS_LINE", "")' in script
+    assert 'os.environ.get("AUDIT_PROOF_SCENARIOS_LINE", "")' in script
     assert 'paper readiness check skipped' in script
     assert 'paper activity check skipped' in script
     assert 'paper activity skipped:' in script
@@ -2397,6 +2407,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "watchlist_status = (" in script
     assert "active_watchlist_symbols >= min_watchlist_symbols" in script
     assert "load_scenario_coverage" in script
+    assert "format_problem_summary" in script
+    assert "re.sub(r\"[^A-Za-z0-9_.:+/-]\", \"_\", value)" in script
+    assert 'parts.append(f"{name}:{len(values)}:{examples}")' in script
     assert 'scenario_dir / f"{symbol}_252d.json"' in script
     assert "scenario_expected_session = proof_end" in script
     assert "blockers.append(f\"scenario_evidence_{scenario_status}\")" in script

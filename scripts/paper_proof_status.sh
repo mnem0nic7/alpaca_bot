@@ -194,6 +194,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
@@ -227,8 +228,10 @@ def format_problem_summary(problems: dict[str, list[str]]) -> str:
     parts = []
     for name, values in problems.items():
         if values:
-            examples = ",".join(values[:10])
-            parts.append(f"{name}={len(values)} examples={examples}")
+            examples = ",".join(
+                re.sub(r"[^A-Za-z0-9_.:+/-]", "_", value) for value in values[:10]
+            )
+            parts.append(f"{name}:{len(values)}:{examples}")
     return ";".join(parts) if parts else "none"
 
 
