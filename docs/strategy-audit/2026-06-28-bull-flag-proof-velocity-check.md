@@ -124,3 +124,44 @@ window is useful as a stress view, but the cumulative proof horizon better
 matches live proof semantics and supports waiting for post-`2026-06-29` paper
 evidence rather than loosening entries, raising exposure, or truncating the
 entry window.
+
+## Current-Head Exact-Active Proof Horizon
+
+After the proof-status pending-state hardening and current replay evidence were
+pushed at commit `782cd34`, the proof horizon was recalculated from trade-level
+portfolio replay records for the exact live active latest-120-day scenario
+universe:
+
+- active paper symbols: `980`
+- scenario files: `980`
+- strategy: `bull_flag`
+- `RELATIVE_VOLUME_THRESHOLD=2.0`
+- `MAX_OPEN_POSITIONS=3`
+- `REPLAY_SLIPPAGE_BPS=2.0`
+- floor-sized starting equity: `$17,247.795`
+- proof gate: at least `10` closed trades and cumulative P&L at least `$0.01`
+
+The replay produced `417` closed trades and `$1067.75` total P&L. Each
+historical session in the 120-session sample was then treated as a possible
+proof start, using the same cumulative semantics as the live proof probe.
+
+| metric | value |
+|---|---:|
+| historical starts checked | 120 |
+| starts that eventually reached proof gate | 115 |
+| starts not proven by data end | 5 |
+| eventual pass rate | 95.83% |
+| first-10-trade pass rate | 77.12% |
+| first-10 failures that later recovered | 24 |
+| median sessions to proof pass | 3 |
+| p90 sessions to proof pass | 14 |
+| p95 sessions to proof pass | 19 |
+| slowest observed pass | 24 sessions |
+| active trade days | 95 |
+
+The only starts not proven by data end were again the final sessions in the
+sample (`2026-06-22` through `2026-06-26`), where later proof-window recovery
+data is not available. Decision: keep the deployed posture unchanged for the
+`2026-06-29` proof start. The current exact-active recent-window replay still
+supports waiting for live paper execution rather than weakening entry quality
+or increasing exposure to force faster trade count.
