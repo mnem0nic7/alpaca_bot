@@ -58,6 +58,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "verify_paper_proof_ready()" in deploy_text
     assert '"${paper_proof_freeze,,}" == "true"' in deploy_text
     assert '"$ROOT_DIR/scripts/run_locked_check_with_audit.sh"' in deploy_text
+    assert "PAPER_READINESS_FORCE_REFRESH=true" in deploy_text
     assert "paper_readiness" in deploy_text
     assert "/var/lock/alpaca-bot-paper-readiness.lock" in deploy_text
     assert '"$ROOT_DIR/scripts/paper_readiness_if_needed.sh"' in deploy_text

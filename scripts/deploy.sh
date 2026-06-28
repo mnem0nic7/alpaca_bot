@@ -53,7 +53,7 @@ paper_proof_enabled() {
 }
 
 refresh_paper_readiness() {
-  "$ROOT_DIR/scripts/run_locked_check_with_audit.sh" \
+  PAPER_READINESS_FORCE_REFRESH=true "$ROOT_DIR/scripts/run_locked_check_with_audit.sh" \
     paper_readiness \
     /var/lock/alpaca-bot-paper-readiness.lock \
     "$ENV_FILE" \
