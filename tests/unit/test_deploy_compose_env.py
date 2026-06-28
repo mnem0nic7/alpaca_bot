@@ -14,6 +14,9 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "ENABLE_VIX_FILTER",
         "ENABLE_VWAP_ENTRY_FILTER",
         "FLOOR_AUTO_RAISE_MAX_AGE_DAYS",
+        "BULL_FLAG_MIN_RUN_PCT",
+        "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO",
+        "BULL_FLAG_CONSOLIDATION_RANGE_PCT",
         "MAX_OPEN_POSITIONS",
         "ATR_STOP_MULTIPLIER",
         "TRAILING_STOP_ATR_MULTIPLIER",
@@ -32,6 +35,15 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "TRAILING_STOP_ATR_MULTIPLIER: ${TRAILING_STOP_ATR_MULTIPLIER:-0.0}"
         in compose_text
     )
+    assert "BULL_FLAG_MIN_RUN_PCT: ${BULL_FLAG_MIN_RUN_PCT:-0.02}" in compose_text
+    assert (
+        "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO: "
+        "${BULL_FLAG_CONSOLIDATION_VOLUME_RATIO:-0.6}"
+    ) in compose_text
+    assert (
+        "BULL_FLAG_CONSOLIDATION_RANGE_PCT: "
+        "${BULL_FLAG_CONSOLIDATION_RANGE_PCT:-0.5}"
+    ) in compose_text
 
 
 def test_deploy_ops_check_enforces_paper_readiness() -> None:
@@ -102,6 +114,9 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "MARKET_DATA_FEED=iex" in env_text
     assert "RELATIVE_VOLUME_THRESHOLD=2.0" in env_text
     assert "MAX_OPEN_POSITIONS=3" in env_text
+    assert "BULL_FLAG_MIN_RUN_PCT=0.02" in env_text
+    assert "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO=0.6" in env_text
+    assert "BULL_FLAG_CONSOLIDATION_RANGE_PCT=0.5" in env_text
     assert "REPLAY_SLIPPAGE_BPS=2.0" in env_text
     assert "PAPER_PROOF_FREEZE=true" in env_text
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180" in env_text
@@ -136,6 +151,9 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert 'RISK_PER_TRADE_PCT="0.01"' in script
     assert 'MAX_OPEN_POSITIONS="3"' in script
     assert 'RELATIVE_VOLUME_THRESHOLD="2.0"' in script
+    assert "BULL_FLAG_MIN_RUN_PCT=0.02" in script
+    assert "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO=0.6" in script
+    assert "BULL_FLAG_CONSOLIDATION_RANGE_PCT=0.5" in script
     assert 'REPLAY_SLIPPAGE_BPS="2.0"' in script
     assert 'PAPER_PROOF_FREEZE="true"' in script
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180" in script
