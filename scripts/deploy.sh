@@ -76,6 +76,15 @@ if credentials_ready; then
     --expect-trading-status enabled \
     --expect-kill-switch false \
     --expect-only-enabled-strategy bull_flag
+  paper_proof_freeze="${PAPER_PROOF_FREEZE:-false}"
+  if [[ "${TRADING_MODE}" == "paper" && "${paper_proof_freeze,,}" == "true" ]]; then
+    "$ROOT_DIR/scripts/run_locked_check_with_audit.sh" \
+      paper_readiness \
+      /var/lock/alpaca-bot-paper-readiness.lock \
+      "$ENV_FILE" \
+      "$ROOT_DIR/scripts/paper_readiness_if_needed.sh" \
+      "$ENV_FILE"
+  fi
 else
   docker compose -f "$COMPOSE_FILE" rm -sf supervisor >/dev/null 2>&1 || true
   docker compose -f "$COMPOSE_FILE" run --rm --entrypoint alpaca-bot-ops-check admin \
