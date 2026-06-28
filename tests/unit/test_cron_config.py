@@ -1074,6 +1074,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "latest_completed_session=" in script
     assert "current_market_date=" in script
     assert "scoring_end_date=" in script
+    assert "paper proof strategy status:" in script
+    assert "status={strategy_status} target={strategy_name}" in script
     assert "paper proof local exposure:" in script
     assert "positions={local_open_positions} active_orders={local_active_orders}" in script
     assert "load_broker_exposure" in script

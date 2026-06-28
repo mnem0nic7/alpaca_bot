@@ -305,8 +305,14 @@ proof_window = (
         ")"
     )
 )
+active_strategy_names = [name for name in active_strategies.split(",") if name]
+strategy_status = "ok" if strategy_name in active_strategy_names else "disabled"
 
 print(f"paper proof active strategies: {active_strategies or 'none'}")
+print(
+    "paper proof strategy status: "
+    f"status={strategy_status} target={strategy_name} active=[{active_strategies or ''}]"
+)
 print(
     "paper proof local exposure: "
     f"positions={local_open_positions} active_orders={local_active_orders}"
