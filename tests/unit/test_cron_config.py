@@ -1698,6 +1698,7 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "paper activity failed: trade update stream issues" in script
     assert "stock_open_positions" in script
     assert "active_stock_orders" in script
+    assert script.count("strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'") >= 2
     assert "has_stock_exposure" in script
     assert "decision_evidence_records" in script
     assert "payload->>'strategy_name' = :'paper_activity_strategy'" in script

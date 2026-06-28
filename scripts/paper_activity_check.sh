@@ -350,12 +350,14 @@ SELECT
     FROM positions
     WHERE trading_mode = 'paper'
       AND strategy_version = :'strategy_version'
+      AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
   ), 0),
   COALESCE((
     SELECT COUNT(*)::int
     FROM orders
     WHERE trading_mode = 'paper'
       AND strategy_version = :'strategy_version'
+      AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
       AND status IN (
         'pending_submit',
         'submitting',
