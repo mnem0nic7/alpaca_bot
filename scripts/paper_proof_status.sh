@@ -287,6 +287,12 @@ proof_end = (
     else latest_completed_session or current_market_date
 )
 post_close_target_session = proof_end if proof_end >= proof_start else None
+activity_target_session = None
+if current_market_date >= proof_start and (
+    next_market_session == current_market_date
+    or latest_completed_session == current_market_date
+):
+    activity_target_session = current_market_date
 market_timezone = settings.market_timezone.key
 
 conn = connect_postgres(settings.database_url)
@@ -389,6 +395,33 @@ try:
             (trading_mode.value, strategy_version),
         )
         scheduled_checks = cur.fetchall()
+
+        activity_audit_row = None
+        if activity_target_session is not None:
+            cur.execute(
+                """
+                SELECT
+                  COALESCE(payload->>'status', '') AS status,
+                  COALESCE(payload->>'exit_code', '') AS exit_code,
+                  created_at
+                FROM audit_events
+                WHERE event_type = 'scheduled_check_completed'
+                  AND payload->>'trading_mode' = %s
+                  AND payload->>'strategy_version' = %s
+                  AND payload->>'check_name' = 'paper_activity'
+                  AND payload->>'session_date' = %s
+                  AND payload->>'proof_start' = %s
+                ORDER BY created_at DESC, event_id DESC
+                LIMIT 1
+                """,
+                (
+                    trading_mode.value,
+                    strategy_version,
+                    activity_target_session.isoformat(),
+                    proof_start.isoformat(),
+                ),
+            )
+            activity_audit_row = cur.fetchone()
 
         cur.execute(
             """
@@ -644,6 +677,38 @@ readiness_audit_age_text = (
     if readiness_audit_age_minutes is not None
     else "none"
 )
+activity_due = False
+activity_due_after = "none"
+activity_check_status = "missing"
+activity_check_exit_code = "unknown"
+activity_check_created_text = "none"
+activity_audit_status = "not_started"
+if activity_target_session is not None:
+    activity_due_time = time(10, 35)
+    activity_due_after = (
+        f"{activity_target_session.isoformat()} "
+        f"{activity_due_time.strftime('%H:%M')} {settings.market_timezone.key}"
+    )
+    activity_due = current_market_datetime.date() > activity_target_session or (
+        current_market_datetime.date() == activity_target_session
+        and current_market_datetime.time() >= activity_due_time
+    )
+    activity_audit_status = "not_due"
+    if activity_audit_row:
+        activity_check_status = activity_audit_row[0] or "unknown"
+        activity_check_exit_code = activity_audit_row[1] or "unknown"
+        activity_created_at = activity_audit_row[2]
+        activity_check_created_text = (
+            activity_created_at.isoformat() if activity_created_at is not None else "none"
+        )
+        if activity_check_status in {"passed", "skipped"}:
+            activity_audit_status = "ok"
+        elif activity_check_status == "pending":
+            activity_audit_status = "pending"
+        else:
+            activity_audit_status = "failed"
+    elif activity_due:
+        activity_audit_status = "missing"
 post_close_due = False
 post_close_due_after = "none"
 post_close_audit_status = "not_started"
@@ -790,6 +855,8 @@ if stream_status != "ok":
     blockers.append(f"stream_{stream_status}")
 if readiness_audit_status != "ok":
     blockers.append(f"readiness_audit_{readiness_audit_status}")
+if activity_audit_status in {"missing", "failed"}:
+    blockers.append(f"activity_audit_{activity_audit_status}")
 if post_close_audit_status in {"missing", "failed"}:
     blockers.append(f"post_close_audit_{post_close_audit_status}")
 if local_open_positions > 0:
@@ -862,6 +929,14 @@ print(
     f"age_minutes={readiness_audit_age_text} "
     f"max_age_minutes={readiness_max_pass_age_minutes} "
     f"latest_supervisor_started_at={latest_supervisor_started_text}"
+)
+print(
+    "paper proof activity audit: "
+    f"status={activity_audit_status} "
+    f"target_session={activity_target_session.isoformat() if activity_target_session else 'none'} "
+    f"due={str(activity_due).lower()} "
+    f"due_after={activity_due_after} "
+    f"check={activity_check_status}:{activity_check_exit_code}:{activity_check_created_text}"
 )
 print(
     "paper proof post-close audit: "

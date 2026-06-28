@@ -1464,6 +1464,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh image_status=ok image_detail=runtime image health ok: services=web,supervisor files=14\\n'\n"
         "  printf 'paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00 latest_event=trade_update_stream_started:2026-06-29T12:59:59+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00 grace_seconds=120\\n'\n"
         "  printf 'paper proof readiness audit: status=ok target_session=2026-06-29 check_status=passed created_at=2026-06-29T13:20:00+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00\\n'\n"
+        "  printf 'paper proof activity audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 10:35 America/New_York check=passed:0:2026-06-29T14:26:00+00:00\\n'\n"
         "  printf 'paper proof post-close audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 17:25 America/New_York session_guard=passed:0:2026-06-29T21:10:00+00:00 paper_profit_probe=pending:43:2026-06-29T21:20:00+00:00\\n'\n"
         "  printf 'paper proof scheduled check: name=paper_profit_probe status=pending exit_code=43 session_date=2026-06-26 proof_start=2026-06-29 created_at=2026-06-27T22:00:00.000000Z\\n'\n"
         "  printf 'paper proof progress: status=pending closed_trades=3 required_trades=10 pnl=12.34 required_pnl=0.01 window=2026-06-29..2026-06-29 first_exit_session=2026-06-29 latest_exit_session=2026-06-29\\n'\n"
@@ -1499,6 +1500,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     assert "image_status=ok" in result.stdout
     assert "paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00" in result.stdout
     assert "paper proof readiness audit: status=ok target_session=2026-06-29" in result.stdout
+    assert "paper proof activity audit: status=ok target_session=2026-06-29" in result.stdout
     assert "paper proof post-close audit: status=ok target_session=2026-06-29" in result.stdout
     assert "paper proof scheduled check: name=paper_profit_probe status=pending" in result.stdout
     assert (
@@ -1600,6 +1602,19 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "created_at={readiness_audit_created_text}" in script
     assert "age_minutes={readiness_audit_age_text}" in script
     assert "max_age_minutes={readiness_max_pass_age_minutes}" in script
+    assert "activity_target_session = None" in script
+    assert "activity_due_time = time(10, 35)" in script
+    assert "payload->>'check_name' = 'paper_activity'" in script
+    assert "activity_audit_status = \"not_due\"" in script
+    assert "activity_audit_status = \"missing\"" in script
+    assert "activity_audit_status = \"failed\"" in script
+    assert "activity_audit_status in {\"missing\", \"failed\"}" in script
+    assert "blockers.append(f\"activity_audit_{activity_audit_status}\")" in script
+    assert "paper proof activity audit:" in script
+    assert "status={activity_audit_status}" in script
+    assert "target_session={activity_target_session.isoformat() if activity_target_session else 'none'}" in script
+    assert "due={str(activity_due).lower()}" in script
+    assert "check={activity_check_status}:{activity_check_exit_code}:{activity_check_created_text}" in script
     assert "from datetime import date, datetime, time, timedelta, timezone" in script
     assert "post_close_target_session = proof_end if proof_end >= proof_start else None" in script
     assert "post_close_audit_rows = []" in script
