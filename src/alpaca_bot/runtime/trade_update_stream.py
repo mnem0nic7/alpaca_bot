@@ -32,6 +32,7 @@ def attach_trade_update_stream(
     now: Callable[[], datetime] | None = None,
     notifier: Notifier | None = None,
     on_event: Callable[[], None] | None = None,
+    broker: Any | None = None,
 ):
     async def handler(update: Any) -> None:
         timestamp = (now or (lambda: datetime.now(timezone.utc)))()
@@ -47,6 +48,7 @@ def attach_trade_update_stream(
                 update=update,
                 now=timestamp,
                 notifier=notifier,
+                broker=broker,
             )
         except Exception as exc:
             _lock = getattr(runtime, "store_lock", None)
@@ -83,12 +85,14 @@ def run_trade_update_stream(
     runtime: RuntimeProtocol,
     stream: TradeUpdateStreamProtocol,
     now: Callable[[], datetime] | None = None,
+    broker: Any | None = None,
 ) -> None:
     attach_trade_update_stream(
         settings=settings,
         runtime=runtime,
         stream=stream,
         now=now,
+        broker=broker,
     )
     stream.run()
 

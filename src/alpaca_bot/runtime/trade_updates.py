@@ -46,6 +46,10 @@ class RuntimeProtocol(Protocol):
     connection: Any
 
 
+class BrokerProtocol(Protocol):
+    def replace_order(self, **kwargs) -> Any: ...
+
+
 @dataclass(frozen=True)
 class TradeUpdate:
     event: str
@@ -60,6 +64,14 @@ class TradeUpdate:
     timestamp: datetime
 
 
+@dataclass(frozen=True)
+class ProtectiveStopQuantityReplace:
+    stop_order: OrderRecord
+    entry_client_order_id: str
+    quantity: float
+    timestamp: datetime
+
+
 def apply_trade_update(
     *,
     settings: Settings,
@@ -67,15 +79,24 @@ def apply_trade_update(
     update: Any,
     now: datetime | Callable[[], datetime] | None = None,
     notifier: Notifier | None = None,
+    broker: BrokerProtocol | None = None,
 ) -> dict[str, Any]:
     store_lock = getattr(runtime, "store_lock", None)
     with store_lock if store_lock is not None else _nullcontext():
-        result, pending_notifications = _apply_trade_update_locked(
+        result, pending_notifications, pending_stop_replacements = _apply_trade_update_locked(
             settings=settings,
             runtime=runtime,
             update=update,
             now=now,
         )
+    result.update(
+        _replace_broker_backed_stop_quantities(
+            runtime=runtime,
+            broker=broker,
+            replacements=pending_stop_replacements,
+            store_lock=store_lock,
+        )
+    )
     # Fire notifier outside the lock to avoid blocking the stream thread.
     if notifier is not None:
         for subject, body in pending_notifications:
@@ -99,7 +120,11 @@ def _apply_trade_update_locked(
     runtime: RuntimeProtocol,
     update: Any,
     now: datetime | Callable[[], datetime] | None = None,
-) -> tuple[dict[str, Any], list[tuple[str, str]]]:
+) -> tuple[
+    dict[str, Any],
+    list[tuple[str, str]],
+    list[ProtectiveStopQuantityReplace],
+]:
     normalized = _normalize_trade_update(update)
     timestamp = _resolve_now(now, fallback=normalized.timestamp)
 
@@ -116,7 +141,10 @@ def _apply_trade_update_locked(
                 status=normalized.status,
                 updated_at=timestamp,
             )
-        return {"routed_to": "option_store", "client_order_id": client_order_id}, []
+        return {
+            "routed_to": "option_store",
+            "client_order_id": client_order_id,
+        }, [], []
 
     matched_order = _find_order(runtime.order_store, normalized)
     pending_notifications: list[tuple[str, str]] = []
@@ -149,7 +177,7 @@ def _apply_trade_update_locked(
             "position_updated": False,
             "order_updated": False,
             "unmatched": True,
-        }, []
+        }, [], []
 
     _is_fill_event = normalized.status in {"filled", "partially_filled"}
     _is_entry_terminal_event = (
@@ -192,6 +220,7 @@ def _apply_trade_update_locked(
     position_updated = False
     protective_stop_queued = False
     protective_stop_client_order_id: str | None = None
+    pending_stop_replacements: list[ProtectiveStopQuantityReplace] = []
     position_cleared = False
 
     # Prepare notifications (pure, no DB writes).
@@ -317,7 +346,11 @@ def _apply_trade_update_locked(
                 if normalized.filled_qty is not None
                 else matched_order.quantity
             )
-            protective_stop_queued, protective_stop_client_order_id = (
+            (
+                protective_stop_queued,
+                protective_stop_client_order_id,
+                pending_stop_replacement,
+            ) = (
                 _save_entry_position_and_stop(
                     runtime,
                     matched_order=matched_order,
@@ -327,6 +360,8 @@ def _apply_trade_update_locked(
                     fill_price=normalized.filled_avg_price,
                 )
             )
+            if pending_stop_replacement is not None:
+                pending_stop_replacements.append(pending_stop_replacement)
         elif (
             matched_order.intent_type in {"stop", "exit"}
             and normalized.status in {"filled", "partially_filled"}
@@ -360,7 +395,11 @@ def _apply_trade_update_locked(
             if terminal_fill_qty is not None and terminal_fill_qty > 0:
                 audit_payload["position_retained"] = True
                 if terminal_fill_price is not None:
-                    protective_stop_queued, protective_stop_client_order_id = (
+                    (
+                        protective_stop_queued,
+                        protective_stop_client_order_id,
+                        pending_stop_replacement,
+                    ) = (
                         _save_entry_position_and_stop(
                             runtime,
                             matched_order=matched_order,
@@ -370,6 +409,8 @@ def _apply_trade_update_locked(
                             fill_price=terminal_fill_price,
                         )
                     )
+                    if pending_stop_replacement is not None:
+                        pending_stop_replacements.append(pending_stop_replacement)
                 else:
                     protective_stop_client_order_id = None
                     runtime.audit_event_store.append(
@@ -446,7 +487,7 @@ def _apply_trade_update_locked(
         "position_cleared": position_cleared,
         "order_updated": True,
         "unmatched": False,
-    }, pending_notifications
+    }, pending_notifications, pending_stop_replacements
 
 
 def _normalize_trade_update(update: Any) -> TradeUpdate:
@@ -503,6 +544,143 @@ def _enum_str(value: Any) -> str:
     return str(value)
 
 
+def _replace_broker_backed_stop_quantities(
+    *,
+    runtime: RuntimeProtocol,
+    broker: BrokerProtocol | None,
+    replacements: list[ProtectiveStopQuantityReplace],
+    store_lock: Any,
+) -> dict[str, Any]:
+    if not replacements:
+        return {}
+
+    replaced = False
+    failed = False
+    lock_ctx = store_lock if store_lock is not None else _nullcontext()
+
+    for replacement in replacements:
+        stop_order = replacement.stop_order
+        if broker is None:
+            failed = True
+            with lock_ctx:
+                try:
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="protective_stop_quantity_replace_failed",
+                            symbol=stop_order.symbol,
+                            payload={
+                                "client_order_id": stop_order.client_order_id,
+                                "broker_order_id": stop_order.broker_order_id,
+                                "entry_client_order_id": replacement.entry_client_order_id,
+                                "old_quantity": stop_order.quantity,
+                                "new_quantity": replacement.quantity,
+                                "error": "broker_not_available",
+                            },
+                            created_at=replacement.timestamp,
+                        ),
+                        commit=False,
+                    )
+                    runtime.connection.commit()
+                except Exception:
+                    try:
+                        runtime.connection.rollback()
+                    except Exception:
+                        pass
+                    raise
+            continue
+
+        try:
+            broker_order = broker.replace_order(
+                order_id=stop_order.broker_order_id,
+                quantity=replacement.quantity,
+            )
+        except Exception as exc:
+            failed = True
+            with lock_ctx:
+                try:
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="protective_stop_quantity_replace_failed",
+                            symbol=stop_order.symbol,
+                            payload={
+                                "client_order_id": stop_order.client_order_id,
+                                "broker_order_id": stop_order.broker_order_id,
+                                "entry_client_order_id": replacement.entry_client_order_id,
+                                "old_quantity": stop_order.quantity,
+                                "new_quantity": replacement.quantity,
+                                "error": str(exc),
+                            },
+                            created_at=replacement.timestamp,
+                        ),
+                        commit=False,
+                    )
+                    runtime.connection.commit()
+                except Exception:
+                    try:
+                        runtime.connection.rollback()
+                    except Exception:
+                        pass
+                    raise
+            continue
+
+        new_broker_order_id = (
+            getattr(broker_order, "broker_order_id", None)
+            or stop_order.broker_order_id
+        )
+        new_status = str(getattr(broker_order, "status", stop_order.status)).lower()
+        new_quantity = float(getattr(broker_order, "quantity", replacement.quantity))
+        updated_stop = OrderRecord(
+            client_order_id=stop_order.client_order_id,
+            symbol=stop_order.symbol,
+            side=stop_order.side,
+            intent_type=stop_order.intent_type,
+            status=new_status,
+            quantity=new_quantity,
+            trading_mode=stop_order.trading_mode,
+            strategy_version=stop_order.strategy_version,
+            strategy_name=stop_order.strategy_name,
+            created_at=stop_order.created_at,
+            updated_at=replacement.timestamp,
+            stop_price=stop_order.stop_price,
+            limit_price=stop_order.limit_price,
+            initial_stop_price=stop_order.initial_stop_price,
+            broker_order_id=new_broker_order_id,
+            signal_timestamp=stop_order.signal_timestamp,
+        )
+        with lock_ctx:
+            try:
+                runtime.order_store.save(updated_stop, commit=False)
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="protective_stop_quantity_replaced",
+                        symbol=stop_order.symbol,
+                        payload={
+                            "client_order_id": stop_order.client_order_id,
+                            "broker_order_id": stop_order.broker_order_id,
+                            "replacement_broker_order_id": new_broker_order_id,
+                            "entry_client_order_id": replacement.entry_client_order_id,
+                            "old_quantity": stop_order.quantity,
+                            "new_quantity": new_quantity,
+                        },
+                        created_at=replacement.timestamp,
+                    ),
+                    commit=False,
+                )
+                runtime.connection.commit()
+            except Exception:
+                try:
+                    runtime.connection.rollback()
+                except Exception:
+                    pass
+                raise
+        replaced = True
+
+    return {
+        "protective_stop_quantity_replaced": replaced,
+        "protective_stop_quantity_replace_failed": failed,
+    }
+
+
 def _find_order(order_store: OrderStoreProtocol, update: TradeUpdate) -> OrderRecord | None:
     order = None
     if update.client_order_id:
@@ -540,10 +718,11 @@ def _save_entry_position_and_stop(
     timestamp: datetime,
     fill_qty: float,
     fill_price: float,
-) -> tuple[bool, str | None]:
+) -> tuple[bool, str | None, ProtectiveStopQuantityReplace | None]:
     strategy_name = matched_order.strategy_name or "breakout"
     protective_stop_client_order_id: str | None = None
     protective_stop_queued = False
+    pending_stop_replacement: ProtectiveStopQuantityReplace | None = None
 
     if matched_order.initial_stop_price is None:
         logger.critical(
@@ -584,7 +763,7 @@ def _save_entry_position_and_stop(
     )
 
     if matched_order.initial_stop_price is None:
-        return protective_stop_queued, protective_stop_client_order_id
+        return protective_stop_queued, protective_stop_client_order_id, pending_stop_replacement
 
     protective_stop_client_order_id = _protective_stop_client_order_id(
         matched_order.client_order_id
@@ -636,9 +815,24 @@ def _save_entry_position_and_stop(
                 ),
                 commit=False,
             )
+        elif (
+            existing_stop.broker_order_id
+            and existing_stop.quantity != fill_qty
+            and existing_stop.status not in _TERMINATED_STOP_STATUSES
+        ):
+            pending_stop_replacement = ProtectiveStopQuantityReplace(
+                stop_order=existing_stop,
+                entry_client_order_id=matched_order.client_order_id,
+                quantity=fill_qty,
+                timestamp=timestamp,
+            )
         protective_stop_client_order_id = None
 
-    return protective_stop_queued, protective_stop_client_order_id
+    return (
+        protective_stop_queued,
+        protective_stop_client_order_id,
+        pending_stop_replacement,
+    )
 
 
 def _reduce_position_for_partial_exit_fill(

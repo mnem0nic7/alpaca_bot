@@ -304,6 +304,7 @@ class RuntimeSupervisor:
                 now=lambda: timestamp,
                 notifier=self._notifier,
                 on_event=self._record_stream_event,
+                broker=self.broker,
             )
             self._stream_attached = True
             self._start_stream_thread(now=lambda: timestamp)

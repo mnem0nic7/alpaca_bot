@@ -169,6 +169,20 @@ class RollbackTrackingConnection:
         self.rollback_count += 1
 
 
+class RecordingBroker:
+    def __init__(self, *, status: str = "accepted") -> None:
+        self.status = status
+        self.replace_calls: list[dict[str, object]] = []
+
+    def replace_order(self, **kwargs):
+        self.replace_calls.append(dict(kwargs))
+        return SimpleNamespace(
+            broker_order_id=kwargs["order_id"],
+            status=self.status,
+            quantity=kwargs["quantity"],
+        )
+
+
 class FailingPositionStore:
     """Position store that raises on save() — for rollback guard tests."""
 
@@ -332,6 +346,79 @@ class TestProtectiveStopOnPartialFill:
         assert stop_saves[0].quantity == 8, (
             "Stop quantity must be updated to match the new filled_qty (8), not remain stale (5)"
         )
+
+    def test_apply_trade_update_resizes_broker_backed_stop_after_later_fill(self):
+        """If the partial-fill stop is already at Alpaca, later fills must resize it."""
+        entry_order = _make_entry_order()
+        entry_order = OrderRecord(
+            client_order_id=entry_order.client_order_id,
+            symbol=entry_order.symbol,
+            side=entry_order.side,
+            intent_type=entry_order.intent_type,
+            status="partially_filled",
+            quantity=entry_order.quantity,
+            trading_mode=entry_order.trading_mode,
+            strategy_version=entry_order.strategy_version,
+            strategy_name=entry_order.strategy_name,
+            created_at=entry_order.created_at,
+            updated_at=entry_order.updated_at,
+            initial_stop_price=entry_order.initial_stop_price,
+            broker_order_id="broker-entry-1",
+            signal_timestamp=entry_order.signal_timestamp,
+            fill_price=112.0,
+            filled_quantity=7,
+        )
+        stop_id = _expected_stop_order_id(entry_order.client_order_id)
+        accepted_stop = OrderRecord(
+            client_order_id=stop_id,
+            symbol="AAPL",
+            side="sell",
+            intent_type="stop",
+            status="accepted",
+            quantity=7,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            strategy_name="breakout",
+            created_at=NOW,
+            updated_at=NOW,
+            stop_price=entry_order.initial_stop_price,
+            initial_stop_price=entry_order.initial_stop_price,
+            broker_order_id="broker-stop-1",
+            signal_timestamp=NOW,
+        )
+        runtime = _make_runtime(orders=[entry_order, accepted_stop])
+        broker = RecordingBroker()
+
+        update = _make_trade_update(
+            status="filled",
+            qty=10,
+            filled_qty=10,
+            filled_avg_price=112.25,
+        )
+        from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+        result = apply_trade_update(
+            settings=make_settings(),
+            runtime=runtime,
+            update=update,
+            now=NOW,
+            broker=broker,
+        )
+
+        assert broker.replace_calls == [
+            {"order_id": "broker-stop-1", "quantity": 10}
+        ]
+        stop_saves = [order for order in runtime.order_store.saved if order.intent_type == "stop"]
+        assert stop_saves[-1].client_order_id == stop_id
+        assert stop_saves[-1].quantity == 10
+        assert stop_saves[-1].status == "accepted"
+        assert any(
+            event.event_type == "protective_stop_quantity_replaced"
+            and event.payload["old_quantity"] == 7
+            and event.payload["new_quantity"] == 10
+            for event in runtime.audit_event_store.appended
+        )
+        assert result["protective_stop_quantity_replaced"] is True
 
     def test_existing_pending_stop_quantity_not_saved_when_already_matching(self):
         """When an existing pending stop's quantity already matches filled_qty, no redundant save."""

@@ -805,6 +805,7 @@ def test_runtime_supervisor_startup_runs_reconciliation_syncs_positions_and_atta
     assert attach_calls[0]["settings"] == settings
     assert attach_calls[0]["runtime"] is runtime
     assert attach_calls[0]["stream"] is stream
+    assert attach_calls[0]["broker"] is broker
     assert callable(attach_calls[0]["now"])
     assert attach_calls[0]["now"]() == now
     assert stream.run_started.wait(timeout=1.0)
