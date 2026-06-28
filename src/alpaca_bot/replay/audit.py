@@ -7,6 +7,7 @@ P&L across all scenarios, and classifies the edge with bootstrap statistics.
 from __future__ import annotations
 
 import dataclasses
+import gc
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
@@ -84,7 +85,12 @@ def run_audit(
     rows: list[StrategyAuditRow] = []
     for name in strategies:
         cost_trades = pooled_trades_fn(scenarios, costed, name)
+        if on_progress is not None:
+            on_progress(f"{name}: costed replay complete ({len(cost_trades)} trades)")
+        gc.collect()
         free_trades = pooled_trades_fn(scenarios, frictionless, name)
+        if on_progress is not None:
+            on_progress(f"{name}: frictionless replay complete ({len(free_trades)} trades)")
 
         report = report_from_records(
             list(cost_trades), AUDIT_STARTING_EQUITY, name
