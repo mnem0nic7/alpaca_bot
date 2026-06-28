@@ -1561,6 +1561,78 @@ def test_stop_fill_all_writes_use_commit_false() -> None:
     )
 
 
+def test_eod_exit_fill_deletes_bull_flag_position_and_commits_once() -> None:
+    """A filled EOD exit must clear the same-strategy position so proof can count it."""
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    exit_order = OrderRecord(
+        client_order_id="paper:v1-breakout:2026-06-29:AAPL:exit:eod_flatten",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="accepted",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=NOW,
+        updated_at=NOW,
+        broker_order_id="broker-exit-1",
+    )
+    connection = RollbackTrackingConnection()
+    position_store = RecordingPositionStore(
+        positions=[
+            PositionRecord(
+                symbol="AAPL",
+                trading_mode=TradingMode.PAPER,
+                strategy_version="v1-breakout",
+                strategy_name="bull_flag",
+                quantity=10,
+                entry_price=112.00,
+                stop_price=109.50,
+                initial_stop_price=109.50,
+                opened_at=NOW,
+                updated_at=NOW,
+            )
+        ]
+    )
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[exit_order]),
+        position_store=position_store,
+        audit_event_store=RecordingAuditEventStore(),
+        connection=connection,
+    )
+
+    fill = _make_trade_update(
+        client_order_id=exit_order.client_order_id,
+        broker_order_id="broker-exit-1",
+        symbol="AAPL",
+        side="sell",
+        status="filled",
+        qty=10,
+        filled_qty=10,
+        filled_avg_price=113.25,
+    )
+    report = apply_trade_update(
+        settings=make_settings(),
+        runtime=runtime,
+        update=fill,
+        now=NOW,
+    )
+
+    assert report["position_updated"] is True
+    assert report["position_cleared"] is True
+    assert position_store.deleted == [
+        {
+            "symbol": "AAPL",
+            "trading_mode": TradingMode.PAPER,
+            "strategy_version": "v1-breakout",
+            "strategy_name": "bull_flag",
+        }
+    ]
+    assert connection.commit_count == 1
+
+
 def test_rollback_called_when_position_store_delete_raises_on_stop_fill() -> None:
     """If position_store.delete raises during a stop fill, connection.rollback()
     must be called and the exception must propagate."""
