@@ -22,8 +22,20 @@ def _is_option_symbol(symbol: str) -> bool:
 
 
 ACTIVE_ORDER_STATUSES = [
-    "pending_submit", "submitting", "new", "accepted", "submitted",
-    "partially_filled", "held", "pending_new",
+    "pending_submit",
+    "submitting",
+    "pending_new",
+    "new",
+    "accepted",
+    "accepted_for_bidding",
+    "submitted",
+    "partially_filled",
+    "held",
+    "pending_replace",
+    "pending_cancel",
+    "stopped",
+    "suspended",
+    "done_for_day",
 ]
 
 RECONCILIATION_MISS_THRESHOLD = 3

@@ -1,7 +1,7 @@
 """Tests for 2026-05-01 production bug fixes.
 
 Covers:
-  - Bug 2: ACTIVE_ORDER_STATUSES / ACTIVE_STOP_STATUSES missing "held" / "pending_new"
+  - Bug 2: ACTIVE_ORDER_STATUSES / ACTIVE_STOP_STATUSES missing nonterminal Alpaca statuses
   - Bug 1: Recovery stop not queued for positions whose prior-day stop was expired
   - Bug 5: Recovery exceptions propagating through run_cycle_once and crashing supervisor
 """
@@ -169,26 +169,42 @@ _NOW = datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — ACTIVE_ORDER_STATUSES contains "held" and "pending_new"
+# Test 1 — ACTIVE_ORDER_STATUSES contains nonterminal Alpaca statuses
 # ---------------------------------------------------------------------------
 
 
-def test_active_order_statuses_includes_held_and_pending_new() -> None:
+def test_active_order_statuses_includes_nonterminal_alpaca_statuses() -> None:
     from alpaca_bot.runtime.startup_recovery import ACTIVE_ORDER_STATUSES
 
-    assert "held" in ACTIVE_ORDER_STATUSES
-    assert "pending_new" in ACTIVE_ORDER_STATUSES
+    assert {
+        "held",
+        "pending_new",
+        "accepted_for_bidding",
+        "pending_replace",
+        "pending_cancel",
+        "stopped",
+        "suspended",
+        "done_for_day",
+    } <= set(ACTIVE_ORDER_STATUSES)
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — ACTIVE_STOP_STATUSES contains "held"
+# Test 2 — ACTIVE_STOP_STATUSES contains nonterminal Alpaca statuses
 # ---------------------------------------------------------------------------
 
 
-def test_active_stop_statuses_includes_held() -> None:
+def test_active_stop_statuses_includes_nonterminal_alpaca_statuses() -> None:
     from alpaca_bot.runtime.cycle_intent_execution import ACTIVE_STOP_STATUSES
 
-    assert "held" in ACTIVE_STOP_STATUSES
+    assert {
+        "held",
+        "pending_new",
+        "accepted_for_bidding",
+        "pending_replace",
+        "pending_cancel",
+        "stopped",
+        "suspended",
+    } <= set(ACTIVE_STOP_STATUSES)
 
 
 # ---------------------------------------------------------------------------

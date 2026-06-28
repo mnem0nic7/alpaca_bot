@@ -1036,6 +1036,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "if [[ \"$args\" == *'--entrypoint python admin'* ]]; then\n"
         "  printf 'paper proof active strategies: bull_flag\\n'\n"
         "  printf 'paper proof watchlist: status=ok active=980 enabled=986 ignored=6 required_active=900\\n'\n"
+        "  printf 'paper proof sizing: status=ok confidence_floor=0.25 manual_baseline=0.25 set_by=operator required_floor=0.25 weight_status=ok active_weights=[bull_flag] stored_weights=[bull_flag] weight_sum=1 target_weight=1.0 target_sharpe=0.0\\n'\n"
         "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh\\n'\n"
         "  printf 'paper proof readiness audit: status=ok target_session=2026-06-29 check_status=passed created_at=2026-06-29T13:20:00+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00\\n'\n"
         "  printf 'paper proof post-close audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 17:25 America/New_York session_guard=passed:0:2026-06-29T21:10:00+00:00 paper_profit_probe=pending:43:2026-06-29T21:20:00+00:00\\n'\n"
@@ -1067,6 +1068,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     assert "  status=enabled kill_switch=false reason=proof running" in result.stdout
     assert "paper proof active strategies: bull_flag" in result.stdout
     assert "paper proof watchlist: status=ok active=980 enabled=986 ignored=6 required_active=900" in result.stdout
+    assert "paper proof sizing: status=ok confidence_floor=0.25" in result.stdout
     assert "paper proof runtime: ops_status=ok" in result.stdout
     assert "paper proof readiness audit: status=ok target_session=2026-06-29" in result.stdout
     assert "paper proof post-close audit: status=ok target_session=2026-06-29" in result.stdout
@@ -1106,6 +1108,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_MIN_WATCHLIST_SYMBOLS" in script
     assert "PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900" in script
     assert "PROOF_STATUS_MIN_WATCHLIST_SYMBOLS must be a positive integer" in script
+    assert "PROOF_STATUS_MIN_CONFIDENCE_FLOOR" in script
+    assert "PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25" in script
+    assert "PROOF_STATUS_MIN_CONFIDENCE_FLOOR must be a non-negative number" in script
     assert "./scripts/ops_check.sh \"$ENV_FILE\" 2>&1" in script
     assert "PROOF_STATUS_OPS_HEALTH_STATUS" in script
     assert "PROOF_STATUS_OPS_HEALTH_DETAIL" in script
@@ -1161,6 +1166,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "paper_profit_probe={post_close_check_statuses['paper_profit_probe']}" in script
     assert "strategy_disabled" in script
     assert "watchlist_under_minimum" in script
+    assert "sizing_drifted" in script
     assert "symbol_watchlist" in script
     assert "active_watchlist_symbols" in script
     assert "watchlist_status = (" in script
@@ -1169,6 +1175,17 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "status={watchlist_status}" in script
     assert "active={active_watchlist_symbols}" in script
     assert "required_active={min_watchlist_symbols}" in script
+    assert "confidence_floor_store" in script
+    assert "strategy_weights" in script
+    assert "weight_status = (" in script
+    assert "confidence_floor_status = (" in script
+    assert "sizing_status = (" in script
+    assert "paper proof sizing:" in script
+    assert "confidence_floor={confidence_floor_value:g}" in script
+    assert "manual_baseline={confidence_floor_manual_baseline:g}" in script
+    assert "required_floor={min_confidence_floor:g}" in script
+    assert "weight_status={weight_status}" in script
+    assert "target_weight={target_weight if target_weight is not None else 'missing'}" in script
     assert "posture_drifted" in script
     assert "broker_account_blocked" in script
     assert "awaiting_completed_proof_session" in script
@@ -1203,9 +1220,34 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "buying_power={broker_buying_power:.2f}" in script
     assert "minimum_required={broker_minimum_buying_power:.2f}" in script
     assert "trading_blocked={str(broker_trading_blocked).lower()}" in script
-    assert "'pending_submit'" in script
-    assert "'partially_filled'" in script
     assert "latest_market_date" not in script
+
+
+def test_paper_proof_checks_count_nonterminal_order_statuses_as_active() -> None:
+    scripts = [
+        Path("scripts/paper_readiness_check.sh").read_text(),
+        Path("scripts/paper_activity_check.sh").read_text(),
+        Path("scripts/paper_proof_status.sh").read_text(),
+    ]
+
+    for script in scripts:
+        for status in (
+            "pending_submit",
+            "submitting",
+            "pending_new",
+            "new",
+            "accepted",
+            "accepted_for_bidding",
+            "submitted",
+            "partially_filled",
+            "held",
+            "pending_replace",
+            "pending_cancel",
+            "stopped",
+            "suspended",
+            "done_for_day",
+        ):
+            assert f"'{status}'" in script
 
 
 def test_post_close_checks_fail_on_open_positions() -> None:

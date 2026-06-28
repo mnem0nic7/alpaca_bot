@@ -944,12 +944,18 @@ SELECT
       AND status IN (
         'pending_submit',
         'submitting',
+        'pending_new',
         'new',
         'accepted',
+        'accepted_for_bidding',
         'submitted',
         'partially_filled',
         'held',
-        'pending_new'
+        'pending_replace',
+        'pending_cancel',
+        'stopped',
+        'suspended',
+        'done_for_day'
       )
   );
 SQL
@@ -997,12 +1003,18 @@ WHERE trading_mode = 'paper'
   AND status IN (
     'pending_submit',
     'submitting',
+    'pending_new',
     'new',
     'accepted',
+    'accepted_for_bidding',
     'submitted',
     'partially_filled',
     'held',
-    'pending_new'
+    'pending_replace',
+    'pending_cancel',
+    'stopped',
+    'suspended',
+    'done_for_day'
   );
 SQL
 )"

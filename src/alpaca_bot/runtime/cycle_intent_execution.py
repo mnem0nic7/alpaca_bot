@@ -26,7 +26,19 @@ logger = logging.getLogger(__name__)
 
 
 ACTIVE_STOP_STATUSES = (
-    "pending_submit", "new", "accepted", "submitted", "partially_filled", "held",
+    "pending_submit",
+    "submitting",
+    "pending_new",
+    "new",
+    "accepted",
+    "accepted_for_bidding",
+    "submitted",
+    "partially_filled",
+    "held",
+    "pending_replace",
+    "pending_cancel",
+    "stopped",
+    "suspended",
 )
 
 
