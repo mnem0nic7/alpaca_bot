@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/deploy/compose.yaml"
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 REQUIRE_CRON_HEALTH="${REQUIRE_CRON_HEALTH:-true}"
+DEPLOY_PROOF_SETTLE_SECONDS="${DEPLOY_PROOF_SETTLE_SECONDS:-15}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file: $ENV_FILE" >&2
@@ -127,6 +128,11 @@ case "${REQUIRE_CRON_HEALTH,,}" in
     ;;
 esac
 
+if [[ ! "$DEPLOY_PROOF_SETTLE_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "DEPLOY_PROOF_SETTLE_SECONDS must be a non-negative integer" >&2
+  exit 1
+fi
+
 "${compose[@]}" build supervisor web migrate admin
 "${compose[@]}" up -d postgres
 "${compose[@]}" run --rm migrate
@@ -164,6 +170,10 @@ fi
 
 if credentials_ready && paper_proof_enabled; then
   verify_paper_proof_ready
+  if [[ "$DEPLOY_PROOF_SETTLE_SECONDS" -gt 0 ]]; then
+    sleep "$DEPLOY_PROOF_SETTLE_SECONDS"
+    verify_paper_proof_ready
+  fi
 fi
 
 "${compose[@]}" ps

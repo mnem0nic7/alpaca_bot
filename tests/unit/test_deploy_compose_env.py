@@ -36,6 +36,8 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
 def test_deploy_ops_check_enforces_paper_readiness() -> None:
     deploy_text = Path("scripts/deploy.sh").read_text()
 
+    assert 'DEPLOY_PROOF_SETTLE_SECONDS="${DEPLOY_PROOF_SETTLE_SECONDS:-15}"' in deploy_text
+    assert "DEPLOY_PROOF_SETTLE_SECONDS must be a non-negative integer" in deploy_text
     assert 'REQUIRE_CRON_HEALTH="${REQUIRE_CRON_HEALTH:-true}"' in deploy_text
     assert "REQUIRE_CRON_HEALTH must be true or false" in deploy_text
     assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in deploy_text
@@ -69,6 +71,8 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "paper proof readiness stale after deploy; refreshing once" in deploy_text
     assert '"readiness=ready"' in deploy_text
     assert '"blockers=none"' in deploy_text
+    assert 'sleep "$DEPLOY_PROOF_SETTLE_SECONDS"' in deploy_text
+    assert deploy_text.count("verify_paper_proof_ready") >= 3
     assert "${proof_summary:-missing summary}" in deploy_text
     assert "deploy failed: paper proof status not ready after deploy" in deploy_text
 
