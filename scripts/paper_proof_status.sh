@@ -20,6 +20,8 @@ set -a
 source "$ENV_FILE"
 set +a
 
+PROOF_STATUS_MIN_WATCHLIST_SYMBOLS="${PROOF_STATUS_MIN_WATCHLIST_SYMBOLS:-${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}}"
+
 if [[ -z "${STRATEGY_VERSION:-}" ]]; then
   echo "missing STRATEGY_VERSION in $ENV_FILE" >&2
   exit 1
@@ -38,6 +40,11 @@ if [[ ! "$PROOF_STATUS_MIN_TRADES" =~ ^[0-9]+$ ]]; then
 fi
 if [[ ! "$PROOF_STATUS_MIN_PNL" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
   echo "PROOF_STATUS_MIN_PNL must be a number" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_MIN_WATCHLIST_SYMBOLS" =~ ^[0-9]+$ ]] \
+  || [[ "$PROOF_STATUS_MIN_WATCHLIST_SYMBOLS" -lt 1 ]]; then
+  echo "PROOF_STATUS_MIN_WATCHLIST_SYMBOLS must be a positive integer" >&2
   exit 1
 fi
 
@@ -79,6 +86,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_STRATEGY="$PROOF_STATUS_STRATEGY" \
   -e PROOF_STATUS_MIN_TRADES="$PROOF_STATUS_MIN_TRADES" \
   -e PROOF_STATUS_MIN_PNL="$PROOF_STATUS_MIN_PNL" \
+  -e PROOF_STATUS_MIN_WATCHLIST_SYMBOLS="$PROOF_STATUS_MIN_WATCHLIST_SYMBOLS" \
   -e PROOF_STATUS_START_DATE="$PROOF_STATUS_START_DATE" \
   -e PROOF_STATUS_END_DATE="$PROOF_STATUS_END_DATE" \
   -e PROOF_STATUS_CRON_HEALTH_STATUS="$cron_health_status" \
@@ -199,6 +207,7 @@ strategy_version = os.environ["STRATEGY_VERSION"]
 strategy_name = os.environ["PROOF_STATUS_STRATEGY"]
 min_trades = int(os.environ["PROOF_STATUS_MIN_TRADES"])
 min_pnl = float(os.environ["PROOF_STATUS_MIN_PNL"])
+min_watchlist_symbols = int(os.environ["PROOF_STATUS_MIN_WATCHLIST_SYMBOLS"])
 cron_health_status = os.environ.get("PROOF_STATUS_CRON_HEALTH_STATUS", "unknown")
 cron_health_detail = os.environ.get("PROOF_STATUS_CRON_HEALTH_DETAIL", "").strip()
 ops_health_status = os.environ.get("PROOF_STATUS_OPS_HEALTH_STATUS", "unknown")
@@ -251,6 +260,26 @@ try:
         )
         active_row = cur.fetchone()
         active_strategies = active_row[0] if active_row else ""
+
+        cur.execute(
+            """
+            SELECT
+              COUNT(*) FILTER (
+                WHERE enabled = TRUE AND COALESCE(ignored, FALSE) = FALSE
+              )::int AS active_symbols,
+              COUNT(*) FILTER (WHERE enabled = TRUE)::int AS enabled_symbols,
+              COUNT(*) FILTER (
+                WHERE enabled = TRUE AND COALESCE(ignored, FALSE) = TRUE
+              )::int AS ignored_symbols
+            FROM symbol_watchlist
+            WHERE trading_mode = %s
+            """,
+            (trading_mode.value,),
+        )
+        watchlist_row = cur.fetchone()
+        active_watchlist_symbols = int(watchlist_row[0] or 0) if watchlist_row else 0
+        enabled_watchlist_symbols = int(watchlist_row[1] or 0) if watchlist_row else 0
+        ignored_watchlist_symbols = int(watchlist_row[2] or 0) if watchlist_row else 0
 
         cur.execute(
             """
@@ -444,6 +473,7 @@ readiness_audit_created_text = (
 post_close_due = False
 post_close_due_after = "none"
 post_close_audit_status = "not_started"
+post_close_pass_evidence_ready = False
 post_close_check_statuses = {
     "session_guard": "missing",
     "paper_profit_probe": "missing",
@@ -488,11 +518,17 @@ if post_close_target_session is not None:
             post_close_audit_status = "failed"
         else:
             post_close_audit_status = "ok"
+            post_close_pass_evidence_ready = (
+                session_guard_status == "passed" and profit_probe_status == "passed"
+            )
 proof_not_started = proof_end < proof_start
+profitable_enough = trade_count >= min_trades and pnl >= min_pnl
 if proof_not_started:
     proof_status = "pending"
-elif trade_count >= min_trades and pnl >= min_pnl:
+elif profitable_enough and post_close_pass_evidence_ready:
     proof_status = "passed"
+elif profitable_enough:
+    proof_status = "pending"
 elif trade_count >= min_trades:
     proof_status = "failing"
 else:
@@ -509,6 +545,11 @@ proof_window = (
 )
 active_strategy_names = [name for name in active_strategies.split(",") if name]
 strategy_status = "ok" if strategy_name in active_strategy_names else "disabled"
+watchlist_status = (
+    "ok"
+    if active_watchlist_symbols >= min_watchlist_symbols
+    else "under_minimum"
+)
 posture_status = (
     "ok"
     if (
@@ -526,6 +567,8 @@ posture_status = (
 blockers = []
 if strategy_status != "ok":
     blockers.append("strategy_disabled")
+if watchlist_status != "ok":
+    blockers.append("watchlist_under_minimum")
 if posture_status != "ok":
     blockers.append("posture_drifted")
 if cron_health_status != "ok":
@@ -561,6 +604,8 @@ elif proof_status == "failing":
     proof_reason = "pnl_below_minimum"
 elif proof_not_started:
     proof_reason = "awaiting_completed_proof_session"
+elif profitable_enough and not post_close_pass_evidence_ready:
+    proof_reason = "awaiting_post_close_audit"
 elif trade_count < min_trades:
     proof_reason = "awaiting_min_trades"
 else:
@@ -606,6 +651,14 @@ print(f"paper proof active strategies: {active_strategies or 'none'}")
 print(
     "paper proof strategy status: "
     f"status={strategy_status} target={strategy_name} active=[{active_strategies or ''}]"
+)
+print(
+    "paper proof watchlist: "
+    f"status={watchlist_status} "
+    f"active={active_watchlist_symbols} "
+    f"enabled={enabled_watchlist_symbols} "
+    f"ignored={ignored_watchlist_symbols} "
+    f"required_active={min_watchlist_symbols}"
 )
 print(
     "paper proof posture: "

@@ -1035,6 +1035,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "fi\n"
         "if [[ \"$args\" == *'--entrypoint python admin'* ]]; then\n"
         "  printf 'paper proof active strategies: bull_flag\\n'\n"
+        "  printf 'paper proof watchlist: status=ok active=980 enabled=986 ignored=6 required_active=900\\n'\n"
         "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh\\n'\n"
         "  printf 'paper proof readiness audit: status=ok target_session=2026-06-29 check_status=passed created_at=2026-06-29T13:20:00+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00\\n'\n"
         "  printf 'paper proof post-close audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 17:25 America/New_York session_guard=passed:0:2026-06-29T21:10:00+00:00 paper_profit_probe=pending:43:2026-06-29T21:20:00+00:00\\n'\n"
@@ -1065,6 +1066,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     ) in result.stdout
     assert "  status=enabled kill_switch=false reason=proof running" in result.stdout
     assert "paper proof active strategies: bull_flag" in result.stdout
+    assert "paper proof watchlist: status=ok active=980 enabled=986 ignored=6 required_active=900" in result.stdout
     assert "paper proof runtime: ops_status=ok" in result.stdout
     assert "paper proof readiness audit: status=ok target_session=2026-06-29" in result.stdout
     assert "paper proof post-close audit: status=ok target_session=2026-06-29" in result.stdout
@@ -1101,6 +1103,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "./scripts/cron_health_check.sh 2>&1" in script
     assert "PROOF_STATUS_CRON_HEALTH_STATUS" in script
     assert "PROOF_STATUS_CRON_HEALTH_DETAIL" in script
+    assert "PROOF_STATUS_MIN_WATCHLIST_SYMBOLS" in script
+    assert "PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900" in script
+    assert "PROOF_STATUS_MIN_WATCHLIST_SYMBOLS must be a positive integer" in script
     assert "./scripts/ops_check.sh \"$ENV_FILE\" 2>&1" in script
     assert "PROOF_STATUS_OPS_HEALTH_STATUS" in script
     assert "PROOF_STATUS_OPS_HEALTH_DETAIL" in script
@@ -1130,6 +1135,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "from datetime import date, datetime, time, timedelta" in script
     assert "post_close_target_session = proof_end if proof_end >= proof_start else None" in script
     assert "post_close_audit_rows = []" in script
+    assert "post_close_pass_evidence_ready = False" in script
     assert "payload->>'check_name' IN (" in script
     assert "'session_guard'" in script
     assert "'paper_profit_probe'" in script
@@ -1140,6 +1146,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "post_close_audit_status = \"missing\"" in script
     assert "post_close_audit_status = \"failed\"" in script
     assert "post_close_audit_status = \"ok\"" in script
+    assert "session_guard_status == \"passed\" and profit_probe_status == \"passed\"" in script
+    assert "profitable_enough = trade_count >= min_trades and pnl >= min_pnl" in script
+    assert "elif profitable_enough and post_close_pass_evidence_ready" in script
+    assert "elif profitable_enough:\n    proof_status = \"pending\"" in script
+    assert "elif profitable_enough and not post_close_pass_evidence_ready" in script
     assert "profit_probe_status == \"pending\" and profit_probe_exit_code == \"43\"" in script
     assert "blockers.append(f\"post_close_audit_{post_close_audit_status}\")" in script
     assert "paper proof post-close audit:" in script
@@ -1149,9 +1160,19 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "session_guard={post_close_check_statuses['session_guard']}" in script
     assert "paper_profit_probe={post_close_check_statuses['paper_profit_probe']}" in script
     assert "strategy_disabled" in script
+    assert "watchlist_under_minimum" in script
+    assert "symbol_watchlist" in script
+    assert "active_watchlist_symbols" in script
+    assert "watchlist_status = (" in script
+    assert "active_watchlist_symbols >= min_watchlist_symbols" in script
+    assert "paper proof watchlist:" in script
+    assert "status={watchlist_status}" in script
+    assert "active={active_watchlist_symbols}" in script
+    assert "required_active={min_watchlist_symbols}" in script
     assert "posture_drifted" in script
     assert "broker_account_blocked" in script
     assert "awaiting_completed_proof_session" in script
+    assert "awaiting_post_close_audit" in script
     assert "awaiting_min_trades" in script
     assert "profit_proven" in script
     assert "paper proof strategy status:" in script
