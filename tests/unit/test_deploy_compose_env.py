@@ -44,11 +44,14 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "--expect-trading-status enabled" in deploy_text
     assert "--expect-kill-switch false" in deploy_text
     assert "--expect-only-enabled-strategy bull_flag" in deploy_text
+    assert 'compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")' in deploy_text
     assert "remove_supervisor_container()" in deploy_text
-    assert 'stop supervisor >/dev/null 2>&1 || true' in deploy_text
-    assert 'rm -f supervisor >/dev/null 2>&1 || true' in deploy_text
-    assert 'docker rm -f "${project_name}-supervisor-1" >/dev/null 2>&1 || true' in deploy_text
-    assert "remove_supervisor_container\n  docker compose" in deploy_text
+    assert '"${compose[@]}" stop supervisor >/dev/null 2>&1 || true' in deploy_text
+    assert '"${compose[@]}" rm -sf supervisor >/dev/null 2>&1 || true' in deploy_text
+    assert 'label=com.docker.compose.service=supervisor' in deploy_text
+    assert 'xargs -r docker rm -f' in deploy_text
+    assert '"${fallback_project_name}-supervisor-1"' in deploy_text
+    assert "remove_supervisor_container\n  \"${compose[@]}\" up" in deploy_text
     assert "paper_proof_enabled()" in deploy_text
     assert "refresh_paper_readiness()" in deploy_text
     assert "verify_paper_proof_ready()" in deploy_text

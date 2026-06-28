@@ -16,6 +16,8 @@ set -a
 source "$ENV_FILE"
 set +a
 
+compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+
 require_var() {
   local name="$1"
   if [[ -z "${!name:-}" ]]; then
@@ -61,11 +63,20 @@ refresh_paper_readiness() {
 
 remove_supervisor_container() {
   local project_name
+  local fallback_project_name
   project_name="${COMPOSE_PROJECT_NAME:-$(basename "$(dirname "$COMPOSE_FILE")")}"
+  fallback_project_name="$(basename "$(dirname "$COMPOSE_FILE")")"
 
-  docker compose -f "$COMPOSE_FILE" stop supervisor >/dev/null 2>&1 || true
-  docker compose -f "$COMPOSE_FILE" rm -f supervisor >/dev/null 2>&1 || true
-  docker rm -f "${project_name}-supervisor-1" >/dev/null 2>&1 || true
+  "${compose[@]}" stop supervisor >/dev/null 2>&1 || true
+  "${compose[@]}" rm -sf supervisor >/dev/null 2>&1 || true
+  docker ps -aq \
+    --filter "label=com.docker.compose.project=${project_name}" \
+    --filter "label=com.docker.compose.service=supervisor" \
+    | xargs -r docker rm -f >/dev/null 2>&1 || true
+  docker rm -f \
+    "${project_name}-supervisor-1" \
+    "${fallback_project_name}-supervisor-1" \
+    >/dev/null 2>&1 || true
 }
 
 verify_paper_proof_ready() {
@@ -116,15 +127,15 @@ case "${REQUIRE_CRON_HEALTH,,}" in
     ;;
 esac
 
-docker compose -f "$COMPOSE_FILE" build supervisor web migrate admin
-docker compose -f "$COMPOSE_FILE" up -d postgres
-docker compose -f "$COMPOSE_FILE" run --rm migrate
-docker compose -f "$COMPOSE_FILE" up -d --force-recreate web
+"${compose[@]}" build supervisor web migrate admin
+"${compose[@]}" up -d postgres
+"${compose[@]}" run --rm migrate
+"${compose[@]}" up -d --force-recreate web
 
 if credentials_ready; then
   remove_supervisor_container
-  docker compose -f "$COMPOSE_FILE" up -d --force-recreate supervisor
-  docker compose -f "$COMPOSE_FILE" run --rm --entrypoint alpaca-bot-ops-check admin \
+  "${compose[@]}" up -d --force-recreate supervisor
+  "${compose[@]}" run --rm --entrypoint alpaca-bot-ops-check admin \
     --url http://web:8080/healthz \
     --expect-worker \
     --wait-seconds 60 \
@@ -138,7 +149,7 @@ if credentials_ready; then
   fi
 else
   remove_supervisor_container
-  docker compose -f "$COMPOSE_FILE" run --rm --entrypoint alpaca-bot-ops-check admin \
+  "${compose[@]}" run --rm --entrypoint alpaca-bot-ops-check admin \
     --url http://web:8080/healthz \
     --no-expect-worker \
     --wait-seconds 30
@@ -155,4 +166,4 @@ if credentials_ready && paper_proof_enabled; then
   verify_paper_proof_ready
 fi
 
-docker compose -f "$COMPOSE_FILE" ps
+"${compose[@]}" ps
