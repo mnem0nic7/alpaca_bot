@@ -1083,6 +1083,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "paper proof broker exposure:" in script
     assert "open_orders={broker_open_orders} open_positions={broker_open_positions}" in script
     assert "paper proof broker account:" in script
+    assert "status={broker_account_status}" in script
     assert "equity={broker_equity:.2f}" in script
     assert "buying_power={broker_buying_power:.2f}" in script
     assert "minimum_required={broker_minimum_buying_power:.2f}" in script

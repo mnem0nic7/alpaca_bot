@@ -114,18 +114,32 @@ def load_latest_completed_session_date(settings: Settings) -> tuple[date | None,
 
 def load_broker_exposure(
     settings: Settings,
-) -> tuple[int | None, int | None, float | None, float | None, float | None, bool | None, str | None]:
+) -> tuple[
+    int | None,
+    int | None,
+    float | None,
+    float | None,
+    float | None,
+    bool | None,
+    str | None,
+    str | None,
+]:
     try:
         broker = AlpacaExecutionAdapter.from_settings(settings)
         open_orders = broker.list_open_orders()
         open_positions = broker.list_positions()
         account = broker.get_account()
     except Exception as exc:
-        return None, None, None, None, None, None, str(exc)
+        return None, None, None, None, None, None, None, str(exc)
     equity = float(account.equity)
     buying_power = float(account.buying_power)
     minimum_buying_power = equity * float(settings.max_position_pct)
     trading_blocked = bool(account.trading_blocked)
+    account_status = (
+        "blocked"
+        if trading_blocked or equity <= 0 or buying_power < minimum_buying_power
+        else "ok"
+    )
     return (
         len(open_orders),
         len(open_positions),
@@ -133,6 +147,7 @@ def load_broker_exposure(
         buying_power,
         minimum_buying_power,
         trading_blocked,
+        account_status,
         None,
     )
 
@@ -154,6 +169,7 @@ latest_completed_session, calendar_warning = load_latest_completed_session_date(
     broker_buying_power,
     broker_minimum_buying_power,
     broker_trading_blocked,
+    broker_account_status,
     broker_exposure_warning,
 ) = load_broker_exposure(settings)
 proof_end = (
@@ -304,6 +320,7 @@ else:
     )
     print(
         "paper proof broker account: "
+        f"status={broker_account_status} "
         f"equity={broker_equity:.2f} "
         f"buying_power={broker_buying_power:.2f} "
         f"minimum_required={broker_minimum_buying_power:.2f} "
