@@ -19,8 +19,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
         "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1002"
     )
     readiness_midday_refresh = (
-        "45 16,17 * * 1-5 root PAPER_READINESS_FORCE_REFRESH=true "
-        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1245"
+        "15 16,17 * * 1-5 root PAPER_READINESS_FORCE_REFRESH=true "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1215"
     )
     readiness_afternoon_refresh = (
         "25 18,19 * * 1-5 root PAPER_READINESS_FORCE_REFRESH=true "
@@ -110,7 +110,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" /etc/cron.d/alpaca-bot' in install_cron
     assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in install_cron
     assert "Runs weekdays on New York wall time" in install_cron
-    assert "paper readiness 09:20/09:55/09:58/10:02/12:45/14:25/16:55" in install_cron
+    assert "paper readiness 09:20/09:55/09:58/10:02/12:15/14:25/16:55" in install_cron
     assert "paper activity 10:25/12:00" in install_cron
     assert "proof status 17:28" in install_cron
     assert "scripts/apply_candidate.sh" in cron_text
