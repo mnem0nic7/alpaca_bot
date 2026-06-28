@@ -1804,6 +1804,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "fail_on_issues = os.environ.get(\"PROOF_STATUS_FAIL_ON_ISSUES\"" in script
     assert "readiness_status != \"ready\" or blockers or proof_status == \"failing\"" in script
     assert "raise SystemExit(1)" in script
+    assert "if fail_on_issues and proof_status == \"pending\"" in script
+    assert "raise SystemExit(43)" in script
     assert "due={str(post_close_due).lower()}" in script
     assert "session_guard={post_close_check_statuses['session_guard']}" in script
     assert "paper_profit_probe={post_close_check_statuses['paper_profit_probe']}" in script

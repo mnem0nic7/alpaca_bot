@@ -1067,4 +1067,6 @@ if fail_on_issues and (
     readiness_status != "ready" or blockers or proof_status == "failing"
 ):
     raise SystemExit(1)
+if fail_on_issues and proof_status == "pending":
+    raise SystemExit(43)
 PY
