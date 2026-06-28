@@ -289,6 +289,7 @@ def test_build_session_diagnostics_cycle_errors(monkeypatch):
     ]
     assert stream_calls
     assert "trade_update_failed" in stream_calls[0]["event_types"]
+    assert "protective_stop_quantity_replace_failed" in stream_calls[0]["event_types"]
     dispatch_calls = [
         call
         for call in call_log

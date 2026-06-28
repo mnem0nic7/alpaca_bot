@@ -419,6 +419,7 @@ def _build_session_diagnostics(
                 "stream_restart_failed",
                 "trade_update_stream_failed",
                 "trade_update_failed",
+                "protective_stop_quantity_replace_failed",
             ],
             since=session_start,
             until=session_end,
