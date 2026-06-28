@@ -184,7 +184,7 @@ else:
 proof_window = (
     f"{proof_start.isoformat()}..{proof_end.isoformat()}"
     if not proof_not_started
-    else f"not_started(latest_market_date={proof_end.isoformat()})"
+    else f"not_started(current_market_date={proof_end.isoformat()})"
 )
 
 print(f"paper proof active strategies: {active_strategies or 'none'}")

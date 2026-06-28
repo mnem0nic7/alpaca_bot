@@ -1057,6 +1057,13 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     assert "alpaca-bot-session-eval" not in calls
 
 
+def test_paper_proof_status_labels_pre_start_window_as_current_date() -> None:
+    script = Path("scripts/paper_proof_status.sh").read_text()
+
+    assert "not_started(current_market_date=" in script
+    assert "latest_market_date" not in script
+
+
 def test_post_close_checks_fail_on_open_positions() -> None:
     session_guard = Path("scripts/session_guard.sh").read_text()
     profit_probe = Path("scripts/paper_profit_probe.sh").read_text()
