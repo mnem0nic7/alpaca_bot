@@ -208,6 +208,7 @@ def _patch_cli_deps(
     *,
     equity_baseline: float | None = 100_000.0,
     open_positions: list | None = None,
+    active_orders: list | None = None,
 ):
     """Stub all I/O dependencies for session_eval_cli.main()."""
     import alpaca_bot.admin.session_eval_cli as cli_module
@@ -235,6 +236,7 @@ def _patch_cli_deps(
     fake_order_store = SimpleNamespace(
         list_closed_trades=list_closed_trades,
         list_failed_entries=lambda **kwargs: [],
+        list_by_status=lambda **kwargs: list(active_orders or []),
     )
     fake_audit_store = SimpleNamespace(list_by_event_types=lambda **kwargs: [])
     fake_position_store = SimpleNamespace(list_all=lambda **kwargs: list(open_positions or []))
@@ -438,6 +440,59 @@ def test_session_eval_cli_fail_on_diagnostics_allows_active_no_trade_day(
     out = capsys.readouterr().out
     assert "No closed trades" in out
     assert "Guard failed" not in out
+
+
+def test_session_eval_cli_fail_on_diagnostics_fails_active_local_order(
+    monkeypatch,
+    capsys,
+):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+    from alpaca_bot.config import TradingMode
+    from alpaca_bot.storage.models import OrderRecord
+
+    latest = datetime(2026, 5, 4, 15, 30, tzinfo=timezone.utc)
+    active_order = OrderRecord(
+        client_order_id="bull_flag:v1:2026-05-04:AAPL:entry",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1",
+        strategy_name="bull_flag",
+        created_at=latest,
+        updated_at=latest,
+    )
+    _patch_cli_deps(monkeypatch, rows=[], active_orders=[active_order])
+    monkeypatch.setattr(
+        cli_module,
+        "_load_entries_disabled_cycle_stats",
+        lambda *_args, **_kwargs: (10, 0, {}),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "_load_decision_activity_stats",
+        lambda *_args, **_kwargs: cli_module.DecisionActivityStats(
+            cycles=3,
+            records=2940,
+            accepted=0,
+            latest_cycle_at=latest,
+        ),
+    )
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategy", "bull_flag",
+        "--fail-on-diagnostics",
+    ])
+
+    assert rc == 46
+    out = capsys.readouterr().out
+    assert "Active orders after session: AAPL (pending_submit entry)" in out
+    assert "Guard failed: operational diagnostics contain proof-blocking issues" in out
 
 
 def test_load_entries_disabled_cycle_stats_parses_colon_reasons(monkeypatch):

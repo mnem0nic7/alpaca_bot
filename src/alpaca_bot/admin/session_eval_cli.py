@@ -23,6 +23,23 @@ from alpaca_bot.storage.repositories import (
     PositionStore,
 )
 
+ACTIVE_ORDER_STATUSES = (
+    "pending_submit",
+    "submitting",
+    "pending_new",
+    "new",
+    "accepted",
+    "accepted_for_bidding",
+    "submitted",
+    "partially_filled",
+    "held",
+    "pending_replace",
+    "pending_cancel",
+    "stopped",
+    "suspended",
+    "done_for_day",
+)
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
@@ -272,6 +289,7 @@ class SessionDiagnostics:
     failed_entries: list[OrderRecord] = field(default_factory=list)
     stream_issues: list[AuditEvent] = field(default_factory=list)
     open_positions: list[PositionRecord] = field(default_factory=list)
+    active_orders: list[OrderRecord] = field(default_factory=list)
     reconciliation_issues: list[AuditEvent] = field(default_factory=list)
     total_supervisor_cycles: int = 0
     entries_disabled_cycles: int = 0
@@ -289,6 +307,7 @@ class SessionDiagnostics:
             self.failed_entries,
             self.stream_issues,
             self.open_positions,
+            self.active_orders,
             self.reconciliation_issues,
             self.entries_disabled_cycles,
             self.strategy_disabled_cycles,
@@ -302,14 +321,15 @@ class SessionDiagnostics:
 
         Unfilled entry orders remain diagnostic output only. A stop-limit entry
         can legitimately cancel without fill; missing cycles, disabled entries,
-        runtime errors, stream/reconciliation issues, open exposure, and missing
-        decision activity are proof-blocking.
+        runtime errors, stream/reconciliation issues, open exposure, active
+        local orders, and missing decision activity are proof-blocking.
         """
         return any([
             self.cycle_errors,
             self.dispatch_failures,
             self.stream_issues,
             self.open_positions,
+            self.active_orders,
             self.reconciliation_issues,
             self.entries_disabled_cycles,
             self.strategy_disabled_cycles,
@@ -401,6 +421,11 @@ def _build_session_diagnostics(
         open_positions=position_store.list_all(
             trading_mode=trading_mode,
             strategy_version=strategy_version,
+        ),
+        active_orders=order_store.list_by_status(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            statuses=list(ACTIVE_ORDER_STATUSES),
         ),
         reconciliation_issues=audit_store.list_by_event_types(
             event_types=["reconciliation_miss_count_incremented", "runtime_reconciliation_detected"],
@@ -690,6 +715,13 @@ def _print_session_diagnostics(diagnostics: SessionDiagnostics) -> None:
     if diagnostics.open_positions:
         syms = [p.symbol for p in diagnostics.open_positions]
         print(f" ⚠ Open positions at EOD: {', '.join(syms)}")
+
+    if diagnostics.active_orders:
+        parts = [
+            f"{order.symbol} ({order.status} {order.intent_type})"
+            for order in diagnostics.active_orders
+        ]
+        print(f" ⚠ Active orders after session: {', '.join(parts)}")
 
     if diagnostics.reconciliation_issues:
         print(f" ⚠ Reconciliation issues: {len(diagnostics.reconciliation_issues)}")

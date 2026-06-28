@@ -199,6 +199,7 @@ def test_build_session_diagnostics_no_issues(monkeypatch):
     )
     fake_order_store = SimpleNamespace(
         list_failed_entries=lambda **kw: [],
+        list_by_status=lambda **kw: [],
     )
     fake_position_store = SimpleNamespace(
         list_all=lambda **kw: [],
@@ -232,6 +233,7 @@ def test_build_session_diagnostics_no_issues(monkeypatch):
     assert diag.failed_entries == []
     assert diag.stream_issues == []
     assert diag.open_positions == []
+    assert diag.active_orders == []
     assert diag.reconciliation_issues == []
 
 
@@ -255,7 +257,10 @@ def test_build_session_diagnostics_cycle_errors(monkeypatch):
         return []
 
     fake_audit_store = SimpleNamespace(list_by_event_types=fake_list_by_event_types)
-    fake_order_store = SimpleNamespace(list_failed_entries=lambda **kw: [])
+    fake_order_store = SimpleNamespace(
+        list_failed_entries=lambda **kw: [],
+        list_by_status=lambda **kw: [],
+    )
     fake_position_store = SimpleNamespace(list_all=lambda **kw: [])
 
     monkeypatch.setattr(cli_module, "AuditEventStore", lambda conn: fake_audit_store)
@@ -298,7 +303,14 @@ def test_build_session_diagnostics_open_positions(monkeypatch):
     )
 
     monkeypatch.setattr(cli_module, "AuditEventStore", lambda conn: SimpleNamespace(list_by_event_types=lambda **kw: []))
-    monkeypatch.setattr(cli_module, "OrderStore", lambda conn: SimpleNamespace(list_failed_entries=lambda **kw: []))
+    monkeypatch.setattr(
+        cli_module,
+        "OrderStore",
+        lambda conn: SimpleNamespace(
+            list_failed_entries=lambda **kw: [],
+            list_by_status=lambda **kw: [],
+        ),
+    )
     monkeypatch.setattr(cli_module, "PositionStore", lambda conn: SimpleNamespace(list_all=lambda **kw: [pos]))
 
     diag = cli_module._build_session_diagnostics(
