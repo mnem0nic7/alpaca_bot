@@ -204,6 +204,7 @@ def test_active_stop_statuses_includes_nonterminal_alpaca_statuses() -> None:
         "pending_cancel",
         "stopped",
         "suspended",
+        "done_for_day",
     } <= set(ACTIVE_STOP_STATUSES)
 
 
@@ -219,6 +220,7 @@ def test_active_entry_statuses_includes_nonterminal_alpaca_statuses() -> None:
         "pending_cancel",
         "stopped",
         "suspended",
+        "done_for_day",
     } <= set(ACTIVE_ENTRY_STATUSES)
 
 

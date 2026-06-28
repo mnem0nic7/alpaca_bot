@@ -89,6 +89,7 @@ ACTIVE_ENTRY_STATUSES = (
     "pending_cancel",
     "stopped",
     "suspended",
+    "done_for_day",
 )
 
 
@@ -664,7 +665,12 @@ class RuntimeSupervisor:
             timestamp=timestamp,
         )
         working_order_symbols = {order.symbol for order in broker_open_orders}
-        working_order_symbols.update(order.symbol for order in self._list_pending_submit_orders())
+        working_order_symbols.update(
+            order.symbol
+            for order in self._list_active_entry_orders(
+                excluded_broker_order_ids=expired_entry_broker_ids
+            )
+        )
         # Include symbols with active local stop-sell orders so evaluate_cycle()
         # never emits an entry for a symbol already covered by a stop.  Without this,
         # a symbol whose local stop was cleared by reconciliation (RC-2) could get a
@@ -2515,6 +2521,45 @@ class RuntimeSupervisor:
                 trading_mode=self.settings.trading_mode,
                 strategy_version=self.settings.strategy_version,
             )
+
+    def _list_active_entry_orders(
+        self,
+        *,
+        excluded_broker_order_ids: set[str] | None = None,
+    ) -> list[object]:
+        order_store = self.runtime.order_store
+        orders: list[object] = []
+        excluded_broker_order_ids = excluded_broker_order_ids or set()
+        if not (
+            hasattr(order_store, "list_by_status")
+            or hasattr(order_store, "list_pending_submit")
+        ):
+            return orders
+
+        store_lock = getattr(self.runtime, "store_lock", None)
+        with store_lock if store_lock is not None else contextlib.nullcontext():
+            if hasattr(order_store, "list_by_status"):
+                orders.extend(
+                    order_store.list_by_status(
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                        statuses=list(ACTIVE_ENTRY_STATUSES),
+                    )
+                )
+            if hasattr(order_store, "list_pending_submit"):
+                orders.extend(
+                    order_store.list_pending_submit(
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                    )
+                )
+
+        return [
+            order
+            for order in orders
+            if getattr(order, "intent_type", "entry") == "entry"
+            and getattr(order, "broker_order_id", None) not in excluded_broker_order_ids
+        ]
 
     def _maybe_fire_consecutive_loss_gate(
         self,

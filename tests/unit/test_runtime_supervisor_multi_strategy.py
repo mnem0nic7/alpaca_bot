@@ -394,6 +394,91 @@ def test_prior_cycle_pending_submit_blocks_all_strategies() -> None:
         )
 
 
+def test_prior_cycle_done_for_day_entry_blocks_all_strategies() -> None:
+    """A carryover done_for_day entry remains active and must block duplicate entries."""
+    received_working_symbols: list[set[str]] = []
+
+    flags = [
+        StrategyFlag(
+            strategy_name="breakout",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            enabled=True,
+            updated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        ),
+        StrategyFlag(
+            strategy_name="momentum",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1",
+            enabled=True,
+            updated_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        ),
+    ]
+    runtime = _make_runtime(flags=flags)
+
+    def fake_load_flag(*, strategy_name, trading_mode, strategy_version):
+        for flag in flags:
+            if flag.strategy_name == strategy_name:
+                return flag
+        return None
+
+    runtime.strategy_flag_store.load = fake_load_flag
+
+    active_msft = SimpleNamespace(
+        symbol="MSFT",
+        intent_type="entry",
+        status="done_for_day",
+    )
+
+    def list_by_status(*, statuses, **_):
+        if "done_for_day" in statuses:
+            return [active_msft]
+        return []
+
+    runtime.order_store = SimpleNamespace(
+        save=lambda _: None,
+        list_by_status=list_by_status,
+        list_pending_submit=lambda **_: [],
+        daily_realized_pnl=lambda **_: 0.0,
+        list_trade_pnl_by_strategy=lambda **_: [],
+    )
+
+    settings = _make_settings(symbols=("AAPL", "MSFT"))
+
+    def fake_cycle_runner(**kwargs):
+        received_working_symbols.append(set(kwargs["working_order_symbols"]))
+        return SimpleNamespace(intents=[])
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=SimpleNamespace(
+            get_account=lambda: SimpleNamespace(equity=100_000.0),
+            get_open_orders=lambda: [],
+            get_open_positions=lambda: [],
+            get_clock=lambda: SimpleNamespace(is_open=True),
+        ),
+        market_data=SimpleNamespace(
+            get_stock_bars=lambda **_: {},
+            get_daily_bars=lambda **_: {},
+        ),
+        stream=None,
+        cycle_runner=fake_cycle_runner,
+        order_dispatcher=lambda **_: {"submitted_count": 0},
+        cycle_intent_executor=lambda **_: None,
+        close_runtime_fn=lambda _: None,
+        connection_checker=lambda _: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: datetime(2026, 1, 2, 16, 0, tzinfo=timezone.utc))
+
+    assert len(received_working_symbols) >= 2, "Expected at least 2 strategies to run"
+    for index, working_symbols in enumerate(received_working_symbols):
+        assert "MSFT" in working_symbols, (
+            f"Strategy #{index} should see done_for_day MSFT blocked, got {working_symbols}"
+        )
+
+
 def test_same_cycle_entry_intent_blocks_subsequent_strategies() -> None:
     """When Strategy A emits an ENTRY intent for NVDA in this cycle, Strategy B
     (processed later in the same cycle) must see NVDA in its working_order_symbols."""

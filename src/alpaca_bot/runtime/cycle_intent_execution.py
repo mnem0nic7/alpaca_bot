@@ -39,6 +39,7 @@ ACTIVE_STOP_STATUSES = (
     "pending_cancel",
     "stopped",
     "suspended",
+    "done_for_day",
 )
 
 
