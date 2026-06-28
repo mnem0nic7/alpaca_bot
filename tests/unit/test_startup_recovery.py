@@ -968,6 +968,93 @@ def test_missed_stop_fill_recovery_preserves_closed_trade_fill() -> None:
     )
 
 
+def test_missed_eod_exit_fill_recovery_preserves_closed_trade_fill() -> None:
+    """If the stream misses an EOD exit fill, startup recovery must preserve proof P&L."""
+    settings = make_settings()
+    opened_at = datetime(2026, 6, 29, 14, 0, tzinfo=timezone.utc)
+    exit_at = datetime(2026, 6, 29, 19, 50, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 29, 19, 55, tzinfo=timezone.utc)
+    exit_id = "bull_flag:v1-breakout:2026-06-29:AAPL:exit:2026-06-29T19:45:00+00:00"
+    local_position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        quantity=45,
+        entry_price=111.02,
+        stop_price=109.90,
+        initial_stop_price=109.90,
+        opened_at=opened_at,
+        updated_at=opened_at,
+    )
+    exit_order = OrderRecord(
+        client_order_id=exit_id,
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="accepted",
+        quantity=45,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=exit_at,
+        updated_at=exit_at,
+        broker_order_id="broker-exit-aapl",
+        signal_timestamp=exit_at,
+    )
+    broker_closed_exit = BrokerOrder(
+        client_order_id=exit_id,
+        broker_order_id="broker-exit-aapl",
+        symbol="AAPL",
+        side="sell",
+        status="filled",
+        quantity=45,
+        fill_price=112.35,
+        filled_quantity=45,
+        updated_at=exit_at,
+    )
+    position_store = RecordingPositionStore(existing_positions=[local_position])
+    order_store = RecordingOrderStore(existing_orders=[exit_order])
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+    )
+
+    report = recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[],
+        broker_open_orders=[],
+        broker_closed_orders=[broker_closed_exit],
+        now=now,
+    )
+
+    assert position_store.replace_all_calls[0]["positions"] == []
+    assert "local position missing at broker: AAPL" in report.mismatches
+    assert f"broker closed order fill recovered: {exit_id}" in report.mismatches
+
+    recovered_exits = [
+        order
+        for order in order_store.saved
+        if order.client_order_id == exit_id
+    ]
+    assert len(recovered_exits) == 1
+    assert recovered_exits[0].intent_type == "exit"
+    assert recovered_exits[0].status == "filled"
+    assert recovered_exits[0].fill_price == pytest.approx(112.35)
+    assert recovered_exits[0].filled_quantity == pytest.approx(45)
+    assert recovered_exits[0].updated_at == exit_at
+    assert recovered_exits[0].strategy_name == "bull_flag"
+    assert any(
+        event.event_type == "startup_recovery_closed_order_fill_recovered"
+        and event.symbol == "AAPL"
+        and event.payload["intent_type"] == "exit"
+        and event.payload["fill_price"] == pytest.approx(112.35)
+        for event in runtime.audit_event_store.appended
+    )
+
+
 def test_brand_new_broker_position_does_not_queue_stop_when_one_already_active() -> None:
     """If a pending_submit stop for the symbol already exists locally, no duplicate stop is queued."""
     settings = make_settings()
