@@ -37,7 +37,8 @@ capture_env_overrides \
   PROOF_STATUS_REQUIRE_SCENARIOS \
   PROOF_STATUS_SCENARIO_DIR \
   PROOF_STATUS_STREAM_START_GRACE_SECONDS \
-  PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES
+  PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES \
+  PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS
 
 cd "$(dirname "$0")/.."
 
@@ -65,6 +66,7 @@ PROOF_STATUS_REQUIRE_SCENARIOS="${PROOF_STATUS_REQUIRE_SCENARIOS:-${PAPER_READIN
 PROOF_STATUS_SCENARIO_DIR="${PROOF_STATUS_SCENARIO_DIR:-${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}}"
 PROOF_STATUS_STREAM_START_GRACE_SECONDS="${PROOF_STATUS_STREAM_START_GRACE_SECONDS:-120}"
 PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES="${PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES:-${PAPER_READINESS_MAX_PASS_AGE_MINUTES:-180}}"
+PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS="${PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}}"
 
 if [[ -z "${STRATEGY_VERSION:-}" ]]; then
   echo "missing STRATEGY_VERSION in $ENV_FILE" >&2
@@ -101,6 +103,10 @@ if [[ ! "$PROOF_STATUS_STREAM_START_GRACE_SECONDS" =~ ^[0-9]+$ ]]; then
 fi
 if [[ ! "$PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" =~ ^[0-9]+$ || "$PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" -le 0 ]]; then
   echo "PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES must be a positive integer" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS" =~ ^[0-9]+$ ]]; then
+  echo "PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" >&2
   exit 1
 fi
 case "${PROOF_STATUS_FAIL_ON_ISSUES,,}" in
@@ -180,6 +186,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_SCENARIO_DIR="$PROOF_STATUS_SCENARIO_DIR" \
   -e PROOF_STATUS_STREAM_START_GRACE_SECONDS="$PROOF_STATUS_STREAM_START_GRACE_SECONDS" \
   -e PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES="$PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" \
+  -e PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS="$PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS" \
   -e PROOF_STATUS_START_DATE="$PROOF_STATUS_START_DATE" \
   -e PROOF_STATUS_END_DATE="$PROOF_STATUS_END_DATE" \
   -e PROOF_STATUS_CRON_HEALTH_STATUS="$cron_health_status" \
@@ -222,6 +229,13 @@ def parse_bar_date(raw: str) -> date:
     if raw.endswith("Z"):
         raw = raw[:-1] + "+00:00"
     return datetime.fromisoformat(raw).date()
+
+
+def parse_int_or_none(raw: str) -> int | None:
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 def format_problem_summary(problems: dict[str, list[str]]) -> str:
@@ -398,6 +412,7 @@ strategy_name = os.environ["PROOF_STATUS_STRATEGY"]
 min_trades = int(os.environ["PROOF_STATUS_MIN_TRADES"])
 min_pnl = float(os.environ["PROOF_STATUS_MIN_PNL"])
 min_watchlist_symbols = int(os.environ["PROOF_STATUS_MIN_WATCHLIST_SYMBOLS"])
+min_decision_dry_run_records = int(os.environ["PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS"])
 min_confidence_floor = float(os.environ["PROOF_STATUS_MIN_CONFIDENCE_FLOOR"])
 require_scenarios = os.environ.get("PROOF_STATUS_REQUIRE_SCENARIOS", "true").lower() == "true"
 scenario_dir = Path(os.environ["PROOF_STATUS_SCENARIO_DIR"])
@@ -917,16 +932,31 @@ if readiness_audit_row and len(readiness_audit_row) >= 10:
     readiness_decision_dry_run_accepted = readiness_audit_row[7] or ""
     readiness_decision_dry_run_entry_intents = readiness_audit_row[8] or ""
     readiness_decision_dry_run_sample = readiness_audit_row[9] or ""
-readiness_decision_dry_run_status = (
-    "ok"
-    if (
-        readiness_decision_dry_run_strategy
-        and readiness_decision_dry_run_as_of
-        and readiness_decision_dry_run_active
-        and readiness_decision_dry_run_records
-    )
-    else "missing"
+readiness_decision_dry_run_active_value = parse_int_or_none(
+    readiness_decision_dry_run_active
 )
+readiness_decision_dry_run_records_value = parse_int_or_none(
+    readiness_decision_dry_run_records
+)
+readiness_decision_dry_run_status = "ok"
+if not (
+    readiness_decision_dry_run_strategy
+    and readiness_decision_dry_run_as_of
+    and readiness_decision_dry_run_active
+    and readiness_decision_dry_run_records
+):
+    readiness_decision_dry_run_status = "missing"
+elif readiness_decision_dry_run_strategy != strategy_name:
+    readiness_decision_dry_run_status = "strategy_mismatch"
+elif (
+    readiness_decision_dry_run_active_value is None
+    or readiness_decision_dry_run_records_value is None
+):
+    readiness_decision_dry_run_status = "invalid"
+elif readiness_decision_dry_run_active_value < min_watchlist_symbols:
+    readiness_decision_dry_run_status = "active_under_minimum"
+elif readiness_decision_dry_run_records_value < min_decision_dry_run_records:
+    readiness_decision_dry_run_status = "records_under_minimum"
 activity_due = False
 activity_due_after = "none"
 activity_check_status = "missing"
@@ -1194,7 +1224,9 @@ print(
     f"strategy={readiness_decision_dry_run_strategy or 'none'} "
     f"as_of={readiness_decision_dry_run_as_of or 'none'} "
     f"active={readiness_decision_dry_run_active or 'none'} "
+    f"required_active={min_watchlist_symbols} "
     f"decision_records={readiness_decision_dry_run_records or 'none'} "
+    f"required_records={min_decision_dry_run_records} "
     f"accepted={readiness_decision_dry_run_accepted or 'none'} "
     f"entry_intents={readiness_decision_dry_run_entry_intents or 'none'} "
     f"sample={readiness_decision_dry_run_sample or 'none'}"

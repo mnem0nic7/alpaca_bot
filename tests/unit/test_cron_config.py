@@ -2381,6 +2381,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_STREAM_START_GRACE_SECONDS must be a non-negative integer" in script
     assert "PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" in script
     assert "PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES must be a positive integer" in script
+    assert "PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS" in script
+    assert "PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in script
+    assert "-e PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS=\"$PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS\"" in script
     assert "./scripts/ops_check.sh \"$ENV_FILE\"" in script
     assert "--expect-trading-mode \"$trading_mode\"" in script
     assert "--expect-strategy-version \"$STRATEGY_VERSION\"" in script
@@ -2434,6 +2437,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "payload->>'decision_dry_run_strategy'" in script
     assert "payload->>'decision_dry_run_records'" in script
     assert "readiness_audit_rows = cur.fetchall()" in script
+    assert "parse_int_or_none" in script
+    assert "min_decision_dry_run_records" in script
     assert "latest_readiness_reason.startswith(\"lock_busy\")" in script
     assert "(row for row in readiness_audit_rows if row[0] == \"passed\")" in script
     assert "readiness_audit_status" in script
@@ -2442,6 +2447,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "readiness_audit_{readiness_audit_status}" in script
     assert "readiness_decision_dry_run_status" in script
     assert "readiness_decision_dry_run_{readiness_decision_dry_run_status}" in script
+    assert "readiness_decision_dry_run_strategy != strategy_name" in script
+    assert "readiness_decision_dry_run_status = \"strategy_mismatch\"" in script
+    assert "readiness_decision_dry_run_status = \"active_under_minimum\"" in script
+    assert "readiness_decision_dry_run_status = \"records_under_minimum\"" in script
     assert "paper proof readiness audit:" in script
     assert "status={readiness_audit_status}" in script
     assert "target_session={readiness_target_session.isoformat()}" in script
@@ -2450,7 +2459,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "age_minutes={readiness_audit_age_text}" in script
     assert "max_age_minutes={readiness_max_pass_age_minutes}" in script
     assert "paper proof readiness decision dry run:" in script
+    assert "required_active={min_watchlist_symbols}" in script
     assert "decision_records={readiness_decision_dry_run_records or 'none'}" in script
+    assert "required_records={min_decision_dry_run_records}" in script
     assert "accepted={readiness_decision_dry_run_accepted or 'none'}" in script
     assert "sample={readiness_decision_dry_run_sample or 'none'}" in script
     assert "activity_target_session = None" in script
