@@ -531,3 +531,59 @@ decision dry run to the readiness strategy, `900` minimum records, and the
 six-sample regular-session window. This keeps deploy output consistent with
 proof readiness and avoids falling back to the single conservative `15:30`
 sample during a redeploy.
+
+Full-universe replay confirmation after portfolio-audit heartbeat hardening at
+commit `0e7ec87` used the live nightly scenario directory. This run exercises
+all available nightly scenarios, not only the currently enabled non-ignored
+paper watchlist, and confirms that the long audit now emits progress through
+both costed and frictionless replay phases.
+
+- pooled scenarios: `999`
+- deployed proof posture: `bull_flag`, `MAX_OPEN_POSITIONS=3`,
+  `REPLAY_SLIPPAGE_BPS=2.0`
+- report: `/tmp/bull_flag_portfolio_audit_full_local_heartbeat.md`
+- jsonl: `/tmp/bull_flag_portfolio_audit_full_local_heartbeat.jsonl`
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+PYTHONPATH=src python3 -m alpaca_bot.replay.cli portfolio-audit \
+  --scenario-dir /var/lib/alpaca-bot/nightly/scenarios \
+  --strategy bull_flag \
+  --slippage-bps 2 \
+  --max-open-positions 3 \
+  --limit 0 \
+  --jsonl /tmp/bull_flag_portfolio_audit_full_local_heartbeat.jsonl \
+  --output /tmp/bull_flag_portfolio_audit_full_local_heartbeat.md
+```
+
+| scenarios | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(mean<=0) | frictionless P&L | cost drag | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---|
+| 999 | 1043 | 71.3% | 1.39 | 7193.59 | 6.8970 | 3.46 | [3.2575, 10.7683] | 0.0000 | 8901.40 | 1707.81 | positive-edge |
+
+The heartbeat patch was deployed after the audit. The rebuilt
+`alpaca-bot:latest` image was created at `2026-06-28T15:16:49Z`, both `web`
+and `supervisor` were recreated healthy, and the running supervisor exposes the
+heartbeat-capable replay API signatures:
+
+```text
+PortfolioReplayRunner.run(self, scenarios, *, on_progress=None, progress_label=None)
+portfolio_pooled_trades(scenarios, settings, strategy_name, *, on_progress=None)
+```
+
+Post-deploy proof status remained ready:
+
+- `readiness=ready`
+- `proof=pending`
+- `reason=awaiting_completed_proof_session`
+- `blockers=none`
+- active strategy: `bull_flag`
+- readiness dry run: `941` decision records, `3` accepted entries, `3` entry intents
+- exposure: broker open orders `0`, broker open positions `0`
+- proof progress: `0/10` closed trades and `$0.00/$0.01` realized P&L because
+  the proof window has not started yet
+
+Decision: keep the deployed paper posture unchanged. The exact active-universe
+audits remain positive-edge, the broader nightly full-universe replay remains
+positive-edge after 2 bps per-side costs, and the only remaining proof
+dependency is live paper execution from a `2026-06-29`-or-later completed
+market session.
