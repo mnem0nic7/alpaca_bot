@@ -28,7 +28,11 @@ restore_env_overrides() {
 
 capture_env_overrides \
   PAPER_ACTIVITY_STRATEGY \
+  PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS \
+  PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS \
+  PAPER_READINESS_DECISION_DRY_RUN_STRATEGY \
   PAPER_READINESS_MAX_PASS_AGE_MINUTES \
+  PAPER_READINESS_MIN_WATCHLIST_SYMBOLS \
   PAPER_READINESS_SESSION_DATE \
   POST_CLOSE_LOCK_MAX_AGE_MINUTES \
   PROFIT_PROBE_MIN_PNL \
@@ -322,6 +326,126 @@ PY
     | tail -n 1
 }
 
+decision_dry_run_field() {
+  local line="$1"
+  local key="$2"
+  local part
+  local body="${line#paper decision dry run ok: }"
+
+  for part in $body; do
+    if [[ "$part" == "$key="* ]]; then
+      printf '%s\n' "${part#*=}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+validate_readiness_decision_dry_run_line() {
+  local line="$1"
+  local strategy
+  local as_of
+  local active
+  local decision_records
+  local accepted
+  local entry_intents
+  local evaluations
+  local min_decision_records
+  local max_accepted
+  local max_entry_intents
+  local accepted_evidence
+  local entry_intent_evidence
+
+  if [[ -z "$line" ]]; then
+    echo "missing"
+    return 1
+  fi
+  if [[ "$line" != "paper decision dry run ok: "* ]]; then
+    echo "invalid"
+    return 1
+  fi
+
+  strategy="$(decision_dry_run_field "$line" strategy || true)"
+  as_of="$(decision_dry_run_field "$line" as_of || true)"
+  active="$(decision_dry_run_field "$line" active || true)"
+  decision_records="$(decision_dry_run_field "$line" decision_records || true)"
+  accepted="$(decision_dry_run_field "$line" accepted || true)"
+  entry_intents="$(decision_dry_run_field "$line" entry_intents || true)"
+  evaluations="$(decision_dry_run_field "$line" evaluations || true)"
+  min_decision_records="$(decision_dry_run_field "$line" min_decision_records || true)"
+  max_accepted="$(decision_dry_run_field "$line" max_accepted || true)"
+  max_entry_intents="$(decision_dry_run_field "$line" max_entry_intents || true)"
+
+  if [[ -z "$strategy" || -z "$as_of" || -z "$active" || -z "$decision_records" || -z "$accepted" || -z "$entry_intents" ]]; then
+    echo "missing"
+    return 1
+  fi
+  if [[ "$strategy" != "$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY" ]]; then
+    echo "strategy_mismatch"
+    return 1
+  fi
+  if [[ ! "$active" =~ ^[0-9]+$ || ! "$decision_records" =~ ^[0-9]+$ || ! "$accepted" =~ ^[0-9]+$ || ! "$entry_intents" =~ ^[0-9]+$ ]]; then
+    echo "invalid"
+    return 1
+  fi
+  if (( 10#$active < 10#$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS )); then
+    echo "active_under_minimum"
+    return 1
+  fi
+  if (( 10#$decision_records < 10#$PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS )); then
+    echo "records_under_minimum"
+    return 1
+  fi
+  if [[ ! "$evaluations" =~ ^[0-9]+$ ]] \
+    || (( 10#$evaluations < 10#$PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS )); then
+    echo "evaluations_under_minimum"
+    return 1
+  fi
+  if [[ -n "$min_decision_records" ]]; then
+    if [[ ! "$min_decision_records" =~ ^[0-9]+$ ]]; then
+      echo "invalid"
+      return 1
+    fi
+    if (( 10#$min_decision_records < 10#$PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS )); then
+      echo "sample_records_under_minimum"
+      return 1
+    fi
+  fi
+
+  accepted_evidence="$accepted"
+  if [[ -n "$max_accepted" ]]; then
+    if [[ ! "$max_accepted" =~ ^[0-9]+$ ]]; then
+      echo "invalid"
+      return 1
+    fi
+    if (( 10#$max_accepted > 10#$accepted_evidence )); then
+      accepted_evidence="$max_accepted"
+    fi
+  fi
+  if (( 10#$accepted_evidence <= 0 )); then
+    echo "accepted_under_minimum"
+    return 1
+  fi
+
+  entry_intent_evidence="$entry_intents"
+  if [[ -n "$max_entry_intents" ]]; then
+    if [[ ! "$max_entry_intents" =~ ^[0-9]+$ ]]; then
+      echo "invalid"
+      return 1
+    fi
+    if (( 10#$max_entry_intents > 10#$entry_intent_evidence )); then
+      entry_intent_evidence="$max_entry_intents"
+    fi
+  fi
+  if (( 10#$entry_intent_evidence <= 0 )); then
+    echo "entry_intents_under_minimum"
+    return 1
+  fi
+
+  echo "ok"
+}
+
 load_latest_proof_status() {
   local proof_start="$1"
   local proof_strategy="$2"
@@ -534,6 +658,26 @@ case "$CHECK_NAME" in
       echo "PAPER_READINESS_MAX_PASS_AGE_MINUTES must be a positive integer" >&2
       exit 1
     fi
+    PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}"
+    if [[ ! "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" =~ ^[0-9]+$ || "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" -lt 1 ]]; then
+      echo "PAPER_READINESS_MIN_WATCHLIST_SYMBOLS must be a positive integer" >&2
+      exit 1
+    fi
+    PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}"
+    if [[ ! "$PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS" =~ ^[0-9]+$ ]]; then
+      echo "PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" >&2
+      exit 1
+    fi
+    PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS="${PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS:-6}"
+    if [[ ! "$PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS" =~ ^[1-9][0-9]*$ ]]; then
+      echo "PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS must be a positive integer" >&2
+      exit 1
+    fi
+    PAPER_READINESS_DECISION_DRY_RUN_STRATEGY="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
+    if [[ -z "$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY" ]]; then
+      echo "PAPER_READINESS_DECISION_DRY_RUN_STRATEGY must not be empty" >&2
+      exit 1
+    fi
     readiness_session_date="$(load_readiness_session_date)"
     latest_readiness="$(load_latest_readiness_status "$readiness_session_date")"
     latest_readiness_status=""
@@ -555,10 +699,17 @@ case "$CHECK_NAME" in
     fi
     if [[ "$latest_readiness_status" == "passed" && "$readiness_is_current" == "true" && "$readiness_is_recent" == "true" ]]; then
       latest_decision_dry_run_line="$(load_latest_readiness_decision_dry_run "$readiness_session_date")"
-      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy_already_passed"
-      if [[ -n "$latest_decision_dry_run_line" ]]; then
-        echo "$latest_decision_dry_run_line"
+      latest_decision_dry_run_status="missing"
+      if ! latest_decision_dry_run_status="$(validate_readiness_decision_dry_run_line "$latest_decision_dry_run_line")"; then
+        echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy_decision_dry_run_$latest_decision_dry_run_status"
+        if [[ -n "$latest_decision_dry_run_line" ]]; then
+          echo "$latest_decision_dry_run_line"
+        fi
+        echo "paper readiness prior pass lacks accepted entry-intent decision dry-run proof ($latest_decision_dry_run_status); lock busy remains blocking" >&2
+        exit 48
       fi
+      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy_already_passed"
+      echo "$latest_decision_dry_run_line"
       echo "paper readiness lock busy after prior pass for session $readiness_session_date; not blocking entries"
       exit 0
     fi
