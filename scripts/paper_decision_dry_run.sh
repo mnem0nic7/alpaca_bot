@@ -49,7 +49,7 @@ set +a
 restore_env_overrides
 
 PAPER_DECISION_DRY_RUN_STRATEGY="${PAPER_DECISION_DRY_RUN_STRATEGY:-bull_flag}"
-PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-false}"
+PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}"
 PAPER_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_DECISION_DRY_RUN_MIN_RECORDS:-1}"
 PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS="${PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS:-5}"
 PAPER_DECISION_DRY_RUN_SAMPLE_TIME="${PAPER_DECISION_DRY_RUN_SAMPLE_TIME:-15:30}"
@@ -411,6 +411,14 @@ if require_accepted and max_accepted == 0:
         file=sys.stderr,
     )
     raise SystemExit(1)
+max_entry_intents = max(len(item["entry_intents"]) for item in evaluations)
+if require_accepted and max_entry_intents == 0:
+    print(
+        "paper decision dry run failed: "
+        f"entry_intents=0 require_accepted=true evaluations={len(evaluations)}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
 
 best = max(
     evaluations,
@@ -449,8 +457,8 @@ if len(evaluations) > 1:
         f" sample_times={sample_times_text}"
         f" evaluations={len(evaluations)}"
         f" min_decision_records={min(len(item['records']) for item in evaluations)}"
-        f" max_accepted={max(len(item['accepted']) for item in evaluations)}"
-        f" max_entry_intents={max(len(item['entry_intents']) for item in evaluations)}"
+        f" max_accepted={max_accepted}"
+        f" max_entry_intents={max_entry_intents}"
     )
 
 print(

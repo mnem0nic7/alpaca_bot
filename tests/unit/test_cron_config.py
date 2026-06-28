@@ -3369,7 +3369,7 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "restore_env_overrides" in script
     assert script.index('source "$ENV_FILE"') < script.index("\nrestore_env_overrides\n")
     assert 'PAPER_DECISION_DRY_RUN_STRATEGY="${PAPER_DECISION_DRY_RUN_STRATEGY:-bull_flag}"' in script
-    assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-false}"' in script
+    assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}"' in script
     assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_DECISION_DRY_RUN_MIN_RECORDS:-1}"' in script
     assert 'PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="${PAPER_DECISION_DRY_RUN_SAMPLE_TIMES:-}"' in script
     assert "PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED must be true or false" in script
@@ -3400,6 +3400,8 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "traded_symbols_today=set()" in script
     assert "session_type=SessionType.REGULAR" in script
     assert "paper decision dry run ok:" in script
+    assert "accepted=0 require_accepted=true" in script
+    assert "entry_intents=0 require_accepted=true" in script
     assert "decision_records={len(records)}" in script
     assert "accepted={len(accepted)}" in script
     assert "sample_times={sample_times_text}" in script
