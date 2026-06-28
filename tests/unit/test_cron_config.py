@@ -1354,6 +1354,10 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "latest_cycle_strategy_blocked" in script
     assert "strategy_decision_log_cycles" in script
     assert "strategy_decision_log_records" in script
+    assert "strategy_decision_log_summary" in script
+    assert "decision_log_summary" in script
+    assert "reject_stage" in script
+    assert "reject_reason" in script
     assert "strategy_evidence_records" in script
     assert "order_dispatch_failed" in script
     assert "dispatch_failures" in script
@@ -1437,7 +1441,7 @@ def test_paper_activity_allows_low_record_count_when_stock_exposure_exists(tmp_p
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|bull_flag|||3|0|0|0\\n'\n"
+        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|accepted/none/none:1,skipped_no_signal/none/none:9|bull_flag|||3|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1456,6 +1460,10 @@ def test_paper_activity_allows_low_record_count_when_stock_exposure_exists(tmp_p
     assert result.returncode == 0
     assert "paper activity ok:" in result.stdout
     assert "bull_flag_decision_log_records=10" in result.stdout
+    assert (
+        "bull_flag_decision_log_summary=[accepted/none/none:1,"
+        "skipped_no_signal/none/none:9]"
+    ) in result.stdout
     assert "stock_open_positions=3" in result.stdout
     assert "active_stock_orders=0" in result.stdout
     assert "dispatch_failures=0" in result.stdout
@@ -1546,7 +1554,7 @@ def test_paper_activity_allows_recovered_disabled_cycles(tmp_path: Path) -> None
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '12|4|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|4|8|7840|0|8|7840|2026-06-29 14:15:00+00|bull_flag|paper_readiness_check_missing:4|paper_readiness_check_missing:4|0|0|0|0\\n'\n"
+        "printf '12|4|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|4|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7838,rejected/vwap_filter/below_vwap:2|bull_flag|paper_readiness_check_missing:4|paper_readiness_check_missing:4|0|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1567,6 +1575,10 @@ def test_paper_activity_allows_recovered_disabled_cycles(tmp_path: Path) -> None
     assert "disabled_cycles=4" in result.stdout
     assert "latest_cycle_entries_disabled=false" in result.stdout
     assert "bull_flag_decision_log_records=7840" in result.stdout
+    assert (
+        "bull_flag_decision_log_summary=[skipped_no_signal/none/none:7838,"
+        "rejected/vwap_filter/below_vwap:2]"
+    ) in result.stdout
     assert "dispatch_failures=0" in result.stdout
     assert "stream_issues=0" in result.stdout
     assert not docker_marker.exists()
@@ -1607,7 +1619,7 @@ def test_paper_activity_fails_on_recent_dispatch_failures(tmp_path: Path) -> Non
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|bull_flag|||0|0|2|0\\n'\n"
+        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7840|bull_flag|||0|0|2|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1663,7 +1675,7 @@ def test_paper_activity_fails_on_recent_stream_issues(tmp_path: Path) -> None:
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|bull_flag|||0|0|0|2\\n'\n"
+        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7840|bull_flag|||0|0|0|2\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1719,7 +1731,7 @@ def test_paper_activity_diagnostic_failure_does_not_apply_close_only(tmp_path: P
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '0|0|0|0|0||false||false|||0|0|0|0|0|0||bull_flag|||0|0|0|0\\n'\n"
+        "printf '0|0|0|0|0||false||false|||0|0|0|0|0|0|||bull_flag|||0|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
