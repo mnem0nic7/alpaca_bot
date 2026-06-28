@@ -39,10 +39,15 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
 
     assert 'DEPLOY_PROOF_SETTLE_SECONDS="${DEPLOY_PROOF_SETTLE_SECONDS:-15}"' in deploy_text
     assert "DEPLOY_PROOF_SETTLE_SECONDS must be a non-negative integer" in deploy_text
+    assert 'DEPLOY_REQUIRE_DECISION_DRY_RUN="${DEPLOY_REQUIRE_DECISION_DRY_RUN:-true}"' in deploy_text
+    assert "DEPLOY_REQUIRE_DECISION_DRY_RUN must be true or false" in deploy_text
     assert 'REQUIRE_CRON_HEALTH="${REQUIRE_CRON_HEALTH:-true}"' in deploy_text
     assert "REQUIRE_CRON_HEALTH must be true or false" in deploy_text
     assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in deploy_text
     assert "Cron health check skipped because REQUIRE_CRON_HEALTH=false" in deploy_text
+    assert "verify_paper_decision_dry_run()" in deploy_text
+    assert "Paper decision dry run skipped because DEPLOY_REQUIRE_DECISION_DRY_RUN=false" in deploy_text
+    assert '"$ROOT_DIR/scripts/paper_decision_dry_run.sh" "$ENV_FILE"' in deploy_text
     assert '--expect-trading-mode "${TRADING_MODE}"' in deploy_text
     assert '--expect-strategy-version "${STRATEGY_VERSION}"' in deploy_text
     assert "--expect-trading-status enabled" in deploy_text
@@ -74,6 +79,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert '"blockers=none"' in deploy_text
     assert 'sleep "$DEPLOY_PROOF_SETTLE_SECONDS"' in deploy_text
     assert deploy_text.count("verify_paper_proof_ready") >= 3
+    assert deploy_text.index("verify_paper_decision_dry_run") < deploy_text.rindex("verify_paper_proof_ready")
     assert "${proof_summary:-missing summary}" in deploy_text
     assert "deploy failed: paper proof status not ready after deploy" in deploy_text
 

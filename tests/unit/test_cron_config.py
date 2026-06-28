@@ -153,6 +153,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "required scheduled script has syntax errors" in cron_health
     assert "run_check_with_audit.sh" in cron_health
     assert "scheduled_check_lock_skipped.sh" in cron_health
+    assert "paper_decision_dry_run.sh" in cron_health
     assert "paper_readiness_check.sh" in cron_health
     assert "paper_readiness_if_needed.sh" in cron_health
     assert "paper_activity_check.sh" in cron_health
@@ -264,7 +265,10 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
                 "PAPER_READINESS_REQUIRE_FLAT=true",
                 "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=true",
                 "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE=true",
+                "PAPER_READINESS_REQUIRE_DECISION_DRY_RUN=true",
                 "PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS=0",
+                "PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS=900",
+                "PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED=false",
                 "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180",
                 "PAPER_READINESS_PREVIOUS_SESSION_DATE=2026-06-26",
             ]
@@ -290,6 +294,11 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
         "printf 'active_data=%s max_missing=%s\\n' "
         '"${PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE:-}" '
         '"${PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS:-}"\n'
+        "printf 'decision_dry_run=%s min_records=%s require_accepted=%s strategy=%s\\n' "
+        '"${PAPER_READINESS_REQUIRE_DECISION_DRY_RUN:-}" '
+        '"${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-}" '
+        '"${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-}" '
+        '"${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-}"\n'
     )
     fake_readiness.chmod(0o755)
 
@@ -303,7 +312,11 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
             "PAPER_READINESS_REQUIRE_FLAT": "false",
             "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED": "false",
             "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE": "false",
+            "PAPER_READINESS_REQUIRE_DECISION_DRY_RUN": "false",
             "PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS": "3",
+            "PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS": "17",
+            "PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED": "true",
+            "PAPER_READINESS_DECISION_DRY_RUN_STRATEGY": "bull_flag",
             "PAPER_READINESS_MAX_PASS_AGE_MINUTES": "5",
             "PAPER_READINESS_PREVIOUS_SESSION_DATE": "2026-06-25",
         },
@@ -317,6 +330,10 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
         "previous_session=2026-06-25"
     ) in result.stdout
     assert "active_data=false max_missing=3" in result.stdout
+    assert (
+        "decision_dry_run=false min_records=17 "
+        "require_accepted=true strategy=bull_flag"
+    ) in result.stdout
 
 
 def test_paper_readiness_final_retry_reruns_after_supervisor_restart(tmp_path: Path) -> None:
@@ -1104,6 +1121,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR="${PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_MARKET_DATA="${PAPER_READINESS_REQUIRE_MARKET_DATA:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE="${PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE:-true}"' in script
+    assert 'PAPER_READINESS_REQUIRE_DECISION_DRY_RUN="${PAPER_READINESS_REQUIRE_DECISION_DRY_RUN:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_SCENARIOS="${PAPER_READINESS_REQUIRE_SCENARIOS:-true}"' in script
     assert 'PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS="${PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS:-true}"' in script
     assert 'PAPER_READINESS_CLOSE_ONLY_ON_FAILURE="${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE:-true}"' in script
@@ -1118,10 +1136,16 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS="${PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS:-0}"' in script
     assert 'PAPER_READINESS_DATA_SMOKE_SYMBOLS="${PAPER_READINESS_DATA_SMOKE_SYMBOLS:-SPY,AAPL}"' in script
     assert 'PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS="${PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS:-10}"' in script
+    assert 'PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}"' in script
+    assert 'PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-false}"' in script
+    assert 'PAPER_READINESS_DECISION_DRY_RUN_STRATEGY="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
     assert 'PAPER_READINESS_SCENARIO_DIR="${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}"' in script
     assert "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE must be true or false" in script
+    assert "PAPER_READINESS_REQUIRE_DECISION_DRY_RUN must be true or false" in script
+    assert "PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED must be true or false" in script
     assert "PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS must be a non-negative integer" in script
     assert "PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS must be a positive integer" in script
+    assert "PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in script
     assert "PAPER_READINESS_PRIOR_PROOF_START_DATE must be YYYY-MM-DD" in script
     assert "PAPER_READINESS_CLOSE_ONLY_ON_FAILURE must be true or false" in script
     assert "close_only_on_readiness_failure" in script
@@ -1176,6 +1200,12 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness active data coverage check skipped" in script
     assert "active watchlist market data coverage below threshold" in script
     assert "thin_intraday_lt20" in script
+    assert "run_decision_dry_run_check" in script
+    assert "./scripts/paper_decision_dry_run.sh" in script
+    assert 'PAPER_DECISION_DRY_RUN_STRATEGY="$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY"' in script
+    assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="$PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS"' in script
+    assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED"' in script
+    assert "paper readiness decision dry run check skipped" in script
     assert "PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS" in script
     assert "run_watchlist_asset_check" in script
     assert "load_active_watchlist_symbols" in script

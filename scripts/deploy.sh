@@ -6,6 +6,7 @@ COMPOSE_FILE="$ROOT_DIR/deploy/compose.yaml"
 ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 REQUIRE_CRON_HEALTH="${REQUIRE_CRON_HEALTH:-true}"
 DEPLOY_PROOF_SETTLE_SECONDS="${DEPLOY_PROOF_SETTLE_SECONDS:-15}"
+DEPLOY_REQUIRE_DECISION_DRY_RUN="${DEPLOY_REQUIRE_DECISION_DRY_RUN:-true}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file: $ENV_FILE" >&2
@@ -113,6 +114,15 @@ verify_paper_proof_ready() {
   fi
 }
 
+verify_paper_decision_dry_run() {
+  if [[ "${DEPLOY_REQUIRE_DECISION_DRY_RUN,,}" != "true" ]]; then
+    echo "Paper decision dry run skipped because DEPLOY_REQUIRE_DECISION_DRY_RUN=false" >&2
+    return
+  fi
+
+  "$ROOT_DIR/scripts/paper_decision_dry_run.sh" "$ENV_FILE"
+}
+
 require_var POSTGRES_DB
 require_var POSTGRES_USER
 require_var POSTGRES_PASSWORD
@@ -124,6 +134,14 @@ case "${REQUIRE_CRON_HEALTH,,}" in
   true|false) ;;
   *)
     echo "REQUIRE_CRON_HEALTH must be true or false" >&2
+    exit 1
+    ;;
+esac
+
+case "${DEPLOY_REQUIRE_DECISION_DRY_RUN,,}" in
+  true|false) ;;
+  *)
+    echo "DEPLOY_REQUIRE_DECISION_DRY_RUN must be true or false" >&2
     exit 1
     ;;
 esac
@@ -169,6 +187,7 @@ else
 fi
 
 if credentials_ready && paper_proof_enabled; then
+  verify_paper_decision_dry_run
   verify_paper_proof_ready
   if [[ "$DEPLOY_PROOF_SETTLE_SECONDS" -gt 0 ]]; then
     sleep "$DEPLOY_PROOF_SETTLE_SECONDS"

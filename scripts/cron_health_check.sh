@@ -108,6 +108,7 @@ for script in \
   run_locked_check_with_audit.sh \
   run_check_with_audit.sh \
   scheduled_check_lock_skipped.sh \
+  paper_decision_dry_run.sh \
   paper_readiness_check.sh \
   paper_readiness_if_needed.sh \
   paper_activity_check.sh \
