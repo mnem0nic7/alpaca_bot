@@ -7,6 +7,8 @@ ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 REQUIRE_CRON_HEALTH="${REQUIRE_CRON_HEALTH:-true}"
 DEPLOY_PROOF_SETTLE_SECONDS="${DEPLOY_PROOF_SETTLE_SECONDS:-15}"
 DEPLOY_REQUIRE_DECISION_DRY_RUN="${DEPLOY_REQUIRE_DECISION_DRY_RUN:-true}"
+DEPLOY_READINESS_REFRESH_RETRIES="${DEPLOY_READINESS_REFRESH_RETRIES:-3}"
+DEPLOY_READINESS_REFRESH_RETRY_SECONDS="${DEPLOY_READINESS_REFRESH_RETRY_SECONDS:-20}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file: $ENV_FILE" >&2
@@ -60,12 +62,34 @@ paper_proof_enabled() {
 }
 
 refresh_paper_readiness() {
-  PAPER_READINESS_FORCE_REFRESH=true "$ROOT_DIR/scripts/run_locked_check_with_audit.sh" \
-    paper_readiness \
-    /var/lock/alpaca-bot-paper-readiness.lock \
-    "$ENV_FILE" \
-    "$ROOT_DIR/scripts/paper_readiness_if_needed.sh" \
-    "$ENV_FILE"
+  local attempt
+  local rc
+
+  attempt=1
+  while true; do
+    set +e
+    PAPER_READINESS_FORCE_REFRESH=true "$ROOT_DIR/scripts/run_locked_check_with_audit.sh" \
+      paper_readiness \
+      /var/lock/alpaca-bot-paper-readiness.lock \
+      "$ENV_FILE" \
+      "$ROOT_DIR/scripts/paper_readiness_if_needed.sh" \
+      "$ENV_FILE"
+    rc="$?"
+    set -e
+
+    if [[ "$rc" -eq 0 ]]; then
+      return 0
+    fi
+    if [[ "$rc" -ne 48 || "$attempt" -ge "$DEPLOY_READINESS_REFRESH_RETRIES" ]]; then
+      return "$rc"
+    fi
+
+    echo \
+      "paper readiness refresh lock busy after deploy; retrying in ${DEPLOY_READINESS_REFRESH_RETRY_SECONDS}s (${attempt}/${DEPLOY_READINESS_REFRESH_RETRIES})" \
+      >&2
+    sleep "$DEPLOY_READINESS_REFRESH_RETRY_SECONDS"
+    attempt=$((attempt + 1))
+  done
 }
 
 remove_supervisor_container() {
@@ -177,6 +201,14 @@ fi
 
 if [[ ! "$DEPLOY_PROOF_SETTLE_SECONDS" =~ ^[0-9]+$ ]]; then
   echo "DEPLOY_PROOF_SETTLE_SECONDS must be a non-negative integer" >&2
+  exit 1
+fi
+if [[ ! "$DEPLOY_READINESS_REFRESH_RETRIES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "DEPLOY_READINESS_REFRESH_RETRIES must be a positive integer" >&2
+  exit 1
+fi
+if [[ ! "$DEPLOY_READINESS_REFRESH_RETRY_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "DEPLOY_READINESS_REFRESH_RETRY_SECONDS must be a non-negative integer" >&2
   exit 1
 fi
 

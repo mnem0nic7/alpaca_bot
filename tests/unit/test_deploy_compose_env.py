@@ -53,6 +53,16 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "DEPLOY_PROOF_SETTLE_SECONDS must be a non-negative integer" in deploy_text
     assert 'DEPLOY_REQUIRE_DECISION_DRY_RUN="${DEPLOY_REQUIRE_DECISION_DRY_RUN:-true}"' in deploy_text
     assert "DEPLOY_REQUIRE_DECISION_DRY_RUN must be true or false" in deploy_text
+    assert 'DEPLOY_READINESS_REFRESH_RETRIES="${DEPLOY_READINESS_REFRESH_RETRIES:-3}"' in deploy_text
+    assert (
+        'DEPLOY_READINESS_REFRESH_RETRY_SECONDS="${DEPLOY_READINESS_REFRESH_RETRY_SECONDS:-20}"'
+        in deploy_text
+    )
+    assert "DEPLOY_READINESS_REFRESH_RETRIES must be a positive integer" in deploy_text
+    assert (
+        "DEPLOY_READINESS_REFRESH_RETRY_SECONDS must be a non-negative integer"
+        in deploy_text
+    )
     assert 'DEPLOY_DECISION_DRY_RUN_STRATEGY="${DEPLOY_DECISION_DRY_RUN_STRATEGY:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}}"' in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_MIN_RECORDS="${DEPLOY_DECISION_DRY_RUN_MIN_RECORDS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}}"' in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-false}}"' in deploy_text
@@ -87,6 +97,9 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "remove_supervisor_container\n  \"${compose[@]}\" up" in deploy_text
     assert "paper_proof_enabled()" in deploy_text
     assert "refresh_paper_readiness()" in deploy_text
+    assert 'if [[ "$rc" -ne 48 || "$attempt" -ge "$DEPLOY_READINESS_REFRESH_RETRIES" ]]' in deploy_text
+    assert "paper readiness refresh lock busy after deploy; retrying" in deploy_text
+    assert 'sleep "$DEPLOY_READINESS_REFRESH_RETRY_SECONDS"' in deploy_text
     assert "verify_paper_proof_ready()" in deploy_text
     assert '"${paper_proof_freeze,,}" == "true"' in deploy_text
     assert '"$ROOT_DIR/scripts/run_locked_check_with_audit.sh"' in deploy_text
