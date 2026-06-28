@@ -428,7 +428,9 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "paper_readiness_latest_status=" in lock_skip
     assert "paper_readiness)" in lock_skip
     assert "paper_activity)" in lock_skip
+    assert "proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=${PAPER_ACTIVITY_STRATEGY" in lock_skip
     assert "session_guard)" in lock_skip
+    assert "proof_start=${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}} strategy=${SESSION_GUARD_STRATEGY" in lock_skip
     assert "paper_profit_probe)" in lock_skip
     assert "exit 48" in lock_skip
 
@@ -707,7 +709,10 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "./scripts/paper_readiness_check.sh" not in script
     assert "readiness repair lock busy" in script
     assert 'if [[ "$rc" -eq 43 ]]' in script
-    assert "scheduled check context: session_date=$(TZ=America/New_York date +%F) strategy=$PAPER_ACTIVITY_STRATEGY" in script
+    assert (
+        "scheduled check context: session_date=$(TZ=America/New_York date +%F) "
+        "proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=$PAPER_ACTIVITY_STRATEGY"
+    ) in script
     assert "decision_record_count" in script
     assert "decision_log" in script
     assert "latest_supervisor AS" in script
@@ -737,7 +742,7 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "emit_scheduled_context()" in script
     assert (
         'echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) '
-        'strategy=$PAPER_ACTIVITY_STRATEGY"'
+        'proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=$PAPER_ACTIVITY_STRATEGY"'
     ) in script
     assert "emit_scheduled_context\n\n  if [[ \"${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE,,}\"" in script
     assert "emit_scheduled_context\n\nload_market_clock_status" in script
@@ -920,6 +925,7 @@ def test_paper_activity_readiness_lock_busy_is_pending_without_close_only(tmp_pa
         "proof_start=2026-06-29 reason=lock_busy_stale_pass"
     ) in result.stdout
     assert "scheduled check context: session_date=" in result.stdout
+    assert "proof_start=2026-06-29" in result.stdout
     assert "strategy=bull_flag" in result.stdout
     assert "paper activity pending: readiness repair lock busy" in result.stdout
     assert not docker_marker.exists()
