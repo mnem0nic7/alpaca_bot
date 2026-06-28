@@ -84,7 +84,13 @@ fi
 cron_health_detail="$(compact_check_detail "$cron_health_detail")"
 
 ops_health_status="ok"
-if ! ops_health_detail="$(./scripts/ops_check.sh "$ENV_FILE" 2>&1)"; then
+if ! ops_health_detail="$(./scripts/ops_check.sh "$ENV_FILE" \
+  --expect-trading-mode "$trading_mode" \
+  --expect-strategy-version "$STRATEGY_VERSION" \
+  --expect-trading-status enabled \
+  --expect-kill-switch false \
+  --expect-only-enabled-strategy "$PROOF_STATUS_STRATEGY" \
+  2>&1)"; then
   ops_health_status="failed"
 fi
 ops_health_detail="$(compact_check_detail "$ops_health_detail")"

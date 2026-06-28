@@ -1510,6 +1510,11 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     assert "close-only" not in calls
     assert "resume" not in calls
     assert "alpaca-bot-session-eval" not in calls
+    assert "--expect-trading-mode paper" in calls
+    assert "--expect-strategy-version v1-breakout" in calls
+    assert "--expect-trading-status enabled" in calls
+    assert "--expect-kill-switch false" in calls
+    assert "--expect-only-enabled-strategy bull_flag" in calls
 
 
 def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> None:
@@ -1543,7 +1548,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_STREAM_START_GRACE_SECONDS must be a non-negative integer" in script
     assert "PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" in script
     assert "PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES must be a positive integer" in script
-    assert "./scripts/ops_check.sh \"$ENV_FILE\" 2>&1" in script
+    assert "./scripts/ops_check.sh \"$ENV_FILE\"" in script
+    assert "--expect-trading-mode \"$trading_mode\"" in script
+    assert "--expect-strategy-version \"$STRATEGY_VERSION\"" in script
+    assert "--expect-trading-status enabled" in script
+    assert "--expect-kill-switch false" in script
+    assert "--expect-only-enabled-strategy \"$PROOF_STATUS_STRATEGY\"" in script
     assert "PROOF_STATUS_OPS_HEALTH_STATUS" in script
     assert "PROOF_STATUS_OPS_HEALTH_DETAIL" in script
     assert "PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT" in script
