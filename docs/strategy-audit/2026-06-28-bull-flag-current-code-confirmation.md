@@ -151,3 +151,18 @@ after-cost profit factor, total P&L, mean/trade, annualized Sharpe, and
 confidence-interval floor under stress slippage. For paper proof, the current
 K=3 posture is still the better tradeoff between proof velocity and robust
 profitability.
+
+Daily proof-cadence replay at the configured 2 bps slippage grouped the same
+exact active-universe latest-120-day replay by exit session:
+
+| K | trades | active trade days | avg trades/active day | days with 10+ trades | profitable active days | median active sessions to 10 trades | max active sessions to 10 trades | positive P&L when 10 trades reached |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 3 | 417 | 95 | 4.39 | 2 | 63 | 3 | 5 | 67/93 |
+| 4 | 505 | 95 | 5.32 | 5 | 60 | 2 | 5 | 71/93 |
+
+Decision: still keep K=3. K=4 would likely reach the 10-trade proof threshold
+about one active session sooner, but it has fewer profitable active days and
+the 5 bps stress sweep shows a weaker profit factor, Sharpe, confidence floor,
+and worse low-end proof-window losses. Under K=3, a one-session proof is
+possible but not the base case; two to five active sessions is historically
+normal, with a median of three active sessions to reach 10 closed trades.
