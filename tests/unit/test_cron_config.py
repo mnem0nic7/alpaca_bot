@@ -1050,6 +1050,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"' in script
     assert 'AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"' in script
     assert 'AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"' in script
+    assert 'AUDIT_DECISION_DRY_RUN_LINE="$decision_dry_run_line"' in script
     assert "-e AUDIT_CHECK_NAME" in script
     assert "-e AUDIT_STATUS" in script
     assert "-e AUDIT_EXIT_CODE" in script
@@ -1058,16 +1059,18 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "-e AUDIT_PROOF_SUMMARY_LINE" in script
     assert "-e AUDIT_PROOF_PROGRESS_LINE" in script
     assert "-e AUDIT_PROOF_SCENARIOS_LINE" in script
+    assert "-e AUDIT_DECISION_DRY_RUN_LINE" in script
     assert 'output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"' in script
     assert 'context_line="$(grep -E' in script
     assert 'proof_summary_line="$(grep -E' in script
     assert 'proof_progress_line="$(grep -E' in script
     assert 'proof_scenarios_line="$(grep -E' in script
+    assert 'decision_dry_run_line="$(grep -E' in script
     assert "scheduled check context: " in script
     assert "CONTEXT_KEYS" in script
     assert "PROOF_SUMMARY_FIELDS" in script
     assert "PROOF_SCENARIOS_FIELDS" in script
-    assert 'PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;-]+$")' in script
+    assert 'PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")' in script
     assert '"readiness": "proof_readiness"' in script
     assert '"proof": "proof_status"' in script
     assert '"closed_trades": "proof_closed_trades"' in script
@@ -1076,6 +1079,11 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"active": "proof_scenario_active"' in script
     assert '"expected_session": "proof_scenario_expected_session"' in script
     assert '"problems": "proof_scenario_problems"' in script
+    assert "DECISION_DRY_RUN_FIELDS" in script
+    assert '"decision_records": "decision_dry_run_records"' in script
+    assert '"accepted": "decision_dry_run_accepted"' in script
+    assert '"entry_intents": "decision_dry_run_entry_intents"' in script
+    assert '"sample": "decision_dry_run_sample"' in script
     assert "parse_prefixed_fields" in script
     assert '"session_date"' in script
     assert '"previous_session_date"' in script
@@ -1085,6 +1093,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'os.environ.get("AUDIT_PROOF_SUMMARY_LINE", "")' in script
     assert 'os.environ.get("AUDIT_PROOF_PROGRESS_LINE", "")' in script
     assert 'os.environ.get("AUDIT_PROOF_SCENARIOS_LINE", "")' in script
+    assert 'os.environ.get("AUDIT_DECISION_DRY_RUN_LINE", "")' in script
     assert 'paper readiness check skipped' in script
     assert 'paper activity check skipped' in script
     assert 'paper activity skipped:' in script
@@ -2259,6 +2268,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh image_status=ok image_detail=runtime image health ok: services=web,supervisor files=15\\n'\n"
         "  printf 'paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00 latest_event=trade_update_stream_started:2026-06-29T12:59:59+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00 grace_seconds=120\\n'\n"
         "  printf 'paper proof readiness audit: status=ok target_session=2026-06-29 check_status=passed created_at=2026-06-29T13:20:00+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00\\n'\n"
+        "  printf 'paper proof readiness decision dry run: status=ok strategy=bull_flag as_of=2026-06-26T15:30:00-04:00 active=980 decision_records=965 accepted=1 entry_intents=1 sample=TPB:39.62732912119471@87.05\\n'\n"
         "  printf 'paper proof activity audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 10:35 America/New_York check=passed:0:2026-06-29T14:26:00+00:00\\n'\n"
         "  printf 'paper proof post-close audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 17:25 America/New_York session_guard=passed:0:2026-06-29T21:10:00+00:00 paper_profit_probe=pending:43:2026-06-29T21:20:00+00:00\\n'\n"
         "  printf 'paper proof scheduled check: name=paper_profit_probe status=pending exit_code=43 session_date=2026-06-26 proof_start=2026-06-29 created_at=2026-06-27T22:00:00.000000Z\\n'\n"
@@ -2296,6 +2306,8 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     assert "image_status=ok" in result.stdout
     assert "paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00" in result.stdout
     assert "paper proof readiness audit: status=ok target_session=2026-06-29" in result.stdout
+    assert "paper proof readiness decision dry run: status=ok strategy=bull_flag" in result.stdout
+    assert "decision_records=965 accepted=1 entry_intents=1 sample=TPB" in result.stdout
     assert "paper proof activity audit: status=ok target_session=2026-06-29" in result.stdout
     assert "paper proof post-close audit: status=ok target_session=2026-06-29" in result.stdout
     assert "paper proof scheduled check: name=paper_profit_probe status=pending" in result.stdout
@@ -2419,6 +2431,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "payload->>'session_date' = %s" in script
     assert "payload->>'proof_start' = %s" in script
     assert "COALESCE(payload->>'reason', '') AS reason" in script
+    assert "payload->>'decision_dry_run_strategy'" in script
+    assert "payload->>'decision_dry_run_records'" in script
     assert "readiness_audit_rows = cur.fetchall()" in script
     assert "latest_readiness_reason.startswith(\"lock_busy\")" in script
     assert "(row for row in readiness_audit_rows if row[0] == \"passed\")" in script
@@ -2426,6 +2440,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "readiness_audit_status = \"stale\"" in script
     assert "readiness_audit_status = \"stale_by_age\"" in script
     assert "readiness_audit_{readiness_audit_status}" in script
+    assert "readiness_decision_dry_run_status" in script
+    assert "readiness_decision_dry_run_{readiness_decision_dry_run_status}" in script
     assert "paper proof readiness audit:" in script
     assert "status={readiness_audit_status}" in script
     assert "target_session={readiness_target_session.isoformat()}" in script
@@ -2433,6 +2449,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "created_at={readiness_audit_created_text}" in script
     assert "age_minutes={readiness_audit_age_text}" in script
     assert "max_age_minutes={readiness_max_pass_age_minutes}" in script
+    assert "paper proof readiness decision dry run:" in script
+    assert "decision_records={readiness_decision_dry_run_records or 'none'}" in script
+    assert "accepted={readiness_decision_dry_run_accepted or 'none'}" in script
+    assert "sample={readiness_decision_dry_run_sample or 'none'}" in script
     assert "activity_target_session = None" in script
     assert "activity_due_time = time(10, 35)" in script
     assert "payload->>'check_name' = 'paper_activity'" in script

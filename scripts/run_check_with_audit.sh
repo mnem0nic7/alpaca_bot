@@ -65,6 +65,7 @@ context_line="$(grep -E '^scheduled check context: ' "$output_file" | tail -n 1 
 proof_summary_line="$(grep -E '^paper proof summary: ' "$output_file" | tail -n 1 || true)"
 proof_progress_line="$(grep -E '^paper proof progress: ' "$output_file" | tail -n 1 || true)"
 proof_scenarios_line="$(grep -E '^paper proof scenarios: ' "$output_file" | tail -n 1 || true)"
+decision_dry_run_line="$(grep -E '^paper decision dry run ok: ' "$output_file" | tail -n 1 || true)"
 
 export AUDIT_CHECK_NAME="$CHECK_NAME"
 export AUDIT_STATUS="$status"
@@ -74,6 +75,7 @@ export AUDIT_CONTEXT_LINE="$context_line"
 export AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"
 export AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"
 export AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"
+export AUDIT_DECISION_DRY_RUN_LINE="$decision_dry_run_line"
 
 audit_failed=false
 if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
@@ -85,6 +87,7 @@ if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_PROOF_SUMMARY_LINE \
     -e AUDIT_PROOF_PROGRESS_LINE \
     -e AUDIT_PROOF_SCENARIOS_LINE \
+    -e AUDIT_DECISION_DRY_RUN_LINE \
     --entrypoint python admin <<'PY'
 from __future__ import annotations
 
@@ -108,10 +111,11 @@ CONTEXT_KEYS = {
     "min_pnl",
 }
 CONTEXT_VALUE = re.compile(r"^[A-Za-z0-9_.:+-]+$")
-PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;-]+$")
+PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")
 PROOF_SUMMARY_PREFIX = "paper proof summary: "
 PROOF_PROGRESS_PREFIX = "paper proof progress: "
 PROOF_SCENARIOS_PREFIX = "paper proof scenarios: "
+DECISION_DRY_RUN_PREFIX = "paper decision dry run ok: "
 PROOF_SUMMARY_FIELDS = {
     "readiness": "proof_readiness",
     "proof": "proof_status",
@@ -133,6 +137,24 @@ PROOF_SCENARIOS_FIELDS = {
     "active": "proof_scenario_active",
     "expected_session": "proof_scenario_expected_session",
     "problems": "proof_scenario_problems",
+}
+DECISION_DRY_RUN_FIELDS = {
+    "strategy": "decision_dry_run_strategy",
+    "as_of": "decision_dry_run_as_of",
+    "active": "decision_dry_run_active",
+    "ignored": "decision_dry_run_ignored",
+    "fractionable": "decision_dry_run_fractionable",
+    "intraday": "decision_dry_run_intraday",
+    "completed_intraday": "decision_dry_run_completed_intraday",
+    "daily": "decision_dry_run_daily",
+    "thin_completed_lt20": "decision_dry_run_thin_completed_lt20",
+    "decision_records": "decision_dry_run_records",
+    "accepted": "decision_dry_run_accepted",
+    "rejected": "decision_dry_run_rejected",
+    "skipped_no_signal": "decision_dry_run_skipped_no_signal",
+    "entry_intents": "decision_dry_run_entry_intents",
+    "equity": "decision_dry_run_equity",
+    "sample": "decision_dry_run_sample",
 }
 
 
@@ -206,6 +228,13 @@ try:
             os.environ.get("AUDIT_PROOF_SCENARIOS_LINE", ""),
             prefix=PROOF_SCENARIOS_PREFIX,
             field_map=PROOF_SCENARIOS_FIELDS,
+        )
+    )
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_DECISION_DRY_RUN_LINE", ""),
+            prefix=DECISION_DRY_RUN_PREFIX,
+            field_map=DECISION_DRY_RUN_FIELDS,
         )
     )
 

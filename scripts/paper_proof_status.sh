@@ -667,7 +667,14 @@ try:
             SELECT
               COALESCE(payload->>'status', '') AS status,
               created_at,
-              COALESCE(payload->>'reason', '') AS reason
+              COALESCE(payload->>'reason', '') AS reason,
+              COALESCE(payload->>'decision_dry_run_strategy', '') AS decision_dry_run_strategy,
+              COALESCE(payload->>'decision_dry_run_as_of', '') AS decision_dry_run_as_of,
+              COALESCE(payload->>'decision_dry_run_active', '') AS decision_dry_run_active,
+              COALESCE(payload->>'decision_dry_run_records', '') AS decision_dry_run_records,
+              COALESCE(payload->>'decision_dry_run_accepted', '') AS decision_dry_run_accepted,
+              COALESCE(payload->>'decision_dry_run_entry_intents', '') AS decision_dry_run_entry_intents,
+              COALESCE(payload->>'decision_dry_run_sample', '') AS decision_dry_run_sample
             FROM audit_events
             WHERE event_type = 'scheduled_check_completed'
               AND payload->>'trading_mode' = %s
@@ -895,6 +902,31 @@ readiness_audit_age_text = (
     if readiness_audit_age_minutes is not None
     else "none"
 )
+readiness_decision_dry_run_strategy = ""
+readiness_decision_dry_run_as_of = ""
+readiness_decision_dry_run_active = ""
+readiness_decision_dry_run_records = ""
+readiness_decision_dry_run_accepted = ""
+readiness_decision_dry_run_entry_intents = ""
+readiness_decision_dry_run_sample = ""
+if readiness_audit_row and len(readiness_audit_row) >= 10:
+    readiness_decision_dry_run_strategy = readiness_audit_row[3] or ""
+    readiness_decision_dry_run_as_of = readiness_audit_row[4] or ""
+    readiness_decision_dry_run_active = readiness_audit_row[5] or ""
+    readiness_decision_dry_run_records = readiness_audit_row[6] or ""
+    readiness_decision_dry_run_accepted = readiness_audit_row[7] or ""
+    readiness_decision_dry_run_entry_intents = readiness_audit_row[8] or ""
+    readiness_decision_dry_run_sample = readiness_audit_row[9] or ""
+readiness_decision_dry_run_status = (
+    "ok"
+    if (
+        readiness_decision_dry_run_strategy
+        and readiness_decision_dry_run_as_of
+        and readiness_decision_dry_run_active
+        and readiness_decision_dry_run_records
+    )
+    else "missing"
+)
 activity_due = False
 activity_due_after = "none"
 activity_check_status = "missing"
@@ -1077,6 +1109,8 @@ if stream_status != "ok":
     blockers.append(f"stream_{stream_status}")
 if readiness_audit_status != "ok":
     blockers.append(f"readiness_audit_{readiness_audit_status}")
+elif readiness_decision_dry_run_status != "ok":
+    blockers.append(f"readiness_decision_dry_run_{readiness_decision_dry_run_status}")
 if activity_audit_status in {"missing", "failed", "skipped"} or (
     activity_due and activity_audit_status == "pending"
 ):
@@ -1153,6 +1187,17 @@ print(
     f"age_minutes={readiness_audit_age_text} "
     f"max_age_minutes={readiness_max_pass_age_minutes} "
     f"latest_supervisor_started_at={latest_supervisor_started_text}"
+)
+print(
+    "paper proof readiness decision dry run: "
+    f"status={readiness_decision_dry_run_status} "
+    f"strategy={readiness_decision_dry_run_strategy or 'none'} "
+    f"as_of={readiness_decision_dry_run_as_of or 'none'} "
+    f"active={readiness_decision_dry_run_active or 'none'} "
+    f"decision_records={readiness_decision_dry_run_records or 'none'} "
+    f"accepted={readiness_decision_dry_run_accepted or 'none'} "
+    f"entry_intents={readiness_decision_dry_run_entry_intents or 'none'} "
+    f"sample={readiness_decision_dry_run_sample or 'none'}"
 )
 print(
     "paper proof activity audit: "
