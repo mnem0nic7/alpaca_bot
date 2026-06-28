@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import dataclasses
+import hashlib
 import io
 import json
 import os
@@ -102,6 +103,14 @@ def main(argv: list[str] | None = None) -> int:
         "--limit", type=int, default=0, metavar="N",
         help="audit only the first N scenario files (0 = all)",
     )
+    aud_p.add_argument(
+        "--sample-size", type=int, default=0, metavar="N",
+        help="deterministically sample N scenario files across the directory (0 = disabled)",
+    )
+    aud_p.add_argument(
+        "--sample-seed", default="0", metavar="SEED",
+        help="seed for --sample-size scenario selection (default: 0)",
+    )
     aud_p.add_argument("--output", metavar="FILE", default="-")
     aud_p.add_argument("--json", dest="json_path", metavar="FILE", default=None)
 
@@ -122,6 +131,14 @@ def main(argv: list[str] | None = None) -> int:
     lev_p.add_argument(
         "--limit", type=int, default=0, metavar="N",
         help="use only the first N scenario files (0 = all)",
+    )
+    lev_p.add_argument(
+        "--sample-size", type=int, default=0, metavar="N",
+        help="deterministically sample N scenario files across the directory (0 = disabled)",
+    )
+    lev_p.add_argument(
+        "--sample-seed", default="0", metavar="SEED",
+        help="seed for --sample-size scenario selection (default: 0)",
     )
     lev_p.add_argument(
         "--coarse", action="store_true",
@@ -157,6 +174,14 @@ def main(argv: list[str] | None = None) -> int:
         "--limit", type=int, default=0, metavar="N",
         help="use only the first N scenario files (0 = all)",
     )
+    be_p.add_argument(
+        "--sample-size", type=int, default=0, metavar="N",
+        help="deterministically sample N scenario files across the directory (0 = disabled)",
+    )
+    be_p.add_argument(
+        "--sample-seed", default="0", metavar="SEED",
+        help="seed for --sample-size scenario selection (default: 0)",
+    )
     be_p.add_argument("--output", metavar="FILE", default="-")
 
     # --- portfolio-audit subcommand ---
@@ -189,6 +214,14 @@ def main(argv: list[str] | None = None) -> int:
     port_p.add_argument(
         "--limit", type=int, default=0, metavar="N",
         help="use only the first N scenario files (0 = all)",
+    )
+    port_p.add_argument(
+        "--sample-size", type=int, default=0, metavar="N",
+        help="deterministically sample N scenario files across the directory (0 = disabled)",
+    )
+    port_p.add_argument(
+        "--sample-seed", default="0", metavar="SEED",
+        help="seed for --sample-size scenario selection (default: 0)",
     )
     port_p.add_argument(
         "--starting-equity",
@@ -321,9 +354,11 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     else:
         names = list(STRATEGY_REGISTRY)
 
-    paths = sorted(Path(args.scenario_dir).glob("*.json"))
-    if args.limit > 0:
-        paths = paths[: args.limit]
+    try:
+        paths = _select_scenario_paths(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if not paths:
         print(f"No scenario files in {args.scenario_dir}", file=sys.stderr)
         return 1
@@ -354,9 +389,11 @@ def _cmd_audit(args: argparse.Namespace) -> int:
 def _cmd_lever_sweep(args: argparse.Namespace) -> int:
     settings = Settings.from_env()
 
-    paths = sorted(Path(args.scenario_dir).glob("*.json"))
-    if args.limit > 0:
-        paths = paths[: args.limit]
+    try:
+        paths = _select_scenario_paths(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if not paths:
         print(f"No scenario files in {args.scenario_dir}", file=sys.stderr)
         return 1
@@ -392,9 +429,11 @@ def _cmd_lever_sweep(args: argparse.Namespace) -> int:
 def _cmd_break_even(args: argparse.Namespace) -> int:
     settings = Settings.from_env()
 
-    paths = sorted(Path(args.scenario_dir).glob("*.json"))
-    if args.limit > 0:
-        paths = paths[: args.limit]
+    try:
+        paths = _select_scenario_paths(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if not paths:
         print(f"No scenario files in {args.scenario_dir}", file=sys.stderr)
         return 1
@@ -424,9 +463,11 @@ def _cmd_break_even(args: argparse.Namespace) -> int:
 def _cmd_portfolio_audit(args: argparse.Namespace) -> int:
     settings = Settings.from_env()
 
-    paths = sorted(Path(args.scenario_dir).glob("*.json"))
-    if args.limit > 0:
-        paths = paths[: args.limit]
+    try:
+        paths = _select_scenario_paths(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if not paths:
         print(f"No scenario files in {args.scenario_dir}", file=sys.stderr)
         return 1
@@ -501,6 +542,32 @@ def _cmd_portfolio_audit(args: argparse.Namespace) -> int:
 
     _write_output("\n".join(blocks), args.output)
     return 0
+
+
+def _select_scenario_paths(args: argparse.Namespace) -> list[Path]:
+    paths = sorted(Path(args.scenario_dir).glob("*.json"))
+    limit = int(getattr(args, "limit", 0) or 0)
+    sample_size = int(getattr(args, "sample_size", 0) or 0)
+    if limit < 0:
+        raise ValueError("--limit must be a non-negative integer")
+    if sample_size < 0:
+        raise ValueError("--sample-size must be a non-negative integer")
+    if limit > 0 and sample_size > 0:
+        raise ValueError("--limit and --sample-size cannot be combined")
+    if sample_size > 0 and sample_size < len(paths):
+        seed = str(getattr(args, "sample_seed", "0"))
+        paths = sorted(
+            sorted(paths, key=lambda path: _scenario_sample_key(path, seed))[
+                :sample_size
+            ]
+        )
+    elif limit > 0:
+        paths = paths[:limit]
+    return paths
+
+
+def _scenario_sample_key(path: Path, seed: str) -> str:
+    return hashlib.sha256(f"{seed}:{path.name}".encode("utf-8")).hexdigest()
 
 
 def _duplicate_scenario_symbols(scenarios: list) -> list[str]:

@@ -768,6 +768,74 @@ def test_audit_subcommand_writes_markdown_and_json(tmp_path, monkeypatch):
     assert row["cost_drag"] >= 0
 
 
+def test_audit_subcommand_samples_scenarios_deterministically(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from alpaca_bot.replay import cli as replay_cli
+    from alpaca_bot.replay.cli import main
+
+    _set_audit_env(monkeypatch)
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+    payload = json.loads(_GOLDEN_SCENARIO.read_text())
+    for symbol in ("AAA", "BBB", "CCC", "DDD", "EEE"):
+        scenario = dict(payload)
+        scenario["name"] = symbol
+        scenario["symbol"] = symbol
+        for key in ("daily_bars", "intraday_bars"):
+            scenario[key] = [dict(bar, symbol=symbol) for bar in payload[key]]
+        (scenario_dir / f"{symbol}.json").write_text(json.dumps(scenario))
+
+    captured: list[list[str]] = []
+
+    def fake_run_audit(*, scenarios, **kwargs):
+        captured.append([scenario.name for scenario in scenarios])
+        return []
+
+    monkeypatch.setattr(replay_cli, "run_audit", fake_run_audit)
+
+    for _ in range(2):
+        rc = main([
+            "audit",
+            "--scenario-dir", str(scenario_dir),
+            "--strategies", "breakout",
+            "--sample-size", "3",
+            "--sample-seed", "proof",
+        ])
+        assert rc == 0
+
+    assert len(captured) == 2
+    assert captured[0] == captured[1]
+    assert len(captured[0]) == 3
+    assert captured[0] == sorted(captured[0])
+
+
+def test_audit_subcommand_rejects_limit_with_sample(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    import shutil
+
+    from alpaca_bot.replay.cli import main
+
+    _set_audit_env(monkeypatch)
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+    shutil.copy(_GOLDEN_SCENARIO, scenario_dir / "a.json")
+
+    rc = main([
+        "audit",
+        "--scenario-dir", str(scenario_dir),
+        "--limit", "1",
+        "--sample-size", "1",
+    ])
+
+    assert rc == 1
+    assert "--limit and --sample-size cannot be combined" in capsys.readouterr().err
+
+
 def test_audit_subcommand_unknown_strategy_fails(tmp_path, monkeypatch):
     import shutil
 
