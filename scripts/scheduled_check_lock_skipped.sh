@@ -475,16 +475,8 @@ try:
               AND payload->>'trading_mode' = %s
               AND payload->>'strategy_version' = %s
               AND (NOT (payload ? 'strategy') OR payload->>'strategy' = %s)
-              AND (
-                %s = ''
-                OR NOT (payload ? 'min_trades')
-                OR payload->>'min_trades' = %s
-              )
-              AND (
-                %s = ''
-                OR NOT (payload ? 'min_pnl')
-                OR payload->>'min_pnl' = %s
-              )
+              AND (%s = '' OR payload->>'min_trades' = %s)
+              AND (%s = '' OR payload->>'min_pnl' = %s)
             ORDER BY created_at DESC, event_id DESC
             LIMIT 1
             """,
