@@ -663,7 +663,8 @@ try:
                 'trade_update_stream_failed',
                 'trade_update_failed',
                 'stream_heartbeat_stale',
-                'stream_restart_failed'
+                'stream_restart_failed',
+                'protective_stop_quantity_replace_failed'
               )
               AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)
               AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)
@@ -914,6 +915,7 @@ stream_issue_status_by_event_type = {
     "trade_update_failed": "trade_update_failed",
     "stream_heartbeat_stale": "heartbeat_stale",
     "stream_restart_failed": "restart_failed",
+    "protective_stop_quantity_replace_failed": "protective_stop_quantity_replace_failed",
 }
 if (
     stream_status == "ok"

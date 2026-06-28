@@ -18,13 +18,43 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
         "2 14,15 * * 1-5 root RUN_IF_NY_TIME_GRACE_MINUTES=1 "
         "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1002"
     )
+    readiness_stale_repair_1015 = (
+        "15 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1015"
+    )
+    readiness_stale_repair_1045 = (
+        "45 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1045"
+    )
+    readiness_stale_repair_1115 = (
+        "15 15,16 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1115"
+    )
+    readiness_stale_repair_1145 = (
+        "45 15,16 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1145"
+    )
     readiness_midday_refresh = (
         "15 16,17 * * 1-5 root PAPER_READINESS_FORCE_REFRESH=true "
         "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1215"
     )
+    readiness_stale_repair_1245 = (
+        "45 16,17 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1245"
+    )
+    readiness_stale_repair_1315 = (
+        "15 17,18 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1315"
+    )
+    readiness_stale_repair_1345 = (
+        "45 17,18 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1345"
+    )
+    readiness_stale_repair_1415 = (
+        "15 18,19 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1415"
+    )
     readiness_afternoon_refresh = (
         "25 18,19 * * 1-5 root PAPER_READINESS_FORCE_REFRESH=true "
         "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1425"
+    )
+    readiness_stale_repair_1445 = (
+        "45 18,19 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1445"
+    )
+    readiness_stale_repair_1515 = (
+        "15 19,20 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1515"
     )
     readiness_post_close_refresh = (
         "55 20,21 * * 1-5 root PAPER_READINESS_FORCE_REFRESH=true "
@@ -53,8 +83,18 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert readiness_retry in cron_text
     assert readiness_final in cron_text
     assert readiness_post_open_repair in cron_text
+    assert readiness_stale_repair_1015 in cron_text
+    assert readiness_stale_repair_1045 in cron_text
+    assert readiness_stale_repair_1115 in cron_text
+    assert readiness_stale_repair_1145 in cron_text
     assert readiness_midday_refresh in cron_text
+    assert readiness_stale_repair_1245 in cron_text
+    assert readiness_stale_repair_1315 in cron_text
+    assert readiness_stale_repair_1345 in cron_text
+    assert readiness_stale_repair_1415 in cron_text
     assert readiness_afternoon_refresh in cron_text
+    assert readiness_stale_repair_1445 in cron_text
+    assert readiness_stale_repair_1515 in cron_text
     assert readiness_post_close_refresh in cron_text
     assert readiness_pre_proof_refresh in cron_text
     assert early_activity in cron_text
@@ -66,10 +106,22 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(readiness) < cron_text.index(readiness_retry)
     assert cron_text.index(readiness_retry) < cron_text.index(readiness_final)
     assert cron_text.index(readiness_final) < cron_text.index(readiness_post_open_repair)
-    assert cron_text.index(readiness_post_open_repair) < cron_text.index(early_activity)
+    assert cron_text.index(readiness_post_open_repair) < cron_text.index(readiness_stale_repair_1015)
+    assert cron_text.index(readiness_stale_repair_1015) < cron_text.index(early_activity)
     assert cron_text.index(early_activity) < cron_text.index(activity)
+    assert cron_text.index(early_activity) < cron_text.index(readiness_stale_repair_1045)
+    assert cron_text.index(readiness_stale_repair_1045) < cron_text.index(readiness_stale_repair_1115)
+    assert cron_text.index(readiness_stale_repair_1115) < cron_text.index(readiness_stale_repair_1145)
+    assert cron_text.index(readiness_stale_repair_1145) < cron_text.index(activity)
     assert cron_text.index(activity) < cron_text.index(readiness_midday_refresh)
-    assert cron_text.index(readiness_midday_refresh) < cron_text.index(readiness_afternoon_refresh)
+    assert cron_text.index(readiness_midday_refresh) < cron_text.index(readiness_stale_repair_1245)
+    assert cron_text.index(readiness_stale_repair_1245) < cron_text.index(readiness_stale_repair_1315)
+    assert cron_text.index(readiness_stale_repair_1315) < cron_text.index(readiness_stale_repair_1345)
+    assert cron_text.index(readiness_stale_repair_1345) < cron_text.index(readiness_stale_repair_1415)
+    assert cron_text.index(readiness_stale_repair_1415) < cron_text.index(readiness_afternoon_refresh)
+    assert cron_text.index(readiness_afternoon_refresh) < cron_text.index(readiness_stale_repair_1445)
+    assert cron_text.index(readiness_stale_repair_1445) < cron_text.index(readiness_stale_repair_1515)
+    assert cron_text.index(readiness_stale_repair_1515) < cron_text.index(readiness_post_close_refresh)
     assert cron_text.index(readiness_afternoon_refresh) < cron_text.index(readiness_post_close_refresh)
     assert cron_text.index(readiness_post_close_refresh) < cron_text.index(session_guard)
     assert cron_text.index(session_guard) < cron_text.index(profit_probe)
@@ -78,8 +130,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(profit_probe) < cron_text.index(proof_status)
     assert cron_text.index(proof_status) < cron_text.index(nightly)
     assert cron_text.index(profit_probe) < cron_text.index(nightly)
-    assert cron_text.count("scripts/run_if_ny_time.sh") == 14
-    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 13
+    assert cron_text.count("scripts/run_if_ny_time.sh") == 24
+    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 23
     assert "flock -n /var/lock/alpaca-bot-nightly.lock" in cron_text
     assert "flock -n /var/lock/alpaca-bot-paper" not in cron_text
     assert "flock -n /var/lock/alpaca-bot-session-guard.lock" not in cron_text
@@ -88,7 +140,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "scripts/paper_readiness_check.sh" in cron_text
     assert cron_text.count("scripts/paper_readiness_check.sh") == 2
     assert "scripts/paper_readiness_if_needed.sh" in cron_text
-    assert cron_text.count("scripts/paper_readiness_if_needed.sh") == 6
+    assert cron_text.count("scripts/paper_readiness_if_needed.sh") == 16
     assert cron_text.count("PAPER_READINESS_FORCE_REFRESH=true") == 4
     assert cron_text.count("PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=false") == 2
     assert cron_text.index("PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=false") < cron_text.index(
@@ -118,7 +170,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" /etc/cron.d/alpaca-bot' in install_cron
     assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in install_cron
     assert "Runs weekdays on New York wall time" in install_cron
-    assert "paper readiness 09:20/09:55/09:58/10:02/12:15/14:25/16:55/17:24" in install_cron
+    assert "paper readiness 09:20/09:55/09:58/10:02 plus stale-repair checks from 10:15-15:15" in install_cron
+    assert "force refresh 12:15/14:25/16:55/17:24" in install_cron
     assert "paper activity 10:25/12:00" in install_cron
     assert "proof status 17:28" in install_cron
     assert "scripts/apply_candidate.sh" in cron_text
@@ -1627,6 +1680,7 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "stream_restart_failed" in script
     assert "trade_update_stream_failed" in script
     assert "trade_update_failed" in script
+    assert "protective_stop_quantity_replace_failed" in script
     assert "stream_issues" in script
     assert "paper activity failed: trade update stream issues" in script
     assert "stock_open_positions" in script
@@ -2641,11 +2695,16 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "'trade_update_failed'" in script
     assert "'stream_heartbeat_stale'" in script
     assert "'stream_restart_failed'" in script
+    assert "'protective_stop_quantity_replace_failed'" in script
     assert "latest_stream_started_at" in script
     assert "stream_issue_status_by_event_type" in script
     assert '"trade_update_failed": "trade_update_failed"' in script
     assert '"stream_heartbeat_stale": "heartbeat_stale"' in script
     assert '"stream_restart_failed": "restart_failed"' in script
+    assert (
+        '"protective_stop_quantity_replace_failed": '
+        '"protective_stop_quantity_replace_failed"'
+    ) in script
     assert "stream_status = \"missing\"" in script
     assert "stream_status = \"stale\"" in script
     assert "blockers.append(f\"stream_{stream_status}\")" in script

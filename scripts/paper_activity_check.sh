@@ -379,7 +379,8 @@ SELECT
       'stream_heartbeat_stale',
       'stream_restart_failed',
       'trade_update_stream_failed',
-      'trade_update_failed'
+      'trade_update_failed',
+      'protective_stop_quantity_replace_failed'
     )
   )::int
 FROM recent;
