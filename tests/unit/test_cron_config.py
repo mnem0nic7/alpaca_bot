@@ -28,6 +28,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     )
     readiness_post_close_refresh = (
         "55 20,21 * * 1-5 root PAPER_READINESS_FORCE_REFRESH=true "
+        "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=false "
         "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1655"
     )
     early_activity = "15 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1015"
@@ -71,6 +72,10 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "scripts/paper_readiness_if_needed.sh" in cron_text
     assert cron_text.count("scripts/paper_readiness_if_needed.sh") == 5
     assert cron_text.count("PAPER_READINESS_FORCE_REFRESH=true") == 3
+    assert cron_text.count("PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=false") == 1
+    assert cron_text.index("PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=false") < cron_text.index(
+        "run_if_ny_time.sh 1655"
+    )
     assert "run_locked_check_with_audit.sh paper_readiness" in cron_text
     assert "RUN_IF_NY_TIME_GRACE_MINUTES=1" in cron_text
     assert "/var/log/alpaca-bot-paper-readiness.log" in cron_text
