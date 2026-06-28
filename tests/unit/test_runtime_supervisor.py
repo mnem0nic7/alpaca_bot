@@ -479,6 +479,27 @@ def make_bar_series(symbol: str, *, end: datetime, count: int, days: bool = Fals
     return bars
 
 
+def test_completed_intraday_bars_excludes_current_start_stamped_interval() -> None:
+    module, _RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    now = datetime(2026, 4, 24, 14, 15, tzinfo=timezone.utc)
+    bars = [
+        Bar("AAPL", datetime(2026, 4, 24, 13, 45, tzinfo=timezone.utc), 100, 101, 99, 100.5, 1_000),
+        Bar("AAPL", datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc), 101, 102, 100, 101.5, 1_000),
+        Bar("AAPL", datetime(2026, 4, 24, 14, 15, tzinfo=timezone.utc), 102, 103, 101, 102.5, 1_000),
+    ]
+
+    completed = module._completed_intraday_bars_by_symbol(
+        {"AAPL": bars},
+        timestamp=now,
+        timeframe_minutes=15,
+    )
+
+    assert [bar.timestamp for bar in completed["AAPL"]] == [
+        datetime(2026, 4, 24, 13, 45, tzinfo=timezone.utc),
+        datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
+    ]
+
+
 def make_trading_status(
     settings: Settings,
     *,
@@ -951,7 +972,11 @@ def test_runtime_supervisor_run_cycle_once_gathers_runtime_inputs_and_dispatches
     # equity is now account.equity * confidence_score; with no weight_store all Sharpes
     # default to 0.0, so all strategies receive the confidence floor (0.25 default).
     assert cycle_calls[0]["equity"] == pytest.approx(123_456.78 * 0.25)
-    assert cycle_calls[0]["intraday_bars_by_symbol"] == market_data.intraday_bars_by_symbol
+    expected_completed_intraday = {
+        symbol: bars[:-1]
+        for symbol, bars in market_data.intraday_bars_by_symbol.items()
+    }
+    assert cycle_calls[0]["intraday_bars_by_symbol"] == expected_completed_intraday
     assert cycle_calls[0]["daily_bars_by_symbol"] == market_data.daily_bars_by_symbol
     assert cycle_calls[0]["working_order_symbols"] == {"MSFT"}
     assert isinstance(cycle_calls[0]["traded_symbols_today"], set)

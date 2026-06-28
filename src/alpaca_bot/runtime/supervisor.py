@@ -15,7 +15,7 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 from alpaca_bot.config import Settings
-from alpaca_bot.domain import OpenPosition
+from alpaca_bot.domain import Bar, OpenPosition
 from alpaca_bot.execution import (
     AlpacaBroker,
     AlpacaMarketDataAdapter,
@@ -78,6 +78,34 @@ STREAM_HEARTBEAT_TIMEOUT_SECONDS = 300
 ACTIVE_ENTRY_STATUSES = (
     "submitting", "new", "accepted", "submitted", "partially_filled", "held", "pending_new",
 )
+
+
+def _completed_intraday_bars_by_symbol(
+    bars_by_symbol: dict[str, list[Bar]],
+    *,
+    timestamp: datetime,
+    timeframe_minutes: int,
+) -> dict[str, list[Bar]]:
+    # Alpaca bars are start-stamped; exclude the current interval until it closes.
+    cutoff = (
+        timestamp.replace(tzinfo=timezone.utc)
+        if timestamp.tzinfo is None
+        else timestamp.astimezone(timezone.utc)
+    )
+    timeframe = timedelta(minutes=timeframe_minutes)
+    completed: dict[str, list[Bar]] = {}
+    for symbol, bars in bars_by_symbol.items():
+        completed_bars: list[Bar] = []
+        for bar in bars:
+            bar_ts = (
+                bar.timestamp.replace(tzinfo=timezone.utc)
+                if bar.timestamp.tzinfo is None
+                else bar.timestamp.astimezone(timezone.utc)
+            )
+            if bar_ts + timeframe <= cutoff:
+                completed_bars.append(bar)
+        completed[symbol] = completed_bars
+    return completed
 
 
 def _external_short_upnl(broker_positions: list[BrokerPosition]) -> float:
@@ -715,11 +743,16 @@ class RuntimeSupervisor:
             end=timestamp,
             timeframe_minutes=self.settings.entry_timeframe_minutes,
         )
+        completed_intraday_bars_by_symbol = _completed_intraday_bars_by_symbol(
+            intraday_bars_by_symbol,
+            timestamp=timestamp,
+            timeframe_minutes=self.settings.entry_timeframe_minutes,
+        )
         open_positions = self._apply_highest_price_updates(
-            open_positions, intraday_bars_by_symbol
+            open_positions, completed_intraday_bars_by_symbol
         )
         open_positions = self._apply_lowest_price_updates(
-            open_positions, intraday_bars_by_symbol
+            open_positions, completed_intraday_bars_by_symbol
         )
         daily_bars_end = datetime.combine(session_date, datetime.min.time()).replace(
             tzinfo=self.settings.market_timezone
@@ -986,7 +1019,7 @@ class RuntimeSupervisor:
                     runtime=self.runtime,
                     now=timestamp,
                     equity=effective_equity,
-                    intraday_bars_by_symbol=intraday_bars_by_symbol,
+                    intraday_bars_by_symbol=completed_intraday_bars_by_symbol,
                     daily_bars_by_symbol=daily_bars_by_symbol,
                     open_positions=strategy_positions,
                     working_order_symbols=strategy_working_symbols,
