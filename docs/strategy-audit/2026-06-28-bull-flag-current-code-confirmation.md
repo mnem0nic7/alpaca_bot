@@ -166,3 +166,29 @@ the 5 bps stress sweep shows a weaker profit factor, Sharpe, confidence floor,
 and worse low-end proof-window losses. Under K=3, a one-session proof is
 possible but not the base case; two to five active sessions is historically
 normal, with a median of three active sessions to reach 10 closed trades.
+
+Current-code reconfirmation after runtime-image proof-status hardening at
+commit `395f950` reran the exact active-universe latest-120-day portfolio audit
+with the deployed proof posture and floor-sized equity:
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+python3 -m alpaca_bot.replay.cli portfolio-audit \
+  --scenario-dir /tmp/alpaca-active-120d-scenarios \
+  --strategy bull_flag \
+  --slippage-bps 2 \
+  --max-open-positions 3 \
+  --starting-equity 17247.795 \
+  --output /tmp/alpaca-bull-flag-120d-current-395f950.md \
+  --jsonl /tmp/alpaca-bull-flag-120d-current-395f950.jsonl
+```
+
+| scenarios | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(mean<=0) | frictionless P&L | cost drag | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---|
+| 980 | 417 | 74.8% | 1.75 | 1067.75 | 2.5605 | 5.83 | [1.1926, 3.8842] | 0.0000 | 1283.93 | 216.18 | positive-edge |
+
+The same live state also passed a weekend paper-activity dry run: readiness was
+already passed for the 2026-06-29 session, the Alpaca market clock reported the
+market closed, and the activity check exited cleanly with
+`paper activity skipped: market closed in last 90 minutes`. This confirms the
+post-open activity path remains non-disruptive before the proof window opens.
