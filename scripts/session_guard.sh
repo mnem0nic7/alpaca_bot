@@ -6,6 +6,7 @@ SESSION_GUARD_STRATEGY="${SESSION_GUARD_STRATEGY:-bull_flag}"
 SESSION_GUARD_MIN_TRADES="${SESSION_GUARD_MIN_TRADES:-10}"
 SESSION_GUARD_FAIL_BELOW_PNL="${SESSION_GUARD_FAIL_BELOW_PNL:-0}"
 SESSION_GUARD_FAIL_ON_DIAGNOSTICS="${SESSION_GUARD_FAIL_ON_DIAGNOSTICS:-true}"
+SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"
 SESSION_GUARD_DATE="${SESSION_GUARD_DATE:-}"
 
 cd "$(dirname "$0")/.."
@@ -104,6 +105,31 @@ if [[ ! "$SESSION_GUARD_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   echo "SESSION_GUARD_DATE must use YYYY-MM-DD" >&2
   exit 1
 fi
+if [[ ! "$SESSION_GUARD_START_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+  echo "SESSION_GUARD_START_DATE must use YYYY-MM-DD" >&2
+  exit 1
+fi
+
+echo "scheduled check context: session_date=$SESSION_GUARD_DATE proof_start=$SESSION_GUARD_START_DATE strategy=$SESSION_GUARD_STRATEGY"
+
+if [[ "$SESSION_GUARD_DATE" < "$SESSION_GUARD_START_DATE" ]]; then
+  echo \
+    "session guard pending: latest completed session $SESSION_GUARD_DATE is before proof start $SESSION_GUARD_START_DATE"
+  if ! BROKER_FLAT_CONTEXT="${SESSION_GUARD_STRATEGY} session guard pending ${SESSION_GUARD_START_DATE}" \
+    ./scripts/broker_flat_check.sh "$ENV_FILE"; then
+    reason="${SESSION_GUARD_STRATEGY} session guard pending ${SESSION_GUARD_START_DATE}: broker exposure remains before proof start"
+    if ! "${compose[@]}" run -T --rm admin \
+      close-only \
+      --mode "${TRADING_MODE:-paper}" \
+      --strategy-version "$STRATEGY_VERSION" \
+      --reason "$reason"; then
+      echo "session guard failed: could not apply close-only guard" >&2
+      exit 45
+    fi
+    exit 44
+  fi
+  exit 43
+fi
 
 session_eval_args=(
   --date "$SESSION_GUARD_DATE"
@@ -118,8 +144,6 @@ session_eval_args=(
 if [[ "${SESSION_GUARD_FAIL_ON_DIAGNOSTICS,,}" == "true" ]]; then
   session_eval_args+=(--fail-on-diagnostics)
 fi
-
-echo "scheduled check context: session_date=$SESSION_GUARD_DATE strategy=$SESSION_GUARD_STRATEGY"
 
 "${compose[@]}" run -T --rm \
   --entrypoint alpaca-bot-session-eval admin \
