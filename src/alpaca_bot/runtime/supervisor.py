@@ -654,7 +654,10 @@ class RuntimeSupervisor:
             entries_disabled_reasons.append("intraday_consecutive_loss_gate")
         if (
             self._paper_proof_requires_readiness_audit(session_type=session_type)
-            and not self._paper_readiness_audit_passed(session_date=session_date)
+            and not self._paper_readiness_audit_passed(
+                session_date=session_date,
+                now=timestamp,
+            )
         ):
             entries_disabled_reasons.append("paper_readiness_check_missing")
         entries_disabled = bool(entries_disabled_reasons)
@@ -2418,7 +2421,7 @@ class RuntimeSupervisor:
             and session_type is SessionType.REGULAR
         )
 
-    def _paper_readiness_audit_passed(self, *, session_date: date) -> bool:
+    def _paper_readiness_audit_passed(self, *, session_date: date, now: datetime) -> bool:
         audit_store = getattr(self.runtime, "audit_event_store", None)
         store_lock = getattr(self.runtime, "store_lock", None)
         latest_check_loader = getattr(audit_store, "load_latest_scheduled_check", None)
@@ -2448,6 +2451,8 @@ class RuntimeSupervisor:
                 latest_supervisor_event is not None
                 and readiness_event.created_at < latest_supervisor_event.created_at
             ):
+                return False
+            if self._paper_readiness_audit_is_expired(readiness_event, now=now):
                 return False
             payload = getattr(readiness_event, "payload", {}) or {}
             return payload.get("status") == "passed"
@@ -2489,6 +2494,8 @@ class RuntimeSupervisor:
                 and event.created_at < latest_supervisor_started_at
             ):
                 continue
+            if self._paper_readiness_audit_is_expired(event, now=now):
+                continue
             payload = getattr(event, "payload", {}) or {}
             if payload.get("check_name") != "paper_readiness":
                 continue
@@ -2500,6 +2507,28 @@ class RuntimeSupervisor:
                 continue
             return payload.get("status") == "passed"
         return False
+
+    def _paper_readiness_audit_is_expired(
+        self,
+        event: AuditEvent,
+        *,
+        now: datetime,
+    ) -> bool:
+        created_at = event.created_at
+        created_utc = (
+            created_at.replace(tzinfo=timezone.utc)
+            if created_at.tzinfo is None
+            else created_at.astimezone(timezone.utc)
+        )
+        now_utc = (
+            now.replace(tzinfo=timezone.utc)
+            if now.tzinfo is None
+            else now.astimezone(timezone.utc)
+        )
+        max_age = timedelta(
+            minutes=self.settings.paper_readiness_max_pass_age_minutes
+        )
+        return now_utc - created_utc > max_age
 
     def _load_trading_status(self) -> TradingStatusValue | None:
         if not hasattr(self.runtime.trading_status_store, "load"):

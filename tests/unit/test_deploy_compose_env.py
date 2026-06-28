@@ -21,6 +21,7 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "OPTION_STRATEGY_MAX_ROLLING_LOSS_USD",
         "OPTION_STRATEGY_ROLLING_LOSS_DAYS",
         "PAPER_PROOF_FREEZE",
+        "PAPER_READINESS_MAX_PASS_AGE_MINUTES",
         "REPLAY_SLIPPAGE_BPS",
     }
 
@@ -79,6 +80,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "MAX_OPEN_POSITIONS=3" in env_text
     assert "REPLAY_SLIPPAGE_BPS=2.0" in env_text
     assert "PAPER_PROOF_FREEZE=true" in env_text
+    assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180" in env_text
     assert "PROFIT_PROBE_START_DATE=2026-06-29" in env_text
     assert "PROFIT_PROBE_STRATEGY=bull_flag" in env_text
     assert "PROFIT_PROBE_MIN_TRADES=10" in env_text
@@ -112,6 +114,7 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert 'RELATIVE_VOLUME_THRESHOLD="2.0"' in script
     assert 'REPLAY_SLIPPAGE_BPS="2.0"' in script
     assert 'PAPER_PROOF_FREEZE="true"' in script
+    assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180" in script
     assert "PROFIT_PROBE_START_DATE=2026-06-29" in script
     assert "PROFIT_PROBE_STRATEGY=bull_flag" in script
     assert "PROFIT_PROBE_MIN_TRADES=10" in script

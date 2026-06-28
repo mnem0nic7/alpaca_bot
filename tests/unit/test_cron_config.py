@@ -18,6 +18,14 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
         "2 14,15 * * 1-5 root RUN_IF_NY_TIME_GRACE_MINUTES=1 "
         "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1002"
     )
+    readiness_midday_refresh = (
+        "55 16,17 * * 1-5 root PAPER_READINESS_FORCE_REFRESH=true "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1255"
+    )
+    readiness_afternoon_refresh = (
+        "25 18,19 * * 1-5 root PAPER_READINESS_FORCE_REFRESH=true "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1425"
+    )
     early_activity = "15 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1015"
     activity = "0 16,17 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1200"
     session_guard = "10 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1710"
@@ -28,6 +36,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert readiness_retry in cron_text
     assert readiness_final in cron_text
     assert readiness_post_open_repair in cron_text
+    assert readiness_midday_refresh in cron_text
+    assert readiness_afternoon_refresh in cron_text
     assert early_activity in cron_text
     assert activity in cron_text
     assert session_guard in cron_text
@@ -38,10 +48,13 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(readiness_final) < cron_text.index(readiness_post_open_repair)
     assert cron_text.index(readiness_post_open_repair) < cron_text.index(early_activity)
     assert cron_text.index(early_activity) < cron_text.index(activity)
+    assert cron_text.index(activity) < cron_text.index(readiness_midday_refresh)
+    assert cron_text.index(readiness_midday_refresh) < cron_text.index(readiness_afternoon_refresh)
+    assert cron_text.index(readiness_afternoon_refresh) < cron_text.index(session_guard)
     assert cron_text.index(session_guard) < cron_text.index(profit_probe)
     assert cron_text.index(profit_probe) < cron_text.index(nightly)
-    assert cron_text.count("scripts/run_if_ny_time.sh") == 9
-    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 8
+    assert cron_text.count("scripts/run_if_ny_time.sh") == 11
+    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 10
     assert "flock -n /var/lock/alpaca-bot-nightly.lock" in cron_text
     assert "flock -n /var/lock/alpaca-bot-paper" not in cron_text
     assert "flock -n /var/lock/alpaca-bot-session-guard.lock" not in cron_text
@@ -50,7 +63,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "scripts/paper_readiness_check.sh" in cron_text
     assert cron_text.count("scripts/paper_readiness_check.sh") == 2
     assert "scripts/paper_readiness_if_needed.sh" in cron_text
-    assert cron_text.count("scripts/paper_readiness_if_needed.sh") == 2
+    assert cron_text.count("scripts/paper_readiness_if_needed.sh") == 4
+    assert cron_text.count("PAPER_READINESS_FORCE_REFRESH=true") == 2
     assert "run_locked_check_with_audit.sh paper_readiness" in cron_text
     assert "RUN_IF_NY_TIME_GRACE_MINUTES=1" in cron_text
     assert "/var/log/alpaca-bot-paper-readiness.log" in cron_text
@@ -66,7 +80,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" /etc/cron.d/alpaca-bot' in install_cron
     assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in install_cron
     assert "Runs weekdays on New York wall time" in install_cron
-    assert "paper readiness 09:20/09:55/09:58/10:02" in install_cron
+    assert "paper readiness 09:20/09:55/09:58/10:02/12:55/14:25" in install_cron
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
     assert "expected HHMM must be a valid 24-hour time" in run_if_ny_time
     assert "date returned invalid HHMM" in run_if_ny_time
@@ -135,6 +149,51 @@ def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -
     ) in result.stdout
     assert "paper readiness already passed for session 2026-06-29" in result.stdout
     assert "paper readiness check skipped" not in result.stdout
+
+
+def test_paper_readiness_force_refresh_reruns_after_recent_pass(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_latest_status=2026-06-29|passed|2026-06-29T16:55:00.000000Z|2026-06-29T14:01:00.000000Z|5\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+    fake_readiness = tmp_path / "paper_readiness_check.sh"
+    fake_readiness.write_text("#!/usr/bin/env bash\nprintf 'fresh readiness ran\\n'\n")
+    fake_readiness.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_readiness_if_needed.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_READINESS_CHECK_SCRIPT": str(fake_readiness),
+            "PAPER_READINESS_FORCE_REFRESH": "true",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 reason=force_refresh"
+    ) in result.stdout
+    assert "paper readiness force refresh requested" in result.stdout
+    assert "fresh readiness ran" in result.stdout
+    assert "paper readiness already passed for session 2026-06-29" not in result.stdout
 
 
 def test_paper_readiness_final_retry_reruns_after_supervisor_restart(tmp_path: Path) -> None:
@@ -222,6 +281,52 @@ def test_paper_readiness_final_retry_reruns_after_old_pass(tmp_path: Path) -> No
         "proof_start=2026-06-29 reason=stale_by_age"
     ) in result.stdout
     assert "paper readiness prior pass is older than max age 180m" in result.stdout
+    assert "fresh readiness ran" in result.stdout
+    assert "paper readiness already passed for session 2026-06-29" not in result.stdout
+
+
+def test_paper_readiness_force_refresh_reruns_after_recent_pass(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+                "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_latest_status=2026-06-29|passed|2026-06-29T14:02:00.000000Z|2026-06-29T13:50:00.000000Z|173\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+    fake_readiness = tmp_path / "paper_readiness_check.sh"
+    fake_readiness.write_text("#!/usr/bin/env bash\nprintf 'fresh readiness ran\\n'\n")
+    fake_readiness.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_readiness_if_needed.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_READINESS_CHECK_SCRIPT": str(fake_readiness),
+            "PAPER_READINESS_FORCE_REFRESH": "true",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 reason=force_refresh"
+    ) in result.stdout
+    assert "paper readiness force refresh requested" in result.stdout
     assert "fresh readiness ran" in result.stdout
     assert "paper readiness already passed for session 2026-06-29" not in result.stdout
 
@@ -533,7 +638,11 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "payload ? 'strategy_version'" in readiness_if_needed
     assert "settings.trading_mode.value, settings.strategy_version" in readiness_if_needed
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES" in readiness_if_needed
+    assert "PAPER_READINESS_FORCE_REFRESH" in readiness_if_needed
+    assert "reason=force_refresh" in readiness_if_needed
     assert "reason=stale_by_age" in readiness_if_needed
+    assert "PAPER_READINESS_FORCE_REFRESH" in readiness_if_needed
+    assert "reason=force_refresh" in readiness_if_needed
 
 
 def test_run_check_with_audit_records_scheduled_check_result() -> None:

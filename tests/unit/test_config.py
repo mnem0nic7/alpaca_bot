@@ -90,6 +90,21 @@ def test_paper_proof_freeze_defaults_false_and_parses_env():
     assert settings.paper_proof_freeze is True
 
 
+def test_paper_readiness_max_pass_age_minutes_default_and_validation():
+    settings = Settings.from_env(_base_env())
+    assert settings.paper_readiness_max_pass_age_minutes == 180
+
+    with pytest.raises(ValueError, match="PAPER_READINESS_MAX_PASS_AGE_MINUTES"):
+        Settings.from_env(_base_env(PAPER_READINESS_MAX_PASS_AGE_MINUTES="0"))
+
+
+def test_paper_readiness_max_pass_age_minutes_env_override():
+    settings = Settings.from_env(
+        _base_env(PAPER_READINESS_MAX_PASS_AGE_MINUTES="45")
+    )
+    assert settings.paper_readiness_max_pass_age_minutes == 45
+
+
 def test_replay_slippage_bps_default_and_validation():
     settings = Settings.from_env(_base_env())
     assert settings.replay_slippage_bps == 5.0

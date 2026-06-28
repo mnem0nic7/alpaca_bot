@@ -1491,7 +1491,7 @@ def test_runtime_supervisor_uses_direct_readiness_audit_lookup(monkeypatch) -> N
     ]
 
 
-def test_runtime_supervisor_allows_paper_proof_entries_after_early_readiness_audit(
+def test_runtime_supervisor_blocks_paper_proof_entries_after_old_readiness_audit(
     monkeypatch,
 ) -> None:
     module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
@@ -1552,12 +1552,102 @@ def test_runtime_supervisor_allows_paper_proof_entries_after_early_readiness_aud
         session_type=module.SessionType.REGULAR,
     )
 
-    assert report.entries_disabled is False
-    assert report.entries_disabled_reasons == ()
-    assert cycle_calls[0]["entries_disabled"] is False
-    assert report.blocked_strategy_names == ()
-    assert "allowed_intent_types" not in dispatch_calls[0]
+    active_strategy_names = set(import_module("alpaca_bot.strategy").STRATEGY_REGISTRY)
+    assert report.entries_disabled is True
+    assert report.entries_disabled_reasons == ("paper_readiness_check_missing",)
+    assert cycle_calls[0]["entries_disabled"] is True
+    assert set(report.blocked_strategy_names) == active_strategy_names
+    assert dispatch_calls[0]["allowed_intent_types"] == {"stop", "exit"}
+    assert dispatch_calls[0]["blocked_strategy_names"] == active_strategy_names
     assert audit_store.list_by_event_types_calls[-1]["since"] is None
+
+
+def test_runtime_supervisor_blocks_direct_paper_readiness_audit_when_too_old(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings(
+        {
+            "PAPER_PROOF_FREEZE": "true",
+            "PAPER_READINESS_MAX_PASS_AGE_MINUTES": "180",
+        }
+    )
+    now = datetime(2026, 6, 29, 14, 15, tzinfo=timezone.utc)
+    readiness_event = AuditEvent(
+        event_type="scheduled_check_completed",
+        payload={
+            "check_name": "paper_readiness",
+            "status": "passed",
+            "session_date": "2026-06-29",
+            "trading_mode": "paper",
+            "strategy_version": "v1-breakout",
+        },
+        created_at=datetime(2026, 6, 27, 17, 25, tzinfo=timezone.utc),
+    )
+    supervisor_event = AuditEvent(
+        event_type="supervisor_started",
+        payload={},
+        created_at=datetime(2026, 6, 27, 17, 20, tzinfo=timezone.utc),
+    )
+    audit_store = DirectLookupAuditEventStore(
+        readiness_event=readiness_event,
+        supervisor_started_event=supervisor_event,
+    )
+    runtime = make_runtime_context(
+        settings,
+        audit_event_store=audit_store,
+        position_store=RecordingPositionStore(),
+    )
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    stream = FakeStream()
+    cycle_calls: list[dict[str, object]] = []
+    dispatch_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: cycle_calls.append(kwargs) or SimpleNamespace(intents=[]),
+    )
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0},
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    report = supervisor.run_cycle_once(
+        now=lambda: now,
+        session_type=module.SessionType.REGULAR,
+    )
+
+    active_strategy_names = set(import_module("alpaca_bot.strategy").STRATEGY_REGISTRY)
+    assert report.entries_disabled is True
+    assert report.entries_disabled_reasons == ("paper_readiness_check_missing",)
+    assert cycle_calls[0]["entries_disabled"] is True
+    assert set(report.blocked_strategy_names) == active_strategy_names
+    assert dispatch_calls[0]["allowed_intent_types"] == {"stop", "exit"}
+    assert dispatch_calls[0]["blocked_strategy_names"] == active_strategy_names
+    assert audit_store.latest_scheduled_check_calls == [
+        {
+            "check_name": "paper_readiness",
+            "trading_mode": TradingMode.PAPER,
+            "strategy_version": "v1-breakout",
+            "session_date": date(2026, 6, 29),
+        }
+    ]
 
 
 def test_runtime_supervisor_blocks_paper_proof_entries_when_readiness_predates_restart(

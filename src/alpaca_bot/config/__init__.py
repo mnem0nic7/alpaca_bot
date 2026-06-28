@@ -77,6 +77,7 @@ class Settings:
     notify_slippage_threshold_pct: float = 0.005
     confidence_floor: float = 0.25
     paper_proof_freeze: bool = False
+    paper_readiness_max_pass_age_minutes: int = 180
     floor_raise_step: float = 0.10
     drawdown_raise_pct: float = 0.05
     losing_streak_n: int = 3
@@ -223,6 +224,9 @@ class Settings:
             confidence_floor=float(values.get("CONFIDENCE_FLOOR", "0.25")),
             paper_proof_freeze=_parse_bool(
                 "PAPER_PROOF_FREEZE", values.get("PAPER_PROOF_FREEZE", "false")
+            ),
+            paper_readiness_max_pass_age_minutes=int(
+                values.get("PAPER_READINESS_MAX_PASS_AGE_MINUTES", "180")
             ),
             floor_raise_step=float(values.get("FLOOR_RAISE_STEP", "0.10")),
             drawdown_raise_pct=float(values.get("DRAWDOWN_RAISE_PCT", "0.05")),
@@ -461,6 +465,8 @@ class Settings:
         _validate_positive_fraction(
             "BREAKOUT_STOP_BUFFER_PCT", self.breakout_stop_buffer_pct
         )
+        if self.paper_readiness_max_pass_age_minutes < 1:
+            raise ValueError("PAPER_READINESS_MAX_PASS_AGE_MINUTES must be positive")
         if self.entry_stop_price_buffer <= 0:
             raise ValueError("ENTRY_STOP_PRICE_BUFFER must be positive")
         if self.daily_sma_period < 2:

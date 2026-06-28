@@ -26,6 +26,14 @@ if [[ ! "$PAPER_READINESS_MAX_PASS_AGE_MINUTES" =~ ^[0-9]+$ || "$PAPER_READINESS
   echo "PAPER_READINESS_MAX_PASS_AGE_MINUTES must be a positive integer" >&2
   exit 1
 fi
+PAPER_READINESS_FORCE_REFRESH="${PAPER_READINESS_FORCE_REFRESH:-false}"
+case "${PAPER_READINESS_FORCE_REFRESH,,}" in
+  true|false) ;;
+  *)
+    echo "PAPER_READINESS_FORCE_REFRESH must be true or false" >&2
+    exit 1
+    ;;
+esac
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
@@ -149,6 +157,11 @@ fi
 
 if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "passed" && "$readiness_is_current" == "true" && "$readiness_is_recent" == "true" ]]; then
   proof_start="${PROFIT_PROBE_START_DATE:-2026-06-29}"
+  if [[ "${PAPER_READINESS_FORCE_REFRESH,,}" == "true" ]]; then
+    echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=force_refresh"
+    echo "paper readiness force refresh requested; rerunning final check"
+    exec "$PAPER_READINESS_CHECK_SCRIPT" "$ENV_FILE"
+  fi
   echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=already_passed"
   echo "paper readiness already passed for session $session_date; final retry not rerun"
   exit 0
