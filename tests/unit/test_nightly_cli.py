@@ -942,6 +942,127 @@ def test_nightly_cli_writes_audit_event_after_sweep(monkeypatch, tmp_path):
     assert "best_score" in payload
 
 
+def test_nightly_publish_winner_strategy_weights_uses_enabled_scores(monkeypatch):
+    """Nightly weights are proportional to held pooled OOS scores for enabled strategies."""
+    from alpaca_bot.config import TradingMode
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    class FakeConn:
+        def __init__(self):
+            self.commits = 0
+
+        def commit(self):
+            self.commits += 1
+
+    class FakeStrategyFlagStore:
+        def __init__(self, conn): pass
+        def list_all(self, *, trading_mode, strategy_version):
+            return [
+                SimpleNamespace(strategy_name="breakout", enabled=True),
+                SimpleNamespace(strategy_name="momentum", enabled=True),
+                SimpleNamespace(strategy_name="orb", enabled=False),
+            ]
+
+    weight_calls = []
+
+    class FakeStrategyWeightStore:
+        def __init__(self, conn): pass
+        def upsert_many(self, **kw):
+            weight_calls.append(kw)
+
+    audit_events = []
+
+    class FakeAuditEventStore:
+        def __init__(self, conn): pass
+        def append(self, event, *, commit=True):
+            audit_events.append((event, commit))
+
+    monkeypatch.setattr(module, "StrategyFlagStore", FakeStrategyFlagStore)
+    monkeypatch.setattr(module, "StrategyWeightStore", FakeStrategyWeightStore)
+    monkeypatch.setattr(module, "AuditEventStore", FakeAuditEventStore)
+
+    conn = FakeConn()
+    now = datetime(2026, 6, 28, 12, 0, tzinfo=timezone.utc)
+    settings = SimpleNamespace(trading_mode=TradingMode.PAPER, strategy_version="v1")
+    winners = [
+        ("breakout", TuningCandidate(params={}, report=None, score=0.5), 0.6),
+        ("momentum", TuningCandidate(params={}, report=None, score=0.3), 0.3),
+        ("orb", TuningCandidate(params={}, report=None, score=0.8), 0.9),
+    ]
+
+    published = module._publish_winner_strategy_weights(
+        conn=conn,
+        settings=settings,
+        strategy_names=["breakout", "momentum", "orb"],
+        winners=winners,
+        computed_at=now,
+    )
+
+    assert published is True
+    assert conn.commits == 1
+    assert len(weight_calls) == 1
+    assert weight_calls[0]["commit"] is False
+    assert set(weight_calls[0]["weights"]) == {"breakout", "momentum"}
+    assert abs(weight_calls[0]["weights"]["breakout"] - (2 / 3)) < 1e-9
+    assert abs(weight_calls[0]["weights"]["momentum"] - (1 / 3)) < 1e-9
+    assert weight_calls[0]["sharpes"] == {"breakout": 0.6, "momentum": 0.3}
+    assert audit_events[0][0].event_type == "strategy_weights_updated"
+    assert audit_events[0][1] is False
+    assert audit_events[0][0].payload["active_strategies"] == ["breakout", "momentum"]
+
+
+def test_nightly_publish_winner_strategy_weights_skips_missing_active(monkeypatch):
+    """Do not overwrite stored weights unless every active strategy has a held winner."""
+    from alpaca_bot.config import TradingMode
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    class FakeStrategyFlagStore:
+        def __init__(self, conn): pass
+        def list_all(self, *, trading_mode, strategy_version):
+            return [
+                SimpleNamespace(strategy_name="breakout", enabled=True),
+                SimpleNamespace(strategy_name="momentum", enabled=True),
+            ]
+
+    weight_calls = []
+
+    class FakeStrategyWeightStore:
+        def __init__(self, conn): pass
+        def upsert_many(self, **kw):
+            weight_calls.append(kw)
+
+    audit_events = []
+
+    class FakeAuditEventStore:
+        def __init__(self, conn): pass
+        def append(self, event, *, commit=True):
+            audit_events.append((event, commit))
+
+    monkeypatch.setattr(module, "StrategyFlagStore", FakeStrategyFlagStore)
+    monkeypatch.setattr(module, "StrategyWeightStore", FakeStrategyWeightStore)
+    monkeypatch.setattr(module, "AuditEventStore", FakeAuditEventStore)
+
+    now = datetime(2026, 6, 28, 12, 0, tzinfo=timezone.utc)
+    settings = SimpleNamespace(trading_mode=TradingMode.PAPER, strategy_version="v1")
+
+    published = module._publish_winner_strategy_weights(
+        conn=object(),
+        settings=settings,
+        strategy_names=["breakout", "momentum"],
+        winners=[("breakout", TuningCandidate(params={}, report=None, score=0.5), 0.6)],
+        computed_at=now,
+    )
+
+    assert published is False
+    assert weight_calls == []
+    assert audit_events[0][0].event_type == "nightly_strategy_weights_skipped"
+    assert audit_events[0][0].payload["reason"] == "active_strategy_without_held_winner"
+    assert audit_events[0][0].payload["missing_strategies"] == ["momentum"]
+    assert audit_events[0][1] is True
+
+
 def test_nightly_cli_prunes_decision_log_by_default(monkeypatch, tmp_path):
     """Without --no-db, the pipeline prunes decision_log and audits the count."""
     from alpaca_bot.nightly import cli as module
