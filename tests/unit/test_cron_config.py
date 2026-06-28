@@ -984,6 +984,79 @@ def test_session_guard_pending_before_proof_start_does_not_close_only(tmp_path: 
     assert not close_only_marker.exists()
 
 
+def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+            ]
+        )
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_calls = tmp_path / "docker_calls"
+    mutating_marker = tmp_path / "mutating_call"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "args=\"$*\"\n"
+        f"printf '%s\\n' \"$args\" >> \"{docker_calls}\"\n"
+        "case \"$args\" in\n"
+        "  *close-only*|*resume*|*alpaca-bot-session-eval*)\n"
+        f"    touch \"{mutating_marker}\"\n"
+        "    printf 'mutating docker call: %s\\n' \"$args\" >&2\n"
+        "    exit 99\n"
+        "    ;;\n"
+        "esac\n"
+        "if [[ \"$args\" == *' admin status '* ]]; then\n"
+        "  printf 'status=enabled kill_switch=false reason=proof running\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$args\" == *'--entrypoint python admin'* ]]; then\n"
+        "  printf 'paper proof active strategies: bull_flag\\n'\n"
+        "  printf 'paper proof scheduled check: name=paper_profit_probe status=pending exit_code=43 session_date=2026-06-26 proof_start=2026-06-29 created_at=2026-06-27T22:00:00.000000Z\\n'\n"
+        "  printf 'paper proof progress: status=pending closed_trades=3 required_trades=10 pnl=12.34 required_pnl=0.01 window=2026-06-29..2026-06-29 first_exit_session=2026-06-29 latest_exit_session=2026-06-29\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf 'unexpected docker call: %s\\n' \"$args\" >&2\n"
+        "exit 99\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_proof_status.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PROOF_STATUS_END_DATE": "2026-06-29",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "paper proof status context: proof_start=2026-06-29 mode=paper "
+        "strategy_version=v1-breakout strategy=bull_flag min_trades=10 min_pnl=0.01"
+    ) in result.stdout
+    assert "  status=enabled kill_switch=false reason=proof running" in result.stdout
+    assert "paper proof active strategies: bull_flag" in result.stdout
+    assert "paper proof scheduled check: name=paper_profit_probe status=pending" in result.stdout
+    assert (
+        "paper proof progress: status=pending closed_trades=3 "
+        "required_trades=10 pnl=12.34 required_pnl=0.01"
+    ) in result.stdout
+    assert not mutating_marker.exists()
+    calls = docker_calls.read_text()
+    assert "close-only" not in calls
+    assert "resume" not in calls
+    assert "alpaca-bot-session-eval" not in calls
+
+
 def test_post_close_checks_fail_on_open_positions() -> None:
     session_guard = Path("scripts/session_guard.sh").read_text()
     profit_probe = Path("scripts/paper_profit_probe.sh").read_text()
