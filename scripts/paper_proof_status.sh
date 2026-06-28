@@ -112,14 +112,29 @@ def load_latest_completed_session_date(settings: Settings) -> tuple[date | None,
     return max(completed), None
 
 
-def load_broker_exposure(settings: Settings) -> tuple[int | None, int | None, str | None]:
+def load_broker_exposure(
+    settings: Settings,
+) -> tuple[int | None, int | None, float | None, float | None, float | None, bool | None, str | None]:
     try:
         broker = AlpacaExecutionAdapter.from_settings(settings)
         open_orders = broker.list_open_orders()
         open_positions = broker.list_positions()
+        account = broker.get_account()
     except Exception as exc:
-        return None, None, str(exc)
-    return len(open_orders), len(open_positions), None
+        return None, None, None, None, None, None, str(exc)
+    equity = float(account.equity)
+    buying_power = float(account.buying_power)
+    minimum_buying_power = equity * float(settings.max_position_pct)
+    trading_blocked = bool(account.trading_blocked)
+    return (
+        len(open_orders),
+        len(open_positions),
+        equity,
+        buying_power,
+        minimum_buying_power,
+        trading_blocked,
+        None,
+    )
 
 
 settings = Settings.from_env()
@@ -132,7 +147,15 @@ proof_start = parse_date(os.environ["PROOF_STATUS_START_DATE"], name="PROOF_STAT
 end_value = os.environ.get("PROOF_STATUS_END_DATE", "")
 current_market_date = datetime.now(settings.market_timezone).date()
 latest_completed_session, calendar_warning = load_latest_completed_session_date(settings)
-broker_open_orders, broker_open_positions, broker_exposure_warning = load_broker_exposure(settings)
+(
+    broker_open_orders,
+    broker_open_positions,
+    broker_equity,
+    broker_buying_power,
+    broker_minimum_buying_power,
+    broker_trading_blocked,
+    broker_exposure_warning,
+) = load_broker_exposure(settings)
 proof_end = (
     parse_date(end_value, name="PROOF_STATUS_END_DATE")
     if end_value
@@ -278,6 +301,13 @@ else:
     print(
         "paper proof broker exposure: "
         f"open_orders={broker_open_orders} open_positions={broker_open_positions}"
+    )
+    print(
+        "paper proof broker account: "
+        f"equity={broker_equity:.2f} "
+        f"buying_power={broker_buying_power:.2f} "
+        f"minimum_required={broker_minimum_buying_power:.2f} "
+        f"trading_blocked={str(broker_trading_blocked).lower()}"
     )
 if calendar_warning:
     print(f"paper proof calendar warning: {calendar_warning}")
