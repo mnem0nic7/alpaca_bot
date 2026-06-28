@@ -88,7 +88,8 @@ for script in \
   paper_readiness_if_needed.sh \
   paper_activity_check.sh \
   session_guard.sh \
-  paper_profit_probe.sh
+  paper_profit_probe.sh \
+  runtime_image_health_check.sh
 do
   path="$ROOT_DIR/scripts/$script"
   if [[ ! -x "$path" ]]; then
