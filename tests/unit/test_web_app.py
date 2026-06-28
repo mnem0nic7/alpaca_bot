@@ -156,6 +156,10 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_required_trades": "10",
             "proof_pnl": "12.34",
             "proof_required_pnl": "0.01",
+            "proof_scenario_status": "ok",
+            "proof_scenario_active": "980",
+            "proof_scenario_expected_session": "2026-06-26",
+            "proof_scenario_problems": "none",
         },
         created_at=now,
     )
@@ -255,6 +259,10 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "Readiness" in response.text
     assert "Closed Trades" in response.text
     assert "Proof P&L" in response.text
+    assert "Scenario Evidence" in response.text
+    assert "Scenario Problems" in response.text
+    assert "ok\n              980\n              @ 2026-06-26" in response.text
+    assert "scenarios=ok:980@2026-06-26" in response.text
     assert "awaiting_min_trades" in response.text
     assert "12.34 / 0.01" in response.text
     assert "trades&gt;=10" in response.text

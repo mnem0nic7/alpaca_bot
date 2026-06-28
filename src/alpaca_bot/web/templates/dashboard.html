@@ -342,6 +342,18 @@
             <p class="eyebrow">Blockers</p>
             <p class="value mono {{ 'warn' if proof_blockers != 'none' else '' }}">{{ proof_blockers }}</p>
           </div>
+          <div>
+            <p class="eyebrow">Scenario Evidence</p>
+            <p class="value mono {{ 'warn' if proof_payload.get('proof_scenario_status', 'unknown') != 'ok' else '' }}">
+              {{ proof_payload.get('proof_scenario_status', 'unknown') }}
+              {{ proof_payload.get('proof_scenario_active', '?') }}
+              @ {{ proof_payload.get('proof_scenario_expected_session', 'unknown') }}
+            </p>
+          </div>
+          <div>
+            <p class="eyebrow">Scenario Problems</p>
+            <p class="value mono {{ 'warn' if proof_payload.get('proof_scenario_problems', 'none') != 'none' else '' }}">{{ proof_payload.get('proof_scenario_problems', 'none') }}</p>
+          </div>
         </div>
         <p class="muted mono" style="margin-top: 0.75rem;">
           proof={{ proof_payload.get("proof_start", "unknown") }}
@@ -382,6 +394,8 @@
                     {% if event.payload.get("proof_blockers") %} blockers={{ event.payload.get("proof_blockers") }}{% endif %}
                     {% if event.payload.get("proof_closed_trades") %} closed={{ event.payload.get("proof_closed_trades") }}/{{ event.payload.get("proof_required_trades", "?") }}{% endif %}
                     {% if event.payload.get("proof_pnl") %} proof_pnl={{ event.payload.get("proof_pnl") }}{% endif %}
+                    {% if event.payload.get("proof_scenario_status") %} scenarios={{ event.payload.get("proof_scenario_status") }}:{{ event.payload.get("proof_scenario_active", "?") }}@{{ event.payload.get("proof_scenario_expected_session", "?") }}{% endif %}
+                    {% if event.payload.get("proof_scenario_problems") and event.payload.get("proof_scenario_problems") != "none" %} scenario_problems={{ event.payload.get("proof_scenario_problems") }}{% endif %}
                   </td>
                   <td class="{{ 'warn' if check_status == 'failed' else 'muted' }}">
                     {{ check_status }}
