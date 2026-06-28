@@ -23,6 +23,7 @@ set +a
 PROOF_STATUS_MIN_WATCHLIST_SYMBOLS="${PROOF_STATUS_MIN_WATCHLIST_SYMBOLS:-${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}}"
 PROOF_STATUS_MIN_CONFIDENCE_FLOOR="${PROOF_STATUS_MIN_CONFIDENCE_FLOOR:-${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}}"
 PROOF_STATUS_STREAM_START_GRACE_SECONDS="${PROOF_STATUS_STREAM_START_GRACE_SECONDS:-120}"
+PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES="${PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES:-${PAPER_READINESS_MAX_PASS_AGE_MINUTES:-180}}"
 
 if [[ -z "${STRATEGY_VERSION:-}" ]]; then
   echo "missing STRATEGY_VERSION in $ENV_FILE" >&2
@@ -55,6 +56,10 @@ if [[ ! "$PROOF_STATUS_MIN_CONFIDENCE_FLOOR" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
 fi
 if [[ ! "$PROOF_STATUS_STREAM_START_GRACE_SECONDS" =~ ^[0-9]+$ ]]; then
   echo "PROOF_STATUS_STREAM_START_GRACE_SECONDS must be a non-negative integer" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" =~ ^[0-9]+$ || "$PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" -le 0 ]]; then
+  echo "PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES must be a positive integer" >&2
   exit 1
 fi
 
@@ -99,6 +104,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_MIN_WATCHLIST_SYMBOLS="$PROOF_STATUS_MIN_WATCHLIST_SYMBOLS" \
   -e PROOF_STATUS_MIN_CONFIDENCE_FLOOR="$PROOF_STATUS_MIN_CONFIDENCE_FLOOR" \
   -e PROOF_STATUS_STREAM_START_GRACE_SECONDS="$PROOF_STATUS_STREAM_START_GRACE_SECONDS" \
+  -e PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES="$PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" \
   -e PROOF_STATUS_START_DATE="$PROOF_STATUS_START_DATE" \
   -e PROOF_STATUS_END_DATE="$PROOF_STATUS_END_DATE" \
   -e PROOF_STATUS_CRON_HEALTH_STATUS="$cron_health_status" \
@@ -109,7 +115,7 @@ echo "paper proof evidence status:"
 from __future__ import annotations
 
 import os
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
@@ -222,6 +228,9 @@ min_pnl = float(os.environ["PROOF_STATUS_MIN_PNL"])
 min_watchlist_symbols = int(os.environ["PROOF_STATUS_MIN_WATCHLIST_SYMBOLS"])
 min_confidence_floor = float(os.environ["PROOF_STATUS_MIN_CONFIDENCE_FLOOR"])
 stream_start_grace_seconds = int(os.environ["PROOF_STATUS_STREAM_START_GRACE_SECONDS"])
+readiness_max_pass_age_minutes = int(
+    os.environ["PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES"]
+)
 cron_health_status = os.environ.get("PROOF_STATUS_CRON_HEALTH_STATUS", "unknown")
 cron_health_detail = os.environ.get("PROOF_STATUS_CRON_HEALTH_DETAIL", "").strip()
 ops_health_status = os.environ.get("PROOF_STATUS_OPS_HEALTH_STATUS", "unknown")
@@ -570,15 +579,36 @@ elif (
     stream_status = "stale"
 readiness_audit_check_status = "missing"
 readiness_audit_created_at = None
+readiness_audit_age_minutes = None
 readiness_audit_status = "missing"
 if readiness_audit_row:
     readiness_audit_check_status = readiness_audit_row[0] or "unknown"
     readiness_audit_created_at = readiness_audit_row[1]
+    readiness_audit_created_utc = readiness_audit_created_at
+    if readiness_audit_created_utc.tzinfo is None:
+        readiness_audit_created_utc = readiness_audit_created_utc.replace(
+            tzinfo=timezone.utc
+        )
+    else:
+        readiness_audit_created_utc = readiness_audit_created_utc.astimezone(
+            timezone.utc
+        )
+    readiness_audit_age_minutes = max(
+        0,
+        int(
+            (
+                datetime.now(timezone.utc) - readiness_audit_created_utc
+            ).total_seconds()
+            // 60
+        ),
+    )
     if (
         latest_supervisor_started_at is not None
         and readiness_audit_created_at < latest_supervisor_started_at
     ):
         readiness_audit_status = "stale"
+    elif readiness_audit_age_minutes > readiness_max_pass_age_minutes:
+        readiness_audit_status = "stale_by_age"
     elif readiness_audit_check_status == "passed":
         readiness_audit_status = "ok"
     else:
@@ -586,6 +616,11 @@ if readiness_audit_row:
 readiness_audit_created_text = (
     readiness_audit_created_at.isoformat()
     if readiness_audit_created_at is not None
+    else "none"
+)
+readiness_audit_age_text = (
+    str(readiness_audit_age_minutes)
+    if readiness_audit_age_minutes is not None
     else "none"
 )
 post_close_due = False
@@ -799,6 +834,8 @@ print(
     f"target_session={readiness_target_session.isoformat()} "
     f"check_status={readiness_audit_check_status} "
     f"created_at={readiness_audit_created_text} "
+    f"age_minutes={readiness_audit_age_text} "
+    f"max_age_minutes={readiness_max_pass_age_minutes} "
     f"latest_supervisor_started_at={latest_supervisor_started_text}"
 )
 print(

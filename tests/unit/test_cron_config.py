@@ -181,6 +181,51 @@ def test_paper_readiness_final_retry_reruns_after_supervisor_restart(tmp_path: P
     assert "paper readiness already passed for session 2026-06-29" not in result.stdout
 
 
+def test_paper_readiness_final_retry_reruns_after_old_pass(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+                "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_latest_status=2026-06-29|passed|2026-06-28T04:12:49.000000Z|2026-06-28T04:11:57.000000Z|181\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+    fake_readiness = tmp_path / "paper_readiness_check.sh"
+    fake_readiness.write_text("#!/usr/bin/env bash\nprintf 'fresh readiness ran\\n'\n")
+    fake_readiness.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_readiness_if_needed.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_READINESS_CHECK_SCRIPT": str(fake_readiness),
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 reason=stale_by_age"
+    ) in result.stdout
+    assert "paper readiness prior pass is older than max age 180m" in result.stdout
+    assert "fresh readiness ran" in result.stdout
+    assert "paper readiness already passed for session 2026-06-29" not in result.stdout
+
+
 def test_paper_readiness_lock_skip_does_not_block_after_pass(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     env_file.write_text(
@@ -270,6 +315,52 @@ def test_paper_readiness_lock_skip_blocks_stale_pass_after_restart(tmp_path: Pat
         "proof_start=2026-06-29 reason=lock_busy_stale_pass"
     ) in result.stdout
     assert "paper readiness prior pass is older than latest supervisor start" in result.stderr
+
+
+def test_paper_readiness_lock_skip_blocks_old_pass(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+                "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-07-04\\n'\n")
+    fake_date.chmod(0o755)
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_session_date=2026-07-06\\n'\n"
+        "printf 'paper_readiness_latest_status=passed|2026-06-28T04:12:49.000000Z|2026-06-28T04:11:57.000000Z|181\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_readiness",
+            str(tmp_path / "readiness.lock"),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 48
+    assert (
+        "scheduled check context: session_date=2026-07-06 "
+        "proof_start=2026-06-29 reason=lock_busy_stale_pass"
+    ) in result.stdout
+    assert "paper readiness prior pass is older than max age 180m" in result.stderr
 
 
 def test_paper_readiness_lock_skip_blocks_without_pass(tmp_path: Path) -> None:
@@ -437,9 +528,12 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "payload ? 'trading_mode'" in lock_skip
     assert "payload ? 'strategy_version'" in lock_skip
     assert "settings.trading_mode.value, settings.strategy_version" in lock_skip
+    assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES" in lock_skip
     assert "payload ? 'trading_mode'" in readiness_if_needed
     assert "payload ? 'strategy_version'" in readiness_if_needed
     assert "settings.trading_mode.value, settings.strategy_version" in readiness_if_needed
+    assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES" in readiness_if_needed
+    assert "reason=stale_by_age" in readiness_if_needed
 
 
 def test_run_check_with_audit_records_scheduled_check_result() -> None:
@@ -1115,6 +1209,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_MIN_CONFIDENCE_FLOOR must be a non-negative number" in script
     assert "PROOF_STATUS_STREAM_START_GRACE_SECONDS" in script
     assert "PROOF_STATUS_STREAM_START_GRACE_SECONDS must be a non-negative integer" in script
+    assert "PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" in script
+    assert "PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES must be a positive integer" in script
     assert "./scripts/ops_check.sh \"$ENV_FILE\" 2>&1" in script
     assert "PROOF_STATUS_OPS_HEALTH_STATUS" in script
     assert "PROOF_STATUS_OPS_HEALTH_DETAIL" in script
@@ -1146,13 +1242,16 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "payload->>'session_date' = %s" in script
     assert "readiness_audit_status" in script
     assert "readiness_audit_status = \"stale\"" in script
+    assert "readiness_audit_status = \"stale_by_age\"" in script
     assert "readiness_audit_{readiness_audit_status}" in script
     assert "paper proof readiness audit:" in script
     assert "status={readiness_audit_status}" in script
     assert "target_session={readiness_target_session.isoformat()}" in script
     assert "check_status={readiness_audit_check_status}" in script
     assert "created_at={readiness_audit_created_text}" in script
-    assert "from datetime import date, datetime, time, timedelta" in script
+    assert "age_minutes={readiness_audit_age_text}" in script
+    assert "max_age_minutes={readiness_max_pass_age_minutes}" in script
+    assert "from datetime import date, datetime, time, timedelta, timezone" in script
     assert "post_close_target_session = proof_end if proof_end >= proof_start else None" in script
     assert "post_close_audit_rows = []" in script
     assert "post_close_pass_evidence_ready = False" in script
