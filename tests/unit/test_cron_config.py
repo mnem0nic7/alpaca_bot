@@ -1655,12 +1655,14 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE \\" in script
     assert "PAPER_ACTIVITY_WINDOW_MINUTES" in script
     assert 'PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"' in script
+    assert 'PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES="${PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES:-5}"' in script
     assert 'PAPER_ACTIVITY_REQUIRE_DECISION_LOG="${PAPER_ACTIVITY_REQUIRE_DECISION_LOG:-true}"' in script
     assert 'PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT="${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT:-true}"' in script
     assert 'PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE="${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE:-true}"' in script
     assert 'PAPER_ACTIVITY_READINESS_RUNNER="${PAPER_ACTIVITY_READINESS_RUNNER:-./scripts/run_locked_check_with_audit.sh}"' in script
     assert 'PAPER_ACTIVITY_READINESS_SCRIPT="${PAPER_ACTIVITY_READINESS_SCRIPT:-./scripts/paper_readiness_if_needed.sh}"' in script
     assert "PAPER_ACTIVITY_REQUIRE_DECISION_LOG must be true or false" in script
+    assert "PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES must be a positive integer" in script
     assert "PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT must be true or false" in script
     assert "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE must be true or false" in script
     assert 'PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
@@ -1699,10 +1701,18 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "latest_accepted_decision_log" in script
     assert "recent_entry_orders" in script
     assert "recent_entry_order_status_summary" in script
+    assert "accepted_symbols" in script
+    assert "materialized_entry_symbols" in script
+    assert "unmaterialized_accepted_symbols" in script
+    assert "stale_pending_entry_orders" in script
+    assert "stale_pending_entry_order_summary" in script
+    assert "broker_order_id IS NULL" in script
     assert "accepted_decisions=${strategy_accepted_decisions:-0}" in script
-    assert "recent_entry_orders=0" in script
-    assert "but recent_entry_orders=0" in script
+    assert "unmaterialized_accepted_symbol_count" in script
+    assert "unmaterialized_accepted_symbols=[" in script
     assert "entry_order_status_summary" in script
+    assert "stale pending entry orders" in script
+    assert "PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES" in script
     assert "strategy_evidence_records" in script
     assert "order_dispatch_failed" in script
     assert "order_dispatch_stop_price_rejected" in script
@@ -1804,7 +1814,7 @@ def test_paper_activity_allows_low_record_count_when_stock_exposure_exists(tmp_p
         "  printf 'ok|100000.00|200000.00|5000.00|false|1|3|DASH|DASH\\n'\n"
         "  exit 0\n"
         "fi\n"
-        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|accepted/none/none:1,skipped_no_signal/none/none:9|1|2026-06-29 16:00:00+00|0||bull_flag|||3|0|0|0\\n'\n"
+        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|accepted/none/none:1,skipped_no_signal/none/none:9|1|2026-06-29 16:00:00+00|0||1|DASH|1|DASH|0||0||bull_flag|||3|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1829,6 +1839,9 @@ def test_paper_activity_allows_low_record_count_when_stock_exposure_exists(tmp_p
     ) in result.stdout
     assert "stock_open_positions=3" in result.stdout
     assert "active_stock_orders=0" in result.stdout
+    assert "bull_flag_accepted_symbols=[DASH]" in result.stdout
+    assert "bull_flag_materialized_entry_symbols=[DASH]" in result.stdout
+    assert "bull_flag_unmaterialized_accepted_symbols=[]" in result.stdout
     assert "require_broker_account=true" in result.stdout
     assert "broker_account_status=ok" in result.stdout
     assert "broker_open_orders=1" in result.stdout
@@ -1876,7 +1889,7 @@ def test_paper_activity_fails_when_accepted_decisions_do_not_materialize_orders(
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|accepted/none/none:1,skipped_no_signal/none/none:9|1|2026-06-29 16:00:00+00|0||bull_flag|||0|0|0|0\\n'\n"
+        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|accepted/none/none:1,skipped_no_signal/none/none:9|1|2026-06-29 16:00:00+00|0||1|DASH|0||1|DASH|0||bull_flag|||0|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1894,8 +1907,129 @@ def test_paper_activity_fails_when_accepted_decisions_do_not_materialize_orders(
     )
 
     assert result.returncode == 1
-    assert "accepted_decisions=1 but recent_entry_orders=0" in result.stderr
+    assert "accepted_decisions=1" in result.stderr
+    assert "unmaterialized_accepted_symbols=[DASH]" in result.stderr
+    assert "materialized_entry_symbols=[]" in result.stderr
     assert "latest_accepted_decision_log=2026-06-29 16:00:00+00" in result.stderr
+    assert not docker_marker.exists()
+
+
+def test_paper_activity_fails_when_some_accepted_symbols_do_not_materialize(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    docker_marker = tmp_path / "docker_close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin close-only'; then\n"
+        f"  touch {docker_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|accepted/none/none:2,skipped_no_signal/none/none:8|2|2026-06-29 16:00:00+00|1|submitted:1|2|DASH,SNOW|1|DASH|1|SNOW|0||bull_flag|||0|1|0|0\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE": "false",
+            "PAPER_ACTIVITY_MIN_DECISION_RECORDS": "0",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "accepted_decisions=2" in result.stderr
+    assert "accepted_symbols=[DASH,SNOW]" in result.stderr
+    assert "materialized_entry_symbols=[DASH]" in result.stderr
+    assert "unmaterialized_accepted_symbols=[SNOW]" in result.stderr
+    assert not docker_marker.exists()
+
+
+def test_paper_activity_fails_on_stale_pending_entry_orders(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    docker_marker = tmp_path / "docker_close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin close-only'; then\n"
+        f"  touch {docker_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "printf '10|0|10|1000|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|1000|0|10|1000|2026-06-29 16:00:00+00|accepted/none/none:1,skipped_no_signal/none/none:999|1|2026-06-29 16:00:00+00|1|pending_submit:1|1|DASH|1|DASH|0||1|DASH:16:00:00|bull_flag|||0|1|0|0\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE": "false",
+            "PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES": "5",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "stale pending entry orders count=1" in result.stderr
+    assert "max_age_minutes=5" in result.stderr
+    assert "symbols=[DASH:16:00:00]" in result.stderr
     assert not docker_marker.exists()
 
 
@@ -1986,7 +2120,7 @@ def test_paper_activity_allows_recovered_disabled_cycles(tmp_path: Path) -> None
         "  printf 'ok|100000.00|200000.00|5000.00|false|0|0|none|none\\n'\n"
         "  exit 0\n"
         "fi\n"
-        "printf '12|4|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|4|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7838,rejected/vwap_filter/below_vwap:2|0||0||bull_flag|paper_readiness_check_missing:4|paper_readiness_check_missing:4|0|0|0|0\\n'\n"
+        "printf '12|4|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|4|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7838,rejected/vwap_filter/below_vwap:2|0||0||0||0||0||0||bull_flag|paper_readiness_check_missing:4|paper_readiness_check_missing:4|0|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -2057,7 +2191,7 @@ def test_paper_activity_fails_when_broker_account_is_blocked(tmp_path: Path) -> 
         "  printf 'blocked|100000.00|1000.00|5000.00|true|0|0|none|none\\n'\n"
         "  exit 0\n"
         "fi\n"
-        "printf '12|0|8|1000|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|1000|0|8|1000|2026-06-29 14:15:00+00|skipped_no_signal/none/none:1000|0||0||bull_flag|||0|0|0|0\\n'\n"
+        "printf '12|0|8|1000|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|1000|0|8|1000|2026-06-29 14:15:00+00|skipped_no_signal/none/none:1000|0||0||0||0||0||0||bull_flag|||0|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -2116,7 +2250,7 @@ def test_paper_activity_fails_on_recent_dispatch_failures(tmp_path: Path) -> Non
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7840|0||0||bull_flag|||0|0|2|0\\n'\n"
+        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7840|0||0||0||0||0||0||bull_flag|||0|0|2|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -2172,7 +2306,7 @@ def test_paper_activity_fails_on_recent_stream_issues(tmp_path: Path) -> None:
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7840|0||0||bull_flag|||0|0|0|2\\n'\n"
+        "printf '12|0|8|7840|0|2026-06-29 14:15:00+00|false||false||2026-06-29 14:15:00+00|0|8|7840|0|8|7840|2026-06-29 14:15:00+00|skipped_no_signal/none/none:7840|0||0||0||0||0||0||bull_flag|||0|0|0|2\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -2228,7 +2362,7 @@ def test_paper_activity_diagnostic_failure_does_not_apply_close_only(tmp_path: P
         f"  touch {docker_marker}\n"
         "  exit 99\n"
         "fi\n"
-        "printf '0|0|0|0|0||false||false|||0|0|0|0|0|0|||0||0||bull_flag|||0|0|0|0\\n'\n"
+        "printf '0|0|0|0|0||false||false|||0|0|0|0|0|0|||0||0||0||0||0||0||bull_flag|||0|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 

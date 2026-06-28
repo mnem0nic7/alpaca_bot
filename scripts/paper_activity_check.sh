@@ -27,6 +27,7 @@ restore_env_overrides() {
 capture_env_overrides \
   PAPER_ACTIVITY_WINDOW_MINUTES \
   PAPER_ACTIVITY_MIN_DECISION_RECORDS \
+  PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES \
   PAPER_ACTIVITY_REQUIRE_DECISION_LOG \
   PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT \
   PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE \
@@ -49,6 +50,7 @@ restore_env_overrides
 
 PAPER_ACTIVITY_WINDOW_MINUTES="${PAPER_ACTIVITY_WINDOW_MINUTES:-90}"
 PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"
+PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES="${PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES:-5}"
 PAPER_ACTIVITY_REQUIRE_DECISION_LOG="${PAPER_ACTIVITY_REQUIRE_DECISION_LOG:-true}"
 PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT="${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT:-true}"
 PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE="${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE:-true}"
@@ -121,6 +123,12 @@ fi
 
 if [[ ! "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" =~ ^[0-9]+$ ]]; then
   echo "PAPER_ACTIVITY_MIN_DECISION_RECORDS must be a non-negative integer" >&2
+  exit 1
+fi
+
+if [[ ! "$PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES" =~ ^[0-9]+$ ]] \
+  || [[ "$PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES" -lt 1 ]]; then
+  echo "PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES must be a positive integer" >&2
   exit 1
 fi
 
@@ -238,7 +246,7 @@ WITH recent AS (
     AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = :'strategy_version')
 ),
 recent_decisions AS (
-  SELECT cycle_at, strategy_name, decision, reject_stage, reject_reason
+  SELECT cycle_at, symbol, strategy_name, decision, reject_stage, reject_reason
   FROM decision_log
   WHERE cycle_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
     AND trading_mode = 'paper'
@@ -257,6 +265,87 @@ latest_supervisor AS (
   WHERE event_type = 'supervisor_cycle'
   ORDER BY created_at DESC
   LIMIT 1
+),
+strategy_positions AS (
+  SELECT DISTINCT symbol
+  FROM positions
+  WHERE trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+    AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
+),
+recent_entry_order_rows AS (
+  SELECT symbol, status
+  FROM orders
+  WHERE trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+    AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
+    AND intent_type = 'entry'
+    AND created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+),
+active_strategy_orders AS (
+  SELECT DISTINCT symbol
+  FROM orders
+  WHERE trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+    AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
+    AND status IN (
+      'pending_submit',
+      'submitting',
+      'pending_new',
+      'new',
+      'accepted',
+      'accepted_for_bidding',
+      'submitted',
+      'partially_filled',
+      'held',
+      'pending_replace',
+      'pending_cancel',
+      'stopped',
+      'suspended',
+      'done_for_day'
+    )
+),
+active_entry_orders AS (
+  SELECT DISTINCT symbol
+  FROM orders
+  WHERE trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+    AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
+    AND intent_type = 'entry'
+    AND status IN (
+      'pending_submit',
+      'submitting',
+      'pending_new',
+      'new',
+      'accepted',
+      'accepted_for_bidding',
+      'submitted',
+      'partially_filled',
+      'held',
+      'pending_replace',
+      'pending_cancel',
+      'stopped',
+      'suspended',
+      'done_for_day'
+    )
+),
+accepted_symbols AS (
+  SELECT DISTINCT symbol
+  FROM recent_decisions
+  WHERE strategy_name = :'paper_activity_strategy'
+    AND decision = 'accepted'
+),
+materialized_entry_symbols AS (
+  SELECT symbol FROM recent_entry_order_rows
+  UNION
+  SELECT symbol FROM active_entry_orders
+  UNION
+  SELECT symbol FROM strategy_positions
+),
+unmaterialized_accepted_symbols AS (
+  SELECT symbol FROM accepted_symbols
+  EXCEPT
+  SELECT symbol FROM materialized_entry_symbols
 )
 SELECT
   COUNT(*) FILTER (WHERE event_type = 'supervisor_cycle')::int,
@@ -375,25 +464,46 @@ SELECT
   ), ''),
   COALESCE((
     SELECT COUNT(*)::int
-    FROM orders
-    WHERE trading_mode = 'paper'
-      AND strategy_version = :'strategy_version'
-      AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
-      AND intent_type = 'entry'
-      AND created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+    FROM recent_entry_order_rows
   ), 0)::int,
   COALESCE((
     SELECT string_agg(status || ':' || status_count::text, ',' ORDER BY status)
     FROM (
       SELECT status, COUNT(*)::int AS status_count
-      FROM orders
-      WHERE trading_mode = 'paper'
-        AND strategy_version = :'strategy_version'
-        AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
-        AND intent_type = 'entry'
-        AND created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+      FROM recent_entry_order_rows
       GROUP BY status
     ) entry_status_counts
+  ), ''),
+  COALESCE((SELECT COUNT(*)::int FROM accepted_symbols), 0)::int,
+  COALESCE((SELECT string_agg(symbol, ',' ORDER BY symbol) FROM accepted_symbols), ''),
+  COALESCE((SELECT COUNT(*)::int FROM materialized_entry_symbols), 0)::int,
+  COALESCE((SELECT string_agg(symbol, ',' ORDER BY symbol) FROM materialized_entry_symbols), ''),
+  COALESCE((SELECT COUNT(*)::int FROM unmaterialized_accepted_symbols), 0)::int,
+  COALESCE((SELECT string_agg(symbol, ',' ORDER BY symbol) FROM unmaterialized_accepted_symbols), ''),
+  COALESCE((
+    SELECT COUNT(*)::int
+    FROM orders
+    WHERE trading_mode = 'paper'
+      AND strategy_version = :'strategy_version'
+      AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
+      AND intent_type = 'entry'
+      AND status = 'pending_submit'
+      AND broker_order_id IS NULL
+      AND created_at <= NOW() - (${PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES} * interval '1 minute')
+  ), 0)::int,
+  COALESCE((
+    SELECT string_agg(
+      symbol || ':' || to_char(created_at AT TIME ZONE 'UTC', 'HH24:MI:SS'),
+      ',' ORDER BY created_at, symbol
+    )
+    FROM orders
+    WHERE trading_mode = 'paper'
+      AND strategy_version = :'strategy_version'
+      AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
+      AND intent_type = 'entry'
+      AND status = 'pending_submit'
+      AND broker_order_id IS NULL
+      AND created_at <= NOW() - (${PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES} * interval '1 minute')
   ), ''),
   array_to_string((SELECT names FROM enabled_strategies), ','),
   COALESCE((
@@ -427,33 +537,11 @@ SELECT
   ), ''),
   COALESCE((
     SELECT COUNT(*)::int
-    FROM positions
-    WHERE trading_mode = 'paper'
-      AND strategy_version = :'strategy_version'
-      AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
+    FROM strategy_positions
   ), 0),
   COALESCE((
     SELECT COUNT(*)::int
-    FROM orders
-    WHERE trading_mode = 'paper'
-      AND strategy_version = :'strategy_version'
-      AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
-      AND status IN (
-        'pending_submit',
-        'submitting',
-        'pending_new',
-        'new',
-        'accepted',
-        'accepted_for_bidding',
-        'submitted',
-        'partially_filled',
-        'held',
-        'pending_replace',
-        'pending_cancel',
-        'stopped',
-        'suspended',
-        'done_for_day'
-      )
+    FROM active_strategy_orders
   ), 0),
   COUNT(*) FILTER (
     WHERE event_type IN (
@@ -484,6 +572,9 @@ IFS='|' read -r supervisor_cycles disabled_cycles decision_cycles decision_recor
   strategy_decision_log_cycles strategy_decision_log_records latest_decision_log \
   strategy_decision_log_summary strategy_accepted_decisions latest_accepted_decision_log \
   recent_entry_orders recent_entry_order_status_summary \
+  accepted_symbol_count accepted_symbols materialized_entry_symbol_count materialized_entry_symbols \
+  unmaterialized_accepted_symbol_count unmaterialized_accepted_symbols \
+  stale_pending_entry_orders stale_pending_entry_order_summary \
   active_strategy_names disabled_reasons strategy_disabled_reasons \
   stock_open_positions active_stock_orders dispatch_failures stream_issues <<< "$stats"
 
@@ -564,10 +655,13 @@ if [[ "${strategy_evidence_cycles:-0}" -eq 0 ]]; then
   exit 1
 fi
 
-if [[ "${strategy_accepted_decisions:-0}" -gt 0 \
-  && "${recent_entry_orders:-0}" -eq 0 \
-  && "$has_stock_exposure" != "true" ]]; then
-  echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY accepted_decisions=${strategy_accepted_decisions:-0} but recent_entry_orders=0 latest_accepted_decision_log=${latest_accepted_decision_log:-none} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
+if [[ "${unmaterialized_accepted_symbol_count:-0}" -gt 0 ]]; then
+  echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY accepted_decisions=${strategy_accepted_decisions:-0} unmaterialized_accepted_symbols=[${unmaterialized_accepted_symbols:-}] accepted_symbols=[${accepted_symbols:-}] materialized_entry_symbols=[${materialized_entry_symbols:-}] recent_entry_orders=${recent_entry_orders:-0} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} latest_accepted_decision_log=${latest_accepted_decision_log:-none} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
+  exit 1
+fi
+
+if [[ "${stale_pending_entry_orders:-0}" -gt 0 ]]; then
+  echo "paper activity failed: stale pending entry orders count=${stale_pending_entry_orders:-0} max_age_minutes=$PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES symbols=[${stale_pending_entry_order_summary:-}]" >&2
   exit 1
 fi
 
@@ -617,4 +711,4 @@ if [[ "${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT,,}" == "true" ]]; then
   fi
 fi
 
-echo "paper activity ok: supervisor_cycles=$supervisor_cycles disabled_cycles=${disabled_cycles:-0} latest_cycle_entries_disabled=${latest_cycle_entries_disabled:-false} decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_blocked_cycles=${strategy_blocked_cycles:-0} latest_${PAPER_ACTIVITY_STRATEGY}_blocked=${latest_cycle_strategy_blocked:-false} dispatch_failures=${dispatch_failures:-0} stream_issues=${stream_issues:-0} ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_decision_log_summary=[${strategy_decision_log_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_accepted_decisions=${strategy_accepted_decisions:-0} latest_${PAPER_ACTIVITY_STRATEGY}_accepted_decision_log=${latest_accepted_decision_log:-none} ${PAPER_ACTIVITY_STRATEGY}_recent_entry_orders=${recent_entry_orders:-0} ${PAPER_ACTIVITY_STRATEGY}_entry_order_status_summary=[${recent_entry_order_status_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source require_decision_log=${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,} require_broker_account=${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT,,} broker_account_status=${broker_account_status:-unset} broker_equity=${broker_equity:-unset} broker_buying_power=${broker_buying_power:-unset} broker_minimum_required=${broker_minimum_buying_power:-unset} broker_trading_blocked=${broker_trading_blocked:-unset} broker_open_orders=${broker_open_orders:-unset} broker_open_positions=${broker_open_positions:-unset} broker_open_order_symbols=${broker_open_order_symbols:-none} broker_open_position_symbols=${broker_open_position_symbols:-none} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
+echo "paper activity ok: supervisor_cycles=$supervisor_cycles disabled_cycles=${disabled_cycles:-0} latest_cycle_entries_disabled=${latest_cycle_entries_disabled:-false} decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_blocked_cycles=${strategy_blocked_cycles:-0} latest_${PAPER_ACTIVITY_STRATEGY}_blocked=${latest_cycle_strategy_blocked:-false} dispatch_failures=${dispatch_failures:-0} stream_issues=${stream_issues:-0} ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_decision_log_summary=[${strategy_decision_log_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_accepted_decisions=${strategy_accepted_decisions:-0} ${PAPER_ACTIVITY_STRATEGY}_accepted_symbols=[${accepted_symbols:-}] latest_${PAPER_ACTIVITY_STRATEGY}_accepted_decision_log=${latest_accepted_decision_log:-none} ${PAPER_ACTIVITY_STRATEGY}_recent_entry_orders=${recent_entry_orders:-0} ${PAPER_ACTIVITY_STRATEGY}_entry_order_status_summary=[${recent_entry_order_status_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_materialized_entry_symbols=[${materialized_entry_symbols:-}] ${PAPER_ACTIVITY_STRATEGY}_unmaterialized_accepted_symbols=[${unmaterialized_accepted_symbols:-}] ${PAPER_ACTIVITY_STRATEGY}_stale_pending_entry_orders=${stale_pending_entry_orders:-0} ${PAPER_ACTIVITY_STRATEGY}_stale_pending_entry_order_summary=[${stale_pending_entry_order_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source require_decision_log=${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,} require_broker_account=${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT,,} broker_account_status=${broker_account_status:-unset} broker_equity=${broker_equity:-unset} broker_buying_power=${broker_buying_power:-unset} broker_minimum_required=${broker_minimum_buying_power:-unset} broker_trading_blocked=${broker_trading_blocked:-unset} broker_open_orders=${broker_open_orders:-unset} broker_open_positions=${broker_open_positions:-unset} broker_open_order_symbols=${broker_open_order_symbols:-none} broker_open_position_symbols=${broker_open_position_symbols:-none} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
