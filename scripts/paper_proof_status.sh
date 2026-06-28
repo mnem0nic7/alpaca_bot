@@ -1392,11 +1392,16 @@ if post_close_target_session is not None:
             if status == "missing"
         ]
         failed_checks = []
-        session_guard_status = post_close_check_statuses["session_guard"].split(":", 1)[0]
+        session_guard_parts = post_close_check_statuses["session_guard"].split(":")
+        session_guard_status = session_guard_parts[0]
+        session_guard_exit_code = session_guard_parts[1] if len(session_guard_parts) > 1 else ""
         profit_probe_parts = post_close_check_statuses["paper_profit_probe"].split(":")
         profit_probe_status = profit_probe_parts[0]
         profit_probe_exit_code = profit_probe_parts[1] if len(profit_probe_parts) > 1 else ""
-        if session_guard_status != "missing" and session_guard_status != "passed":
+        if session_guard_status != "missing" and not (
+            session_guard_status == "passed"
+            or (session_guard_status == "pending" and session_guard_exit_code == "43")
+        ):
             failed_checks.append("session_guard")
         if profit_probe_status != "missing" and not (
             profit_probe_status == "passed"

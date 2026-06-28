@@ -1061,6 +1061,8 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "guard_min_pnl=\"${SESSION_GUARD_FAIL_BELOW_PNL:-0}\"" in lock_skip
     assert "reason=lock_busy_already_passed" in lock_skip
     assert "session guard passed: lock busy after recent pass" in lock_skip
+    assert "reason=lock_busy_already_pending" in lock_skip
+    assert "session guard pending: lock busy after recent pending result" in lock_skip
     assert "paper_profit_probe)" in lock_skip
     assert "reason=lock_busy_already_pending" in lock_skip
     assert "paper profit probe pending: lock busy after recent pending result" in lock_skip
@@ -1336,6 +1338,58 @@ def test_session_guard_lock_skip_uses_recent_post_close_pass(
     assert "min_pnl=1.23" in result.stdout
     assert "reason=lock_busy_already_passed" in result.stdout
     assert "session guard passed: lock busy after recent pass" in result.stdout
+
+
+def test_session_guard_lock_skip_uses_recent_post_close_pending(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "echo 'post_close_check_latest=pending|43|2026-06-29T21:10:00.000000Z|0'\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "PROFIT_PROBE_STRATEGY=bull_flag",
+            ]
+        )
+    )
+    lock_file = tmp_path / "session-guard.lock"
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "session_guard",
+            str(lock_file),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "SESSION_GUARD_START_DATE": "2026-07-06",
+            "SESSION_GUARD_STRATEGY": "custom_flag",
+            "SESSION_GUARD_MIN_TRADES": "12",
+            "SESSION_GUARD_FAIL_BELOW_PNL": "1.23",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+    assert "proof_start=2026-07-06" in result.stdout
+    assert "strategy=custom_flag" in result.stdout
+    assert "min_trades=12" in result.stdout
+    assert "min_pnl=1.23" in result.stdout
+    assert "reason=lock_busy_already_pending" in result.stdout
+    assert "session guard pending: lock busy after recent pending result" in result.stdout
 
 
 def test_profit_probe_lock_skip_uses_recent_post_close_pending(
@@ -1788,7 +1842,8 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "latest_checks AS" in script
     assert "missing AS" in script
     assert "invalid AS" in script
-    assert "check_name = 'session_guard' AND status = 'passed'" in script
+    assert "check_name = 'session_guard'" in script
+    assert "status = 'passed'" in script
     assert "check_name = 'paper_profit_probe'" in script
     assert "OR (status = 'pending' AND exit_code = '43')" in script
     assert "check_name = 'paper_profit_probe' AND status IN ('passed', 'pending')" not in script
@@ -2810,6 +2865,78 @@ def test_session_guard_preserves_invocation_overrides_after_env_source(
     assert "custom_flag session guard pending 2026-07-07" in result.stdout
 
 
+def test_session_guard_below_pnl_after_min_trades_stays_pending(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+            ]
+        )
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    session_eval_marker = tmp_path / "session_eval_called"
+    funnel_marker = tmp_path / "funnel_called"
+    close_only_marker = tmp_path / "close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "args=\"$*\"\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'alpaca-bot-session-eval'; then\n"
+        f"  touch {session_eval_marker}\n"
+        "  printf 'Session Evaluation: 2026-06-29\\n'\n"
+        "  printf 'Trades:   10\\n'\n"
+        "  printf 'Total PnL: $-12.34\\n'\n"
+        "  printf 'Guard failed: pnl=$-12.34 below $0.00 after 10 trades.\\n'\n"
+        "  exit 42\n"
+        "fi\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'alpaca-bot-funnel-report'; then\n"
+        f"  touch {funnel_marker}\n"
+        "  printf 'funnel diagnostic ok\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if printf '%s\\n' \"$args\" | grep -q ' admin close-only'; then\n"
+        f"  touch {close_only_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'BROKER_FLAT_CONTEXT'; then\n"
+        "  printf 'bull_flag session guard 2026-06-29 broker exposure ok: open_orders=0 open_positions=0\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '2026-06-29\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/session_guard.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 strategy=bull_flag min_trades=10 min_pnl=0"
+    ) in result.stdout
+    assert "Guard failed: pnl=$-12.34 below $0.00 after 10 trades." in result.stdout
+    assert (
+        "session guard pending: same-day pnl below 0 after 10+ trades; "
+        "continuing cumulative proof window"
+    ) in result.stdout
+    assert "broker exposure ok: open_orders=0 open_positions=0" in result.stdout
+    assert session_eval_marker.exists()
+    assert funnel_marker.exists()
+    assert not close_only_marker.exists()
+
+
 def test_paper_profit_probe_pending_before_proof_start_does_not_close_only(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     env_file.write_text(
@@ -3402,6 +3529,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "post_close_audit_status = \"missing\"" in script
     assert "post_close_audit_status = \"failed\"" in script
     assert "post_close_audit_status = \"ok\"" in script
+    assert "session_guard_parts = post_close_check_statuses[\"session_guard\"].split(\":\")" in script
+    assert "session_guard_exit_code = session_guard_parts[1]" in script
+    assert (
+        "session_guard_status == \"pending\" and session_guard_exit_code == \"43\""
+        in script
+    )
     assert "session_guard_status == \"passed\" and profit_probe_status == \"passed\"" in script
     assert "profitable_enough = trade_count >= min_trades and pnl >= min_pnl" in script
     assert "trade_pnl_rows = [" in script
@@ -3828,7 +3961,9 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert '6) TZ=America/New_York date -d "1 day ago" +%F ;;' in profit_probe
     assert '7) TZ=America/New_York date -d "2 days ago" +%F ;;' in profit_probe
     assert '*) TZ=America/New_York date -d "1 day ago" +%F ;;' in profit_probe
-    assert '"$rc" -eq 42 || "$rc" -eq 44 || "$rc" -eq 46' in session_guard
+    assert 'if [[ "$rc" -eq 42 ]]; then' in session_guard
+    assert "session guard pending: same-day pnl below" in session_guard
+    assert '"$rc" -eq 44 || "$rc" -eq 46' in session_guard
     assert "open positions remain after close" in session_guard
     assert "session guard failed ${SESSION_GUARD_DATE}: operational diagnostics contain proof-blocking issues" in session_guard
     assert "session guard failed: could not apply close-only guard" in session_guard

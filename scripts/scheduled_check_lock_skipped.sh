@@ -753,11 +753,17 @@ case "$CHECK_NAME" in
     latest_guard_age_minutes=""
     IFS='|' read -r latest_guard_status latest_guard_exit_code latest_guard_created_at latest_guard_age_minutes <<< "$latest_guard"
     if [[ "$latest_guard_age_minutes" =~ ^[0-9]+$ ]] \
-      && (( 10#$latest_guard_age_minutes <= 10#$post_close_lock_max_age )) \
-      && [[ "$latest_guard_status" == "passed" && "$latest_guard_exit_code" == "0" ]]; then
-      echo "scheduled check context: session_date=$session_date proof_start=$guard_proof_start strategy=$guard_strategy min_trades=$guard_min_trades min_pnl=$guard_min_pnl reason=lock_busy_already_passed"
-      echo "session guard passed: lock busy after recent pass for session $session_date created_at=${latest_guard_created_at:-unknown} age_minutes=$latest_guard_age_minutes"
-      exit 0
+      && (( 10#$latest_guard_age_minutes <= 10#$post_close_lock_max_age )); then
+      if [[ "$latest_guard_status" == "passed" && "$latest_guard_exit_code" == "0" ]]; then
+        echo "scheduled check context: session_date=$session_date proof_start=$guard_proof_start strategy=$guard_strategy min_trades=$guard_min_trades min_pnl=$guard_min_pnl reason=lock_busy_already_passed"
+        echo "session guard passed: lock busy after recent pass for session $session_date created_at=${latest_guard_created_at:-unknown} age_minutes=$latest_guard_age_minutes"
+        exit 0
+      fi
+      if [[ "$latest_guard_status" == "pending" && "$latest_guard_exit_code" == "43" ]]; then
+        echo "scheduled check context: session_date=$session_date proof_start=$guard_proof_start strategy=$guard_strategy min_trades=$guard_min_trades min_pnl=$guard_min_pnl reason=lock_busy_already_pending"
+        echo "session guard pending: lock busy after recent pending result for session $session_date created_at=${latest_guard_created_at:-unknown} age_minutes=$latest_guard_age_minutes"
+        exit 43
+      fi
     fi
     echo "scheduled check context: session_date=$session_date proof_start=$guard_proof_start strategy=$guard_strategy min_trades=$guard_min_trades min_pnl=$guard_min_pnl reason=lock_busy"
     ;;

@@ -212,11 +212,14 @@ if [[ "$rc" -eq 42 || "$rc" -eq 46 ]]; then
   fi
 fi
 
-if [[ "$rc" -eq 42 || "$rc" -eq 44 || "$rc" -eq 46 ]]; then
+if [[ "$rc" -eq 42 ]]; then
+  echo \
+    "session guard pending: same-day pnl below ${SESSION_GUARD_FAIL_BELOW_PNL} after ${SESSION_GUARD_MIN_TRADES}+ trades; continuing cumulative proof window"
+  rc=43
+fi
+
+if [[ "$rc" -eq 44 || "$rc" -eq 46 ]]; then
   case "$rc" in
-    42)
-      reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: pnl below ${SESSION_GUARD_FAIL_BELOW_PNL} after ${SESSION_GUARD_MIN_TRADES}+ trades"
-      ;;
     44)
       reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: open positions remain after close"
       if [[ "$broker_flat_failed" == "true" ]]; then
