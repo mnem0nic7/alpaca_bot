@@ -135,6 +135,24 @@ def load_latest_completed_session_date(settings: Settings) -> tuple[date | None,
     return max(completed), None
 
 
+def load_next_market_session_date(settings: Settings) -> tuple[date | None, str | None]:
+    now = datetime.now(settings.market_timezone)
+    try:
+        calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+            start=now.date(),
+            end=now.date() + timedelta(days=10),
+        )
+    except Exception as exc:
+        return None, str(exc)
+
+    upcoming = [
+        session.session_date for session in calendar if session.session_date >= now.date()
+    ]
+    if not upcoming:
+        return None, "no upcoming market sessions found"
+    return min(upcoming), None
+
+
 def load_broker_exposure(
     settings: Settings,
 ) -> tuple[
@@ -189,6 +207,16 @@ proof_start = parse_date(os.environ["PROOF_STATUS_START_DATE"], name="PROOF_STAT
 end_value = os.environ.get("PROOF_STATUS_END_DATE", "")
 current_market_date = datetime.now(settings.market_timezone).date()
 latest_completed_session, calendar_warning = load_latest_completed_session_date(settings)
+next_market_session, next_session_warning = load_next_market_session_date(settings)
+if next_session_warning:
+    calendar_warning = (
+        f"{calendar_warning}; {next_session_warning}"
+        if calendar_warning
+        else next_session_warning
+    )
+readiness_target_session = next_market_session or current_market_date
+if readiness_target_session < proof_start:
+    readiness_target_session = proof_start
 (
     broker_open_orders,
     broker_open_positions,
@@ -253,6 +281,45 @@ try:
 
         cur.execute(
             """
+            SELECT created_at
+            FROM audit_events
+            WHERE event_type = 'supervisor_started'
+              AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)
+              AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (trading_mode.value, strategy_version),
+        )
+        latest_supervisor_row = cur.fetchone()
+        latest_supervisor_started_at = (
+            latest_supervisor_row[0] if latest_supervisor_row else None
+        )
+
+        cur.execute(
+            """
+            SELECT
+              COALESCE(payload->>'status', '') AS status,
+              created_at
+            FROM audit_events
+            WHERE event_type = 'scheduled_check_completed'
+              AND payload->>'trading_mode' = %s
+              AND payload->>'strategy_version' = %s
+              AND payload->>'check_name' = 'paper_readiness'
+              AND payload->>'session_date' = %s
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (
+                trading_mode.value,
+                strategy_version,
+                readiness_target_session.isoformat(),
+            ),
+        )
+        readiness_audit_row = cur.fetchone()
+
+        cur.execute(
+            """
             SELECT
               (
                 SELECT COUNT(*)::int
@@ -313,6 +380,31 @@ exit_sessions = [
 ]
 first_exit_session = min(exit_sessions).isoformat() if exit_sessions else ""
 latest_exit_session = max(exit_sessions).isoformat() if exit_sessions else ""
+latest_supervisor_started_text = (
+    latest_supervisor_started_at.isoformat()
+    if latest_supervisor_started_at is not None
+    else "none"
+)
+readiness_audit_check_status = "missing"
+readiness_audit_created_at = None
+readiness_audit_status = "missing"
+if readiness_audit_row:
+    readiness_audit_check_status = readiness_audit_row[0] or "unknown"
+    readiness_audit_created_at = readiness_audit_row[1]
+    if (
+        latest_supervisor_started_at is not None
+        and readiness_audit_created_at < latest_supervisor_started_at
+    ):
+        readiness_audit_status = "stale"
+    elif readiness_audit_check_status == "passed":
+        readiness_audit_status = "ok"
+    else:
+        readiness_audit_status = readiness_audit_check_status
+readiness_audit_created_text = (
+    readiness_audit_created_at.isoformat()
+    if readiness_audit_created_at is not None
+    else "none"
+)
 proof_not_started = proof_end < proof_start
 if proof_not_started:
     proof_status = "pending"
@@ -357,6 +449,8 @@ if cron_health_status != "ok":
     blockers.append("cron_health_failed")
 if ops_health_status != "ok":
     blockers.append("ops_health_failed")
+if readiness_audit_status != "ok":
+    blockers.append(f"readiness_audit_{readiness_audit_status}")
 if local_open_positions > 0:
     blockers.append("local_open_positions")
 if local_active_orders > 0:
@@ -405,6 +499,14 @@ print(
     "paper proof runtime: "
     f"ops_status={ops_health_status} "
     f"ops_detail={ops_health_detail or 'none'}"
+)
+print(
+    "paper proof readiness audit: "
+    f"status={readiness_audit_status} "
+    f"target_session={readiness_target_session.isoformat()} "
+    f"check_status={readiness_audit_check_status} "
+    f"created_at={readiness_audit_created_text} "
+    f"latest_supervisor_started_at={latest_supervisor_started_text}"
 )
 print(f"paper proof active strategies: {active_strategies or 'none'}")
 print(

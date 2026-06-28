@@ -1029,6 +1029,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "if [[ \"$args\" == *'--entrypoint python admin'* ]]; then\n"
         "  printf 'paper proof active strategies: bull_flag\\n'\n"
         "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh\\n'\n"
+        "  printf 'paper proof readiness audit: status=ok target_session=2026-06-29 check_status=passed created_at=2026-06-29T13:20:00+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00\\n'\n"
         "  printf 'paper proof scheduled check: name=paper_profit_probe status=pending exit_code=43 session_date=2026-06-26 proof_start=2026-06-29 created_at=2026-06-27T22:00:00.000000Z\\n'\n"
         "  printf 'paper proof progress: status=pending closed_trades=3 required_trades=10 pnl=12.34 required_pnl=0.01 window=2026-06-29..2026-06-29 first_exit_session=2026-06-29 latest_exit_session=2026-06-29\\n'\n"
         "  exit 0\n"
@@ -1057,6 +1058,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     assert "  status=enabled kill_switch=false reason=proof running" in result.stdout
     assert "paper proof active strategies: bull_flag" in result.stdout
     assert "paper proof runtime: ops_status=ok" in result.stdout
+    assert "paper proof readiness audit: status=ok target_session=2026-06-29" in result.stdout
     assert "paper proof scheduled check: name=paper_profit_probe status=pending" in result.stdout
     assert (
         "paper proof progress: status=pending closed_trades=3 "
@@ -1073,6 +1075,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     script = Path("scripts/paper_proof_status.sh").read_text()
 
     assert "load_latest_completed_session_date" in script
+    assert "load_next_market_session_date" in script
     assert "AlpacaExecutionAdapter.from_settings" in script
     assert "get_market_calendar" in script
     assert "close_at + timedelta(minutes=30)" in script
@@ -1101,6 +1104,20 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "paper proof runtime:" in script
     assert "ops_status={ops_health_status}" in script
     assert "ops_detail={ops_health_detail or 'none'}" in script
+    assert "readiness_target_session = next_market_session or current_market_date" in script
+    assert "if readiness_target_session < proof_start" in script
+    assert "event_type = 'supervisor_started'" in script
+    assert "latest_supervisor_started_at" in script
+    assert "payload->>'check_name' = 'paper_readiness'" in script
+    assert "payload->>'session_date' = %s" in script
+    assert "readiness_audit_status" in script
+    assert "readiness_audit_status = \"stale\"" in script
+    assert "readiness_audit_{readiness_audit_status}" in script
+    assert "paper proof readiness audit:" in script
+    assert "status={readiness_audit_status}" in script
+    assert "target_session={readiness_target_session.isoformat()}" in script
+    assert "check_status={readiness_audit_check_status}" in script
+    assert "created_at={readiness_audit_created_text}" in script
     assert "strategy_disabled" in script
     assert "posture_drifted" in script
     assert "broker_account_blocked" in script
