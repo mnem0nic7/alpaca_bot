@@ -1365,7 +1365,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     fake_runtime_health = tmp_path / "runtime_image_health_check.sh"
     fake_runtime_health.write_text(
         "#!/usr/bin/env bash\n"
-        "printf 'runtime image health ok: service=web files=14\\n'\n"
+        "printf 'runtime image health ok: services=web,supervisor files=14\\n'\n"
     )
     fake_runtime_health.chmod(0o755)
     fake_docker = fake_bin / "docker"
@@ -1392,7 +1392,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "  printf 'paper proof active strategies: bull_flag\\n'\n"
         "  printf 'paper proof watchlist: status=ok active=980 enabled=986 ignored=6 required_active=900\\n'\n"
         "  printf 'paper proof sizing: status=ok confidence_floor=0.25 manual_baseline=0.25 set_by=operator required_floor=0.25 weight_status=ok active_weights=[bull_flag] stored_weights=[bull_flag] weight_sum=1 target_weight=1.0 target_sharpe=0.0\\n'\n"
-        "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh image_status=ok image_detail=runtime image health ok: service=web files=14\\n'\n"
+        "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh image_status=ok image_detail=runtime image health ok: services=web,supervisor files=14\\n'\n"
         "  printf 'paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00 latest_event=trade_update_stream_started:2026-06-29T12:59:59+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00 grace_seconds=120\\n'\n"
         "  printf 'paper proof readiness audit: status=ok target_session=2026-06-29 check_status=passed created_at=2026-06-29T13:20:00+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00\\n'\n"
         "  printf 'paper proof post-close audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 17:25 America/New_York session_guard=passed:0:2026-06-29T21:10:00+00:00 paper_profit_probe=pending:43:2026-06-29T21:20:00+00:00\\n'\n"
@@ -1638,6 +1638,8 @@ def test_runtime_image_health_check_compares_deployed_package_to_workspace() -> 
     script = Path("scripts/runtime_image_health_check.sh").read_text()
 
     assert "RUNTIME_IMAGE_HEALTH_SERVICE" in script
+    assert "RUNTIME_IMAGE_HEALTH_SERVICES" in script
+    assert "supervisor" in script
     assert "RUNTIME_IMAGE_HEALTH_FILES" in script
     assert "runtime/supervisor.py" in script
     assert "core/engine.py" in script
@@ -1647,8 +1649,9 @@ def test_runtime_image_health_check_compares_deployed_package_to_workspace() -> 
     assert "import alpaca_bot" in script
     assert "Path(alpaca_bot.__file__).resolve().parent" in script
     assert "hashlib.sha256(path.read_bytes()).hexdigest()" in script
-    assert 'diff -u "$host_hashes" "$image_hashes"' in script
+    assert 'diff -u "$host_hashes" "$image_hash"' in script
     assert "runtime image health ok:" in script
+    assert "services=${checked_services[*]}" in script
     assert "deployed package differs from workspace" in script
 
 
