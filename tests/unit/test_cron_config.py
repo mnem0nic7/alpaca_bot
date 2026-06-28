@@ -1038,6 +1038,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "  printf 'paper proof watchlist: status=ok active=980 enabled=986 ignored=6 required_active=900\\n'\n"
         "  printf 'paper proof sizing: status=ok confidence_floor=0.25 manual_baseline=0.25 set_by=operator required_floor=0.25 weight_status=ok active_weights=[bull_flag] stored_weights=[bull_flag] weight_sum=1 target_weight=1.0 target_sharpe=0.0\\n'\n"
         "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh\\n'\n"
+        "  printf 'paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00 latest_event=trade_update_stream_started:2026-06-29T12:59:59+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00 grace_seconds=120\\n'\n"
         "  printf 'paper proof readiness audit: status=ok target_session=2026-06-29 check_status=passed created_at=2026-06-29T13:20:00+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00\\n'\n"
         "  printf 'paper proof post-close audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 17:25 America/New_York session_guard=passed:0:2026-06-29T21:10:00+00:00 paper_profit_probe=pending:43:2026-06-29T21:20:00+00:00\\n'\n"
         "  printf 'paper proof scheduled check: name=paper_profit_probe status=pending exit_code=43 session_date=2026-06-26 proof_start=2026-06-29 created_at=2026-06-27T22:00:00.000000Z\\n'\n"
@@ -1070,6 +1071,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     assert "paper proof watchlist: status=ok active=980 enabled=986 ignored=6 required_active=900" in result.stdout
     assert "paper proof sizing: status=ok confidence_floor=0.25" in result.stdout
     assert "paper proof runtime: ops_status=ok" in result.stdout
+    assert "paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00" in result.stdout
     assert "paper proof readiness audit: status=ok target_session=2026-06-29" in result.stdout
     assert "paper proof post-close audit: status=ok target_session=2026-06-29" in result.stdout
     assert "paper proof scheduled check: name=paper_profit_probe status=pending" in result.stdout
@@ -1111,6 +1113,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_MIN_CONFIDENCE_FLOOR" in script
     assert "PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25" in script
     assert "PROOF_STATUS_MIN_CONFIDENCE_FLOOR must be a non-negative number" in script
+    assert "PROOF_STATUS_STREAM_START_GRACE_SECONDS" in script
+    assert "PROOF_STATUS_STREAM_START_GRACE_SECONDS must be a non-negative integer" in script
     assert "./scripts/ops_check.sh \"$ENV_FILE\" 2>&1" in script
     assert "PROOF_STATUS_OPS_HEALTH_STATUS" in script
     assert "PROOF_STATUS_OPS_HEALTH_DETAIL" in script
@@ -1127,6 +1131,17 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "if readiness_target_session < proof_start" in script
     assert "event_type = 'supervisor_started'" in script
     assert "latest_supervisor_started_at" in script
+    assert "'trade_update_stream_started'" in script
+    assert "'trade_update_stream_stopped'" in script
+    assert "'trade_update_stream_failed'" in script
+    assert "latest_stream_started_at" in script
+    assert "stream_status = \"missing\"" in script
+    assert "stream_status = \"stale\"" in script
+    assert "blockers.append(f\"stream_{stream_status}\")" in script
+    assert "paper proof stream:" in script
+    assert "latest_start={latest_stream_started_text}" in script
+    assert "latest_event={latest_stream_event_text}" in script
+    assert "grace_seconds={stream_start_grace_seconds}" in script
     assert "payload->>'check_name' = 'paper_readiness'" in script
     assert "payload->>'session_date' = %s" in script
     assert "readiness_audit_status" in script

@@ -22,6 +22,7 @@ set +a
 
 PROOF_STATUS_MIN_WATCHLIST_SYMBOLS="${PROOF_STATUS_MIN_WATCHLIST_SYMBOLS:-${PAPER_READINESS_MIN_WATCHLIST_SYMBOLS:-900}}"
 PROOF_STATUS_MIN_CONFIDENCE_FLOOR="${PROOF_STATUS_MIN_CONFIDENCE_FLOOR:-${PAPER_READINESS_MIN_CONFIDENCE_FLOOR:-0.25}}"
+PROOF_STATUS_STREAM_START_GRACE_SECONDS="${PROOF_STATUS_STREAM_START_GRACE_SECONDS:-120}"
 
 if [[ -z "${STRATEGY_VERSION:-}" ]]; then
   echo "missing STRATEGY_VERSION in $ENV_FILE" >&2
@@ -50,6 +51,10 @@ if [[ ! "$PROOF_STATUS_MIN_WATCHLIST_SYMBOLS" =~ ^[0-9]+$ ]] \
 fi
 if [[ ! "$PROOF_STATUS_MIN_CONFIDENCE_FLOOR" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
   echo "PROOF_STATUS_MIN_CONFIDENCE_FLOOR must be a non-negative number" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_STREAM_START_GRACE_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "PROOF_STATUS_STREAM_START_GRACE_SECONDS must be a non-negative integer" >&2
   exit 1
 fi
 
@@ -93,6 +98,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_MIN_PNL="$PROOF_STATUS_MIN_PNL" \
   -e PROOF_STATUS_MIN_WATCHLIST_SYMBOLS="$PROOF_STATUS_MIN_WATCHLIST_SYMBOLS" \
   -e PROOF_STATUS_MIN_CONFIDENCE_FLOOR="$PROOF_STATUS_MIN_CONFIDENCE_FLOOR" \
+  -e PROOF_STATUS_STREAM_START_GRACE_SECONDS="$PROOF_STATUS_STREAM_START_GRACE_SECONDS" \
   -e PROOF_STATUS_START_DATE="$PROOF_STATUS_START_DATE" \
   -e PROOF_STATUS_END_DATE="$PROOF_STATUS_END_DATE" \
   -e PROOF_STATUS_CRON_HEALTH_STATUS="$cron_health_status" \
@@ -215,6 +221,7 @@ min_trades = int(os.environ["PROOF_STATUS_MIN_TRADES"])
 min_pnl = float(os.environ["PROOF_STATUS_MIN_PNL"])
 min_watchlist_symbols = int(os.environ["PROOF_STATUS_MIN_WATCHLIST_SYMBOLS"])
 min_confidence_floor = float(os.environ["PROOF_STATUS_MIN_CONFIDENCE_FLOOR"])
+stream_start_grace_seconds = int(os.environ["PROOF_STATUS_STREAM_START_GRACE_SECONDS"])
 cron_health_status = os.environ.get("PROOF_STATUS_CRON_HEALTH_STATUS", "unknown")
 cron_health_detail = os.environ.get("PROOF_STATUS_CRON_HEALTH_DETAIL", "").strip()
 ops_health_status = os.environ.get("PROOF_STATUS_OPS_HEALTH_STATUS", "unknown")
@@ -372,6 +379,41 @@ try:
 
         cur.execute(
             """
+            SELECT event_type, created_at
+            FROM audit_events
+            WHERE event_type IN (
+                'trade_update_stream_started',
+                'trade_update_stream_stopped',
+                'trade_update_stream_failed'
+              )
+              AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)
+              AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (trading_mode.value, strategy_version),
+        )
+        latest_stream_event_row = cur.fetchone()
+
+        cur.execute(
+            """
+            SELECT created_at
+            FROM audit_events
+            WHERE event_type = 'trade_update_stream_started'
+              AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)
+              AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (trading_mode.value, strategy_version),
+        )
+        latest_stream_start_row = cur.fetchone()
+        latest_stream_started_at = (
+            latest_stream_start_row[0] if latest_stream_start_row else None
+        )
+
+        cur.execute(
+            """
             SELECT
               COALESCE(payload->>'status', '') AS status,
               created_at
@@ -499,6 +541,33 @@ latest_supervisor_started_text = (
     if latest_supervisor_started_at is not None
     else "none"
 )
+latest_stream_event_type = latest_stream_event_row[0] if latest_stream_event_row else None
+latest_stream_event_at = latest_stream_event_row[1] if latest_stream_event_row else None
+latest_stream_started_text = (
+    latest_stream_started_at.isoformat()
+    if latest_stream_started_at is not None
+    else "none"
+)
+latest_stream_event_text = (
+    f"{latest_stream_event_type}:{latest_stream_event_at.isoformat()}"
+    if latest_stream_event_type is not None and latest_stream_event_at is not None
+    else "none"
+)
+stream_status = "ok"
+if latest_stream_started_at is None:
+    stream_status = "missing"
+elif (
+    latest_stream_event_type in {"trade_update_stream_failed", "trade_update_stream_stopped"}
+    and latest_stream_event_at is not None
+    and latest_stream_event_at >= latest_stream_started_at
+):
+    stream_status = latest_stream_event_type.removeprefix("trade_update_stream_")
+elif (
+    latest_supervisor_started_at is not None
+    and latest_stream_started_at
+    < latest_supervisor_started_at - timedelta(seconds=stream_start_grace_seconds)
+):
+    stream_status = "stale"
 readiness_audit_check_status = "missing"
 readiness_audit_created_at = None
 readiness_audit_status = "missing"
@@ -659,6 +728,8 @@ if cron_health_status != "ok":
     blockers.append("cron_health_failed")
 if ops_health_status != "ok":
     blockers.append("ops_health_failed")
+if stream_status != "ok":
+    blockers.append(f"stream_{stream_status}")
 if readiness_audit_status != "ok":
     blockers.append(f"readiness_audit_{readiness_audit_status}")
 if post_close_audit_status in {"missing", "failed"}:
@@ -713,6 +784,14 @@ print(
     "paper proof runtime: "
     f"ops_status={ops_health_status} "
     f"ops_detail={ops_health_detail or 'none'}"
+)
+print(
+    "paper proof stream: "
+    f"status={stream_status} "
+    f"latest_start={latest_stream_started_text} "
+    f"latest_event={latest_stream_event_text} "
+    f"latest_supervisor_started_at={latest_supervisor_started_text} "
+    f"grace_seconds={stream_start_grace_seconds}"
 )
 print(
     "paper proof readiness audit: "
