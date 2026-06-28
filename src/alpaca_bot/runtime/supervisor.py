@@ -2455,7 +2455,7 @@ class RuntimeSupervisor:
             if self._paper_readiness_audit_is_expired(readiness_event, now=now):
                 return False
             payload = getattr(readiness_event, "payload", {}) or {}
-            return payload.get("status") == "passed"
+            return self._paper_readiness_audit_payload_allows_entries(payload)
 
         loader = getattr(audit_store, "list_by_event_types", None)
         if not callable(loader):
@@ -2505,8 +2505,17 @@ class RuntimeSupervisor:
                 continue
             if payload.get("strategy_version", expected_version) != expected_version:
                 continue
-            return payload.get("status") == "passed"
+            return self._paper_readiness_audit_payload_allows_entries(payload)
         return False
+
+    def _paper_readiness_audit_payload_allows_entries(
+        self, payload: dict[str, object]
+    ) -> bool:
+        expected_proof_start = self.settings.profit_probe_start_date.isoformat()
+        return (
+            payload.get("status") == "passed"
+            and payload.get("proof_start") == expected_proof_start
+        )
 
     def _paper_readiness_audit_is_expired(
         self,

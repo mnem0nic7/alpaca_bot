@@ -202,6 +202,15 @@ try:
               COALESCE(payload->>'proof_status', '') AS proof_status,
               COALESCE(payload->>'proof_readiness', '') AS proof_readiness,
               COALESCE(payload->>'proof_blockers', '') AS proof_blockers,
+              COALESCE(payload->>'proof_reason', '') AS proof_reason,
+              COALESCE(payload->>'proof_warnings', '') AS proof_warnings,
+              COALESCE(payload->>'proof_progress_status', '') AS proof_progress_status,
+              COALESCE(payload->>'proof_closed_trades', '') AS proof_closed_trades,
+              COALESCE(payload->>'proof_required_trades', '') AS proof_required_trades,
+              COALESCE(payload->>'proof_pnl', '') AS proof_pnl,
+              COALESCE(payload->>'proof_required_pnl', '') AS proof_required_pnl,
+              COALESCE(payload->>'proof_first_exit_session', '') AS proof_first_exit_session,
+              COALESCE(payload->>'proof_latest_exit_session', '') AS proof_latest_exit_session,
               created_at,
               to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
             FROM audit_events
@@ -233,7 +242,7 @@ finally:
 if not row:
     raise SystemExit(0)
 
-created_raw = row[5]
+created_raw = row[14]
 created_utc = created_raw
 if created_utc.tzinfo is None:
     created_utc = created_utc.replace(tzinfo=timezone.utc)
@@ -243,7 +252,9 @@ age_seconds = (datetime.now(timezone.utc) - created_utc).total_seconds()
 age_minutes = str(max(0, int(age_seconds // 60)))
 print(
     "paper_proof_status_latest="
-    f"{row[0]}|{row[1]}|{row[2]}|{row[3]}|{row[4]}|{row[6]}|"
+    f"{row[0]}|{row[1]}|{row[2]}|{row[3]}|{row[4]}|{row[5]}|"
+    f"{row[6]}|{row[7]}|{row[8]}|{row[9]}|{row[10]}|{row[11]}|"
+    f"{row[12]}|{row[13]}|{row[15]}|"
     f"{age_minutes}"
 )
 PY
@@ -322,9 +333,18 @@ case "$CHECK_NAME" in
     latest_proof=""
     latest_readiness=""
     latest_blockers=""
+    latest_proof_reason=""
+    latest_warnings=""
+    latest_progress_status=""
+    latest_closed_trades=""
+    latest_required_trades=""
+    latest_pnl=""
+    latest_required_pnl=""
+    latest_first_exit_session=""
+    latest_latest_exit_session=""
     latest_created_at=""
     latest_age_minutes=""
-    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_created_at latest_age_minutes <<< "$latest_proof_status"
+    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_proof_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_created_at latest_age_minutes <<< "$latest_proof_status"
     proof_lock_is_recent=false
     if [[ "$latest_age_minutes" =~ ^[0-9]+$ ]] \
       && (( 10#$latest_age_minutes <= 10#$PROOF_STATUS_LOCK_MAX_AGE_MINUTES )); then
@@ -340,6 +360,8 @@ case "$CHECK_NAME" in
     fi
     if [[ "$proof_lock_is_recent" == "true" && "$proof_lock_has_current_evidence" == "true" ]]; then
       echo "scheduled check context: session_date=$session_date proof_start=$proof_start strategy=$proof_strategy min_trades=$proof_min_trades min_pnl=$proof_min_pnl reason=lock_busy_already_reported"
+      echo "paper proof summary: readiness=$latest_readiness proof=$latest_proof reason=${latest_proof_reason:-lock_busy_already_reported} blockers=$latest_blockers warnings=${latest_warnings:-none}"
+      echo "paper proof progress: status=${latest_progress_status:-$latest_proof} closed_trades=${latest_closed_trades:-unknown} required_trades=${latest_required_trades:-$proof_min_trades} pnl=${latest_pnl:-unknown} required_pnl=${latest_required_pnl:-$proof_min_pnl} window=lock_busy_already_reported first_exit_session=${latest_first_exit_session:-none} latest_exit_session=${latest_latest_exit_session:-none}"
       echo "paper proof status check skipped: lock busy after recent proof status $latest_proof created_at=${latest_created_at:-unknown} age_minutes=$latest_age_minutes"
       exit 0
     fi

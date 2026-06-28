@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import time
+from datetime import date, time
 from enum import StrEnum
 import os
 from zoneinfo import ZoneInfo
@@ -34,6 +34,22 @@ def _parse_time(name: str, value: str) -> time:
     hour, minute = parts
     parsed = time(hour=int(hour), minute=int(minute))
     return parsed
+
+
+def _parse_date(name: str, value: str) -> date:
+    if (
+        len(value) != 10
+        or value[4] != "-"
+        or value[7] != "-"
+        or not value[:4].isdigit()
+        or not value[5:7].isdigit()
+        or not value[8:].isdigit()
+    ):
+        raise ValueError(f"{name} must use YYYY-MM-DD format, got {value!r}")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must use YYYY-MM-DD format, got {value!r}") from exc
 
 
 def _parse_symbols(value: str) -> tuple[str, ...]:
@@ -78,6 +94,7 @@ class Settings:
     confidence_floor: float = 0.25
     paper_proof_freeze: bool = False
     paper_readiness_max_pass_age_minutes: int = 180
+    profit_probe_start_date: date = date(2026, 6, 29)
     floor_raise_step: float = 0.10
     drawdown_raise_pct: float = 0.05
     losing_streak_n: int = 3
@@ -227,6 +244,10 @@ class Settings:
             ),
             paper_readiness_max_pass_age_minutes=int(
                 values.get("PAPER_READINESS_MAX_PASS_AGE_MINUTES", "180")
+            ),
+            profit_probe_start_date=_parse_date(
+                "PROFIT_PROBE_START_DATE",
+                values.get("PROFIT_PROBE_START_DATE", "2026-06-29"),
             ),
             floor_raise_step=float(values.get("FLOOR_RAISE_STEP", "0.10")),
             drawdown_raise_pct=float(values.get("DRAWDOWN_RAISE_PCT", "0.05")),

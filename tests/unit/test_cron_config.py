@@ -684,7 +684,12 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "payload->>'min_pnl' = %s" in lock_skip
     assert "PROOF_STATUS_LOCK_MAX_AGE_MINUTES" in lock_skip
     assert "reason=lock_busy_already_reported" in lock_skip
+    assert "paper proof summary:" in lock_skip
+    assert "paper proof progress:" in lock_skip
     assert "paper proof status check skipped:" in lock_skip
+    assert "proof_closed_trades" in lock_skip
+    assert "proof_required_trades" in lock_skip
+    assert "proof_first_exit_session" in lock_skip
     assert '"$latest_status" == "pending" && "$latest_exit_code" == "43" && "$latest_proof" == "pending"' in lock_skip
     assert '"$latest_status" == "passed" && "$latest_exit_code" == "0" && "$latest_proof" == "passed"' in lock_skip
     assert "PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}" in lock_skip
@@ -712,7 +717,7 @@ def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -
     docker.write_text(
         "#!/usr/bin/env bash\n"
         "cat >/dev/null\n"
-        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|2026-06-28T06:37:20.499132Z|0'\n"
+        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|2026-06-28T06:37:20.499132Z|0'\n"
     )
     docker.chmod(0o755)
 
@@ -735,6 +740,14 @@ def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -
 
     assert result.returncode == 0
     assert "reason=lock_busy_already_reported" in result.stdout
+    assert (
+        "paper proof summary: readiness=ready proof=pending "
+        "reason=awaiting_completed_proof_session blockers=none warnings=none"
+    ) in result.stdout
+    assert (
+        "paper proof progress: status=pending closed_trades=0 required_trades=10 "
+        "pnl=0.00 required_pnl=0.01"
+    ) in result.stdout
     assert "paper proof status check skipped:" in result.stdout
 
 
@@ -745,7 +758,7 @@ def test_proof_status_lock_skip_fails_without_recent_evidence(tmp_path: Path) ->
     docker.write_text(
         "#!/usr/bin/env bash\n"
         "cat >/dev/null\n"
-        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|2026-06-28T06:37:20.499132Z|31'\n"
+        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|2026-06-28T06:37:20.499132Z|31'\n"
     )
     docker.chmod(0o755)
 

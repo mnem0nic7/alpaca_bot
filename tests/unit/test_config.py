@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 from alpaca_bot.config import Settings
@@ -103,6 +105,19 @@ def test_paper_readiness_max_pass_age_minutes_env_override():
         _base_env(PAPER_READINESS_MAX_PASS_AGE_MINUTES="45")
     )
     assert settings.paper_readiness_max_pass_age_minutes == 45
+
+
+def test_profit_probe_start_date_default_and_validation():
+    settings = Settings.from_env(_base_env())
+    assert settings.profit_probe_start_date == date(2026, 6, 29)
+
+    with pytest.raises(ValueError, match="PROFIT_PROBE_START_DATE"):
+        Settings.from_env(_base_env(PROFIT_PROBE_START_DATE="20260629"))
+
+
+def test_profit_probe_start_date_env_override():
+    settings = Settings.from_env(_base_env(PROFIT_PROBE_START_DATE="2026-07-06"))
+    assert settings.profit_probe_start_date == date(2026, 7, 6)
 
 
 def test_replay_slippage_bps_default_and_validation():

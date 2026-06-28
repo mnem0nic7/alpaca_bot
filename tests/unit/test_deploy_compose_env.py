@@ -22,6 +22,7 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "OPTION_STRATEGY_ROLLING_LOSS_DAYS",
         "PAPER_PROOF_FREEZE",
         "PAPER_READINESS_MAX_PASS_AGE_MINUTES",
+        "PROFIT_PROBE_START_DATE",
         "REPLAY_SLIPPAGE_BPS",
     }
 
