@@ -324,3 +324,15 @@ python3 -m alpaca_bot.replay.cli portfolio-audit \
 Decision: keep the deployed paper posture unchanged. Current head remains
 ready for the `2026-06-29` paper proof start, with no live/scenario universe
 drift and the same positive after-cost active-universe replay edge.
+
+Scenario freshness scan before the proof start:
+
+- exact active latest-120-day scenario files: `980`
+- daily coverage max date: `2026-06-26` for all `980`
+- intraday coverage max date: `2026-06-26` for all `980`
+- stale scenario files: `0`
+- sparse-but-current intraday files under 1000 bars: `24`
+
+Decision: no universe change. Sparse symbols remain current, were included in
+the positive-edge active-universe replay above, and the live proof stack already
+requires a fresh paper-readiness pass before regular-session entries.
