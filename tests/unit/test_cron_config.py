@@ -184,6 +184,7 @@ def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -
     fake_docker.write_text(
         "#!/usr/bin/env bash\n"
         "printf 'paper_readiness_latest_status=2026-06-29|passed|2026-06-27T18:07:44.000000Z|2026-06-27T18:07:43.000000Z\\n'\n"
+        "printf 'paper_readiness_latest_decision_dry_run=paper decision dry run ok: strategy=bull_flag as_of=2026-06-26T11:30:00-04:00 active=980 decision_records=941 accepted=3 entry_intents=3 sample_times=10:30,11:30,12:30,13:30,14:30,15:30 evaluations=6 min_decision_records=929 max_accepted=3 max_entry_intents=3\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -200,6 +201,9 @@ def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -
         "scheduled check context: session_date=2026-06-29 "
         "proof_start=2026-06-29 reason=already_passed"
     ) in result.stdout
+    assert "paper decision dry run ok: strategy=bull_flag" in result.stdout
+    assert "decision_records=941" in result.stdout
+    assert "sample_times=10:30,11:30,12:30,13:30,14:30,15:30" in result.stdout
     assert "paper readiness already passed for session 2026-06-29" in result.stdout
     assert "paper readiness check skipped" not in result.stdout
 

@@ -122,6 +122,7 @@ else:
             break
 
 conn = connect_postgres(settings.database_url)
+dry_run_row = None
 try:
     with conn.cursor() as cur:
         cur.execute(
@@ -159,6 +160,50 @@ try:
             (settings.trading_mode.value, settings.strategy_version),
         )
         supervisor_row = cur.fetchone()
+        cur.execute(
+            """
+            SELECT
+              COALESCE(payload->>'decision_dry_run_strategy', ''),
+              COALESCE(payload->>'decision_dry_run_as_of', ''),
+              COALESCE(payload->>'decision_dry_run_active', ''),
+              COALESCE(payload->>'decision_dry_run_ignored', ''),
+              COALESCE(payload->>'decision_dry_run_fractionable', ''),
+              COALESCE(payload->>'decision_dry_run_intraday', ''),
+              COALESCE(payload->>'decision_dry_run_completed_intraday', ''),
+              COALESCE(payload->>'decision_dry_run_daily', ''),
+              COALESCE(payload->>'decision_dry_run_thin_completed_lt20', ''),
+              COALESCE(payload->>'decision_dry_run_records', ''),
+              COALESCE(payload->>'decision_dry_run_accepted', ''),
+              COALESCE(payload->>'decision_dry_run_rejected', ''),
+              COALESCE(payload->>'decision_dry_run_skipped_no_signal', ''),
+              COALESCE(payload->>'decision_dry_run_entry_intents', ''),
+              COALESCE(payload->>'decision_dry_run_equity', ''),
+              COALESCE(payload->>'decision_dry_run_sample', ''),
+              COALESCE(payload->>'decision_dry_run_sample_times', ''),
+              COALESCE(payload->>'decision_dry_run_evaluations', ''),
+              COALESCE(payload->>'decision_dry_run_min_decision_records', ''),
+              COALESCE(payload->>'decision_dry_run_max_accepted', ''),
+              COALESCE(payload->>'decision_dry_run_max_entry_intents', '')
+            FROM audit_events
+            WHERE event_type = 'scheduled_check_completed'
+              AND payload->>'check_name' = 'paper_readiness'
+              AND payload->>'status' = 'passed'
+              AND payload->>'session_date' = %s
+              AND payload->>'proof_start' = %s
+              AND payload->>'trading_mode' = %s
+              AND payload->>'strategy_version' = %s
+              AND payload ? 'decision_dry_run_strategy'
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (
+                session_date.isoformat(),
+                proof_start,
+                settings.trading_mode.value,
+                settings.strategy_version,
+            ),
+        )
+        dry_run_row = cur.fetchone()
 finally:
     conn.close()
 
@@ -182,11 +227,51 @@ print(
     f"{session_date.isoformat()}|{status}|{readiness_created_at}|"
     f"{supervisor_started_at}|{readiness_age_minutes}"
 )
+if dry_run_row and dry_run_row[0]:
+    keys = (
+        "strategy",
+        "as_of",
+        "active",
+        "ignored",
+        "fractionable",
+        "intraday",
+        "completed_intraday",
+        "daily",
+        "thin_completed_lt20",
+        "decision_records",
+        "accepted",
+        "rejected",
+        "skipped_no_signal",
+        "entry_intents",
+        "equity",
+        "sample",
+        "sample_times",
+        "evaluations",
+        "min_decision_records",
+        "max_accepted",
+        "max_entry_intents",
+    )
+    fields = [
+        f"{key}={value}"
+        for key, value in zip(keys, dry_run_row)
+        if value
+    ]
+    print(
+        "paper_readiness_latest_decision_dry_run="
+        "paper decision dry run ok: "
+        + " ".join(fields)
+    )
 PY
 )"
+latest_readiness_output="$latest_readiness"
 latest_readiness="$(
-  printf '%s\n' "$latest_readiness" \
+  printf '%s\n' "$latest_readiness_output" \
     | sed -n 's/^paper_readiness_latest_status=//p' \
+    | tail -n 1
+)"
+latest_decision_dry_run_line="$(
+  printf '%s\n' "$latest_readiness_output" \
+    | sed -n 's/^paper_readiness_latest_decision_dry_run=//p' \
     | tail -n 1
 )"
 
@@ -219,6 +304,9 @@ if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "pa
     exec "$PAPER_READINESS_CHECK_SCRIPT" "$ENV_FILE"
   fi
   echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=already_passed"
+  if [[ -n "$latest_decision_dry_run_line" ]]; then
+    echo "$latest_decision_dry_run_line"
+  fi
   echo "paper readiness already passed for session $session_date; final retry not rerun"
   exit 0
 fi
