@@ -1271,8 +1271,20 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "run_container_settings_posture_check" in script
     assert "paper readiness container Settings ok" in script
     assert "paper readiness failed: container Settings posture drift:" in script
+    assert "require_env_value_or_unset BULL_FLAG_MIN_RUN_PCT 0.02" in script
+    assert "require_env_value_or_unset BULL_FLAG_CONSOLIDATION_VOLUME_RATIO 0.6" in script
+    assert "require_env_value_or_unset BULL_FLAG_CONSOLIDATION_RANGE_PCT 0.5" in script
     assert 'check("market_data_feed", settings.market_data_feed.value, "iex")' in script
     assert 'check("trailing_stop_atr_multiplier", settings.trailing_stop_atr_multiplier, 1.5)' in script
+    assert 'check("bull_flag_min_run_pct", settings.bull_flag_min_run_pct, 0.02)' in script
+    assert (
+        'check("bull_flag_consolidation_volume_ratio", '
+        'settings.bull_flag_consolidation_volume_ratio, 0.6)'
+    ) in script
+    assert (
+        'check("bull_flag_consolidation_range_pct", '
+        'settings.bull_flag_consolidation_range_pct, 0.5)'
+    ) in script
     assert 'check("enable_profit_trail", settings.enable_profit_trail, True)' in script
     assert 'check("paper_proof_freeze", settings.paper_proof_freeze, True)' in script
     assert 'check("enable_vwap_entry_filter", settings.enable_vwap_entry_filter, True)' in script
