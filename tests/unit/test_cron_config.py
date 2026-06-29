@@ -1976,6 +1976,10 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "latest_accepted_decision_log" in script
     assert "recent_entry_orders" in script
     assert "recent_entry_order_status_summary" in script
+    assert (
+        "created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')\n"
+        "      OR updated_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')"
+    ) in script
     assert "accepted_symbols" in script
     assert "materialized_entry_symbols" in script
     assert "unmaterialized_accepted_symbols" in script

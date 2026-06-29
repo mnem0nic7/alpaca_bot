@@ -300,7 +300,10 @@ recent_entry_order_rows AS (
     AND strategy_version = :'strategy_version'
     AND strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'
     AND intent_type = 'entry'
-    AND created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+    AND (
+      created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+      OR updated_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+    )
 ),
 active_strategy_orders AS (
   SELECT DISTINCT symbol
