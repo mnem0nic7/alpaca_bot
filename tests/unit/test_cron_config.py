@@ -1811,7 +1811,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_value_or_unset BULL_FLAG_CONSOLIDATION_VOLUME_RATIO 0.6" in script
     assert "require_env_value_or_unset BULL_FLAG_CONSOLIDATION_RANGE_PCT 0.5" in script
     assert 'check("market_data_feed", settings.market_data_feed.value, "iex")' in script
-    assert 'check("trailing_stop_atr_multiplier", settings.trailing_stop_atr_multiplier, 1.5)' in script
+    assert 'check("trailing_stop_atr_multiplier", settings.trailing_stop_atr_multiplier, 1.0)' in script
     assert 'check("bull_flag_min_run_pct", settings.bull_flag_min_run_pct, 0.02)' in script
     assert (
         'check("bull_flag_consolidation_volume_ratio", '
@@ -1887,7 +1887,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_value RISK_PER_TRADE_PCT 0.01" in script
     assert "require_env_value_or_unset ATR_PERIOD 14" in script
     assert "require_env_value_or_unset ATR_STOP_MULTIPLIER 1.0" in script
-    assert "require_env_value TRAILING_STOP_ATR_MULTIPLIER 1.5" in script
+    assert "require_env_value TRAILING_STOP_ATR_MULTIPLIER 1.0" in script
     assert "require_env_value_or_unset TRAILING_STOP_PROFIT_TRIGGER_R 1.0" in script
     assert "require_env_value INTRADAY_CONSECUTIVE_LOSS_GATE 0" in script
     assert "require_env_value ENTRY_WINDOW_START 10:00" in script
@@ -3691,7 +3691,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "abs(float(settings.daily_loss_limit_pct) - 0.01)" in script
     assert "int(settings.atr_period) == 14" in script
     assert "abs(float(settings.atr_stop_multiplier) - 1.0)" in script
-    assert "abs(float(settings.trailing_stop_atr_multiplier) - 1.5)" in script
+    assert "abs(float(settings.trailing_stop_atr_multiplier) - 1.0)" in script
     assert "abs(float(settings.trailing_stop_profit_trigger_r) - 1.0)" in script
     assert "abs(float(settings.bull_flag_min_run_pct) - 0.02)" in script
     assert "abs(float(settings.bull_flag_consolidation_volume_ratio) - 0.6)" in script

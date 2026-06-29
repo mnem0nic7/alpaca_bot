@@ -172,7 +172,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "INTRADAY_CONSECUTIVE_LOSS_GATE=0" in env_text
     assert "ATR_PERIOD=14" in env_text
     assert "ATR_STOP_MULTIPLIER=1.0" in env_text
-    assert "TRAILING_STOP_ATR_MULTIPLIER=1.5" in env_text
+    assert "TRAILING_STOP_ATR_MULTIPLIER=1.0" in env_text
     assert "TRAILING_STOP_PROFIT_TRIGGER_R=1.0" in env_text
     assert "ENABLE_VIX_FILTER=false" in env_text
     assert "ENABLE_SECTOR_FILTER=false" in env_text
@@ -209,7 +209,7 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "INTRADAY_CONSECUTIVE_LOSS_GATE=0" in script
     assert "ATR_PERIOD=14" in script
     assert "ATR_STOP_MULTIPLIER=1.0" in script
-    assert "TRAILING_STOP_ATR_MULTIPLIER=1.5" in script
+    assert "TRAILING_STOP_ATR_MULTIPLIER=1.0" in script
     assert "TRAILING_STOP_PROFIT_TRIGGER_R=1.0" in script
     assert 'ENABLE_VIX_FILTER="false"' in script
     assert 'ENABLE_SECTOR_FILTER="false"' in script
