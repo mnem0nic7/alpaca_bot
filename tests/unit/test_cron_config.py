@@ -1813,6 +1813,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'check("market_data_feed", settings.market_data_feed.value, "iex")' in script
     assert 'check("trailing_stop_atr_multiplier", settings.trailing_stop_atr_multiplier, 1.0)' in script
     assert 'check("bull_flag_min_run_pct", settings.bull_flag_min_run_pct, 0.02)' in script
+    assert 'check("stop_limit_buffer_pct", settings.stop_limit_buffer_pct, 0.0005)' in script
     assert (
         'check("bull_flag_consolidation_volume_ratio", '
         'settings.bull_flag_consolidation_volume_ratio, 0.6)'
@@ -1885,6 +1886,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_value MAX_OPEN_POSITIONS 4" in script
     assert "require_env_value REPLAY_SLIPPAGE_BPS 2.0" in script
     assert "require_env_value RISK_PER_TRADE_PCT 0.01" in script
+    assert "require_env_value STOP_LIMIT_BUFFER_PCT 0.0005" in script
     assert "require_env_value_or_unset ATR_PERIOD 14" in script
     assert "require_env_value_or_unset ATR_STOP_MULTIPLIER 1.0" in script
     assert "require_env_value TRAILING_STOP_ATR_MULTIPLIER 1.0" in script
@@ -3665,6 +3667,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "{settings.max_portfolio_exposure_pct:g}"
     ) in script
     assert "daily_loss_limit_pct={settings.daily_loss_limit_pct:g}" in script
+    assert "stop_limit_buffer_pct={settings.stop_limit_buffer_pct:g}" in script
     assert "atr_period={settings.atr_period}" in script
     assert "atr_stop_multiplier={settings.atr_stop_multiplier:g}" in script
     assert (
@@ -3679,6 +3682,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "entry_window_end={as_hhmm(settings.entry_window_end)}" in script
     assert "flatten_time={as_hhmm(settings.flatten_time)}" in script
     assert "abs(float(settings.relative_volume_threshold) - 2.0)" in script
+    assert "abs(float(settings.stop_limit_buffer_pct) - 0.0005)" in script
     assert 'settings.market_data_feed.value == "iex"' in script
     assert "int(settings.daily_sma_period) == 20" in script
     assert "int(settings.breakout_lookback_bars) == 20" in script

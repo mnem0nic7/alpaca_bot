@@ -302,3 +302,23 @@ was the only candidate with a slightly higher CI lower bound, so it received a
 proof-horizon check; that check reduced first-threshold pass rate and materially
 slowed proof speed versus current. Shorter lookbacks were weaker on aggregate
 and robust metrics.
+
+## Stop-Limit Buffer Follow-up
+
+The stop-limit entry buffer was checked after the ATR-period follow-up. These
+were costed full-universe portfolio replays with the current paper-proof
+posture, 2 bps slippage, K=4, and `$17,247.795` starting equity.
+
+| candidate | trades | total P&L | profit factor | ann. Sharpe | win rate | 95% CI mean/trade | exit reasons | proof first-threshold pass | proof eventual pass | proof p90 | proof p95 | slowest proof pass |
+|---|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|
+| current: `STOP_LIMIT_BUFFER_PCT=0.001` | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | 72.42% | [1.2042, 2.8908] | stop 890, EOD 338, target 1 | 59.93% | 99.26% | 17 | 22 | 31 |
+| `STOP_LIMIT_BUFFER_PCT=0.0005` | 1,175 | `$2,715.89` | 1.5869 | 4.7835 | 73.11% | [1.4165, 3.1699] | stop 856, EOD 318, target 1 | 61.80% | 99.26% | 13 | 19 | 32 |
+| `STOP_LIMIT_BUFFER_PCT=0.002` | 1,328 | `$2,293.56` | 1.3877 | 3.5252 | 71.84% | [0.8601, 2.5885] | stop 964, EOD 362, target 2 | not tested | not tested | not tested | not tested | not tested |
+| `STOP_LIMIT_BUFFER_PCT=0.005` | 1,447 | `$1,674.87` | 1.2445 | 2.5051 | 70.28% | [0.3071, 1.9843] | stop 1041, EOD 404, target 2 | not tested | not tested | not tested | not tested | not tested |
+
+Decision: promote `STOP_LIMIT_BUFFER_PCT=0.0005`. The tighter buffer reduced
+lower-quality fills, improved aggregate P&L, profit factor, Sharpe, win rate,
+and CI lower bound, and improved first-threshold proof rate plus p90/p95 proof
+speed. The slowest observed proof pass moved from 31 to 32 sessions, which is
+not enough tail degradation to offset the stronger robust metrics and faster
+typical proof horizon.

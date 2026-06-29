@@ -375,6 +375,7 @@ require_env_value RISK_PER_TRADE_PCT 0.01
 require_env_value MAX_POSITION_PCT 0.05
 require_env_value MAX_PORTFOLIO_EXPOSURE_PCT 0.30
 require_env_value DAILY_LOSS_LIMIT_PCT 0.01
+require_env_value STOP_LIMIT_BUFFER_PCT 0.0005
 require_env_value_or_unset ATR_PERIOD 14
 require_env_value_or_unset ATR_STOP_MULTIPLIER 1.0
 require_env_value TRAILING_STOP_ATR_MULTIPLIER 1.0
@@ -447,6 +448,7 @@ check("max_position_pct", settings.max_position_pct, 0.05)
 check("max_open_positions", settings.max_open_positions, 4)
 check("max_portfolio_exposure_pct", settings.max_portfolio_exposure_pct, 0.30)
 check("daily_loss_limit_pct", settings.daily_loss_limit_pct, 0.01)
+check("stop_limit_buffer_pct", settings.stop_limit_buffer_pct, 0.0005)
 check("atr_period", settings.atr_period, 14)
 check("atr_stop_multiplier", settings.atr_stop_multiplier, 1.0)
 check("trailing_stop_atr_multiplier", settings.trailing_stop_atr_multiplier, 1.0)
