@@ -208,12 +208,13 @@ def _make_position(
     entry_price: float = 100.0,
     stop_price: float = 90.0,
     initial_stop_price: float = 90.0,
+    quantity: float = 10,
 ) -> OpenPosition:
     return OpenPosition(
         symbol=symbol,
         entry_timestamp=datetime(2026, 5, 6, 14, 0, tzinfo=timezone.utc),
         entry_price=entry_price,
-        quantity=10,
+        quantity=quantity,
         entry_level=entry_price - 1.0,
         initial_stop_price=initial_stop_price,
         stop_price=stop_price,
@@ -244,6 +245,74 @@ def test_existing_position_stop_beyond_cap_emits_update_stop():
     # 5% cap: 100.0 * (1 - 0.05) = 95.0
     assert update_stops[0].stop_price == pytest.approx(95.0)
     assert update_stops[0].reason == "stop_cap_applied"
+
+
+def test_existing_position_stop_beyond_dollar_loss_cap_emits_update_stop():
+    settings = make_settings(
+        MAX_STOP_PCT="0.50",
+        MAX_LOSS_PER_TRADE_DOLLARS="10.0",
+        ENABLE_BREAKEVEN_STOP="false",
+    )
+    position = _make_position(
+        entry_price=17.01,
+        stop_price=16.16,
+        initial_stop_price=16.16,
+        quantity=50.699,
+    )
+    intraday_bars = _make_intraday_bars(17.0)  # close = 16.9
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=_now(),
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": intraday_bars},
+        daily_bars_by_symbol={"AAPL": _make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    cap_updates = [
+        i for i in result.intents
+        if i.intent_type == CycleIntentType.UPDATE_STOP and i.reason == "stop_cap_applied"
+    ]
+    assert len(cap_updates) == 1
+    assert cap_updates[0].stop_price == pytest.approx(16.82)
+    assert (position.entry_price - cap_updates[0].stop_price) * position.quantity <= 10.0
+
+
+def test_existing_position_dollar_loss_cap_above_close_no_intent():
+    settings = make_settings(
+        MAX_STOP_PCT="0.50",
+        MAX_LOSS_PER_TRADE_DOLLARS="10.0",
+        ENABLE_BREAKEVEN_STOP="false",
+    )
+    position = _make_position(
+        entry_price=17.01,
+        stop_price=16.16,
+        initial_stop_price=16.16,
+        quantity=50.699,
+    )
+    intraday_bars = _make_intraday_bars(16.9)  # close = 16.8
+
+    result = evaluate_cycle(
+        settings=settings,
+        now=_now(),
+        equity=100_000.0,
+        intraday_bars_by_symbol={"AAPL": intraday_bars},
+        daily_bars_by_symbol={"AAPL": _make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    cap_updates = [
+        i for i in result.intents
+        if i.intent_type == CycleIntentType.UPDATE_STOP and i.reason == "stop_cap_applied"
+    ]
+    assert cap_updates == []
 
 
 def test_existing_position_stop_within_cap_no_intent():

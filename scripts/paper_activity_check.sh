@@ -82,6 +82,21 @@ emit_scheduled_context() {
   echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=$PAPER_ACTIVITY_STRATEGY"
 }
 
+only_readiness_missing_reasons() {
+  local reasons="${1:-}"
+  if [[ -z "$reasons" ]]; then
+    return 1
+  fi
+  local reason
+  IFS=',' read -ra _paper_activity_reasons <<< "$reasons"
+  for reason in "${_paper_activity_reasons[@]}"; do
+    if [[ "$reason" != "paper_readiness_check_missing" ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
 close_only_on_activity_failure() {
   local rc="$?"
   trap - EXIT
@@ -618,6 +633,10 @@ if [[ "${supervisor_cycles:-0}" -eq 0 ]]; then
 fi
 
 if [[ "${latest_cycle_entries_disabled:-false}" == "true" ]]; then
+  if only_readiness_missing_reasons "${latest_cycle_disabled_reasons:-}"; then
+    echo "paper activity pending: latest supervisor cycle still had entries disabled for paper_readiness_check_missing; waiting for post-repair cycle"
+    exit 43
+  fi
   reason_suffix=""
   if [[ -n "${latest_cycle_disabled_reasons:-}" ]]; then
     reason_suffix=" reasons=$latest_cycle_disabled_reasons"
@@ -627,6 +646,10 @@ if [[ "${latest_cycle_entries_disabled:-false}" == "true" ]]; then
 fi
 
 if [[ "${latest_cycle_strategy_blocked:-false}" == "true" ]]; then
+  if only_readiness_missing_reasons "${latest_cycle_strategy_disabled_reasons:-}"; then
+    echo "paper activity pending: latest $PAPER_ACTIVITY_STRATEGY cycle still had entries disabled for paper_readiness_check_missing; waiting for post-repair cycle"
+    exit 43
+  fi
   reason_suffix=""
   if [[ -n "${latest_cycle_strategy_disabled_reasons:-}" ]]; then
     reason_suffix=" reasons=$latest_cycle_strategy_disabled_reasons"

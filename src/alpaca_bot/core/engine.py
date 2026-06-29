@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from enum import StrEnum
@@ -39,6 +40,20 @@ if TYPE_CHECKING:
     from alpaca_bot.domain.models import OptionContract
 
 logger = logging.getLogger(__name__)
+
+
+def _loss_cap_stop_price(position: OpenPosition, settings: Settings) -> float | None:
+    max_loss = settings.max_loss_per_trade_dollars
+    if max_loss is None:
+        return None
+    quantity = abs(position.quantity)
+    if quantity <= 0 or position.entry_price <= 0:
+        return None
+    raw_stop = position.entry_price - (max_loss / quantity)
+    if position.quantity < 0:
+        raw_stop = position.entry_price + (max_loss / quantity)
+        return math.floor(raw_stop * 100 + 1e-9) / 100
+    return math.ceil(raw_stop * 100 - 1e-9) / 100
 
 
 def _filter_valid_bars(bars: Sequence[Bar], *, label: str = "") -> Sequence[Bar]:
@@ -501,8 +516,11 @@ def evaluate_cycle(
             if not bars:
                 continue
             effective_stop = emitted_update_stops.get(position.symbol, position.stop_price)
+            loss_cap_stop = _loss_cap_stop_price(position, settings)
             if is_short_cap:
                 cap_stop = round(position.entry_price * (1 + settings.max_stop_pct), 2)
+                if loss_cap_stop is not None:
+                    cap_stop = min(cap_stop, loss_cap_stop)
                 if effective_stop > cap_stop and cap_stop > bars[-1].close:
                     intents.append(
                         CycleIntent(
@@ -516,6 +534,8 @@ def evaluate_cycle(
                     )
             else:
                 cap_stop = round(position.entry_price * (1 - settings.max_stop_pct), 2)
+                if loss_cap_stop is not None:
+                    cap_stop = max(cap_stop, loss_cap_stop)
                 if effective_stop < cap_stop and cap_stop < bars[-1].close:
                     intents.append(
                         CycleIntent(
