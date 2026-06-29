@@ -244,3 +244,22 @@ Decision: keep `ENABLE_TREND_FILTER_EXIT=false` and
 replay window. The VWAP-breakdown exit increased turnover but reduced aggregate
 P&L, profit factor, Sharpe, and the CI lower bound, so no proof-horizon run or
 runtime promotion was warranted.
+
+## Daily SMA Lookback Follow-up
+
+The entry daily-trend lookback was checked after the viability-exit follow-up.
+These were costed full-universe portfolio replays with the current paper-proof
+posture, 2 bps slippage, K=4, and `$17,247.795` starting equity.
+
+| candidate | trades | total P&L | profit factor | ann. Sharpe | win rate | 95% CI mean/trade | exit reasons | verdict |
+|---|---:|---:|---:|---:|---:|---|---|---|
+| current: `DAILY_SMA_PERIOD=20` | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | 72.42% | [1.2042, 2.8908] | stop 890, EOD 338, target 1 | positive-edge |
+| `DAILY_SMA_PERIOD=10` | 1,236 | `$1,377.66` | 1.2512 | 2.2764 | 70.79% | [0.2689, 1.9204] | stop 880, EOD 355, target 1 | positive-edge |
+| `DAILY_SMA_PERIOD=30` | 1,207 | `$2,510.20` | 1.4901 | 4.3418 | 71.83% | [1.1946, 2.9784] | stop 865, EOD 340, target 2 | positive-edge |
+| `DAILY_SMA_PERIOD=50` | 1,099 | `$1,964.74` | 1.4273 | 4.1431 | 72.52% | [0.8663, 2.7119] | stop 796, EOD 302, target 1 | positive-edge |
+
+Decision: keep `DAILY_SMA_PERIOD=20`. The 10-day lookback increased turnover
+slightly but materially weakened aggregate and robust metrics. The 30-day
+lookback improved raw P&L and Sharpe slightly, but its CI lower bound was below
+the current posture. The 50-day lookback reduced trade count and weakened total
+P&L, profit factor, and CI lower bound.
