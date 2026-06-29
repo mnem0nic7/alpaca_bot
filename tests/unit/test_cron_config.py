@@ -16,53 +16,63 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     )
     readiness_post_open_repair = (
         "2 14,15 * * 1-5 root RUN_IF_NY_TIME_GRACE_MINUTES=1 "
-        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1002"
+        "PAPER_READINESS_REQUIRE_FLAT=false /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1002"
     )
     readiness_post_open_repair_1005 = (
         "5 14,15 * * 1-5 root RUN_IF_NY_TIME_GRACE_MINUTES=1 "
-        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1005"
+        "PAPER_READINESS_REQUIRE_FLAT=false /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1005"
     )
     readiness_post_open_repair_1010 = (
         "10 14,15 * * 1-5 root RUN_IF_NY_TIME_GRACE_MINUTES=1 "
-        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1010"
+        "PAPER_READINESS_REQUIRE_FLAT=false /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1010"
     )
     readiness_stale_repair_1015 = (
-        "15 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1015"
+        "15 14,15 * * 1-5 root PAPER_READINESS_REQUIRE_FLAT=false "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1015"
     )
     readiness_stale_repair_1045 = (
-        "45 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1045"
+        "45 14,15 * * 1-5 root PAPER_READINESS_REQUIRE_FLAT=false "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1045"
     )
     readiness_stale_repair_1115 = (
-        "15 15,16 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1115"
+        "15 15,16 * * 1-5 root PAPER_READINESS_REQUIRE_FLAT=false "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1115"
     )
     readiness_stale_repair_1145 = (
-        "45 15,16 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1145"
+        "45 15,16 * * 1-5 root PAPER_READINESS_REQUIRE_FLAT=false "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1145"
     )
     readiness_midday_refresh = (
         "15 16,17 * * 1-5 root PAPER_READINESS_FORCE_REFRESH=true "
-        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1215"
+        "PAPER_READINESS_REQUIRE_FLAT=false /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1215"
     )
     readiness_stale_repair_1245 = (
-        "45 16,17 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1245"
+        "45 16,17 * * 1-5 root PAPER_READINESS_REQUIRE_FLAT=false "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1245"
     )
     readiness_stale_repair_1315 = (
-        "15 17,18 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1315"
+        "15 17,18 * * 1-5 root PAPER_READINESS_REQUIRE_FLAT=false "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1315"
     )
     readiness_stale_repair_1345 = (
-        "45 17,18 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1345"
+        "45 17,18 * * 1-5 root PAPER_READINESS_REQUIRE_FLAT=false "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1345"
     )
     readiness_stale_repair_1415 = (
-        "15 18,19 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1415"
+        "15 18,19 * * 1-5 root PAPER_READINESS_REQUIRE_FLAT=false "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1415"
     )
     readiness_afternoon_refresh = (
         "25 18,19 * * 1-5 root PAPER_READINESS_FORCE_REFRESH=true "
-        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1425"
+        "PAPER_READINESS_REQUIRE_FLAT=false /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1425"
     )
     readiness_stale_repair_1445 = (
-        "45 18,19 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1445"
+        "45 18,19 * * 1-5 root PAPER_READINESS_REQUIRE_FLAT=false "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1445"
     )
     readiness_stale_repair_1515 = (
-        "15 19,20 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1515"
+        "15 19,20 * * 1-5 root PAPER_READINESS_REQUIRE_FLAT=false "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1515"
     )
     readiness_post_close_refresh = (
         "55 20,21 * * 1-5 root PAPER_READINESS_FORCE_REFRESH=true "
@@ -157,6 +167,11 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "scripts/paper_readiness_if_needed.sh" in cron_text
     assert cron_text.count("scripts/paper_readiness_if_needed.sh") == 18
     assert cron_text.count("PAPER_READINESS_FORCE_REFRESH=true") == 4
+    assert cron_text.count("PAPER_READINESS_REQUIRE_FLAT=false") == 15
+    assert (
+        "PAPER_READINESS_FORCE_REFRESH=true PAPER_READINESS_REQUIRE_FLAT=false "
+        "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1425"
+    ) in cron_text
     assert cron_text.count("PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=false") == 2
     assert cron_text.index("PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED=false") < cron_text.index(
         "run_if_ny_time.sh 1655"
