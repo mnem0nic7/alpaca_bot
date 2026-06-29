@@ -130,6 +130,25 @@ def _completed_intraday_bars_by_symbol(
     return completed
 
 
+def _bar_interval_overlaps_position(
+    bar: Bar,
+    *,
+    position_timestamp: datetime,
+    timeframe_minutes: int,
+) -> bool:
+    bar_start = (
+        bar.timestamp.replace(tzinfo=timezone.utc)
+        if bar.timestamp.tzinfo is None
+        else bar.timestamp.astimezone(timezone.utc)
+    )
+    position_time = (
+        position_timestamp.replace(tzinfo=timezone.utc)
+        if position_timestamp.tzinfo is None
+        else position_timestamp.astimezone(timezone.utc)
+    )
+    return bar_start + timedelta(minutes=timeframe_minutes) > position_time
+
+
 def _external_short_upnl(broker_positions: list[BrokerPosition]) -> float:
     return sum(
         (bp.unrealized_pl for bp in broker_positions if bp.quantity < 0 and bp.unrealized_pl is not None),
@@ -1535,7 +1554,19 @@ class RuntimeSupervisor:
             if not bars:
                 result.append(position)
                 continue
-            bar_high = bars[-1].high
+            overlapping_bars = [
+                bar
+                for bar in bars
+                if _bar_interval_overlaps_position(
+                    bar,
+                    position_timestamp=position.entry_timestamp,
+                    timeframe_minutes=self.settings.entry_timeframe_minutes,
+                )
+            ]
+            if not overlapping_bars:
+                result.append(position)
+                continue
+            bar_high = max(bar.high for bar in overlapping_bars)
             if bar_high <= position.highest_price:
                 result.append(position)
                 continue
@@ -1579,7 +1610,19 @@ class RuntimeSupervisor:
             if not bars:
                 result.append(position)
                 continue
-            bar_low = bars[-1].low
+            overlapping_bars = [
+                bar
+                for bar in bars
+                if _bar_interval_overlaps_position(
+                    bar,
+                    position_timestamp=position.entry_timestamp,
+                    timeframe_minutes=self.settings.entry_timeframe_minutes,
+                )
+            ]
+            if not overlapping_bars:
+                result.append(position)
+                continue
+            bar_low = min(bar.low for bar in overlapping_bars)
             if bar_low >= position.lowest_price:
                 result.append(position)
                 continue

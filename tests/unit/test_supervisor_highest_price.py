@@ -40,10 +40,14 @@ def _make_settings(**overrides):
     return Settings.from_env(base)
 
 
-def _make_bar(high: float) -> Bar:
+def _make_bar(
+    high: float,
+    timestamp: datetime | None = None,
+) -> Bar:
+    timestamp = timestamp or datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     return Bar(
         symbol="AAPL",
-        timestamp=datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        timestamp=timestamp,
         open=high - 0.10,
         high=high,
         low=high - 0.20,
@@ -142,6 +146,27 @@ def test_apply_highest_price_updates_bar_high_exceeds_current():
     assert len(pstore.update_calls) == 1
     assert pstore.update_calls[0]["highest_price"] == 3.20
     assert pstore.update_calls[0]["symbol"] == "AAPL"
+
+
+def test_apply_highest_price_updates_uses_max_over_position_bars():
+    settings = _make_settings()
+    pstore = _RecordingPositionStore()
+    supervisor = _make_supervisor(settings, pstore)
+
+    position = _make_position(highest_price=3.00)
+    bars = {
+        "AAPL": [
+            _make_bar(high=3.50, timestamp=datetime(2026, 5, 1, 9, 45, tzinfo=timezone.utc)),
+            _make_bar(high=3.15, timestamp=datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc)),
+            _make_bar(high=3.40, timestamp=datetime(2026, 5, 1, 10, 15, tzinfo=timezone.utc)),
+            _make_bar(high=3.10, timestamp=datetime(2026, 5, 1, 10, 30, tzinfo=timezone.utc)),
+        ]
+    }
+
+    result = supervisor._apply_highest_price_updates([position], bars)
+
+    assert result[0].highest_price == 3.40
+    assert pstore.update_calls[0]["highest_price"] == 3.40
 
 
 def test_apply_highest_price_updates_bar_high_equal_no_update():

@@ -40,10 +40,15 @@ def _make_settings(**overrides):
     return Settings.from_env(base)
 
 
-def _make_bar(low: float, symbol: str = "QBTS") -> Bar:
+def _make_bar(
+    low: float,
+    symbol: str = "QBTS",
+    timestamp: datetime | None = None,
+) -> Bar:
+    timestamp = timestamp or datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc)
     return Bar(
         symbol=symbol,
-        timestamp=datetime(2026, 5, 1, 14, 0, tzinfo=timezone.utc),
+        timestamp=timestamp,
         open=low + 0.10,
         high=low + 0.20,
         low=low,
@@ -160,6 +165,27 @@ def test_apply_lowest_price_updates_tracks_new_low():
     assert len(pstore.update_calls) == 1
     assert pstore.update_calls[0]["lowest_price"] == 4.75
     assert pstore.update_calls[0]["symbol"] == "QBTS"
+
+
+def test_apply_lowest_price_updates_uses_min_over_position_bars():
+    settings = _make_settings()
+    pstore = _RecordingPositionStore()
+    supervisor = _make_supervisor(settings, pstore)
+
+    position = _make_short_position(lowest_price=5.00)
+    bars = {
+        "QBTS": [
+            _make_bar(low=4.00, timestamp=datetime(2026, 5, 1, 9, 45, tzinfo=timezone.utc)),
+            _make_bar(low=4.80, timestamp=datetime(2026, 5, 1, 10, 0, tzinfo=timezone.utc)),
+            _make_bar(low=4.60, timestamp=datetime(2026, 5, 1, 10, 15, tzinfo=timezone.utc)),
+            _make_bar(low=4.90, timestamp=datetime(2026, 5, 1, 10, 30, tzinfo=timezone.utc)),
+        ]
+    }
+
+    result = supervisor._apply_lowest_price_updates([position], bars)
+
+    assert result[0].lowest_price == 4.60
+    assert pstore.update_calls[0]["lowest_price"] == 4.60
 
 
 def test_apply_lowest_price_updates_ignores_higher_low():
