@@ -181,3 +181,25 @@ improve the current objective.
 Decision: keep `ENABLE_VWAP_ENTRY_FILTER=true`. Disabling the filter reduced
 aggregate P&L, profit factor, Sharpe, and CI lower bound without increasing the
 trade count in the current portfolio replay.
+
+## Bull-Flag Shape Follow-up
+
+Bull-flag pattern-shape thresholds were checked after the exit-tuning
+promotions. These were costed full-universe portfolio replays only because no
+candidate improved the robust objective.
+
+| candidate | trades | total P&L | profit factor | ann. Sharpe | 95% CI mean/trade | verdict |
+|---|---:|---:|---:|---:|---|---|
+| current: min run 0.02, range 0.5, volume ratio 0.6 | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | [1.2042, 2.8908] | positive-edge |
+| min run 0.015 | 1,339 | `$2,492.22` | 1.4717 | 4.1756 | [1.0531, 2.6094] | positive-edge |
+| min run 0.03 | 1,038 | `$2,201.96` | 1.4373 | 3.7508 | [1.1372, 3.1443] | positive-edge |
+| range 0.4 | 1,233 | `$2,355.65` | 1.4565 | 4.1301 | [1.0441, 2.7544] | positive-edge |
+| range 0.6 | 1,234 | `$2,580.22` | 1.4909 | 4.2701 | [1.1910, 2.9843] | positive-edge |
+| volume ratio 0.5 | 1,112 | `$1,772.47` | 1.3540 | 3.1980 | [0.6512, 2.4857] | positive-edge |
+| volume ratio 0.7 | 1,315 | `$2,423.14` | 1.4344 | 3.8751 | [0.9837, 2.6860] | positive-edge |
+
+Decision: keep `BULL_FLAG_MIN_RUN_PCT=0.02`,
+`BULL_FLAG_CONSOLIDATION_RANGE_PCT=0.5`, and
+`BULL_FLAG_CONSOLIDATION_VOLUME_RATIO=0.6`. `range=0.6` increased raw P&L and
+point-estimate metrics slightly, but its CI lower bound was below the current
+posture. All other candidates were weaker on both aggregate and robust metrics.
