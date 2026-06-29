@@ -5,6 +5,14 @@ import math
 from alpaca_bot.config import Settings
 
 
+FRACTIONAL_QUANTITY_SCALE = 10_000
+
+
+def _floor_fractional_quantity(quantity: float) -> float:
+    scaled = round(quantity * FRACTIONAL_QUANTITY_SCALE, 8)
+    return math.floor(scaled) / FRACTIONAL_QUANTITY_SCALE
+
+
 def calculate_position_size(
     *,
     equity: float,
@@ -41,4 +49,6 @@ def calculate_position_size(
         quantity = max_notional / entry_price
         if not fractionable:
             quantity = math.floor(quantity)
+    if fractionable:
+        quantity = _floor_fractional_quantity(quantity)
     return max(float(quantity), 0.0)

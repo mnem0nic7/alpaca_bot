@@ -230,3 +230,23 @@ def test_position_size_notional_cap_is_binding_when_risk_quantity_exceeds_it() -
     )
 
     assert quantity == 5
+
+
+def test_fractional_position_size_floors_to_broker_precision_under_dollar_cap() -> None:
+    entry_price = 754.82
+    stop_price = 717.08
+    quantity = calculate_position_size(
+        equity=68_988.46,
+        entry_price=entry_price,
+        stop_price=stop_price,
+        settings=make_settings(
+            RISK_PER_TRADE_PCT="0.01",
+            MAX_POSITION_PCT="0.05",
+            MAX_LOSS_PER_TRADE_DOLLARS="10.0",
+        ),
+        fractionable=True,
+    )
+
+    assert quantity == pytest.approx(0.2649)
+    assert round(quantity, 4) == quantity
+    assert (entry_price - stop_price) * quantity <= 10.0
