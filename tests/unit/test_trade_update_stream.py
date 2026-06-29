@@ -115,11 +115,51 @@ def test_attach_trade_update_stream_registers_async_handler_and_applies_updates(
                 "status": "filled",
                 "timestamp": now.isoformat(),
             },
-            "now": None,
+            "now": now,
             "notifier": None,
             "broker": None,
         }
     ]
+
+
+def test_attach_trade_update_stream_uses_receive_time_when_broker_timestamp_is_stale(monkeypatch) -> None:
+    attach_trade_update_stream, _run_trade_update_stream = load_streaming_api()
+    settings = make_settings()
+    receive_at = datetime(2026, 4, 24, 19, 35, tzinfo=timezone.utc)
+    broker_event_at = datetime(2026, 4, 24, 19, 10, tzinfo=timezone.utc)
+    runtime = SimpleNamespace(audit_event_store=RecordingAuditEventStore())
+    stream = RecordingStream()
+    seen: list[dict[str, object]] = []
+
+    def fake_apply_trade_update(**kwargs):
+        seen.append(kwargs)
+        return {"order_updated": True}
+
+    monkeypatch.setattr(
+        "alpaca_bot.runtime.trade_update_stream.apply_trade_update",
+        fake_apply_trade_update,
+    )
+
+    handler = attach_trade_update_stream(
+        settings=settings,
+        runtime=runtime,
+        stream=stream,
+        now=lambda: receive_at,
+    )
+    asyncio.run(
+        handler(
+            {
+                "event": "fill",
+                "client_order_id": "cid-1",
+                "broker_order_id": "oid-1",
+                "symbol": "AAPL",
+                "status": "filled",
+                "timestamp": broker_event_at.isoformat(),
+            }
+        )
+    )
+
+    assert seen[0]["now"] == receive_at
 
 
 def test_attach_trade_update_stream_audits_handler_failures(monkeypatch) -> None:

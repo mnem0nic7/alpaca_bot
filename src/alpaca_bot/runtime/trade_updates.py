@@ -764,7 +764,7 @@ def _save_entry_position_and_stop(
             entry_price=fill_price,
             stop_price=initial_stop_price,
             initial_stop_price=initial_stop_price,
-            opened_at=normalized.timestamp,
+            opened_at=timestamp,
             updated_at=timestamp,
         ),
         commit=False,

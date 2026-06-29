@@ -46,7 +46,7 @@ def attach_trade_update_stream(
                 settings=settings,
                 runtime=runtime,  # type: ignore[arg-type]
                 update=update,
-                now=None,
+                now=timestamp,
                 notifier=notifier,
                 broker=broker,
             )

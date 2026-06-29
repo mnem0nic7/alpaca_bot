@@ -215,6 +215,7 @@ def _make_trade_update(
     qty: int = 10,
     filled_qty: int = 10,
     filled_avg_price: float = 112.00,
+    timestamp: datetime = NOW,
 ) -> dict:
     return {
         "event": status,
@@ -226,7 +227,7 @@ def _make_trade_update(
         "qty": qty,
         "filled_qty": filled_qty,
         "filled_avg_price": filled_avg_price,
-        "timestamp": NOW.isoformat(),
+        "timestamp": timestamp.isoformat(),
     }
 
 
@@ -1387,6 +1388,33 @@ def test_two_event_partial_then_filled_position_quantity_reflects_final_fill() -
     assert last_position.quantity == 10, (
         f"Expected final position quantity=10, got {last_position.quantity}"
     )
+
+
+def test_entry_position_opened_at_uses_effective_apply_time_not_stale_broker_timestamp() -> None:
+    """Live broker event timestamps can arrive earlier than the local order row.
+
+    Position opened_at must use apply_trade_update's effective timestamp so
+    later high/low watermark scans do not include bars from before the local
+    fill was processed.
+    """
+    broker_event_at = datetime(2026, 4, 25, 14, 10, tzinfo=timezone.utc)
+    receive_at = datetime(2026, 4, 25, 14, 30, tzinfo=timezone.utc)
+    entry_order = _make_entry_order()
+    runtime = _make_runtime(orders=[entry_order])
+
+    update = _make_trade_update(timestamp=broker_event_at)
+
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    apply_trade_update(
+        settings=make_settings(),
+        runtime=runtime,
+        update=update,
+        now=receive_at,
+    )
+
+    assert runtime.position_store.saved[-1].opened_at == receive_at
+    assert runtime.position_store.saved[-1].updated_at == receive_at
 
 
 def test_filled_event_with_no_matching_local_order_emits_unmatched_audit_event() -> None:
