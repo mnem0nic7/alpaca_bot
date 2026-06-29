@@ -1896,7 +1896,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_true PAPER_PROOF_FREEZE" in script
     assert "require_env_true ENABLE_VWAP_ENTRY_FILTER" in script
     assert "require_env_true ENABLE_PROFIT_TRAIL" in script
-    assert "require_env_value PROFIT_TRAIL_PCT 0.95" in script
+    assert "require_env_value PROFIT_TRAIL_PCT 0.90" in script
     assert "require_env_true ENABLE_PROFIT_TARGET" in script
     assert "require_env_value PROFIT_TARGET_R 3.0" in script
     assert "require_env_true_or_unset ENABLE_BREAKEVEN_STOP" in script
@@ -3710,7 +3710,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     ) in script
     assert "bool(settings.enable_vwap_entry_filter)" in script
     assert "bool(settings.enable_profit_trail)" in script
-    assert "abs(float(settings.profit_trail_pct) - 0.95)" in script
+    assert "abs(float(settings.profit_trail_pct) - 0.90)" in script
     assert "bool(settings.enable_profit_target)" in script
     assert "abs(float(settings.profit_target_r) - 3.0)" in script
     assert "bool(settings.enable_breakeven_stop)" in script

@@ -72,3 +72,26 @@ Decision: keep `TRAILING_STOP_PROFIT_TRIGGER_R=1.0`. The 0.5R trigger has a
 small CI-floor and P&L improvement, but it lowers the first-threshold pass rate
 from 61.80% to 60.67%. That is not enough evidence to change the paper proof
 posture immediately before the 2026-06-29 session.
+
+## Profit Trail Distance Follow-up
+
+After the trailing ATR promotion, the existing `PROFIT_TRAIL_PCT=0.95` became
+too tight relative to the ATR trail. Looser profit-trail distances were tested
+against the same active scenario universe, K=4, 2 bps slippage, 3R target, and
+1.0 trailing ATR posture.
+
+| profit trail pct | trades | total P&L | profit factor | ann. Sharpe | 95% CI mean/trade | first-threshold pass rate | p90 pass | p95 pass | slowest pass |
+|---:|---:|---:|---:|---:|---|---:|---:|---:|---:|
+| 0.95, current | 1,235 | `$2,163.27` | 1.4062 | 3.7953 | [0.9253, 2.6061] | 61.80% | 16 | 24 | 38 |
+| 0.975 | 1,288 | `$1,988.61` | 1.4054 | 3.8290 | [0.9010, 2.2178] | not tested | not tested | not tested | not tested |
+| 0.925 | 1,229 | `$2,436.04` | 1.4697 | 4.1587 | [1.1519, 2.8339] | 59.55% | 17 | 22 | 31 |
+| 0.90 | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | [1.2042, 2.8908] | 59.93% | 17 | 22 | 31 |
+| off | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | [1.2042, 2.8908] | not tested | not tested | not tested | not tested |
+
+Decision: promote `PROFIT_TRAIL_PCT=0.90` while keeping profit-trail enabled.
+The 0.90 setting improves aggregate after-cost P&L, profit factor, Sharpe, and
+CI lower bound while improving the proof-horizon tail (`p95` and slowest pass).
+Its first-threshold pass rate is lower than 0.95, so the promotion is based on
+the stronger profitability and better tail horizon, not on immediate first-10
+trade proof velocity. Disabling the profit trail was identical to 0.90 in this
+sample, but keeping a loose trail preserves an explicit profit guard.

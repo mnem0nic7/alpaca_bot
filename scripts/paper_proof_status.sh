@@ -1554,7 +1554,7 @@ posture_status = (
         and as_hhmm(settings.flatten_time) == "15:45"
         and bool(settings.enable_vwap_entry_filter)
         and bool(settings.enable_profit_trail)
-        and abs(float(settings.profit_trail_pct) - 0.95) < 1e-9
+        and abs(float(settings.profit_trail_pct) - 0.90) < 1e-9
         and bool(settings.enable_profit_target)
         and abs(float(settings.profit_target_r) - 3.0) < 1e-9
         and bool(settings.enable_breakeven_stop)

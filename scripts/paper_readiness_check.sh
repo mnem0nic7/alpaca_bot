@@ -389,7 +389,7 @@ require_env_value FLATTEN_TIME 15:45
 require_env_true PAPER_PROOF_FREEZE
 require_env_true ENABLE_VWAP_ENTRY_FILTER
 require_env_true ENABLE_PROFIT_TRAIL
-require_env_value PROFIT_TRAIL_PCT 0.95
+require_env_value PROFIT_TRAIL_PCT 0.90
 require_env_true ENABLE_PROFIT_TARGET
 require_env_value PROFIT_TARGET_R 3.0
 require_env_true_or_unset ENABLE_BREAKEVEN_STOP
@@ -458,7 +458,7 @@ check("entry_window_start", as_hhmm(settings.entry_window_start), "10:00")
 check("entry_window_end", as_hhmm(settings.entry_window_end), "15:30")
 check("flatten_time", as_hhmm(settings.flatten_time), "15:45")
 check("enable_profit_trail", settings.enable_profit_trail, True)
-check("profit_trail_pct", settings.profit_trail_pct, 0.95)
+check("profit_trail_pct", settings.profit_trail_pct, 0.90)
 check("paper_proof_freeze", settings.paper_proof_freeze, True)
 check("enable_profit_target", settings.enable_profit_target, True)
 check("profit_target_r", settings.profit_target_r, 3.0)
