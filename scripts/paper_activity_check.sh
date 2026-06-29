@@ -311,6 +311,13 @@ latest_supervisor AS (
   ORDER BY created_at DESC
   LIMIT 1
 ),
+latest_supervisor_activity AS (
+  SELECT event_type, payload, created_at
+  FROM recent
+  WHERE event_type IN ('supervisor_cycle', 'supervisor_idle')
+  ORDER BY created_at DESC
+  LIMIT 1
+),
 latest_supervisor_started AS (
   SELECT MAX(created_at) AS created_at
   FROM recent
@@ -626,7 +633,16 @@ SELECT
         NOT (stream_issue.payload ? 'strategy_name')
         OR stream_issue.payload->>'strategy_name' = :'paper_activity_strategy'
       )
-  ), 0)::int
+  ), 0)::int,
+  COALESCE((
+    SELECT CASE
+      WHEN event_type = 'supervisor_idle'
+       AND payload->>'reason' = 'market_closed'
+      THEN 'true'
+      ELSE 'false'
+    END
+    FROM latest_supervisor_activity
+  ), 'false')
 FROM recent;
 SQL
 )"
@@ -643,7 +659,8 @@ IFS='|' read -r supervisor_cycles disabled_cycles decision_cycles decision_recor
   unmaterialized_accepted_symbol_count unmaterialized_accepted_symbols \
   stale_pending_entry_orders stale_pending_entry_order_summary \
   active_strategy_names disabled_reasons strategy_disabled_reasons \
-  stock_open_positions active_stock_orders dispatch_failures stream_issues <<< "$stats"
+  stock_open_positions active_stock_orders dispatch_failures stream_issues \
+  latest_activity_market_closed <<< "$stats"
 
 strategy_evidence_cycles="${strategy_decision_cycles:-0}"
 if [[ "${strategy_decision_log_cycles:-0}" -gt "$strategy_evidence_cycles" ]]; then
@@ -660,6 +677,23 @@ fi
 has_stock_exposure=false
 if [[ "${stock_open_positions:-0}" -gt 0 || "${active_stock_orders:-0}" -gt 0 ]]; then
   has_stock_exposure=true
+fi
+
+if [[ "${market_closed_idles:-0}" -gt 0 && "${latest_activity_market_closed:-false}" == "true" ]]; then
+  if market_clock="$(load_market_clock_status)"; then
+    IFS='|' read -r market_clock_status market_clock_detail <<< "$market_clock"
+  else
+    market_clock_status="unknown"
+    market_clock_detail="clock command failed"
+  fi
+
+  if [[ "$market_clock_status" == "closed" ]]; then
+    echo "paper activity skipped: latest supervisor activity is market_closed clock=${market_clock_detail:-unknown}"
+    exit 0
+  fi
+
+  echo "paper activity failed: supervisor reported market_closed but Alpaca clock is ${market_clock_status:-unknown} (${market_clock_detail:-no detail})" >&2
+  exit 1
 fi
 
 if [[ "${supervisor_cycles:-0}" -eq 0 && "${market_closed_idles:-0}" -gt 0 ]]; then

@@ -1979,11 +1979,13 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "decision_record_count" in script
     assert "decision_log" in script
     assert "latest_supervisor AS" in script
+    assert "latest_supervisor_activity AS" in script
     assert "latest_supervisor_started AS" in script
     assert "SELECT MAX(created_at) AS created_at" in script
     assert "(SELECT created_at FROM latest_supervisor_started)" in script
     assert "latest_cycle_entries_disabled" in script
     assert "latest_cycle_strategy_blocked" in script
+    assert "latest_activity_market_closed" in script
     assert "strategy_decision_log_cycles" in script
     assert "strategy_decision_log_records" in script
     assert "strategy_decision_log_summary" in script
@@ -2067,6 +2069,7 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "broker_account_status=${broker_account_status:-unset}" in script
     assert "require_broker_account=${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT,,}" in script
     assert "supervisor reported market_closed but Alpaca clock is" in script
+    assert "latest supervisor activity is market_closed" in script
     assert "market_closed" in script
     assert "no supervisor cycles" in script
     assert "no decision cycles" in script
@@ -2523,6 +2526,66 @@ def test_paper_activity_allows_post_flatten_strategy_session_block(
     assert "post_flatten_strategy_blocked=true" in result.stdout
     assert "stock_open_positions=0" in result.stdout
     assert "active_stock_orders=0" in result.stdout
+    assert not docker_marker.exists()
+
+
+def test_paper_activity_skips_when_latest_supervisor_activity_is_market_closed(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    docker_marker = tmp_path / "docker_close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin close-only'; then\n"
+        f"  touch {docker_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "if printf '%s\\n' \"$*\" | grep -q -- '--entrypoint python admin'; then\n"
+        "  printf 'closed|timestamp=2026-06-29T20:02:00+00:00 next_open=2026-06-30T13:30:00+00:00 next_close=2026-06-30T20:00:00+00:00\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '12|4|8|7840|3|2026-06-29 19:59:00+00|true|trading_status:close_only,paper_readiness_check_missing|true|trading_status:close_only,paper_readiness_check_missing,strategy_session_state_entries_disabled|2026-06-29 19:59:00+00|4|8|7840|0|8|7840|2026-06-29 19:59:00+00|skipped_no_signal/none/none:7840|0||0||0||0||0||0||bull_flag|trading_status:close_only:4,paper_readiness_check_missing:4|strategy_session_state_entries_disabled:4|0|0|0|0|true\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "paper activity skipped: latest supervisor activity is market_closed" in result.stdout
     assert not docker_marker.exists()
 
 
