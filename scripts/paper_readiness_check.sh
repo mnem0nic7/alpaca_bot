@@ -141,6 +141,21 @@ fallback_readiness_session_date() {
   esac
 }
 
+is_after_configured_flatten_time() {
+  local now_hm flatten_hm now_hour now_min flatten_hour flatten_min
+  now_hm="$(TZ=America/New_York date +%H:%M)"
+  flatten_hm="${FLATTEN_TIME:-15:45}"
+  if [[ ! "$now_hm" =~ ^[0-9]{1,2}:[0-9]{2}$ ]] \
+    || [[ ! "$flatten_hm" =~ ^[0-9]{1,2}:[0-9]{2}$ ]]; then
+    return 1
+  fi
+  now_hour="${now_hm%:*}"
+  now_min="${now_hm#*:}"
+  flatten_hour="${flatten_hm%:*}"
+  flatten_min="${flatten_hm#*:}"
+  (( 10#$now_hour * 60 + 10#$now_min >= 10#$flatten_hour * 60 + 10#$flatten_min ))
+}
+
 load_readiness_session_date() {
   local calendar_date
   if calendar_date="$("${compose[@]}" run -T --rm \
@@ -1475,13 +1490,17 @@ SQL
     <<< "$session_entry_blocks"
 
   if [[ "${blocked_session_state_count:-0}" != "0" ]]; then
+    if is_after_configured_flatten_time; then
+      echo "paper readiness session entry block check skipped after flatten: session=$PAPER_READINESS_SESSION_DATE blocked=$blocked_session_state_count names=[$blocked_session_state_names]"
+    else
     echo \
       "paper readiness failed: session $PAPER_READINESS_SESSION_DATE has entry-blocking state for [$blocked_session_state_names]" \
       >&2
     exit 1
+    fi
+  else
+    echo "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0"
   fi
-
-  echo "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0"
 else
   echo "paper readiness session entry block check skipped"
 fi

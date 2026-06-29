@@ -1729,6 +1729,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "load_previous_session_date" in script
     assert "fallback_readiness_session_date" in script
     assert "fallback_previous_session_date" in script
+    assert "is_after_configured_flatten_time" in script
     assert "get_market_calendar" in script
     assert "no upcoming market session found" in script
     assert "no previous market session found" in script
@@ -1742,6 +1743,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "-v readiness_session_date=\"$PAPER_READINESS_SESSION_DATE\"" in script
     assert "session_date = (:'readiness_session_date')::date" in script
     assert "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
+    assert "paper readiness session entry block check skipped after flatten" in script
     assert "<= ((:'readiness_session_date')::date - 1)" in script
     assert "paper readiness losing streak gate ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
     assert 'status=close_only' in script
@@ -1883,6 +1885,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "check_name = 'paper_profit_probe' AND status IN ('passed', 'pending')" not in script
     assert "session $PAPER_READINESS_SESSION_DATE has entry-blocking state" in script
     assert "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
+    assert "paper readiness session entry block check skipped after flatten" in script
     assert "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED" in script
     assert "IN ('_global', '_equity')" in script
     assert "LOSING_STREAK_N must be a positive integer" in script
