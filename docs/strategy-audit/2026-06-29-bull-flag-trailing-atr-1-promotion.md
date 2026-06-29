@@ -95,3 +95,21 @@ Its first-threshold pass rate is lower than 0.95, so the promotion is based on
 the stronger profitability and better tail horizon, not on immediate first-10
 trade proof velocity. Disabling the profit trail was identical to 0.90 in this
 sample, but keeping a loose trail preserves an explicit profit guard.
+
+## Initial ATR Stop Follow-up
+
+After deploying the 0.90 profit trail, the initial ATR stop multiplier was
+checked around the current `ATR_STOP_MULTIPLIER=1.0` posture. These were
+costed full-universe portfolio replays only; alternatives that did not improve
+the costed objective were not sent through proof-horizon.
+
+| ATR stop multiplier | trades | total P&L | profit factor | ann. Sharpe | 95% CI mean/trade | verdict |
+|---:|---:|---:|---:|---:|---|---|
+| 0.75 | 1,235 | `$2,443.87` | 1.4693 | 4.2030 | [1.1610, 2.8449] | positive-edge |
+| 1.0, current | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | [1.2042, 2.8908] | positive-edge |
+| 1.5 | 1,227 | `$2,442.00` | 1.4742 | 4.2054 | [1.1289, 2.8854] | positive-edge |
+| 2.0 | 1,227 | `$2,410.92` | 1.4661 | 4.1451 | [1.0854, 2.8611] | positive-edge |
+
+Decision: keep `ATR_STOP_MULTIPLIER=1.0`. The tighter and wider alternatives
+all stayed positive-edge, but each reduced aggregate P&L and CI lower bound
+versus the deployed 1.0 stop.
