@@ -1576,7 +1576,7 @@ posture_status = (
         and int(settings.viability_daily_bar_max_age_days) == 5
         and int(settings.viability_min_hold_minutes) == 0
         and settings.max_loss_per_trade_dollars is not None
-        and abs(float(settings.max_loss_per_trade_dollars) - 10.0) < 1e-9
+        and abs(float(settings.max_loss_per_trade_dollars) - 20.0) < 1e-9
         and bool(settings.paper_proof_freeze)
         and int(settings.intraday_consecutive_loss_gate) == 0
         and abs(float(settings.replay_slippage_bps) - 2.0) < 1e-9
