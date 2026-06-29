@@ -68,6 +68,22 @@ The conservative mark reduces P&L by `$34.51`, but still remains above the
 no-target baseline (`$2,043.30`). The promotion is therefore not materially
 dependent on many idealized target fills in the replay sample.
 
+## Profit Target R Sensitivity
+
+After deploying the 3R target, alternative target distances were replayed
+against the same active scenario universe and K=4 posture.
+
+| profit target R | trades | total P&L | profit factor | ann. Sharpe | 95% CI mean/trade | p(mean<=0) | verdict |
+|---:|---:|---:|---:|---:|---|---:|---|
+| 1.5 | 1,237 | `$2,104.13` | 1.3938 | 3.7279 | [0.8361, 2.5443] | 0.0000 | positive-edge |
+| 2.0 | 1,236 | `$2,059.07` | 1.3854 | 3.6519 | [0.7522, 2.5259] | 0.0000 | positive-edge |
+| 3.0 | 1,235 | `$2,087.64` | 1.3924 | 3.6862 | [0.8687, 2.5407] | 0.0005 | positive-edge |
+| 4.0 | 1,235 | `$2,043.30` | 1.3845 | 3.6334 | [0.8415, 2.4886] | 0.0005 | positive-edge |
+
+Decision: keep `PROFIT_TARGET_R=3.0`. The 1.5R candidate has higher raw P&L,
+but the 3R setting retains the strongest CI lower bound among the checked
+target distances while still improving on the no-target/4R baseline.
+
 Decision: promote `ENABLE_PROFIT_TARGET=true` and `PROFIT_TARGET_R=3.0` for
 the paper proof posture. The candidate preserves trade count and eventual proof
 pass rate while slightly improving after-cost P&L, profit factor, Sharpe, CI
