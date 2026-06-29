@@ -129,3 +129,21 @@ the current objective.
 
 Decision: keep `ENTRY_WINDOW_END=15:30`. Earlier cutoffs reduced total P&L,
 profit factor, Sharpe, and CI lower bound under the current paper posture.
+
+## Relative Volume Threshold Follow-up
+
+The relative-volume threshold was checked after the exit-tuning promotions to
+confirm the current selectivity still held up. These were costed full-universe
+portfolio replays only because no alternative improved the robust objective.
+
+| relative volume threshold | trades | total P&L | profit factor | ann. Sharpe | 95% CI mean/trade | verdict |
+|---:|---:|---:|---:|---:|---|---|
+| 1.8 | 1,365 | `$2,548.93` | 1.4462 | 4.1496 | [1.0298, 2.6865] | positive-edge |
+| 2.0, current | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | [1.2042, 2.8908] | positive-edge |
+| 2.5 | 905 | `$1,547.41` | 1.3684 | 3.0962 | [0.6648, 2.7212] | positive-edge |
+| 3.0 | 674 | `$1,518.99` | 1.4864 | 3.5971 | [0.9290, 3.4921] | positive-edge |
+
+Decision: keep `RELATIVE_VOLUME_THRESHOLD=2.0`. Lowering the threshold to 1.8
+increased raw P&L but reduced profit factor, Sharpe, and CI lower bound.
+Stricter thresholds reduced trade count and aggregate P&L without improving
+the CI floor.
