@@ -531,6 +531,79 @@ def make_bar_series(symbol: str, *, end: datetime, count: int, days: bool = Fals
     return bars
 
 
+def test_load_traded_symbols_blocks_terminal_same_session_entry_attempts() -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings({"SYMBOLS": "AAPL,MSFT,NVDA,TSLA,AMD,QQQ"})
+    session_date = date(2026, 4, 24)
+    signal_ts = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+    prior_signal_ts = datetime(2026, 4, 23, 19, 0, tzinfo=timezone.utc)
+
+    def entry(symbol: str, status: str, *, timestamp: datetime = signal_ts) -> OrderRecord:
+        return OrderRecord(
+            client_order_id=f"paper:v1-breakout:{symbol}:entry:{status}",
+            symbol=symbol,
+            side="buy",
+            intent_type="entry",
+            status=status,
+            quantity=1,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            created_at=timestamp,
+            updated_at=timestamp,
+            signal_timestamp=timestamp,
+        )
+
+    order_store = RecordingOrderStore(
+        [
+            entry("AAPL", "filled"),
+            entry("MSFT", "canceled"),
+            entry("NVDA", "expired"),
+            entry("TSLA", "rejected"),
+            entry("AMD", "error"),
+            entry("QQQ", "error", timestamp=prior_signal_ts),
+            OrderRecord(
+                client_order_id="paper:v1-breakout:AAPL:stop:error",
+                symbol="AAPL",
+                side="sell",
+                intent_type="stop",
+                status="error",
+                quantity=1,
+                trading_mode=TradingMode.PAPER,
+                strategy_version="v1-breakout",
+                created_at=signal_ts,
+                updated_at=signal_ts,
+                signal_timestamp=signal_ts,
+            ),
+        ]
+    )
+    runtime = make_runtime_context(settings, order_store=order_store)
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    traded_symbols = supervisor._load_traded_symbols(
+        session_date=session_date,
+        strategy_name="breakout",
+    )
+
+    assert traded_symbols == {
+        ("AAPL", session_date),
+        ("MSFT", session_date),
+        ("NVDA", session_date),
+        ("TSLA", session_date),
+        ("AMD", session_date),
+    }
+    assert order_store.list_by_status_calls[0]["statuses"] == list(
+        module.ENTRY_ATTEMPT_STATUSES
+    )
+
+
 def test_completed_intraday_bars_excludes_current_start_stamped_interval() -> None:
     module, _RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
     now = datetime(2026, 4, 24, 14, 15, tzinfo=timezone.utc)

@@ -92,6 +92,14 @@ ACTIVE_ENTRY_STATUSES = (
     "suspended",
     "done_for_day",
 )
+TERMINAL_ENTRY_ATTEMPT_STATUSES = (
+    "filled",
+    "canceled",
+    "expired",
+    "rejected",
+    "error",
+)
+ENTRY_ATTEMPT_STATUSES = ACTIVE_ENTRY_STATUSES + TERMINAL_ENTRY_ATTEMPT_STATUSES
 
 
 def _completed_intraday_bars_by_symbol(
@@ -2726,7 +2734,7 @@ class RuntimeSupervisor:
             orders = self.runtime.order_store.list_by_status(
                 trading_mode=self.settings.trading_mode,
                 strategy_version=self.settings.strategy_version,
-                statuses=["filled", "partially_filled"],
+                statuses=list(ENTRY_ATTEMPT_STATUSES),
                 strategy_name=strategy_name,
             )
         traded_symbols: set[tuple[str, date]] = set()
