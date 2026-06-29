@@ -281,3 +281,24 @@ Decision: keep `RELATIVE_VOLUME_LOOKBACK_BARS=20`. Every tested alternative
 reduced trade count, aggregate P&L, profit factor, Sharpe, and CI lower bound
 versus the current posture, so no proof-horizon run or runtime promotion was
 warranted.
+
+## ATR Period Follow-up
+
+The ATR lookback period was checked after the relative-volume lookback
+follow-up. These were costed full-universe portfolio replays with the current
+paper-proof posture, 2 bps slippage, K=4, and `$17,247.795` starting equity.
+
+| candidate | trades | total P&L | profit factor | ann. Sharpe | win rate | 95% CI mean/trade | exit reasons | proof first-threshold pass | proof p90 | proof p95 | slowest proof pass |
+|---|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---:|
+| current: `ATR_PERIOD=14` | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | 72.42% | [1.2042, 2.8908] | stop 890, EOD 338, target 1 | 59.93% | 17 | 22 | 31 |
+| `ATR_PERIOD=7` | 1,228 | `$2,485.73` | 1.4800 | 4.2146 | 72.39% | [1.1385, 2.9296] | stop 892, EOD 335, target 1 | not tested | not tested | not tested | not tested |
+| `ATR_PERIOD=10` | 1,229 | `$2,482.33` | 1.4801 | 4.2297 | 72.42% | [1.1961, 2.8745] | stop 891, EOD 337, target 1 | not tested | not tested | not tested | not tested |
+| `ATR_PERIOD=20` | 1,231 | `$2,555.80` | 1.4959 | 4.3842 | 72.46% | [1.1878, 2.9614] | stop 892, EOD 338, target 1 | not tested | not tested | not tested | not tested |
+| `ATR_PERIOD=30` | 1,174 | `$2,439.15` | 1.4997 | 4.3660 | 72.15% | [1.2110, 2.9884] | stop 847, EOD 326, target 1 | 59.18% | 37 | 50 | 63 |
+
+Decision: keep `ATR_PERIOD=14`. `ATR_PERIOD=20` improved raw P&L, profit
+factor, and Sharpe, but its CI lower bound was below current. `ATR_PERIOD=30`
+was the only candidate with a slightly higher CI lower bound, so it received a
+proof-horizon check; that check reduced first-threshold pass rate and materially
+slowed proof speed versus current. Shorter lookbacks were weaker on aggregate
+and robust metrics.
