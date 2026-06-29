@@ -47,6 +47,27 @@ Proof-horizon follow-up for the 3R target:
 | p95 sessions to proof pass | 24 |
 | slowest observed pass | 38 |
 
+## Target Fill Assumption Stress
+
+Replay records target hits at the target price after slippage. Live paper emits
+a regular exit intent after the target is detected, so a target hit can fill
+like a market exit rather than exactly at the target. A follow-up diagnostic
+replayed the promoted posture, then marked every `profit_target` exit to the
+target bar close with 2 bps sell slippage.
+
+| measure | ideal target fill | target exit marked to bar close |
+|---|---:|---:|
+| total trades | 1,235 | 1,235 |
+| profit-target exits | 1 | 1 |
+| total P&L | `$2,087.64` | `$2,053.13` |
+| profit factor | 1.3924 | 1.3859 |
+| annualized Sharpe | 3.6862 | 3.6436 |
+| target-exit P&L | `$74.45` | `$39.93` |
+
+The conservative mark reduces P&L by `$34.51`, but still remains above the
+no-target baseline (`$2,043.30`). The promotion is therefore not materially
+dependent on many idealized target fills in the replay sample.
+
 Decision: promote `ENABLE_PROFIT_TARGET=true` and `PROFIT_TARGET_R=3.0` for
 the paper proof posture. The candidate preserves trade count and eventual proof
 pass rate while slightly improving after-cost P&L, profit factor, Sharpe, CI
