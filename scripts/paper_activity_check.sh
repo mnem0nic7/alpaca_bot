@@ -574,20 +574,37 @@ SELECT
       )
       AND (NOT (payload ? 'strategy_name') OR payload->>'strategy_name' = :'paper_activity_strategy')
   )::int,
-  COUNT(*) FILTER (
-    WHERE event_type IN (
-      'stream_heartbeat_stale',
-      'stream_restart_failed',
-      'trade_update_stream_failed',
-      'trade_update_failed',
-      'protective_stop_quantity_replace_failed'
-    )
-      AND created_at >= COALESCE(
+  COALESCE((
+    SELECT COUNT(*)::int
+    FROM recent stream_issue
+    WHERE stream_issue.created_at >= COALESCE(
         (SELECT created_at FROM latest_supervisor_started),
         NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
       )
-      AND (NOT (payload ? 'strategy_name') OR payload->>'strategy_name' = :'paper_activity_strategy')
-  )::int
+      AND (
+        stream_issue.event_type IN (
+          'stream_restart_failed',
+          'trade_update_stream_failed',
+          'trade_update_failed',
+          'protective_stop_quantity_replace_failed'
+        )
+        OR (
+          stream_issue.event_type = 'stream_heartbeat_stale'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM recent stream_recovery
+            WHERE stream_recovery.event_type = 'trade_update_stream_restarted'
+              AND stream_recovery.created_at >= stream_issue.created_at
+              AND stream_recovery.created_at <= stream_issue.created_at + interval '2 minutes'
+              AND COALESCE(stream_recovery.payload->>'reason', '') = 'heartbeat_stale'
+          )
+        )
+      )
+      AND (
+        NOT (stream_issue.payload ? 'strategy_name')
+        OR stream_issue.payload->>'strategy_name' = :'paper_activity_strategy'
+      )
+  ), 0)::int
 FROM recent;
 SQL
 )"
