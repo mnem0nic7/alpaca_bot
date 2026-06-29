@@ -17,6 +17,7 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "BULL_FLAG_MIN_RUN_PCT",
         "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO",
         "BULL_FLAG_CONSOLIDATION_RANGE_PCT",
+        "MAX_LOSS_PER_TRADE_DOLLARS",
         "MAX_OPEN_POSITIONS",
         "CONFIDENCE_FLOOR",
         "ATR_STOP_MULTIPLIER",
@@ -56,6 +57,7 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
     assert "ENABLE_SPREAD_FILTER: ${ENABLE_SPREAD_FILTER:-false}" in compose_text
     assert "ENABLE_PROFIT_TARGET: ${ENABLE_PROFIT_TARGET:-false}" in compose_text
     assert "PROFIT_TARGET_R: ${PROFIT_TARGET_R:-2.0}" in compose_text
+    assert "MAX_LOSS_PER_TRADE_DOLLARS: ${MAX_LOSS_PER_TRADE_DOLLARS:-}" in compose_text
 
 
 def test_nightly_compose_sweeps_enabled_strategy_flags() -> None:
