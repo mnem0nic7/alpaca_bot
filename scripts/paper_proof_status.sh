@@ -1539,7 +1539,7 @@ posture_status = (
         and int(settings.entry_timeframe_minutes) == 15
         and abs(float(settings.risk_per_trade_pct) - 0.01) < 1e-9
         and abs(float(settings.max_position_pct) - 0.05) < 1e-9
-        and int(settings.max_open_positions) == 3
+        and int(settings.max_open_positions) == 4
         and abs(float(settings.max_portfolio_exposure_pct) - 0.30) < 1e-9
         and abs(float(settings.daily_loss_limit_pct) - 0.01) < 1e-9
         and int(settings.atr_period) == 14

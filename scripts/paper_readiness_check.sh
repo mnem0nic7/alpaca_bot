@@ -369,7 +369,7 @@ require_env_value BREAKOUT_LOOKBACK_BARS 20
 require_env_value RELATIVE_VOLUME_LOOKBACK_BARS 20
 require_env_value RELATIVE_VOLUME_THRESHOLD 2.0
 require_env_value ENTRY_TIMEFRAME_MINUTES 15
-require_env_value MAX_OPEN_POSITIONS 3
+require_env_value MAX_OPEN_POSITIONS 4
 require_env_value REPLAY_SLIPPAGE_BPS 2.0
 require_env_value RISK_PER_TRADE_PCT 0.01
 require_env_value MAX_POSITION_PCT 0.05
@@ -442,7 +442,7 @@ check("relative_volume_threshold", settings.relative_volume_threshold, 2.0)
 check("entry_timeframe_minutes", settings.entry_timeframe_minutes, 15)
 check("risk_per_trade_pct", settings.risk_per_trade_pct, 0.01)
 check("max_position_pct", settings.max_position_pct, 0.05)
-check("max_open_positions", settings.max_open_positions, 3)
+check("max_open_positions", settings.max_open_positions, 4)
 check("max_portfolio_exposure_pct", settings.max_portfolio_exposure_pct, 0.30)
 check("daily_loss_limit_pct", settings.daily_loss_limit_pct, 0.01)
 check("atr_period", settings.atr_period, 14)

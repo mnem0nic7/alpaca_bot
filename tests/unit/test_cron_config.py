@@ -1882,7 +1882,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_value RELATIVE_VOLUME_LOOKBACK_BARS 20" in script
     assert "require_env_value RELATIVE_VOLUME_THRESHOLD 2.0" in script
     assert "require_env_value ENTRY_TIMEFRAME_MINUTES 15" in script
-    assert "require_env_value MAX_OPEN_POSITIONS 3" in script
+    assert "require_env_value MAX_OPEN_POSITIONS 4" in script
     assert "require_env_value REPLAY_SLIPPAGE_BPS 2.0" in script
     assert "require_env_value RISK_PER_TRADE_PCT 0.01" in script
     assert "require_env_value_or_unset ATR_PERIOD 14" in script
@@ -3684,7 +3684,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "int(settings.entry_timeframe_minutes) == 15" in script
     assert "abs(float(settings.risk_per_trade_pct) - 0.01)" in script
     assert "abs(float(settings.max_position_pct) - 0.05)" in script
-    assert "int(settings.max_open_positions) == 3" in script
+    assert "int(settings.max_open_positions) == 4" in script
     assert "abs(float(settings.max_portfolio_exposure_pct) - 0.30)" in script
     assert "abs(float(settings.daily_loss_limit_pct) - 0.01)" in script
     assert "int(settings.atr_period) == 14" in script
