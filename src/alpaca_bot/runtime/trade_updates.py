@@ -180,6 +180,45 @@ def _apply_trade_update_locked(
             "unmatched": True,
         }, [], []
 
+    if _is_stale_fill_update(matched_order, normalized):
+        try:
+            runtime.audit_event_store.append(
+                AuditEvent(
+                    event_type="trade_update_stale_fill_ignored",
+                    symbol=matched_order.symbol,
+                    payload={
+                        "client_order_id": matched_order.client_order_id,
+                        "broker_order_id": normalized.broker_order_id
+                        or matched_order.broker_order_id,
+                        "event": normalized.event,
+                        "status": normalized.status,
+                        "existing_status": matched_order.status,
+                        "filled_quantity": normalized.filled_qty,
+                        "existing_filled_quantity": matched_order.filled_quantity,
+                    },
+                    created_at=timestamp,
+                ),
+                commit=False,
+            )
+            runtime.connection.commit()
+        except Exception:
+            try:
+                runtime.connection.rollback()
+            except Exception:
+                pass
+            raise
+        return {
+            "matched_order_id": matched_order.client_order_id,
+            "status": normalized.status,
+            "position_updated": False,
+            "protective_stop_queued": False,
+            "protective_stop_client_order_id": None,
+            "position_cleared": False,
+            "order_updated": False,
+            "unmatched": False,
+            "stale_fill_ignored": True,
+        }, [], []
+
     _is_fill_event = normalized.status in {"filled", "partially_filled"}
     _is_entry_terminal_event = (
         matched_order.intent_type == "entry"
@@ -707,6 +746,21 @@ def _entry_cumulative_fill_qty(
     if matched_order.filled_quantity is None:
         return normalized.filled_qty
     return max(normalized.filled_qty, matched_order.filled_quantity)
+
+
+def _is_stale_fill_update(
+    matched_order: OrderRecord,
+    normalized: TradeUpdate,
+) -> bool:
+    if matched_order.status != "filled":
+        return False
+    if normalized.status not in {"filled", "partially_filled"}:
+        return False
+    if normalized.filled_qty is not None:
+        existing_qty = matched_order.filled_quantity
+        if existing_qty is None or normalized.filled_qty > existing_qty:
+            return False
+    return True
 
 
 def _entry_cumulative_fill_price(

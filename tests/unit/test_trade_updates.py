@@ -1468,6 +1468,55 @@ def test_duplicate_entry_fill_skips_position_save_when_order_already_filled() ->
     )
 
 
+def test_late_partial_fill_after_filled_exit_is_ignored() -> None:
+    """A late partial_fill after a filled exit must not regress the closed order."""
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    exit_order = OrderRecord(
+        client_order_id="paper:v1-breakout:2026-06-29:AAPL:exit:eod_flatten",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="filled",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=NOW,
+        updated_at=NOW,
+        broker_order_id="broker-exit-1",
+        fill_price=113.25,
+        filled_quantity=10,
+    )
+    runtime = _make_runtime(orders=[exit_order])
+
+    late_partial = _make_trade_update(
+        client_order_id=exit_order.client_order_id,
+        broker_order_id="broker-exit-1",
+        symbol="AAPL",
+        side="sell",
+        status="partially_filled",
+        qty=10,
+        filled_qty=4,
+        filled_avg_price=113.25,
+    )
+
+    result = apply_trade_update(
+        settings=make_settings(),
+        runtime=runtime,
+        update=late_partial,
+        now=NOW,
+    )
+
+    assert result["stale_fill_ignored"] is True
+    assert result["order_updated"] is False
+    assert runtime.order_store.saved == []
+    assert runtime.position_store.deleted == []
+    assert [
+        event.event_type for event in runtime.audit_event_store.appended
+    ] == ["trade_update_stale_fill_ignored"]
+
+
 # ---------------------------------------------------------------------------
 # Rollback guard coverage for _apply_trade_update_locked
 # ---------------------------------------------------------------------------
