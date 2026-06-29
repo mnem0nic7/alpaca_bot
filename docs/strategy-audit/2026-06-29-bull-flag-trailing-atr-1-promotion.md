@@ -224,3 +224,23 @@ and `BREAKEVEN_TRAIL_PCT=0.002`. Disabling breakeven materially weakened the
 edge. A later 0.005 trigger improved the CI lower bound but reduced total P&L,
 profit factor, Sharpe, eventual proof pass rate, first-threshold pass rate, and
 slowest proof pass. The current trigger remains the better paper proof posture.
+
+## Viability Exit Follow-up
+
+Daily trend-filter and intraday VWAP-breakdown viability exits were checked
+after the breakeven follow-up. These were costed full-universe portfolio
+replays with the current paper-proof posture, 2 bps slippage, K=4, and
+`$17,247.795` starting equity.
+
+| candidate | trades | total P&L | profit factor | ann. Sharpe | 95% CI mean/trade | exit reasons | verdict |
+|---|---:|---:|---:|---:|---|---|---|
+| current: viability exits off | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | [1.2042, 2.8908] | stop 890, EOD 338, target 1 | positive-edge |
+| trend-filter exit on | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | [1.2042, 2.8908] | stop 890, EOD 338, target 1 | positive-edge |
+| VWAP-breakdown exit on | 1,300 | `$1,889.54` | 1.3514 | 3.4132 | [0.6443, 2.2069] | stop 843, EOD 456, target 1 | positive-edge |
+| trend + VWAP exits on | 1,300 | `$1,889.54` | 1.3514 | 3.4132 | [0.6443, 2.2069] | stop 843, EOD 456, target 1 | positive-edge |
+
+Decision: keep `ENABLE_TREND_FILTER_EXIT=false` and
+`ENABLE_VWAP_BREAKDOWN_EXIT=false`. The trend-filter exit did not fire in this
+replay window. The VWAP-breakdown exit increased turnover but reduced aggregate
+P&L, profit factor, Sharpe, and the CI lower bound, so no proof-horizon run or
+runtime promotion was warranted.
