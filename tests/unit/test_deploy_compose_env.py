@@ -171,6 +171,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "MAX_PORTFOLIO_EXPOSURE_PCT=0.30" in env_text
     assert "INTRADAY_CONSECUTIVE_LOSS_GATE=0" in env_text
     assert "STOP_LIMIT_BUFFER_PCT=0.0005" in env_text
+    assert "ENTRY_STOP_PRICE_BUFFER=0.02" in env_text
     assert "ATR_PERIOD=14" in env_text
     assert "ATR_STOP_MULTIPLIER=1.0" in env_text
     assert "TRAILING_STOP_ATR_MULTIPLIER=1.0" in env_text
@@ -209,6 +210,7 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "CONFIDENCE_FLOOR=0.25" in script
     assert "INTRADAY_CONSECUTIVE_LOSS_GATE=0" in script
     assert "STOP_LIMIT_BUFFER_PCT=0.0005" in script
+    assert "ENTRY_STOP_PRICE_BUFFER=0.02" in script
     assert "ATR_PERIOD=14" in script
     assert "ATR_STOP_MULTIPLIER=1.0" in script
     assert "TRAILING_STOP_ATR_MULTIPLIER=1.0" in script

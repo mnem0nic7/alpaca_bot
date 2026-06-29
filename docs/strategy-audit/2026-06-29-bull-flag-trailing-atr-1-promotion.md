@@ -322,3 +322,22 @@ and CI lower bound, and improved first-threshold proof rate plus p90/p95 proof
 speed. The slowest observed proof pass moved from 31 to 32 sessions, which is
 not enough tail degradation to offset the stronger robust metrics and faster
 typical proof horizon.
+
+## Entry Stop Price Buffer Follow-up
+
+The entry stop trigger buffer was checked after the stop-limit buffer
+promotion. These were costed full-universe portfolio replays with the current
+paper-proof posture, 2 bps slippage, K=4, and `$17,247.795` starting equity.
+
+| candidate | trades | total P&L | profit factor | ann. Sharpe | win rate | 95% CI mean/trade | exit reasons | proof first-threshold pass | proof eventual pass | proof p90 | proof p95 | slowest proof pass |
+|---|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---:|---:|
+| `ENTRY_STOP_PRICE_BUFFER=0.005` | 1,185 | `$2,758.94` | 1.5798 | 4.6282 | 72.91% | [1.4169, 3.2650] | stop 861, EOD 323, target 1 | not tested | not tested | not tested | not tested | not tested |
+| current: `ENTRY_STOP_PRICE_BUFFER=0.01` | 1,175 | `$2,715.89` | 1.5869 | 4.7835 | 73.11% | [1.4165, 3.1699] | stop 856, EOD 318, target 1 | 61.80% | 99.26% | 13 | 19 | 32 |
+| `ENTRY_STOP_PRICE_BUFFER=0.02` | 1,157 | `$2,903.15` | 1.6058 | 4.7728 | 72.77% | [1.6103, 3.4144] | stop 834, EOD 321, target 2 | 62.17% | 99.26% | 15 | 22 | 31 |
+
+Decision: promote `ENTRY_STOP_PRICE_BUFFER=0.02`. The wider entry trigger
+improved aggregate P&L, profit factor, CI lower bound, first-threshold proof
+rate, and slowest observed proof pass. It slightly reduced trade count, win
+rate, and Sharpe, and p90/p95 proof speed slowed from 13/19 to 15/22 sessions;
+that tail tradeoff is acceptable because the robust edge improved materially
+and the slowest proof case improved.

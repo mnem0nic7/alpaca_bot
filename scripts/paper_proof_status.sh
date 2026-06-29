@@ -1543,6 +1543,7 @@ posture_status = (
         and abs(float(settings.max_portfolio_exposure_pct) - 0.30) < 1e-9
         and abs(float(settings.daily_loss_limit_pct) - 0.01) < 1e-9
         and abs(float(settings.stop_limit_buffer_pct) - 0.0005) < 1e-9
+        and abs(float(settings.entry_stop_price_buffer) - 0.02) < 1e-9
         and int(settings.atr_period) == 14
         and abs(float(settings.atr_stop_multiplier) - 1.0) < 1e-9
         and abs(float(settings.trailing_stop_atr_multiplier) - 1.0) < 1e-9
@@ -1786,6 +1787,7 @@ print(
     f"max_portfolio_exposure_pct={settings.max_portfolio_exposure_pct:g} "
     f"daily_loss_limit_pct={settings.daily_loss_limit_pct:g} "
     f"stop_limit_buffer_pct={settings.stop_limit_buffer_pct:g} "
+    f"entry_stop_price_buffer={settings.entry_stop_price_buffer:g} "
     f"atr_period={settings.atr_period} "
     f"atr_stop_multiplier={settings.atr_stop_multiplier:g} "
     f"trailing_stop_atr_multiplier={settings.trailing_stop_atr_multiplier:g} "
