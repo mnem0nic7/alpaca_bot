@@ -281,6 +281,11 @@ latest_supervisor AS (
   ORDER BY created_at DESC
   LIMIT 1
 ),
+latest_supervisor_started AS (
+  SELECT MAX(created_at) AS created_at
+  FROM recent
+  WHERE event_type = 'supervisor_started'
+),
 strategy_positions AS (
   SELECT DISTINCT symbol
   FROM positions
@@ -563,6 +568,10 @@ SELECT
       'order_dispatch_failed',
       'order_dispatch_stop_price_rejected'
     )
+      AND created_at >= COALESCE(
+        (SELECT created_at FROM latest_supervisor_started),
+        NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+      )
       AND (NOT (payload ? 'strategy_name') OR payload->>'strategy_name' = :'paper_activity_strategy')
   )::int,
   COUNT(*) FILTER (
@@ -573,6 +582,10 @@ SELECT
       'trade_update_failed',
       'protective_stop_quantity_replace_failed'
     )
+      AND created_at >= COALESCE(
+        (SELECT created_at FROM latest_supervisor_started),
+        NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+      )
       AND (NOT (payload ? 'strategy_name') OR payload->>'strategy_name' = :'paper_activity_strategy')
   )::int
 FROM recent;

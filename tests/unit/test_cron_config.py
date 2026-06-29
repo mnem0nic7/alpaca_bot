@@ -1961,6 +1961,9 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "decision_record_count" in script
     assert "decision_log" in script
     assert "latest_supervisor AS" in script
+    assert "latest_supervisor_started AS" in script
+    assert "SELECT MAX(created_at) AS created_at" in script
+    assert "(SELECT created_at FROM latest_supervisor_started)" in script
     assert "latest_cycle_entries_disabled" in script
     assert "latest_cycle_strategy_blocked" in script
     assert "strategy_decision_log_cycles" in script
