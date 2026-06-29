@@ -30,6 +30,8 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "ENABLE_REGIME_FILTER",
         "ENABLE_NEWS_FILTER",
         "ENABLE_SPREAD_FILTER",
+        "ENABLE_PROFIT_TARGET",
+        "PROFIT_TARGET_R",
         "REPLAY_SLIPPAGE_BPS",
     }
 
@@ -52,6 +54,8 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
     assert "ENABLE_REGIME_FILTER: ${ENABLE_REGIME_FILTER:-false}" in compose_text
     assert "ENABLE_NEWS_FILTER: ${ENABLE_NEWS_FILTER:-false}" in compose_text
     assert "ENABLE_SPREAD_FILTER: ${ENABLE_SPREAD_FILTER:-false}" in compose_text
+    assert "ENABLE_PROFIT_TARGET: ${ENABLE_PROFIT_TARGET:-false}" in compose_text
+    assert "PROFIT_TARGET_R: ${PROFIT_TARGET_R:-2.0}" in compose_text
 
 
 def test_nightly_compose_sweeps_enabled_strategy_flags() -> None:
@@ -175,6 +179,8 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "ENABLE_VWAP_ENTRY_FILTER=true" in env_text
     assert "ENABLE_PROFIT_TRAIL=true" in env_text
     assert "PROFIT_TRAIL_PCT=0.95" in env_text
+    assert "ENABLE_PROFIT_TARGET=true" in env_text
+    assert "PROFIT_TARGET_R=3.0" in env_text
     assert "ENABLE_REGIME_FILTER=false" in env_text
     assert "ENABLE_NEWS_FILTER=false" in env_text
     assert "ENABLE_SPREAD_FILTER=false" in env_text
@@ -210,6 +216,10 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert 'ENABLE_VWAP_ENTRY_FILTER="true"' in script
     assert 'ENABLE_PROFIT_TRAIL="true"' in script
     assert "PROFIT_TRAIL_PCT=0.95" in script
+    assert 'ENABLE_PROFIT_TARGET="true"' in script
+    assert 'PROFIT_TARGET_R="3.0"' in script
+    assert "ENABLE_PROFIT_TARGET=$ENABLE_PROFIT_TARGET" in script
+    assert "PROFIT_TARGET_R=$PROFIT_TARGET_R" in script
     assert "ENABLE_NEWS_FILTER=false" in script
     assert "ENABLE_SPREAD_FILTER=false" in script
     assert "OPTION_CHAIN_SYMBOLS=" in script

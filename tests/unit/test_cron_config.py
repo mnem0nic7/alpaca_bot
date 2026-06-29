@@ -1897,6 +1897,8 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_true ENABLE_VWAP_ENTRY_FILTER" in script
     assert "require_env_true ENABLE_PROFIT_TRAIL" in script
     assert "require_env_value PROFIT_TRAIL_PCT 0.95" in script
+    assert "require_env_true ENABLE_PROFIT_TARGET" in script
+    assert "require_env_value PROFIT_TARGET_R 3.0" in script
     assert "require_env_true_or_unset ENABLE_BREAKEVEN_STOP" in script
     assert "require_env_value_or_unset BREAKEVEN_TRIGGER_PCT 0.0025" in script
     assert "require_env_value_or_unset BREAKEVEN_TRAIL_PCT 0.002" in script
@@ -3709,6 +3711,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "bool(settings.enable_vwap_entry_filter)" in script
     assert "bool(settings.enable_profit_trail)" in script
     assert "abs(float(settings.profit_trail_pct) - 0.95)" in script
+    assert "bool(settings.enable_profit_target)" in script
+    assert "abs(float(settings.profit_target_r) - 3.0)" in script
     assert "bool(settings.enable_breakeven_stop)" in script
     assert "abs(float(settings.breakeven_trigger_pct) - 0.0025)" in script
     assert "abs(float(settings.breakeven_trail_pct) - 0.002)" in script
@@ -3720,7 +3724,6 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "not bool(settings.enable_options_trading)" in script
     assert "not bool(settings.option_chain_symbols)" in script
     assert "not bool(settings.extended_hours_enabled)" in script
-    assert "not bool(settings.enable_profit_target)" in script
     assert "not bool(settings.enable_trend_filter_exit)" in script
     assert "not bool(settings.enable_vwap_breakdown_exit)" in script
     assert "abs(float(settings.per_symbol_loss_limit_pct) - 0.0)" in script
@@ -3743,6 +3746,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "options_trading={str(settings.enable_options_trading).lower()}" in script
     assert "option_chain_symbols={','.join(settings.option_chain_symbols) if settings.option_chain_symbols else 'none'}" in script
     assert "profit_target={str(settings.enable_profit_target).lower()}" in script
+    assert "profit_target_r={settings.profit_target_r:g}" in script
     assert "trend_filter_exit={str(settings.enable_trend_filter_exit).lower()}" in script
     assert "vwap_breakdown_exit={str(settings.enable_vwap_breakdown_exit).lower()}" in script
     assert "per_symbol_loss_limit_pct={settings.per_symbol_loss_limit_pct:g}" in script

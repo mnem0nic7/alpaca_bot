@@ -1555,6 +1555,8 @@ posture_status = (
         and bool(settings.enable_vwap_entry_filter)
         and bool(settings.enable_profit_trail)
         and abs(float(settings.profit_trail_pct) - 0.95) < 1e-9
+        and bool(settings.enable_profit_target)
+        and abs(float(settings.profit_target_r) - 3.0) < 1e-9
         and bool(settings.enable_breakeven_stop)
         and abs(float(settings.breakeven_trigger_pct) - 0.0025) < 1e-9
         and abs(float(settings.breakeven_trail_pct) - 0.002) < 1e-9
@@ -1566,7 +1568,6 @@ posture_status = (
         and not bool(settings.enable_options_trading)
         and not bool(settings.option_chain_symbols)
         and not bool(settings.extended_hours_enabled)
-        and not bool(settings.enable_profit_target)
         and not bool(settings.enable_trend_filter_exit)
         and not bool(settings.enable_vwap_breakdown_exit)
         and abs(float(settings.per_symbol_loss_limit_pct) - 0.0) < 1e-9
@@ -1808,6 +1809,7 @@ print(
     f"option_chain_symbols={','.join(settings.option_chain_symbols) if settings.option_chain_symbols else 'none'} "
     f"extended_hours={str(settings.extended_hours_enabled).lower()} "
     f"profit_target={str(settings.enable_profit_target).lower()} "
+    f"profit_target_r={settings.profit_target_r:g} "
     f"trend_filter_exit={str(settings.enable_trend_filter_exit).lower()} "
     f"vwap_breakdown_exit={str(settings.enable_vwap_breakdown_exit).lower()} "
     f"per_symbol_loss_limit_pct={settings.per_symbol_loss_limit_pct:g} "
