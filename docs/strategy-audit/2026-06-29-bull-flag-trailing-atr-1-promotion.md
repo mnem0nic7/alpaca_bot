@@ -113,3 +113,19 @@ the costed objective were not sent through proof-horizon.
 Decision: keep `ATR_STOP_MULTIPLIER=1.0`. The tighter and wider alternatives
 all stayed positive-edge, but each reduced aggregate P&L and CI lower bound
 versus the deployed 1.0 stop.
+
+## Entry Window Follow-up
+
+Earlier entry cutoffs were checked after the 0.90 profit-trail deployment to
+test whether late-day entries were weakening the paper posture. These were
+costed full-universe portfolio replays only because neither candidate improved
+the current objective.
+
+| entry window | trades | total P&L | profit factor | ann. Sharpe | 95% CI mean/trade | verdict |
+|---|---:|---:|---:|---:|---|---|
+| 10:00-15:30, current | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | [1.2042, 2.8908] | positive-edge |
+| 10:00-14:00 | 1,135 | `$2,197.85` | 1.4453 | 3.9100 | [1.0316, 2.8139] | positive-edge |
+| 10:00-12:00 | 833 | `$1,329.23` | 1.3345 | 2.8157 | [0.5004, 2.6686] | positive-edge |
+
+Decision: keep `ENTRY_WINDOW_END=15:30`. Earlier cutoffs reduced total P&L,
+profit factor, Sharpe, and CI lower bound under the current paper posture.
