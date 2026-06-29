@@ -56,3 +56,19 @@ Proof-horizon follow-up for the 1.0 trailing ATR multiplier:
 Decision: promote `TRAILING_STOP_ATR_MULTIPLIER=1.0` for the paper proof
 posture. The candidate preserves trade count and proof-horizon behavior while
 improving after-cost P&L, profit factor, Sharpe, and the CI lower bound.
+
+## Trailing Trigger Follow-up
+
+After deploying the 1.0 trailing ATR multiplier, `TRAILING_STOP_PROFIT_TRIGGER_R=0.5`
+was tested as a follow-up. It improved aggregate after-cost P&L, but the proof
+velocity metric that matters before live paper proof weakened slightly.
+
+| posture | trades | total P&L | profit factor | ann. Sharpe | 95% CI mean/trade | first-threshold pass rate | slowest observed pass |
+|---|---:|---:|---:|---:|---|---:|---:|
+| trigger 1.0, current | 1,235 | `$2,163.27` | 1.4062 | 3.7953 | [0.9253, 2.6061] | 61.80% | 38 |
+| trigger 0.5 | 1,237 | `$2,189.92` | 1.42 | 3.87 | [0.9285, 2.5893] | 60.67% | 38 |
+
+Decision: keep `TRAILING_STOP_PROFIT_TRIGGER_R=1.0`. The 0.5R trigger has a
+small CI-floor and P&L improvement, but it lowers the first-threshold pass rate
+from 61.80% to 60.67%. That is not enough evidence to change the paper proof
+posture immediately before the 2026-06-29 session.
