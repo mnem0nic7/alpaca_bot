@@ -165,3 +165,19 @@ the robust objective.
 Decision: keep `MAX_OPEN_POSITIONS=4`. K=5 slightly increased raw P&L, but it
 reduced profit factor, Sharpe, and the CI lower bound. K=6 degraded all robust
 metrics, and K=3 left too much aggregate edge unused.
+
+## VWAP Entry Filter Follow-up
+
+The VWAP entry filter was checked after the exit-tuning promotions because the
+live dry run was still rejecting some signals at `vwap_filter`. This was a
+costed full-universe portfolio replay only because disabling the filter did not
+improve the current objective.
+
+| VWAP entry filter | trades | total P&L | profit factor | ann. Sharpe | 95% CI mean/trade | verdict |
+|---|---:|---:|---:|---:|---|---|
+| on, current | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | [1.2042, 2.8908] | positive-edge |
+| off | 1,229 | `$2,402.38` | 1.4673 | 4.1728 | [1.0853, 2.8358] | positive-edge |
+
+Decision: keep `ENABLE_VWAP_ENTRY_FILTER=true`. Disabling the filter reduced
+aggregate P&L, profit factor, Sharpe, and CI lower bound without increasing the
+trade count in the current portfolio replay.
