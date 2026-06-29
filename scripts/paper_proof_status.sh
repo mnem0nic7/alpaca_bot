@@ -967,6 +967,55 @@ try:
         local_open_option_symbols = exposure_row[6] if exposure_row else "none"
         local_active_option_order_symbols = exposure_row[7] if exposure_row else "none"
 
+        unpaired_filled_exit_count = 0
+        unpaired_filled_exit_symbols = "none"
+        if proof_end >= proof_start:
+            cur.execute(
+                """
+                SELECT
+                  COUNT(*)::int AS unpaired_filled_exits,
+                  COALESCE(string_agg(DISTINCT x.symbol, ',' ORDER BY x.symbol), 'none')
+                FROM orders x
+                WHERE x.trading_mode = %s
+                  AND x.strategy_version = %s
+                  AND x.strategy_name IS NOT DISTINCT FROM %s
+                  AND x.intent_type IN ('stop', 'exit')
+                  AND x.fill_price IS NOT NULL
+                  AND (x.status = 'filled' OR COALESCE(x.filled_quantity, 0) > 0)
+                  AND DATE(x.updated_at AT TIME ZONE %s) >= %s
+                  AND DATE(x.updated_at AT TIME ZONE %s) <= %s
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM orders e
+                    WHERE e.symbol = x.symbol
+                      AND e.trading_mode = x.trading_mode
+                      AND e.strategy_version = x.strategy_version
+                      AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name
+                      AND e.intent_type = 'entry'
+                      AND e.fill_price IS NOT NULL
+                      AND (e.status = 'filled' OR COALESCE(e.filled_quantity, 0) > 0)
+                      AND e.updated_at <= x.updated_at
+                      AND DATE(e.updated_at AT TIME ZONE %s)
+                          = DATE(x.updated_at AT TIME ZONE %s)
+                  )
+                """,
+                (
+                    trading_mode.value,
+                    strategy_version,
+                    strategy_name,
+                    market_timezone,
+                    proof_start,
+                    market_timezone,
+                    proof_end,
+                    market_timezone,
+                    market_timezone,
+                ),
+            )
+            unpaired_exit_row = cur.fetchone()
+            if unpaired_exit_row:
+                unpaired_filled_exit_count = int(unpaired_exit_row[0] or 0)
+                unpaired_filled_exit_symbols = unpaired_exit_row[1] or "none"
+
     order_store = OrderStore(conn)
     trades = []
     if proof_end >= proof_start:
@@ -1592,6 +1641,8 @@ if not proof_not_started and 0 < trade_count:
         warnings.append("cumulative_pnl_negative")
     elif pnl < min_pnl:
         warnings.append("cumulative_pnl_below_minimum")
+if not proof_not_started and unpaired_filled_exit_count > 0:
+    warnings.append("unpaired_filled_exits")
 
 readiness_status = "blocked" if blockers else "ready"
 if proof_status == "passed":
@@ -1831,6 +1882,12 @@ print(
     f"window={proof_window} "
     f"first_exit_session={first_exit_session or 'none'} "
     f"latest_exit_session={latest_exit_session or 'none'}"
+)
+print(
+    "paper proof scoring: "
+    f"scoreable_closed_trades={trade_count} "
+    f"unpaired_filled_exits={unpaired_filled_exit_count} "
+    f"unpaired_symbols={unpaired_filled_exit_symbols or 'none'}"
 )
 print(
     "paper proof trade quality: "

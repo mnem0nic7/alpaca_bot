@@ -3348,6 +3348,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "partial_pnl_below_minimum" in script
     assert "cumulative_pnl_negative" in script
     assert "cumulative_pnl_below_minimum" in script
+    assert "unpaired_filled_exits" in script
     assert "scheduled check context: session_date=$(TZ=America/New_York date +%F)" in script
     assert "PROOF_STATUS_FAIL_ON_ISSUES" in script
     assert "PROOF_STATUS_FAIL_ON_ISSUES must be true or false" in script
@@ -3543,6 +3544,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "session_guard_status == \"passed\" and profit_probe_status == \"passed\"" not in script
     assert "profitable_enough = trade_count >= min_trades and pnl >= min_pnl" in script
     assert "trade_pnl_rows = [" in script
+    assert "unpaired_filled_exit_count = 0" in script
+    assert "unpaired_filled_exit_symbols = \"none\"" in script
+    assert "NOT EXISTS (" in script
+    assert "AND e.strategy_name IS NOT DISTINCT FROM x.strategy_name" in script
+    assert "DATE(e.updated_at AT TIME ZONE %s)" in script
+    assert "DATE(x.updated_at AT TIME ZONE %s)" in script
+    assert "warnings.append(\"unpaired_filled_exits\")" in script
     assert "wins = sum(1 for _, trade_pnl in trade_pnl_rows if trade_pnl > 0)" in script
     assert "losses = sum(1 for _, trade_pnl in trade_pnl_rows if trade_pnl < 0)" in script
     assert "win_rate_text = f\"{win_rate:.1f}%\" if win_rate is not None else \"none\"" in script
@@ -3731,6 +3739,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "viability_min_hold_minutes={settings.viability_min_hold_minutes}" in script
     assert "max_loss_per_trade_dollars=" in script
     assert "replay_slippage_bps={settings.replay_slippage_bps:g}" in script
+    assert "paper proof scoring:" in script
+    assert "scoreable_closed_trades={trade_count}" in script
+    assert "unpaired_filled_exits={unpaired_filled_exit_count}" in script
+    assert "unpaired_symbols={unpaired_filled_exit_symbols or 'none'}" in script
     assert "paper proof trade quality:" in script
     assert "wins={wins}" in script
     assert "losses={losses}" in script
