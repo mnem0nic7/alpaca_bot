@@ -4348,7 +4348,7 @@ def test_supervisor_exits_after_10_consecutive_cycle_failures(monkeypatch) -> No
     assert call_count == 10, f"Supervisor must exit exactly on the 10th failure, got {call_count}"
 
 
-def test_stream_heartbeat_stale_fires_audit_and_notifier(monkeypatch) -> None:
+def test_stream_heartbeat_stale_fires_audit_and_notifier_without_restart(monkeypatch) -> None:
     """When the stream thread is alive but no event has arrived in >300s, supervisor must
     append a stream_heartbeat_stale audit event and fire the notifier exactly once."""
     module, RuntimeSupervisor, _ = load_supervisor_api()
@@ -4409,11 +4409,9 @@ def test_stream_heartbeat_stale_fires_audit_and_notifier(monkeypatch) -> None:
     restart_events = [
         e for e in audit_events if e.event_type == "trade_update_stream_restarted"
     ]
-    assert len(restart_events) >= 1, "stale heartbeat must restart the stream"
-    assert restart_events[0].payload.get("reason") == "heartbeat_stale"
-    assert supervisor._last_stream_event_at == base_now
-    assert supervisor._stream_heartbeat_alerted is False
-    assert stream.stop_calls >= 1
+    assert restart_events == []
+    assert supervisor._last_stream_event_at == stale_ts
+    assert supervisor._stream_heartbeat_alerted is True
     assert any("heartbeat" in c["subject"].lower() or "stream" in c["subject"].lower() for c in notifier_calls), (
         "Notifier must be fired when heartbeat is stale"
     )
@@ -4484,10 +4482,9 @@ def test_stream_heartbeat_alert_fires_only_once_per_stale_window(monkeypatch) ->
         for e in runtime.audit_event_store.appended
         if e.event_type == "trade_update_stream_restarted"
     ]
-    assert len(restart_events) == 1
-    assert supervisor._last_stream_event_at == base_now
-    assert supervisor._stream_heartbeat_alerted is False
-    assert stream.stop_calls >= 1
+    assert restart_events == []
+    assert supervisor._last_stream_event_at == stale_ts
+    assert supervisor._stream_heartbeat_alerted is True
 
 
 def test_stream_restart_replaces_stream_when_stop_does_not_join(monkeypatch) -> None:

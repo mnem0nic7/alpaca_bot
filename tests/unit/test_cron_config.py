@@ -1993,12 +1993,8 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "order_dispatch_stop_price_rejected" in script
     assert "dispatch_failures" in script
     assert "paper activity failed: order dispatch failure events" in script
-    assert "stream_heartbeat_stale" in script
-    assert "stream_issue.event_type = 'stream_heartbeat_stale'" in script
-    assert "stream_recovery.event_type = 'trade_update_stream_restarted'" in script
-    assert "stream_recovery.created_at >= stream_issue.created_at" in script
-    assert "stream_recovery.created_at <= stream_issue.created_at + interval '2 minutes'" in script
-    assert "COALESCE(stream_recovery.payload->>'reason', '') = 'heartbeat_stale'" in script
+    assert "stream_heartbeat_stale" not in script
+    assert "stream_issue.event_type = 'stream_heartbeat_stale'" not in script
     assert "stream_restart_failed" in script
     assert "trade_update_stream_failed" in script
     assert "trade_update_failed" in script
@@ -3499,13 +3495,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "'trade_update_stream_stopped'" in script
     assert "'trade_update_stream_failed'" in script
     assert "'trade_update_failed'" in script
-    assert "'stream_heartbeat_stale'" in script
+    assert "'stream_heartbeat_stale'" not in script
     assert "'stream_restart_failed'" in script
     assert "'protective_stop_quantity_replace_failed'" in script
     assert "latest_stream_started_at" in script
     assert "stream_issue_status_by_event_type" in script
     assert '"trade_update_failed": "trade_update_failed"' in script
-    assert '"stream_heartbeat_stale": "heartbeat_stale"' in script
+    assert '"stream_heartbeat_stale": "heartbeat_stale"' not in script
     assert '"stream_restart_failed": "restart_failed"' in script
     assert (
         '"protective_stop_quantity_replace_failed": '

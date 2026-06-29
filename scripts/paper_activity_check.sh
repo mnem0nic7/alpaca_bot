@@ -588,17 +588,6 @@ SELECT
           'trade_update_failed',
           'protective_stop_quantity_replace_failed'
         )
-        OR (
-          stream_issue.event_type = 'stream_heartbeat_stale'
-          AND NOT EXISTS (
-            SELECT 1
-            FROM recent stream_recovery
-            WHERE stream_recovery.event_type = 'trade_update_stream_restarted'
-              AND stream_recovery.created_at >= stream_issue.created_at
-              AND stream_recovery.created_at <= stream_issue.created_at + interval '2 minutes'
-              AND COALESCE(stream_recovery.payload->>'reason', '') = 'heartbeat_stale'
-          )
-        )
       )
       AND (
         NOT (stream_issue.payload ? 'strategy_name')
