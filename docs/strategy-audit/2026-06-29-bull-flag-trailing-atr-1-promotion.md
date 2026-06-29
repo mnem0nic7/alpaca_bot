@@ -147,3 +147,21 @@ Decision: keep `RELATIVE_VOLUME_THRESHOLD=2.0`. Lowering the threshold to 1.8
 increased raw P&L but reduced profit factor, Sharpe, and CI lower bound.
 Stricter thresholds reduced trade count and aggregate P&L without improving
 the CI floor.
+
+## Capacity Follow-up
+
+The max-open-position cap was checked after the exit-tuning promotions because
+the live dry run was rejecting five entry intents at the capacity stage. These
+were costed full-universe portfolio replays only because no alternative improved
+the robust objective.
+
+| max open positions | trades | total P&L | profit factor | ann. Sharpe | 95% CI mean/trade | verdict |
+|---:|---:|---:|---:|---:|---|---|
+| 3 | 1,025 | `$2,079.83` | 1.4878 | 4.0528 | [1.0498, 3.0493] | positive-edge |
+| 4, current | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | [1.2042, 2.8908] | positive-edge |
+| 5 | 1,386 | `$2,529.77` | 1.4199 | 4.0590 | [0.9954, 2.7393] | positive-edge |
+| 6 | 1,490 | `$2,281.93` | 1.3346 | 3.4908 | [0.6885, 2.3404] | positive-edge |
+
+Decision: keep `MAX_OPEN_POSITIONS=4`. K=5 slightly increased raw P&L, but it
+reduced profit factor, Sharpe, and the CI lower bound. K=6 degraded all robust
+metrics, and K=3 left too much aggregate edge unused.
