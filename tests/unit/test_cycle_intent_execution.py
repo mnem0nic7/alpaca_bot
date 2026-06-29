@@ -267,6 +267,8 @@ def test_execute_cycle_intents_replaces_active_stop_and_updates_position() -> No
                 "intent_type": "update_stop",
                 "action": "replaced",
                 "stop_price": 111.7,
+                "client_order_id": active_stop.client_order_id,
+                "broker_order_id": "broker-stop-1",
             },
             created_at=now,
         )
@@ -2854,7 +2856,7 @@ def test_replace_stop_does_not_pass_client_order_id() -> None:
 
     Passing the old ID causes Alpaca to reject with 'client_order_id must be
     unique' because the old order (now 'replaced' status) still holds that ID.
-    Omitting it tells Alpaca to transfer the original ID automatically.
+    Omitting it lets Alpaca choose the replacement order's client id.
     """
     execute_cycle_intents = load_cycle_intent_execution_api()
     settings = make_settings()
@@ -2916,9 +2918,95 @@ def test_replace_stop_does_not_pass_client_order_id() -> None:
     assert call["stop_price"] == 111.7
     assert "client_order_id" not in call, (
         "replace_order must NOT pass client_order_id — "
-        "Alpaca transfers the original ID automatically; "
+        "Alpaca manages the replacement client id; "
         "passing the old ID triggers 'client_order_id must be unique'"
     )
+
+
+def test_replace_stop_records_returned_client_order_id() -> None:
+    """Alpaca may create a replacement stop with a new client_order_id.
+
+    Persisting the replacement under the old client id makes broker/local
+    reconciliation see the new broker order as missing and disables entries.
+    """
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 30, tzinfo=timezone.utc)
+    active_stop = OrderRecord(
+        client_order_id="old-stop-client-id",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="new",
+        quantity=25,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        broker_order_id="old-broker-stop-id",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=25,
+        entry_price=111.02,
+        stop_price=109.89,
+        initial_stop_price=109.89,
+        opened_at=now,
+        updated_at=now,
+        strategy_name="breakout",
+    )
+
+    class ReplacementIdBroker(RecordingBroker):
+        def replace_order(self, **kwargs):
+            self.replace_calls.append(dict(kwargs))
+            return SimpleNamespace(
+                client_order_id="replacement-stop-client-id",
+                broker_order_id="replacement-broker-stop-id",
+                symbol="AAPL",
+                side="sell",
+                status="NEW",
+                quantity=25,
+            )
+
+    order_store = RecordingOrderStore(orders=[active_stop])
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+
+    execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=ReplacementIdBroker(),
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[CycleIntent(
+                intent_type=CycleIntentType.UPDATE_STOP,
+                symbol="AAPL",
+                timestamp=now,
+                stop_price=111.7,
+            )],
+        ),
+        now=now,
+    )
+
+    replaced = next(o for o in order_store.saved if o.client_order_id == "old-stop-client-id")
+    replacement = next(
+        o for o in order_store.saved if o.client_order_id == "replacement-stop-client-id"
+    )
+    assert replaced.status == "replaced"
+    assert replaced.broker_order_id == "old-broker-stop-id"
+    assert replacement.status == "new"
+    assert replacement.broker_order_id == "replacement-broker-stop-id"
+    assert replacement.stop_price == pytest.approx(111.7)
 
 
 # ---------------------------------------------------------------------------

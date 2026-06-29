@@ -248,6 +248,7 @@ def _execute_update_stop(
 
     # Broker calls happen outside the lock to avoid blocking the stream thread.
     _path_c_client_order_id: str | None = None
+    replaced_order: OrderRecord | None = None
     try:
         if active_stop is not None and active_stop.broker_order_id:
             if db_only:
@@ -256,8 +257,22 @@ def _execute_update_stop(
                 order_id=active_stop.broker_order_id,
                 stop_price=stop_price,
             )
+            replacement_client_order_id = (
+                getattr(broker_order, "client_order_id", None)
+                or active_stop.client_order_id
+            )
+            replacement_broker_order_id = (
+                getattr(broker_order, "broker_order_id", None)
+                or active_stop.broker_order_id
+            )
+            if replacement_client_order_id != active_stop.client_order_id:
+                replaced_order = dataclass_replace(
+                    active_stop,
+                    status="replaced",
+                    updated_at=now,
+                )
             updated_order = OrderRecord(
-                client_order_id=active_stop.client_order_id,
+                client_order_id=replacement_client_order_id,
                 symbol=symbol,
                 side=active_stop.side,
                 intent_type="stop",
@@ -269,7 +284,7 @@ def _execute_update_stop(
                 updated_at=now,
                 stop_price=stop_price,
                 initial_stop_price=active_stop.initial_stop_price,
-                broker_order_id=broker_order.broker_order_id,
+                broker_order_id=replacement_broker_order_id,
                 signal_timestamp=active_stop.signal_timestamp,
                 strategy_name=strategy_name,
             )
@@ -419,6 +434,8 @@ def _execute_update_stop(
             )
             return None
         try:
+            if replaced_order is not None:
+                runtime.order_store.save(replaced_order, commit=False)
             runtime.order_store.save(updated_order, commit=False)
             runtime.position_store.save(
                 PositionRecord(
@@ -443,6 +460,8 @@ def _execute_update_stop(
                         "intent_type": "update_stop",
                         "action": action,
                         "stop_price": stop_price,
+                        "client_order_id": updated_order.client_order_id,
+                        "broker_order_id": updated_order.broker_order_id,
                     },
                     created_at=now,
                 ),

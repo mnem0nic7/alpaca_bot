@@ -2016,8 +2016,8 @@ def test_startup_recovery_queues_exit_when_stop_equals_market() -> None:
 def test_uuid_stop_inherits_strategy_name_from_position() -> None:
     """Replacement stops created by broker.replace_order() receive UUID client_order_ids.
     When startup_recovery syncs such a broker order with no matching local record, it must
-    infer strategy_name from the synced position (not default to 'breakout'), so that
-    daily_realized_pnl correlation queries match correctly."""
+    infer strategy metadata from the synced position (not default to 'breakout'),
+    so later stop updates and daily_realized_pnl correlation stay correct."""
     settings = make_settings()
     now = datetime(2026, 5, 8, 16, 0, tzinfo=timezone.utc)
     uuid_client_order_id = "b3e8a1c2-4f0d-4321-abcd-9876543210ef"
@@ -2076,6 +2076,8 @@ def test_uuid_stop_inherits_strategy_name_from_position() -> None:
     assert synced_stops[0].strategy_name == "bull_flag", (
         "UUID stop must inherit strategy_name from the synced position, not default to 'breakout'"
     )
+    assert synced_stops[0].stop_price == pytest.approx(195.0)
+    assert synced_stops[0].initial_stop_price == pytest.approx(190.0)
 
 
 def test_infer_strategy_name_option_prefix_returns_option() -> None:

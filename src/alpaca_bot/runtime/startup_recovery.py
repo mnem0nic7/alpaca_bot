@@ -756,37 +756,59 @@ def recover_startup_state(
                     broker_order.symbol,
                     broker_order.client_order_id,
                 )
+            intent_type = (
+                existing.intent_type
+                if existing is not None
+                else _infer_intent_type(
+                    client_order_id=broker_order.client_order_id,
+                    side=broker_order.side,
+                )
+            )
+            strategy_name = (
+                existing.strategy_name
+                if existing is not None
+                else _infer_strategy_name(
+                    client_order_id=broker_order.client_order_id,
+                    symbol=broker_order.symbol,
+                    synced_positions=synced_positions,
+                )
+            )
+            synced_position = (
+                _find_synced_position(
+                    symbol=broker_order.symbol,
+                    strategy_name=strategy_name,
+                    synced_positions=synced_positions,
+                )
+                if existing is None and intent_type == "stop"
+                else None
+            )
             runtime.order_store.save(
                 OrderRecord(
                     client_order_id=broker_order.client_order_id,
                     symbol=broker_order.symbol,
                     side=broker_order.side,
-                    intent_type=(
-                        existing.intent_type
-                        if existing is not None
-                        else _infer_intent_type(
-                            client_order_id=broker_order.client_order_id,
-                            side=broker_order.side,
-                        )
-                    ),
+                    intent_type=intent_type,
                     status=str(broker_order.status).lower(),
                     quantity=broker_order.quantity,
                     trading_mode=settings.trading_mode,
                     strategy_version=settings.strategy_version,
-                    strategy_name=(
-                        existing.strategy_name
-                        if existing is not None
-                        else _infer_strategy_name(
-                            client_order_id=broker_order.client_order_id,
-                            symbol=broker_order.symbol,
-                            synced_positions=synced_positions,
-                        )
-                    ),
+                    strategy_name=strategy_name,
                     created_at=existing.created_at if existing is not None else timestamp,
                     updated_at=timestamp,
-                    stop_price=existing.stop_price if existing is not None else None,
+                    stop_price=(
+                        existing.stop_price
+                        if existing is not None
+                        else synced_position.stop_price if synced_position is not None
+                        else None
+                    ),
                     limit_price=existing.limit_price if existing is not None else None,
-                    initial_stop_price=existing.initial_stop_price if existing is not None else None,
+                    initial_stop_price=(
+                        existing.initial_stop_price
+                        if existing is not None
+                        else synced_position.initial_stop_price
+                        if synced_position is not None
+                        else None
+                    ),
                     broker_order_id=broker_order.broker_order_id,
                     signal_timestamp=existing.signal_timestamp if existing is not None else None,
                 ),
@@ -1018,6 +1040,21 @@ def _infer_strategy_name(
         if pos.symbol == symbol:
             return pos.strategy_name
     return _infer_strategy_name_from_client_order_id(client_order_id)
+
+
+def _find_synced_position(
+    *,
+    symbol: str,
+    strategy_name: str,
+    synced_positions: "list[PositionRecord]",
+) -> PositionRecord | None:
+    for pos in synced_positions:
+        if pos.symbol == symbol and pos.strategy_name == strategy_name:
+            return pos
+    for pos in synced_positions:
+        if pos.symbol == symbol:
+            return pos
+    return None
 
 
 def _infer_intent_type(*, client_order_id: str, side: str) -> str:
