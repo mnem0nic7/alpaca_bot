@@ -84,6 +84,8 @@ class RuntimeProtocol(Protocol):
 
 
 class BrokerProtocol(Protocol):
+    def list_positions(self) -> list[Any]: ...
+
     def replace_order(self, **kwargs): ...
 
     def submit_stop_order(self, **kwargs): ...
@@ -178,6 +180,8 @@ def execute_cycle_intents(
 ) -> CycleIntentExecutionReport:
     timestamp = _resolve_now(now)
     positions_by_symbol: dict[str, PositionRecord] | None = None
+    broker_positions_by_symbol: dict[str, float] | None = None
+    broker_positions_loaded = False
 
     replaced_stop_count = 0
     submitted_stop_count = 0
@@ -206,6 +210,9 @@ def execute_cycle_intents(
             if positions_by_symbol is None:
                 with lock_ctx:
                     positions_by_symbol = _positions_by_symbol(runtime, settings)
+            if not broker_positions_loaded:
+                broker_positions_by_symbol = _broker_positions_by_symbol_for_stop_updates(broker)
+                broker_positions_loaded = True
             action = _execute_update_stop(
                 settings=settings,
                 runtime=runtime,
@@ -219,6 +226,7 @@ def execute_cycle_intents(
                 lock_ctx=lock_ctx,
                 notifier=notifier,
                 db_only=_db_only,
+                broker_positions_by_symbol=broker_positions_by_symbol,
             )
             if action == "replaced":
                 replaced_stop_count += 1
@@ -281,6 +289,7 @@ def _execute_update_stop(
     lock_ctx: Any = None,
     notifier: Notifier | None = None,
     db_only: bool = False,
+    broker_positions_by_symbol: dict[str, float] | None = None,
 ) -> str | None:
     if position is None or stop_price is None:
         return None
@@ -296,6 +305,40 @@ def _execute_update_stop(
     # Read active stop under lock — same psycopg2 connection as stream thread.
     with lock_ctx:
         active_stop = _latest_active_stop_order(runtime, settings, symbol, strategy_name=strategy_name)
+
+    broker_quantity = (
+        broker_positions_by_symbol.get(symbol)
+        if broker_positions_by_symbol is not None
+        else None
+    )
+    if broker_positions_by_symbol is not None and not _broker_position_covers_local_position(
+        local_quantity=position.quantity,
+        broker_quantity=broker_quantity,
+    ):
+        with lock_ctx:
+            try:
+                runtime.audit_event_store.append(
+                    AuditEvent(
+                        event_type="cycle_intent_skipped",
+                        symbol=symbol,
+                        payload={
+                            "intent_type": "update_stop",
+                            "reason": "broker_position_missing",
+                            "local_quantity": position.quantity,
+                            "broker_quantity": broker_quantity,
+                        },
+                        created_at=now,
+                    ),
+                    commit=False,
+                )
+                runtime.connection.commit()
+            except Exception:
+                try:
+                    runtime.connection.rollback()
+                except Exception:
+                    pass
+                raise
+        return None
 
     # Broker calls happen outside the lock to avoid blocking the stream thread.
     _path_c_client_order_id: str | None = None
@@ -1414,6 +1457,47 @@ def _positions_by_symbol(
         strategy_version=settings.strategy_version,
     )
     return {(position.symbol, position.strategy_name): position for position in positions}
+
+
+def _broker_positions_by_symbol_for_stop_updates(
+    broker: BrokerProtocol,
+) -> dict[str, float] | None:
+    list_positions = getattr(broker, "list_positions", None)
+    if not callable(list_positions):
+        return None
+    try:
+        positions = list_positions()
+    except Exception as exc:
+        logger.warning(
+            "cycle_intent_execution: broker position snapshot failed before stop update; "
+            "continuing with local position state: %s",
+            exc,
+        )
+        return None
+
+    result: dict[str, float] = {}
+    for position in positions:
+        symbol = str(getattr(position, "symbol", "") or "").upper()
+        if not symbol:
+            continue
+        quantity = getattr(position, "quantity", None)
+        if quantity is None:
+            quantity = getattr(position, "qty", None)
+        try:
+            result[symbol] = float(quantity)
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def _broker_position_covers_local_position(
+    *, local_quantity: float, broker_quantity: float | None
+) -> bool:
+    if broker_quantity is None or broker_quantity == 0:
+        return False
+    if local_quantity < 0:
+        return broker_quantity < 0
+    return broker_quantity > 0
 
 
 def _active_stop_orders(
