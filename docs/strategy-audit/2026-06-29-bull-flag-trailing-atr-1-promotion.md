@@ -203,3 +203,24 @@ Decision: keep `BULL_FLAG_MIN_RUN_PCT=0.02`,
 `BULL_FLAG_CONSOLIDATION_VOLUME_RATIO=0.6`. `range=0.6` increased raw P&L and
 point-estimate metrics slightly, but its CI lower bound was below the current
 posture. All other candidates were weaker on both aggregate and robust metrics.
+
+## Breakeven Stop Follow-up
+
+Breakeven stop settings were checked after the exit-tuning promotions. These
+were costed full-universe portfolio replays, with proof-horizon run only for
+the one variant that improved the CI lower bound.
+
+| candidate | trades | total P&L | profit factor | ann. Sharpe | 95% CI mean/trade | proof first-threshold pass | proof eventual pass | slowest pass |
+|---|---:|---:|---:|---:|---|---:|---:|---:|
+| current: trigger 0.0025, trail 0.002 | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | [1.2042, 2.8908] | 59.93% | 99.26% | 31 |
+| breakeven off | 867 | `$1,373.95` | 1.2150 | 1.8452 | [0.1401, 3.2096] | not tested | not tested | not tested |
+| trigger 0.001 | 1,256 | `$2,517.25` | 1.5313 | 4.3142 | [1.1761, 2.8453] | not tested | not tested | not tested |
+| trigger 0.005 | 1,164 | `$2,488.90` | 1.4421 | 4.1660 | [1.2252, 3.1256] | 58.80% | 98.88% | 32 |
+| trail 0.001 | 1,172 | `$2,312.51` | 1.4130 | 3.6860 | [1.0243, 2.9590] | not tested | not tested | not tested |
+| trail 0.004 | 1,258 | `$1,892.94` | 1.4179 | 3.6330 | [0.7251, 2.2402] | not tested | not tested | not tested |
+
+Decision: keep `ENABLE_BREAKEVEN_STOP=true`, `BREAKEVEN_TRIGGER_PCT=0.0025`,
+and `BREAKEVEN_TRAIL_PCT=0.002`. Disabling breakeven materially weakened the
+edge. A later 0.005 trigger improved the CI lower bound but reduced total P&L,
+profit factor, Sharpe, eventual proof pass rate, first-threshold pass rate, and
+slowest proof pass. The current trigger remains the better paper proof posture.
