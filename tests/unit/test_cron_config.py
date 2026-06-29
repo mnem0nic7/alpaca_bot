@@ -2042,6 +2042,9 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "latest $PAPER_ACTIVITY_STRATEGY entries blocked" in script
     assert "disabled_cycles=$disabled_cycles/$supervisor_cycles" in script
     assert "blocked_cycles=$strategy_blocked_cycles/$supervisor_cycles" in script
+    assert "only_strategy_session_state_reasons" in script
+    assert "is_after_configured_flatten_time" in script
+    assert "post_flatten_strategy_blocked" in script
     assert "PAPER_ACTIVITY_STRATEGY contains unsupported characters" in script
     assert "emit_scheduled_context()" in script
     assert (
@@ -2445,6 +2448,78 @@ def test_paper_activity_allows_recovered_disabled_cycles(tmp_path: Path) -> None
     assert "broker_account_status=ok" in result.stdout
     assert "broker_open_orders=0" in result.stdout
     assert "broker_open_positions=0" in result.stdout
+    assert not docker_marker.exists()
+
+
+def test_paper_activity_allows_post_flatten_strategy_session_block(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+                "FLATTEN_TIME=15:45",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text(
+        "#!/usr/bin/env bash\n"
+        "case \"${*: -1}\" in\n"
+        "  +%H:%M) printf '15:50\\n' ;;\n"
+        "  *) printf '2026-06-29\\n' ;;\n"
+        "esac\n"
+    )
+    fake_date.chmod(0o755)
+    docker_marker = tmp_path / "docker_close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin close-only'; then\n"
+        f"  touch {docker_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "if printf '%s\\n' \"$*\" | grep -q -- '--entrypoint python admin'; then\n"
+        "  printf 'ok|100000.00|200000.00|5000.00|false|0|0|none|none\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '12|0|12|9000|0|2026-06-29 19:49:00+00|false||true|strategy_session_state_entries_disabled|2026-06-29 19:49:00+00|2|12|9000|0|12|9000|2026-06-29 19:49:00+00|skipped_no_signal/none/none:9000|0||0||0||0||0||0||bull_flag||strategy_session_state_entries_disabled:2|0|0|0|0\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_MIN_DECISION_RECORDS": "900",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "paper activity ok:" in result.stdout
+    assert "latest_bull_flag_blocked=true" in result.stdout
+    assert "post_flatten_strategy_blocked=true" in result.stdout
+    assert "stock_open_positions=0" in result.stdout
+    assert "active_stock_orders=0" in result.stdout
     assert not docker_marker.exists()
 
 

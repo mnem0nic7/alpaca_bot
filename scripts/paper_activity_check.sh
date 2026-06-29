@@ -97,6 +97,36 @@ only_readiness_missing_reasons() {
   return 0
 }
 
+only_strategy_session_state_reasons() {
+  local reasons="${1:-}"
+  if [[ -z "$reasons" ]]; then
+    return 1
+  fi
+  local reason
+  IFS=',' read -ra _paper_activity_reasons <<< "$reasons"
+  for reason in "${_paper_activity_reasons[@]}"; do
+    if [[ "$reason" != "strategy_session_state_entries_disabled" ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
+is_after_configured_flatten_time() {
+  local now_hm flatten_hm now_hour now_min flatten_hour flatten_min
+  now_hm="$(TZ=America/New_York date +%H:%M)"
+  flatten_hm="${FLATTEN_TIME:-15:45}"
+  if [[ ! "$now_hm" =~ ^[0-9]{1,2}:[0-9]{2}$ ]] \
+    || [[ ! "$flatten_hm" =~ ^[0-9]{1,2}:[0-9]{2}$ ]]; then
+    return 1
+  fi
+  now_hour="${now_hm%:*}"
+  now_min="${now_hm#*:}"
+  flatten_hour="${flatten_hm%:*}"
+  flatten_min="${flatten_hm#*:}"
+  (( 10#$now_hour * 60 + 10#$now_min >= 10#$flatten_hour * 60 + 10#$flatten_min ))
+}
+
 close_only_on_activity_failure() {
   local rc="$?"
   trap - EXIT
@@ -672,12 +702,18 @@ if [[ "${latest_cycle_strategy_blocked:-false}" == "true" ]]; then
     echo "paper activity pending: latest $PAPER_ACTIVITY_STRATEGY cycle still had entries disabled for paper_readiness_check_missing; waiting for post-repair cycle"
     exit 43
   fi
+  if only_strategy_session_state_reasons "${latest_cycle_strategy_disabled_reasons:-}" \
+    && [[ "$has_stock_exposure" != "true" ]] \
+    && is_after_configured_flatten_time; then
+    post_flatten_strategy_blocked=true
+  else
   reason_suffix=""
   if [[ -n "${latest_cycle_strategy_disabled_reasons:-}" ]]; then
     reason_suffix=" reasons=$latest_cycle_strategy_disabled_reasons"
   fi
   echo "paper activity failed: latest $PAPER_ACTIVITY_STRATEGY entries blocked$reason_suffix blocked_cycles=$strategy_blocked_cycles/$supervisor_cycles" >&2
   exit 1
+  fi
 fi
 
 if [[ "${dispatch_failures:-0}" -gt 0 ]]; then
@@ -756,4 +792,4 @@ if [[ "${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT,,}" == "true" ]]; then
   fi
 fi
 
-echo "paper activity ok: supervisor_cycles=$supervisor_cycles disabled_cycles=${disabled_cycles:-0} latest_cycle_entries_disabled=${latest_cycle_entries_disabled:-false} decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_blocked_cycles=${strategy_blocked_cycles:-0} latest_${PAPER_ACTIVITY_STRATEGY}_blocked=${latest_cycle_strategy_blocked:-false} dispatch_failures=${dispatch_failures:-0} stream_issues=${stream_issues:-0} ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_decision_log_summary=[${strategy_decision_log_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_accepted_decisions=${strategy_accepted_decisions:-0} ${PAPER_ACTIVITY_STRATEGY}_accepted_symbols=[${accepted_symbols:-}] latest_${PAPER_ACTIVITY_STRATEGY}_accepted_decision_log=${latest_accepted_decision_log:-none} ${PAPER_ACTIVITY_STRATEGY}_recent_entry_orders=${recent_entry_orders:-0} ${PAPER_ACTIVITY_STRATEGY}_entry_order_status_summary=[${recent_entry_order_status_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_materialized_entry_symbols=[${materialized_entry_symbols:-}] ${PAPER_ACTIVITY_STRATEGY}_unmaterialized_accepted_symbols=[${unmaterialized_accepted_symbols:-}] ${PAPER_ACTIVITY_STRATEGY}_stale_pending_entry_orders=${stale_pending_entry_orders:-0} ${PAPER_ACTIVITY_STRATEGY}_stale_pending_entry_order_summary=[${stale_pending_entry_order_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source require_decision_log=${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,} require_broker_account=${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT,,} broker_account_status=${broker_account_status:-unset} broker_equity=${broker_equity:-unset} broker_buying_power=${broker_buying_power:-unset} broker_minimum_required=${broker_minimum_buying_power:-unset} broker_trading_blocked=${broker_trading_blocked:-unset} broker_open_orders=${broker_open_orders:-unset} broker_open_positions=${broker_open_positions:-unset} broker_open_order_symbols=${broker_open_order_symbols:-none} broker_open_position_symbols=${broker_open_position_symbols:-none} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
+echo "paper activity ok: supervisor_cycles=$supervisor_cycles disabled_cycles=${disabled_cycles:-0} latest_cycle_entries_disabled=${latest_cycle_entries_disabled:-false} decision_cycles=$decision_cycles decision_records=$decision_records ${PAPER_ACTIVITY_STRATEGY}_audit_cycles=$strategy_decision_cycles ${PAPER_ACTIVITY_STRATEGY}_audit_records=$strategy_decision_records ${PAPER_ACTIVITY_STRATEGY}_blocked_cycles=${strategy_blocked_cycles:-0} latest_${PAPER_ACTIVITY_STRATEGY}_blocked=${latest_cycle_strategy_blocked:-false} post_flatten_strategy_blocked=${post_flatten_strategy_blocked:-false} dispatch_failures=${dispatch_failures:-0} stream_issues=${stream_issues:-0} ${PAPER_ACTIVITY_STRATEGY}_decision_log_cycles=$strategy_decision_log_cycles ${PAPER_ACTIVITY_STRATEGY}_decision_log_records=$strategy_decision_log_records ${PAPER_ACTIVITY_STRATEGY}_decision_log_summary=[${strategy_decision_log_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_accepted_decisions=${strategy_accepted_decisions:-0} ${PAPER_ACTIVITY_STRATEGY}_accepted_symbols=[${accepted_symbols:-}] latest_${PAPER_ACTIVITY_STRATEGY}_accepted_decision_log=${latest_accepted_decision_log:-none} ${PAPER_ACTIVITY_STRATEGY}_recent_entry_orders=${recent_entry_orders:-0} ${PAPER_ACTIVITY_STRATEGY}_entry_order_status_summary=[${recent_entry_order_status_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_materialized_entry_symbols=[${materialized_entry_symbols:-}] ${PAPER_ACTIVITY_STRATEGY}_unmaterialized_accepted_symbols=[${unmaterialized_accepted_symbols:-}] ${PAPER_ACTIVITY_STRATEGY}_stale_pending_entry_orders=${stale_pending_entry_orders:-0} ${PAPER_ACTIVITY_STRATEGY}_stale_pending_entry_order_summary=[${stale_pending_entry_order_summary:-}] ${PAPER_ACTIVITY_STRATEGY}_evidence_records=$strategy_evidence_records evidence_source=$strategy_evidence_source require_decision_log=${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,} require_broker_account=${PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT,,} broker_account_status=${broker_account_status:-unset} broker_equity=${broker_equity:-unset} broker_buying_power=${broker_buying_power:-unset} broker_minimum_required=${broker_minimum_buying_power:-unset} broker_trading_blocked=${broker_trading_blocked:-unset} broker_open_orders=${broker_open_orders:-unset} broker_open_positions=${broker_open_positions:-unset} broker_open_order_symbols=${broker_open_order_symbols:-none} broker_open_position_symbols=${broker_open_position_symbols:-none} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} legacy_decision_cycles=$legacy_decision_cycles active_strategies=[${active_strategy_names:-}] latest_cycle=${latest_cycle:-none} latest_decision=${latest_decision:-none} latest_decision_log=${latest_decision_log:-none}"
