@@ -75,6 +75,7 @@ from alpaca_bot.storage.models import OptionOrderRecord
 
 
 STREAM_HEARTBEAT_TIMEOUT_SECONDS = 300
+STREAM_STOP_TIMEOUT_SECONDS = 1.0
 ACTIVE_ENTRY_STATUSES = (
     "pending_submit",
     "submitting",
@@ -167,6 +168,7 @@ class RuntimeSupervisor:
         order_dispatcher: Callable[..., object] | None = None,
         cycle_intent_executor: Callable[..., object] | None = None,
         stream_attacher: Callable[..., object] | None = None,
+        stream_factory: Callable[[Settings], object] | None = None,
         close_runtime_fn: Callable[[RuntimeContext], None] | None = None,
         connection_checker: Callable[..., bool] | None = None,
         reconnect_fn: Callable[[RuntimeContext], None] | None = None,
@@ -184,6 +186,7 @@ class RuntimeSupervisor:
         self._order_dispatcher = order_dispatcher or dispatch_pending_orders
         self._cycle_intent_executor = cycle_intent_executor or execute_cycle_intents
         self._stream_attacher = stream_attacher or attach_trade_update_stream
+        self._stream_factory = stream_factory
         self._close_runtime = close_runtime_fn or close_runtime
         self._check_connection = connection_checker or check_connection
         self._reconnect = reconnect_fn or reconnect_runtime_connection
@@ -259,6 +262,7 @@ class RuntimeSupervisor:
             broker=broker,
             market_data=AlpacaMarketDataAdapter.from_settings(settings),
             stream=AlpacaTradingStreamAdapter.from_settings(settings),
+            stream_factory=AlpacaTradingStreamAdapter.from_settings,
             notifier=build_notifier(settings),
             option_chain_adapter=option_chain_adapter,
             option_broker=option_broker,
@@ -1385,6 +1389,12 @@ class RuntimeSupervisor:
                         and not _stream_thread.is_alive()
                     ):
                         self._restart_stream_thread(timestamp=timestamp, reason="thread_dead")
+                    elif (
+                        self.stream is not None
+                        and self._stream_thread is None
+                        and (self._stream_attached or self._stream_factory is not None)
+                    ):
+                        self._restart_stream_thread(timestamp=timestamp, reason="thread_missing")
                     # Heartbeat staleness guard — catches silent clean-close disconnects
                     # that leave the thread alive but no longer receiving events.
                     _stream_thread_alive = (
@@ -2774,8 +2784,10 @@ class RuntimeSupervisor:
     def _start_stream_thread(self, *, now: Callable[[], datetime]) -> None:
         if self.stream is None or self._stream_thread is not None:
             return
+        stream = self.stream
 
         def runner() -> None:
+            current_thread = threading.current_thread()
             _stream_lock = getattr(self.runtime, "store_lock", None)
             _stream_lock_ctx = _stream_lock if _stream_lock is not None else contextlib.nullcontext()
             timestamp = _resolve_now(now)
@@ -2795,9 +2807,9 @@ class RuntimeSupervisor:
                     except Exception:
                         pass
             try:
-                if not hasattr(self.stream, "run"):
+                if not hasattr(stream, "run"):
                     raise RuntimeError("Configured trade update stream does not expose run()")
-                self.stream.run()
+                stream.run()
             except Exception as exc:
                 failure_at = _resolve_now(now)
                 with _stream_lock_ctx:
@@ -2839,7 +2851,8 @@ class RuntimeSupervisor:
                         except Exception:
                             pass
             finally:
-                self._stream_thread = None
+                if self._stream_thread is current_thread:
+                    self._stream_thread = None
 
         self._stream_thread = threading.Thread(
             target=runner,
@@ -2861,25 +2874,81 @@ class RuntimeSupervisor:
             return
 
         old_thread = self._stream_thread
+        abandoned_old_thread = False
         if old_thread is not None and old_thread.is_alive():
-            if not hasattr(self.stream, "stop"):
+            old_stream = self.stream
+            if not hasattr(old_stream, "stop"):
                 logger.warning(
-                    "Trade update stream heartbeat stale but stream has no stop(); "
-                    "restart skipped"
+                    "Trade update stream heartbeat stale but stream has no stop()"
                 )
-                return
-            try:
-                self.stream.stop()
-            except Exception:
-                logger.exception("Failed to stop stale trade update stream before restart")
-            old_thread.join(timeout=1.0)
+            else:
+                try:
+                    old_stream.stop()
+                except Exception:
+                    logger.exception("Failed to stop stale trade update stream before restart")
+            old_thread.join(timeout=STREAM_STOP_TIMEOUT_SECONDS)
             if old_thread.is_alive():
+                abandoned_old_thread = True
+                if self._stream_factory is None:
+                    logger.warning(
+                        "Trade update stream did not stop within timeout; restart skipped"
+                    )
+                    return
                 logger.warning(
-                    "Trade update stream did not stop within timeout; restart skipped"
+                    "Trade update stream did not stop within timeout; "
+                    "abandoning stale stream and starting replacement"
+                )
+
+        if self._stream_factory is not None:
+            try:
+                self.stream = self._stream_factory(self.settings)
+                self._stream_attached = False
+            except Exception as exc:
+                logger.exception("Failed to create replacement trade update stream")
+                self._append_audit(
+                    AuditEvent(
+                        event_type="trade_update_stream_restart_failed",
+                        payload={
+                            "timestamp": timestamp.isoformat(),
+                            "reason": reason,
+                            "error": str(exc),
+                            "phase": "create_stream",
+                            "abandoned_old_thread": abandoned_old_thread,
+                        },
+                        created_at=timestamp,
+                    )
                 )
                 return
 
         self._stream_thread = None
+        if not self._stream_attached:
+            try:
+                self._stream_attacher(
+                    settings=self.settings,
+                    runtime=self.runtime,
+                    stream=self.stream,
+                    now=lambda: timestamp,
+                    notifier=self._notifier,
+                    on_event=self._record_stream_event,
+                    broker=self.broker,
+                )
+                self._stream_attached = True
+            except Exception as exc:
+                logger.exception("Failed to attach replacement trade update stream")
+                self._append_audit(
+                    AuditEvent(
+                        event_type="trade_update_stream_restart_failed",
+                        payload={
+                            "timestamp": timestamp.isoformat(),
+                            "reason": reason,
+                            "error": str(exc),
+                            "phase": "attach_stream",
+                            "abandoned_old_thread": abandoned_old_thread,
+                        },
+                        created_at=timestamp,
+                    )
+                )
+                return
         self._stream_restart_attempts += 1
         backoff_seconds = min(
             60 * (2 ** (self._stream_restart_attempts - 1)),
@@ -2896,6 +2965,7 @@ class RuntimeSupervisor:
                     "timestamp": timestamp.isoformat(),
                     "attempt": self._stream_restart_attempts,
                     "reason": reason,
+                    "abandoned_old_thread": abandoned_old_thread,
                 },
                 created_at=timestamp,
             )

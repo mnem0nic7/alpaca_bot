@@ -2640,6 +2640,58 @@ def test_supervisor_stream_watchdog_does_not_restart_during_backoff_window(
     )
 
 
+def test_supervisor_stream_watchdog_restarts_missing_thread(monkeypatch) -> None:
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now_ts = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    runtime = make_runtime_context(settings)
+    stream = FakeStream(block_until_stop=True)
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(market_is_open=True),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
+    monkeypatch.setattr(
+        supervisor,
+        "run_cycle_once",
+        lambda **kwargs: SupervisorCycleReport(
+            entries_disabled=False,
+            cycle_result=SimpleNamespace(intents=[]),
+            dispatch_report={"submitted_count": 0},
+        ),
+    )
+
+    supervisor._stream_attached = True
+    supervisor._stream_thread = None
+
+    try:
+        supervisor.run_forever(
+            max_iterations=1,
+            sleep_fn=lambda _seconds: None,
+            cycle_now=lambda: now_ts,
+        )
+
+        assert stream.run_started.wait(timeout=1.0)
+        restart_events = [
+            event
+            for event in runtime.audit_event_store.appended
+            if event.event_type == "trade_update_stream_restarted"
+        ]
+        assert len(restart_events) == 1
+        assert restart_events[0].payload["reason"] == "thread_missing"
+    finally:
+        stream.stop()
+        if supervisor._stream_thread is not None:
+            supervisor._stream_thread.join(timeout=1.0)
+
+
 # ---------------------------------------------------------------------------
 # Test 3: flatten_complete negative case — normal cycle does NOT write
 # flatten_complete=True
@@ -4363,6 +4415,88 @@ def test_stream_heartbeat_alert_fires_only_once_per_stale_window(monkeypatch) ->
     assert supervisor._last_stream_event_at == base_now
     assert supervisor._stream_heartbeat_alerted is False
     assert stream.stop_calls >= 1
+
+
+def test_stream_restart_replaces_stream_when_stop_does_not_join(monkeypatch) -> None:
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    monkeypatch.setattr(module, "STREAM_STOP_TIMEOUT_SECONDS", 0.01)
+    settings = make_settings()
+    runtime = make_runtime_context(settings)
+
+    class StopIgnoringStream(FakeStream):
+        def __init__(self) -> None:
+            super().__init__()
+            self.release = threading.Event()
+
+        def run(self) -> None:
+            self.run_calls += 1
+            self.run_started.set()
+            self.release.wait(timeout=5.0)
+
+        def stop(self) -> None:
+            self.stop_calls += 1
+
+    stale_stream = StopIgnoringStream()
+    replacement_stream = FakeStream(block_until_stop=True)
+    stream_factory_calls: list[Settings] = []
+    attach_calls: list[object] = []
+
+    def stream_factory(resolved_settings: Settings) -> object:
+        stream_factory_calls.append(resolved_settings)
+        return replacement_stream
+
+    def recording_stream_attacher(**kwargs) -> object:
+        attach_calls.append(kwargs["stream"])
+        kwargs["stream"].subscribe_trade_updates(object())
+        return object()
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(market_is_open=True),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=stale_stream,
+        stream_attacher=recording_stream_attacher,
+        stream_factory=stream_factory,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+    supervisor._stream_attached = True
+    now = datetime(2026, 4, 30, 14, 30, tzinfo=timezone.utc)
+
+    replacement_thread = None
+    try:
+        supervisor._start_stream_thread(now=lambda: now)
+        assert stale_stream.run_started.wait(timeout=1.0)
+        stale_thread = supervisor._stream_thread
+        assert stale_thread is not None
+
+        supervisor._restart_stream_thread(timestamp=now, reason="heartbeat_stale")
+
+        assert replacement_stream.run_started.wait(timeout=1.0)
+        replacement_thread = supervisor._stream_thread
+        assert replacement_thread is not None
+        assert replacement_thread is not stale_thread
+        assert replacement_thread.is_alive()
+        assert stale_stream.stop_calls == 1
+        assert stream_factory_calls == [settings]
+        assert attach_calls == [replacement_stream]
+        restart_events = [
+            event
+            for event in runtime.audit_event_store.appended
+            if event.event_type == "trade_update_stream_restarted"
+        ]
+        assert restart_events
+        assert restart_events[-1].payload["abandoned_old_thread"] is True
+
+        stale_stream.release.set()
+        stale_thread.join(timeout=1.0)
+        assert supervisor._stream_thread is replacement_thread
+    finally:
+        stale_stream.release.set()
+        replacement_stream.stop()
+        if replacement_thread is not None:
+            replacement_thread.join(timeout=1.0)
 
 
 def test_record_stream_event_updates_last_event_timestamp() -> None:
