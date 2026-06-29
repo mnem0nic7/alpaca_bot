@@ -1079,10 +1079,14 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "reason=lock_busy_already_reported" in lock_skip
     assert "paper proof summary:" in lock_skip
     assert "paper proof progress:" in lock_skip
+    assert "paper proof scoring:" in lock_skip
     assert "paper proof status check skipped:" in lock_skip
     assert "proof_closed_trades" in lock_skip
     assert "proof_required_trades" in lock_skip
     assert "proof_first_exit_session" in lock_skip
+    assert "proof_scoreable_closed_trades" in lock_skip
+    assert "proof_unpaired_filled_exits" in lock_skip
+    assert "proof_unpaired_symbols" in lock_skip
     assert "proof_scenario_status" in lock_skip
     assert "proof_scenario_active" in lock_skip
     assert "proof_scenario_expected_session" in lock_skip
@@ -1123,7 +1127,7 @@ def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -
     docker.write_text(
         "#!/usr/bin/env bash\n"
         "cat >/dev/null\n"
-        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|2026-06-28T06:37:20.499132Z|0'\n"
+        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0'\n"
     )
     docker.chmod(0o755)
 
@@ -1155,6 +1159,10 @@ def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -
         "pnl=0.00 required_pnl=0.01"
     ) in result.stdout
     assert (
+        "paper proof scoring: scoreable_closed_trades=0 "
+        "unpaired_filled_exits=0 unpaired_symbols=none"
+    ) in result.stdout
+    assert (
         "paper proof scenarios: status=ok active=980 "
         "expected_session=2026-06-26 problems=none"
     ) in result.stdout
@@ -1170,7 +1178,7 @@ def test_proof_status_lock_skip_accepts_recent_skipped_proof_status_audit(
     docker.write_text(
         "#!/usr/bin/env bash\n"
         "cat >/dev/null\n"
-        "echo 'paper_proof_status_latest=skipped|0|pending|ready|none|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|2026-06-28T06:37:20.499132Z|0'\n"
+        "echo 'paper_proof_status_latest=skipped|0|pending|ready|none|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0'\n"
     )
     docker.chmod(0o755)
 
@@ -1204,7 +1212,7 @@ def test_proof_status_lock_skip_preserves_invocation_overrides(tmp_path: Path) -
     docker.write_text(
         "#!/usr/bin/env bash\n"
         "cat >/dev/null\n"
-        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|awaiting_completed_proof_session|none|pending|0|12|0.00|2.34|none|none|ok|980|2026-06-26|none|2026-06-28T06:37:20.499132Z|0'\n"
+        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|awaiting_completed_proof_session|none|pending|0|12|0.00|2.34|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0'\n"
     )
     docker.chmod(0o755)
 
@@ -1259,7 +1267,7 @@ def test_proof_status_lock_skip_fails_without_recent_evidence(tmp_path: Path) ->
     docker.write_text(
         "#!/usr/bin/env bash\n"
         "cat >/dev/null\n"
-        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|2026-06-28T06:37:20.499132Z|31'\n"
+        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|31'\n"
     )
     docker.chmod(0o755)
 
@@ -1572,6 +1580,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'AUDIT_CONTEXT_LINE="$context_line"' in script
     assert 'AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"' in script
     assert 'AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"' in script
+    assert 'AUDIT_PROOF_SCORING_LINE="$proof_scoring_line"' in script
     assert 'AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"' in script
     assert 'AUDIT_DECISION_DRY_RUN_LINE="$decision_dry_run_line"' in script
     assert "-e AUDIT_CHECK_NAME" in script
@@ -1581,23 +1590,29 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "-e AUDIT_CONTEXT_LINE" in script
     assert "-e AUDIT_PROOF_SUMMARY_LINE" in script
     assert "-e AUDIT_PROOF_PROGRESS_LINE" in script
+    assert "-e AUDIT_PROOF_SCORING_LINE" in script
     assert "-e AUDIT_PROOF_SCENARIOS_LINE" in script
     assert "-e AUDIT_DECISION_DRY_RUN_LINE" in script
     assert 'output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"' in script
     assert 'context_line="$(grep -E' in script
     assert 'proof_summary_line="$(grep -E' in script
     assert 'proof_progress_line="$(grep -E' in script
+    assert 'proof_scoring_line="$(grep -E' in script
     assert 'proof_scenarios_line="$(grep -E' in script
     assert 'decision_dry_run_line="$(grep -E' in script
     assert "scheduled check context: " in script
     assert "CONTEXT_KEYS" in script
     assert "PROOF_SUMMARY_FIELDS" in script
+    assert "PROOF_SCORING_FIELDS" in script
     assert "PROOF_SCENARIOS_FIELDS" in script
     assert 'PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")' in script
     assert '"readiness": "proof_readiness"' in script
     assert '"proof": "proof_status"' in script
     assert '"closed_trades": "proof_closed_trades"' in script
     assert '"pnl": "proof_pnl"' in script
+    assert '"scoreable_closed_trades": "proof_scoreable_closed_trades"' in script
+    assert '"unpaired_filled_exits": "proof_unpaired_filled_exits"' in script
+    assert '"unpaired_symbols": "proof_unpaired_symbols"' in script
     assert '"status": "proof_scenario_status"' in script
     assert '"active": "proof_scenario_active"' in script
     assert '"expected_session": "proof_scenario_expected_session"' in script
@@ -1622,6 +1637,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "payload.update(parse_context" in script
     assert 'os.environ.get("AUDIT_PROOF_SUMMARY_LINE", "")' in script
     assert 'os.environ.get("AUDIT_PROOF_PROGRESS_LINE", "")' in script
+    assert 'os.environ.get("AUDIT_PROOF_SCORING_LINE", "")' in script
     assert 'os.environ.get("AUDIT_PROOF_SCENARIOS_LINE", "")' in script
     assert 'os.environ.get("AUDIT_DECISION_DRY_RUN_LINE", "")' in script
     assert 'paper readiness check skipped' in script
