@@ -1384,54 +1384,7 @@ class RuntimeSupervisor:
                         _stream_thread is not None
                         and not _stream_thread.is_alive()
                     ):
-                        self._stream_thread = None
-                        # Respect backoff window before attempting restart
-                        if (
-                            self._next_stream_restart_at is None
-                            or timestamp >= self._next_stream_restart_at
-                        ):
-                            self._stream_restart_attempts += 1
-                            backoff_seconds = min(
-                                60 * (2 ** (self._stream_restart_attempts - 1)),
-                                300,  # cap at 5 minutes
-                            )
-                            self._next_stream_restart_at = timestamp + timedelta(
-                                seconds=backoff_seconds
-                            )
-                            self._start_stream_thread(now=lambda: timestamp)
-                            self._append_audit(
-                                AuditEvent(
-                                    event_type="trade_update_stream_restarted",
-                                    payload={
-                                        "timestamp": timestamp.isoformat(),
-                                        "attempt": self._stream_restart_attempts,
-                                    },
-                                    created_at=timestamp,
-                                )
-                            )
-                            if self._stream_restart_attempts >= 5:
-                                self._append_audit(
-                                    AuditEvent(
-                                        event_type="stream_restart_failed",
-                                        payload={
-                                            "attempt_count": self._stream_restart_attempts,
-                                            "timestamp": timestamp.isoformat(),
-                                        },
-                                        created_at=timestamp,
-                                    )
-                                )
-                                if self._notifier is not None:
-                                    try:
-                                        self._notifier.send(
-                                            subject="Trade stream restart failed",
-                                            body=(
-                                                f"Stream has failed to restart after "
-                                                f"{self._stream_restart_attempts} attempts. "
-                                                f"Fill events may be missed."
-                                            ),
-                                        )
-                                    except Exception:
-                                        logger.exception("Notifier failed to send stream restart alert")
+                        self._restart_stream_thread(timestamp=timestamp, reason="thread_dead")
                     # Heartbeat staleness guard — catches silent clean-close disconnects
                     # that leave the thread alive but no longer receiving events.
                     _stream_thread_alive = (
@@ -1472,6 +1425,10 @@ class RuntimeSupervisor:
                                     )
                                 except Exception:
                                     logger.exception("Notifier failed to send heartbeat stale alert")
+                            self._restart_stream_thread(
+                                timestamp=timestamp,
+                                reason="heartbeat_stale",
+                            )
                     else:
                         self._stream_heartbeat_alerted = False
 
@@ -2893,6 +2850,79 @@ class RuntimeSupervisor:
 
     def _record_stream_event(self) -> None:
         self._last_stream_event_at = datetime.now(timezone.utc)
+
+    def _restart_stream_thread(self, *, timestamp: datetime, reason: str) -> None:
+        if self.stream is None:
+            return
+        if (
+            self._next_stream_restart_at is not None
+            and timestamp < self._next_stream_restart_at
+        ):
+            return
+
+        old_thread = self._stream_thread
+        if old_thread is not None and old_thread.is_alive():
+            if not hasattr(self.stream, "stop"):
+                logger.warning(
+                    "Trade update stream heartbeat stale but stream has no stop(); "
+                    "restart skipped"
+                )
+                return
+            try:
+                self.stream.stop()
+            except Exception:
+                logger.exception("Failed to stop stale trade update stream before restart")
+            old_thread.join(timeout=1.0)
+            if old_thread.is_alive():
+                logger.warning(
+                    "Trade update stream did not stop within timeout; restart skipped"
+                )
+                return
+
+        self._stream_thread = None
+        self._stream_restart_attempts += 1
+        backoff_seconds = min(
+            60 * (2 ** (self._stream_restart_attempts - 1)),
+            300,
+        )
+        self._next_stream_restart_at = timestamp + timedelta(seconds=backoff_seconds)
+        self._start_stream_thread(now=lambda: timestamp)
+        self._last_stream_event_at = timestamp
+        self._stream_heartbeat_alerted = False
+        self._append_audit(
+            AuditEvent(
+                event_type="trade_update_stream_restarted",
+                payload={
+                    "timestamp": timestamp.isoformat(),
+                    "attempt": self._stream_restart_attempts,
+                    "reason": reason,
+                },
+                created_at=timestamp,
+            )
+        )
+        if self._stream_restart_attempts >= 5:
+            self._append_audit(
+                AuditEvent(
+                    event_type="stream_restart_failed",
+                    payload={
+                        "attempt_count": self._stream_restart_attempts,
+                        "timestamp": timestamp.isoformat(),
+                    },
+                    created_at=timestamp,
+                )
+            )
+            if self._notifier is not None:
+                try:
+                    self._notifier.send(
+                        subject="Trade stream restart failed",
+                        body=(
+                            f"Stream has failed to restart after "
+                            f"{self._stream_restart_attempts} attempts. "
+                            f"Fill events may be missed."
+                        ),
+                    )
+                except Exception:
+                    logger.exception("Notifier failed to send stream restart alert")
 
 
 TraderSupervisor = RuntimeSupervisor

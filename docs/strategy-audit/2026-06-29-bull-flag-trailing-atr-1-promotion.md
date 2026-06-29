@@ -341,3 +341,21 @@ rate, and slowest observed proof pass. It slightly reduced trade count, win
 rate, and Sharpe, and p90/p95 proof speed slowed from 13/19 to 15/22 sessions;
 that tail tradeoff is acceptable because the robust edge improved materially
 and the slowest proof case improved.
+
+## Max Stop Cap Follow-up
+
+The per-trade stop-distance cap was checked after the entry stop buffer
+promotion. These were costed full-universe portfolio replays with the current
+paper-proof posture, 2 bps slippage, K=4, and `$17,247.795` starting equity.
+
+| candidate | trades | total P&L | profit factor | ann. Sharpe | win rate | 95% CI mean/trade | exit reasons | verdict |
+|---|---:|---:|---:|---:|---:|---|---|---|
+| `MAX_STOP_PCT=0.03` | 1,184 | `$2,579.96` | 1.5184 | 4.4248 | 71.20% | [1.3209, 3.1212] | stop 925, EOD 254, target 5 | positive-edge |
+| `MAX_STOP_PCT=0.04` | 1,163 | `$2,683.62` | 1.5437 | 4.4383 | 72.57% | [1.3508, 3.2058] | stop 866, EOD 294, target 3 | positive-edge |
+| current: `MAX_STOP_PCT=0.05` | 1,157 | `$2,903.15` | 1.6058 | 4.7728 | 72.77% | [1.6103, 3.4144] | stop 834, EOD 321, target 2 | positive-edge |
+| `MAX_STOP_PCT=0.08` | 1,153 | `$2,851.90` | 1.5867 | 4.5474 | 72.77% | [1.4755, 3.4605] | stop 808, EOD 343, target 2 | positive-edge |
+
+Decision: keep `MAX_STOP_PCT=0.05`. Tightening the cap to 3% or 4% increased
+stop turnover and reduced aggregate P&L, profit factor, Sharpe, win rate, and
+CI lower bound. Widening to 8% reduced trade count, P&L, profit factor, Sharpe,
+and CI lower bound. No proof-horizon run or runtime promotion was warranted.
