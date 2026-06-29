@@ -263,3 +263,21 @@ slightly but materially weakened aggregate and robust metrics. The 30-day
 lookback improved raw P&L and Sharpe slightly, but its CI lower bound was below
 the current posture. The 50-day lookback reduced trade count and weakened total
 P&L, profit factor, and CI lower bound.
+
+## Relative-Volume Lookback Follow-up
+
+The bull-flag relative-volume baseline lookback was checked after the daily SMA
+follow-up. These were costed full-universe portfolio replays with the current
+paper-proof posture, 2 bps slippage, K=4, and `$17,247.795` starting equity.
+
+| candidate | trades | total P&L | profit factor | ann. Sharpe | win rate | 95% CI mean/trade | exit reasons | verdict |
+|---|---:|---:|---:|---:|---:|---|---|---|
+| current: `RELATIVE_VOLUME_LOOKBACK_BARS=20` | 1,229 | `$2,498.03` | 1.4835 | 4.2612 | 72.42% | [1.2042, 2.8908] | stop 890, EOD 338, target 1 | positive-edge |
+| `RELATIVE_VOLUME_LOOKBACK_BARS=10` | 995 | `$1,605.34` | 1.3453 | 2.9141 | 70.35% | [0.6085, 2.6606] | stop 724, EOD 270, target 1 | positive-edge |
+| `RELATIVE_VOLUME_LOOKBACK_BARS=30` | 971 | `$1,463.85` | 1.3330 | 2.9119 | 71.16% | [0.5177, 2.5094] | stop 720, EOD 250, target 1 | positive-edge |
+| `RELATIVE_VOLUME_LOOKBACK_BARS=50` | 1,120 | `$1,977.60` | 1.4021 | 3.3064 | 70.36% | [0.8158, 2.6974] | stop 812, EOD 307, target 1 | positive-edge |
+
+Decision: keep `RELATIVE_VOLUME_LOOKBACK_BARS=20`. Every tested alternative
+reduced trade count, aggregate P&L, profit factor, Sharpe, and CI lower bound
+versus the current posture, so no proof-horizon run or runtime promotion was
+warranted.
