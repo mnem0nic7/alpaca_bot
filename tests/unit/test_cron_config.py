@@ -3110,6 +3110,73 @@ def test_session_guard_preserves_invocation_overrides_after_env_source(
     assert "custom_flag session guard pending 2026-07-07" in result.stdout
 
 
+def test_session_guard_reuses_recent_pass_after_broker_flat(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "SESSION_GUARD_DATE=2026-06-29",
+            ]
+        )
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    session_eval_marker = tmp_path / "session_eval_called"
+    close_only_marker = tmp_path / "close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "args=\"$*\"\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'SESSION_GUARD_PASS_SESSION_DATE'; then\n"
+        "  printf 'session_guard_latest_pass=2026-06-29T21:38:40.551317Z|31\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'BROKER_FLAT_CONTEXT'; then\n"
+        "  printf 'bull_flag session guard prior pass 2026-06-29 broker exposure ok: open_orders=0 open_positions=0\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if printf '%s\\n' \"$args\" | grep -q 'alpaca-bot-session-eval'; then\n"
+        f"  touch {session_eval_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "if printf '%s\\n' \"$args\" | grep -q ' admin close-only'; then\n"
+        f"  touch {close_only_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "printf 'unexpected docker call: %s\\n' \"$args\" >&2\n"
+        "exit 99\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/session_guard.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "SESSION_GUARD_REUSE_PASS_MAX_AGE_MINUTES": "180",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 strategy=bull_flag min_trades=10 min_pnl=0 "
+        "reason=already_passed"
+    ) in result.stdout
+    assert "session guard already passed for session 2026-06-29" in result.stdout
+    assert "broker exposure ok: open_orders=0 open_positions=0" in result.stdout
+    assert not session_eval_marker.exists()
+    assert not close_only_marker.exists()
+
+
 def test_session_guard_below_pnl_after_min_trades_stays_pending(
     tmp_path: Path,
 ) -> None:

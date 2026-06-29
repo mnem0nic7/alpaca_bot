@@ -29,6 +29,7 @@ capture_env_overrides \
   SESSION_GUARD_MIN_TRADES \
   SESSION_GUARD_FAIL_BELOW_PNL \
   SESSION_GUARD_FAIL_ON_DIAGNOSTICS \
+  SESSION_GUARD_REUSE_PASS_MAX_AGE_MINUTES \
   SESSION_GUARD_START_DATE \
   SESSION_GUARD_DATE
 
@@ -49,6 +50,7 @@ SESSION_GUARD_STRATEGY="${SESSION_GUARD_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_
 SESSION_GUARD_MIN_TRADES="${SESSION_GUARD_MIN_TRADES:-10}"
 SESSION_GUARD_FAIL_BELOW_PNL="${SESSION_GUARD_FAIL_BELOW_PNL:-0}"
 SESSION_GUARD_FAIL_ON_DIAGNOSTICS="${SESSION_GUARD_FAIL_ON_DIAGNOSTICS:-true}"
+SESSION_GUARD_REUSE_PASS_MAX_AGE_MINUTES="${SESSION_GUARD_REUSE_PASS_MAX_AGE_MINUTES:-180}"
 SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"
 SESSION_GUARD_DATE="${SESSION_GUARD_DATE:-}"
 
@@ -76,6 +78,11 @@ if [[ ! "$SESSION_GUARD_MIN_TRADES" =~ ^[0-9]+$ ]]; then
 fi
 if [[ ! "$SESSION_GUARD_FAIL_BELOW_PNL" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
   echo "SESSION_GUARD_FAIL_BELOW_PNL must be a number" >&2
+  exit 1
+fi
+if [[ ! "$SESSION_GUARD_REUSE_PASS_MAX_AGE_MINUTES" =~ ^[0-9]+$ ]] \
+  || [[ "$SESSION_GUARD_REUSE_PASS_MAX_AGE_MINUTES" -lt 1 ]]; then
+  echo "SESSION_GUARD_REUSE_PASS_MAX_AGE_MINUTES must be a positive integer" >&2
   exit 1
 fi
 
@@ -148,6 +155,84 @@ default_session_date() {
   fallback_session_date
 }
 
+load_latest_session_guard_pass() {
+  "${compose[@]}" run -T --rm \
+    -e SESSION_GUARD_PASS_SESSION_DATE="$SESSION_GUARD_DATE" \
+    -e SESSION_GUARD_PASS_PROOF_START="$SESSION_GUARD_START_DATE" \
+    -e SESSION_GUARD_PASS_STRATEGY="$SESSION_GUARD_STRATEGY" \
+    -e SESSION_GUARD_PASS_MIN_TRADES="$SESSION_GUARD_MIN_TRADES" \
+    -e SESSION_GUARD_PASS_MIN_PNL="$SESSION_GUARD_FAIL_BELOW_PNL" \
+    --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import os
+
+from alpaca_bot.config import Settings
+from alpaca_bot.storage.db import connect_postgres
+
+settings = Settings.from_env()
+session_date = os.environ["SESSION_GUARD_PASS_SESSION_DATE"]
+proof_start = os.environ["SESSION_GUARD_PASS_PROOF_START"]
+strategy = os.environ["SESSION_GUARD_PASS_STRATEGY"]
+min_trades = os.environ["SESSION_GUARD_PASS_MIN_TRADES"]
+min_pnl = os.environ["SESSION_GUARD_PASS_MIN_PNL"]
+
+conn = connect_postgres(settings.database_url)
+try:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+              created_at,
+              to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+            FROM audit_events
+            WHERE event_type = 'scheduled_check_completed'
+              AND payload->>'check_name' = 'session_guard'
+              AND payload->>'status' = 'passed'
+              AND payload->>'exit_code' = '0'
+              AND payload->>'session_date' = %s
+              AND payload->>'proof_start' = %s
+              AND payload->>'trading_mode' = %s
+              AND payload->>'strategy_version' = %s
+              AND payload->>'strategy' = %s
+              AND payload->>'min_trades' = %s
+              AND payload->>'min_pnl' = %s
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (
+                session_date,
+                proof_start,
+                settings.trading_mode.value,
+                settings.strategy_version,
+                strategy,
+                min_trades,
+                min_pnl,
+            ),
+        )
+        row = cur.fetchone()
+finally:
+    conn.close()
+
+if row is None:
+    print("session_guard_latest_pass=||")
+    raise SystemExit(0)
+
+created_raw = row[0]
+created_utc = created_raw
+if created_utc.tzinfo is None:
+    created_utc = created_utc.replace(tzinfo=timezone.utc)
+else:
+    created_utc = created_utc.astimezone(timezone.utc)
+age_seconds = (datetime.now(timezone.utc) - created_utc).total_seconds()
+print(
+    "session_guard_latest_pass="
+    f"{row[1]}|{max(0, int(age_seconds // 60))}"
+)
+PY
+}
+
 SESSION_GUARD_DATE="${SESSION_GUARD_DATE:-$(default_session_date)}"
 if [[ ! "$SESSION_GUARD_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   echo "SESSION_GUARD_DATE must use YYYY-MM-DD" >&2
@@ -173,6 +258,35 @@ if [[ "$SESSION_GUARD_DATE" < "$SESSION_GUARD_START_DATE" ]]; then
     exit 44
   fi
   exit 43
+fi
+
+latest_session_guard_pass="$(load_latest_session_guard_pass || true)"
+latest_session_guard_pass="$(
+  printf '%s\n' "$latest_session_guard_pass" \
+    | sed -n 's/^session_guard_latest_pass=//p' \
+    | tail -n 1
+)"
+latest_pass_created_at=""
+latest_pass_age_minutes=""
+IFS='|' read -r latest_pass_created_at latest_pass_age_minutes <<< "$latest_session_guard_pass"
+if [[ "$latest_pass_age_minutes" =~ ^[0-9]+$ ]] \
+  && (( 10#$latest_pass_age_minutes <= 10#$SESSION_GUARD_REUSE_PASS_MAX_AGE_MINUTES )); then
+  if ! BROKER_FLAT_CONTEXT="${SESSION_GUARD_STRATEGY} session guard prior pass ${SESSION_GUARD_DATE}" \
+    ./scripts/broker_flat_check.sh "$ENV_FILE"; then
+    reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: broker exposure remains after prior pass"
+    if ! "${compose[@]}" run -T --rm admin \
+      close-only \
+      --mode "${TRADING_MODE:-paper}" \
+      --strategy-version "$STRATEGY_VERSION" \
+      --reason "$reason"; then
+      echo "session guard failed: could not apply close-only guard" >&2
+      exit 45
+    fi
+    exit 44
+  fi
+  echo "scheduled check context: session_date=$SESSION_GUARD_DATE proof_start=$SESSION_GUARD_START_DATE strategy=$SESSION_GUARD_STRATEGY min_trades=$SESSION_GUARD_MIN_TRADES min_pnl=$SESSION_GUARD_FAIL_BELOW_PNL reason=already_passed"
+  echo "session guard already passed for session $SESSION_GUARD_DATE created_at=${latest_pass_created_at:-unknown} age_minutes=$latest_pass_age_minutes"
+  exit 0
 fi
 
 session_eval_args=(
