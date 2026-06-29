@@ -41,6 +41,7 @@ ACTIVE_STOP_STATUSES = (
     "suspended",
     "done_for_day",
 )
+STOP_MARKET_PRICE_GAP = 0.01
 
 
 class OrderStoreProtocol(Protocol):
@@ -100,6 +101,56 @@ class BrokerProtocol(Protocol):
     def cancel_order(self, order_id: str) -> None: ...
 
     def get_open_orders_for_symbol(self, symbol: str) -> list: ...
+
+
+def _stop_price_improves(position: PositionRecord, stop_price: float) -> bool:
+    if position.quantity < 0:
+        return stop_price < position.stop_price
+    return stop_price > position.stop_price
+
+
+def _extract_market_price_from_broker_error(exc: Exception) -> float | None:
+    error_text = str(exc)
+    try:
+        payload = json.loads(error_text)
+    except Exception:
+        payload = None
+    if isinstance(payload, dict):
+        raw_market_price = payload.get("market_price")
+        if raw_market_price is not None:
+            try:
+                return float(raw_market_price)
+            except (TypeError, ValueError):
+                return None
+    match = re.search(r'"market_price"\s*:\s*"?([0-9]+(?:\.[0-9]+)?)"?', error_text)
+    if match is None:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def _market_capped_stop_price(
+    *,
+    exc: Exception,
+    is_short: bool,
+) -> float | None:
+    error_text = str(exc).lower()
+    if is_short:
+        if "stop price must be greater than current price" not in error_text:
+            return None
+        market_price = _extract_market_price_from_broker_error(exc)
+        if market_price is None:
+            return None
+        return round(market_price + STOP_MARKET_PRICE_GAP, 2)
+    if "stop price must be less than current price" not in error_text:
+        return None
+    market_price = _extract_market_price_from_broker_error(exc)
+    if market_price is None:
+        return None
+    capped = round(market_price - STOP_MARKET_PRICE_GAP, 2)
+    return capped if capped > 0 else None
 
 
 @dataclass(frozen=True)
@@ -249,14 +300,66 @@ def _execute_update_stop(
     # Broker calls happen outside the lock to avoid blocking the stream thread.
     _path_c_client_order_id: str | None = None
     replaced_order: OrderRecord | None = None
+    requested_stop_price = stop_price
+    stop_price_was_capped = False
+
+    def _call_broker_stop(call: Callable[[float], object]) -> object | None:
+        nonlocal stop_price, stop_price_was_capped
+        try:
+            return call(stop_price)
+        except Exception as exc:
+            capped_stop = _market_capped_stop_price(exc=exc, is_short=is_short)
+            if capped_stop is None:
+                raise
+            if not _stop_price_improves(position, capped_stop):
+                logger.info(
+                    "Skipping update_stop on %s: broker market-price cap %.2f does not "
+                    "improve current stop %.2f",
+                    symbol,
+                    capped_stop,
+                    position.stop_price,
+                )
+                with lock_ctx:
+                    runtime.audit_event_store.append(
+                        AuditEvent(
+                            event_type="cycle_intent_skipped",
+                            symbol=symbol,
+                            payload={
+                                "intent_type": "update_stop",
+                                "reason": "market_price_cap_not_improving",
+                                "requested_stop_price": requested_stop_price,
+                                "capped_stop_price": capped_stop,
+                                "current_stop_price": position.stop_price,
+                                "error": str(exc),
+                            },
+                            created_at=now,
+                        ),
+                        commit=True,
+                    )
+                return None
+            logger.warning(
+                "Capping update_stop on %s from %.2f to %.2f after broker "
+                "market-price rejection",
+                symbol,
+                stop_price,
+                capped_stop,
+            )
+            stop_price = capped_stop
+            stop_price_was_capped = True
+            return call(stop_price)
+
     try:
         if active_stop is not None and active_stop.broker_order_id:
             if db_only:
                 return None  # can't replace broker stops after hours; morning cycle handles it
-            broker_order = broker.replace_order(
-                order_id=active_stop.broker_order_id,
-                stop_price=stop_price,
+            broker_order = _call_broker_stop(
+                lambda effective_stop: broker.replace_order(
+                    order_id=active_stop.broker_order_id,
+                    stop_price=effective_stop,
+                )
             )
+            if broker_order is None:
+                return None
             replacement_client_order_id = (
                 getattr(broker_order, "client_order_id", None)
                 or active_stop.client_order_id
@@ -333,21 +436,27 @@ def _execute_update_stop(
                 context="update_stop",
             )
             if is_short:
-                broker_order = broker.submit_buy_stop_order(
-                    symbol=symbol,
-                    quantity=abs(position.quantity),
-                    stop_price=stop_price,
-                    client_order_id=client_order_id,
+                broker_order = _call_broker_stop(
+                    lambda effective_stop: broker.submit_buy_stop_order(
+                        symbol=symbol,
+                        quantity=abs(position.quantity),
+                        stop_price=effective_stop,
+                        client_order_id=client_order_id,
+                    )
                 )
                 order_side = "buy"
             else:
-                broker_order = broker.submit_stop_order(
-                    symbol=symbol,
-                    quantity=position.quantity,
-                    stop_price=stop_price,
-                    client_order_id=client_order_id,
+                broker_order = _call_broker_stop(
+                    lambda effective_stop: broker.submit_stop_order(
+                        symbol=symbol,
+                        quantity=position.quantity,
+                        stop_price=effective_stop,
+                        client_order_id=client_order_id,
+                    )
                 )
                 order_side = "sell"
+            if broker_order is None:
+                return None
             updated_order = OrderRecord(
                 client_order_id=client_order_id,
                 symbol=symbol,
@@ -452,17 +561,26 @@ def _execute_update_stop(
                 ),
                 commit=False,
             )
+            audit_payload = {
+                "intent_type": "update_stop",
+                "action": action,
+                "stop_price": stop_price,
+                "client_order_id": updated_order.client_order_id,
+                "broker_order_id": updated_order.broker_order_id,
+            }
+            if stop_price_was_capped:
+                audit_payload.update(
+                    {
+                        "requested_stop_price": requested_stop_price,
+                        "stop_price_capped": True,
+                        "cap_reason": "broker_market_price",
+                    }
+                )
             runtime.audit_event_store.append(
                 AuditEvent(
                     event_type="cycle_intent_executed",
                     symbol=symbol,
-                    payload={
-                        "intent_type": "update_stop",
-                        "action": action,
-                        "stop_price": stop_price,
-                        "client_order_id": updated_order.client_order_id,
-                        "broker_order_id": updated_order.broker_order_id,
-                    },
+                    payload=audit_payload,
                     created_at=now,
                 ),
                 commit=False,

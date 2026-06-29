@@ -3009,6 +3009,186 @@ def test_replace_stop_records_returned_client_order_id() -> None:
     assert replacement.stop_price == pytest.approx(111.7)
 
 
+def test_replace_stop_caps_sell_stop_below_broker_market_price() -> None:
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 6, 29, 15, 35, tzinfo=timezone.utc)
+    active_stop = OrderRecord(
+        client_order_id="ftdr-stop-client-id",
+        symbol="FTDR",
+        side="sell",
+        intent_type="stop",
+        status="new",
+        quantity=11.3191,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=now,
+        updated_at=now,
+        stop_price=73.91,
+        initial_stop_price=73.91,
+        broker_order_id="ftdr-broker-stop-id",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="FTDR",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=11.3191,
+        entry_price=76.116184,
+        stop_price=73.91,
+        initial_stop_price=73.91,
+        opened_at=now,
+        updated_at=now,
+        strategy_name="bull_flag",
+    )
+
+    class MarketPriceRejectThenAcceptBroker(RecordingBroker):
+        def replace_order(self, **kwargs):
+            self.replace_calls.append(dict(kwargs))
+            if len(self.replace_calls) == 1:
+                raise RuntimeError(
+                    '{"code":42210000,"market_price":"76.14",'
+                    '"message":"stop price must be less than current price",'
+                    '"stop_price":"76.22"}'
+                )
+            return SimpleNamespace(
+                client_order_id="",
+                broker_order_id=kwargs["order_id"],
+                symbol="FTDR",
+                side="sell",
+                status="NEW",
+                quantity=11.3191,
+            )
+
+    order_store = RecordingOrderStore(orders=[active_stop])
+    position_store = RecordingPositionStore(positions=[position])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        position_store=position_store,
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+    broker = MarketPriceRejectThenAcceptBroker()
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[
+                CycleIntent(
+                    intent_type=CycleIntentType.UPDATE_STOP,
+                    symbol="FTDR",
+                    timestamp=now,
+                    stop_price=76.22,
+                    strategy_name="bull_flag",
+                )
+            ],
+        ),
+        now=now,
+    )
+
+    assert [call["stop_price"] for call in broker.replace_calls] == [76.22, 76.13]
+    assert order_store.saved[0].stop_price == pytest.approx(76.13)
+    assert position_store.saved[0].stop_price == pytest.approx(76.13)
+    executed = [
+        event for event in audit_store.appended
+        if event.event_type == "cycle_intent_executed"
+    ][0]
+    assert executed.payload["stop_price"] == pytest.approx(76.13)
+    assert executed.payload["requested_stop_price"] == pytest.approx(76.22)
+    assert executed.payload["stop_price_capped"] is True
+    assert executed.payload["cap_reason"] == "broker_market_price"
+    assert "stop_update_failed" not in {event.event_type for event in audit_store.appended}
+    assert report.replaced_stop_count == 1
+
+
+def test_replace_stop_skips_market_price_cap_when_not_improving() -> None:
+    execute_cycle_intents = load_cycle_intent_execution_api()
+    settings = make_settings()
+    now = datetime(2026, 6, 29, 15, 35, tzinfo=timezone.utc)
+    active_stop = OrderRecord(
+        client_order_id="ftdr-stop-client-id",
+        symbol="FTDR",
+        side="sell",
+        intent_type="stop",
+        status="new",
+        quantity=11.3191,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=now,
+        updated_at=now,
+        stop_price=76.13,
+        initial_stop_price=73.91,
+        broker_order_id="ftdr-broker-stop-id",
+        signal_timestamp=now,
+    )
+    position = PositionRecord(
+        symbol="FTDR",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        quantity=11.3191,
+        entry_price=76.116184,
+        stop_price=76.13,
+        initial_stop_price=73.91,
+        opened_at=now,
+        updated_at=now,
+        strategy_name="bull_flag",
+    )
+
+    class MarketPriceRejectBroker(RecordingBroker):
+        def replace_order(self, **kwargs):
+            self.replace_calls.append(dict(kwargs))
+            raise RuntimeError(
+                '{"code":42210000,"market_price":"76.14",'
+                '"message":"stop price must be less than current price",'
+                '"stop_price":"76.22"}'
+            )
+
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=RecordingOrderStore(orders=[active_stop]),
+        position_store=RecordingPositionStore(positions=[position]),
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+    broker = MarketPriceRejectBroker()
+
+    report = execute_cycle_intents(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        cycle_result=CycleResult(
+            as_of=now,
+            intents=[
+                CycleIntent(
+                    intent_type=CycleIntentType.UPDATE_STOP,
+                    symbol="FTDR",
+                    timestamp=now,
+                    stop_price=76.22,
+                    strategy_name="bull_flag",
+                )
+            ],
+        ),
+        now=now,
+    )
+
+    assert [call["stop_price"] for call in broker.replace_calls] == [76.22]
+    assert runtime.order_store.saved == []
+    assert runtime.position_store.saved == []
+    skipped = [
+        event for event in audit_store.appended
+        if event.event_type == "cycle_intent_skipped"
+    ][0]
+    assert skipped.payload["reason"] == "market_price_cap_not_improving"
+    assert "stop_update_failed" not in {event.event_type for event in audit_store.appended}
+    assert report.replaced_stop_count == 0
+
+
 # ---------------------------------------------------------------------------
 # Regression: "insufficient qty" must be silently skipped
 # ---------------------------------------------------------------------------
