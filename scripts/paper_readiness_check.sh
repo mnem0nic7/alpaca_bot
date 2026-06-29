@@ -373,6 +373,7 @@ require_env_value MAX_OPEN_POSITIONS 4
 require_env_value REPLAY_SLIPPAGE_BPS 2.0
 require_env_value RISK_PER_TRADE_PCT 0.01
 require_env_value MAX_POSITION_PCT 0.05
+require_env_value MAX_LOSS_PER_TRADE_DOLLARS 10.0
 require_env_value MAX_PORTFOLIO_EXPOSURE_PCT 0.30
 require_env_value DAILY_LOSS_LIMIT_PCT 0.01
 require_env_value STOP_LIMIT_BUFFER_PCT 0.0005
@@ -485,7 +486,7 @@ check("min_position_notional", settings.min_position_notional, 0.0)
 check("max_stop_pct", settings.max_stop_pct, 0.05)
 check("viability_daily_bar_max_age_days", settings.viability_daily_bar_max_age_days, 5)
 check("viability_min_hold_minutes", settings.viability_min_hold_minutes, 0)
-check("max_loss_per_trade_dollars", settings.max_loss_per_trade_dollars, None)
+check("max_loss_per_trade_dollars", settings.max_loss_per_trade_dollars, 10.0)
 check("intraday_consecutive_loss_gate", settings.intraday_consecutive_loss_gate, 0)
 check("replay_slippage_bps", settings.replay_slippage_bps, 2.0)
 

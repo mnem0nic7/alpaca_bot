@@ -1827,7 +1827,8 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'check("paper_proof_freeze", settings.paper_proof_freeze, True)' in script
     assert 'check("enable_vwap_entry_filter", settings.enable_vwap_entry_filter, True)' in script
     assert 'check("enable_news_filter", settings.enable_news_filter, False)' in script
-    assert 'check("max_loss_per_trade_dollars", settings.max_loss_per_trade_dollars, None)' in script
+    assert "require_env_value MAX_LOSS_PER_TRADE_DOLLARS 10.0" in script
+    assert 'check("max_loss_per_trade_dollars", settings.max_loss_per_trade_dollars, 10.0)' in script
     assert script.index("run_container_settings_posture_check") < script.index("run_market_data_smoke_check")
     assert "AlpacaMarketDataAdapter.from_settings" in script
     assert "adapter.get_daily_bars" in script
@@ -3739,7 +3740,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "abs(float(settings.max_stop_pct) - 0.05)" in script
     assert "int(settings.viability_daily_bar_max_age_days) == 5" in script
     assert "int(settings.viability_min_hold_minutes) == 0" in script
-    assert "settings.max_loss_per_trade_dollars is None" in script
+    assert "settings.max_loss_per_trade_dollars is not None" in script
+    assert "abs(float(settings.max_loss_per_trade_dollars) - 10.0)" in script
     assert "bool(settings.paper_proof_freeze)" in script
     assert "int(settings.intraday_consecutive_loss_gate) == 0" in script
     assert "abs(float(settings.replay_slippage_bps) - 2.0)" in script

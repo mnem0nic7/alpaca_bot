@@ -52,6 +52,13 @@ def _parse_date(name: str, value: str) -> date:
         raise ValueError(f"{name} must use YYYY-MM-DD format, got {value!r}") from exc
 
 
+def _parse_optional_float(values: dict[str, str], name: str) -> float | None:
+    raw_value = values.get(name)
+    if raw_value is None or raw_value.strip() == "":
+        return None
+    return float(raw_value)
+
+
 def _parse_symbols(value: str) -> tuple[str, ...]:
     symbols = tuple(symbol.strip().upper() for symbol in value.split(",") if symbol.strip())
     if not symbols:
@@ -425,10 +432,8 @@ class Settings:
             intraday_consecutive_loss_gate=int(
                 values.get("INTRADAY_CONSECUTIVE_LOSS_GATE", "0")
             ),
-            max_loss_per_trade_dollars=(
-                float(values["MAX_LOSS_PER_TRADE_DOLLARS"])
-                if "MAX_LOSS_PER_TRADE_DOLLARS" in values
-                else None
+            max_loss_per_trade_dollars=_parse_optional_float(
+                values, "MAX_LOSS_PER_TRADE_DOLLARS"
             ),
             enable_vix_filter=_parse_bool(
                 "ENABLE_VIX_FILTER", values.get("ENABLE_VIX_FILTER", "false")

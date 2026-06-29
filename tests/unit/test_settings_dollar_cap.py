@@ -36,6 +36,11 @@ def test_max_loss_per_trade_dollars_defaults_to_none():
     assert s.max_loss_per_trade_dollars is None
 
 
+def test_max_loss_per_trade_dollars_blank_treated_as_none():
+    s = Settings.from_env(_base_env(MAX_LOSS_PER_TRADE_DOLLARS=""))
+    assert s.max_loss_per_trade_dollars is None
+
+
 def test_max_loss_per_trade_dollars_parsed_from_env():
     s = Settings.from_env(_base_env(MAX_LOSS_PER_TRADE_DOLLARS="15.0"))
     assert s.max_loss_per_trade_dollars == 15.0
