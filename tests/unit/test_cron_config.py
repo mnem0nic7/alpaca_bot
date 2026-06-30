@@ -88,6 +88,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
         "25 14,15 * * 1-5 root PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE=false "
         "/workspace/alpaca_bot/scripts/run_if_ny_time.sh 1025"
     )
+    first_fatal_activity = "35 14,15 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1035"
     activity = "0 16,17 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1200"
     late_activity = "35 18,19 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1435"
     session_guard = "10 21,22 * * 1-5 root /workspace/alpaca_bot/scripts/run_if_ny_time.sh 1710"
@@ -119,6 +120,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert readiness_post_close_refresh in cron_text
     assert readiness_pre_proof_refresh in cron_text
     assert early_activity in cron_text
+    assert first_fatal_activity in cron_text
     assert activity in cron_text
     assert late_activity in cron_text
     assert session_guard in cron_text
@@ -132,7 +134,9 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(readiness_post_open_repair_1005) < cron_text.index(readiness_post_open_repair_1010)
     assert cron_text.index(readiness_post_open_repair_1010) < cron_text.index(readiness_stale_repair_1015)
     assert cron_text.index(readiness_stale_repair_1015) < cron_text.index(early_activity)
-    assert cron_text.index(early_activity) < cron_text.index(activity)
+    assert cron_text.index(early_activity) < cron_text.index(first_fatal_activity)
+    assert cron_text.index(first_fatal_activity) < cron_text.index(readiness_stale_repair_1045)
+    assert cron_text.index(first_fatal_activity) < cron_text.index(activity)
     assert cron_text.index(early_activity) < cron_text.index(readiness_stale_repair_1045)
     assert cron_text.index(readiness_stale_repair_1045) < cron_text.index(readiness_stale_repair_1115)
     assert cron_text.index(readiness_stale_repair_1115) < cron_text.index(readiness_stale_repair_1145)
@@ -155,8 +159,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert cron_text.index(profit_probe) < cron_text.index(proof_status)
     assert cron_text.index(proof_status) < cron_text.index(nightly)
     assert cron_text.index(profit_probe) < cron_text.index(nightly)
-    assert cron_text.count("scripts/run_if_ny_time.sh") == 27
-    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 26
+    assert cron_text.count("scripts/run_if_ny_time.sh") == 28
+    assert cron_text.count("scripts/run_locked_check_with_audit.sh") == 27
     assert "flock -n /var/lock/alpaca-bot-nightly.lock" in cron_text
     assert "flock -n /var/lock/alpaca-bot-paper" not in cron_text
     assert "flock -n /var/lock/alpaca-bot-session-guard.lock" not in cron_text
@@ -180,11 +184,14 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "RUN_IF_NY_TIME_GRACE_MINUTES=1" in cron_text
     assert "/var/log/alpaca-bot-paper-readiness.log" in cron_text
     assert "scripts/paper_activity_check.sh" in cron_text
-    assert cron_text.count("scripts/paper_activity_check.sh") == 3
+    assert cron_text.count("scripts/paper_activity_check.sh") == 4
     assert cron_text.count("PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE=false") == 1
     assert cron_text.index("PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE=false") < cron_text.index(
         "run_if_ny_time.sh 1025"
     )
+    assert first_fatal_activity in cron_text
+    assert cron_text.index("run_if_ny_time.sh 1025") < cron_text.index("run_if_ny_time.sh 1035")
+    assert cron_text.index("run_if_ny_time.sh 1035") < cron_text.index("run_if_ny_time.sh 1200")
     assert "run_locked_check_with_audit.sh paper_activity" in cron_text
     assert "/var/log/alpaca-bot-paper-activity.log" in cron_text
     assert "scripts/paper_profit_probe.sh" in cron_text
@@ -202,7 +209,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "Runs weekdays on New York wall time" in install_cron
     assert "paper readiness 09:20/09:55/09:58/10:02/10:05/10:10 plus stale-repair checks from 10:15-15:15" in install_cron
     assert "force refresh 12:15/14:25/16:55/17:24" in install_cron
-    assert "paper activity 10:25/12:00/14:35" in install_cron
+    assert "paper activity 10:25/10:35/12:00/14:35" in install_cron
     assert "proof status 17:28" in install_cron
     assert "scripts/apply_candidate.sh" in cron_text
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
