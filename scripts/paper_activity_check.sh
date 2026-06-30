@@ -79,7 +79,7 @@ fi
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
 emit_scheduled_context() {
-  echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=$PAPER_ACTIVITY_STRATEGY"
+  echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} strategy=$PAPER_ACTIVITY_STRATEGY"
 }
 
 only_readiness_missing_reasons() {

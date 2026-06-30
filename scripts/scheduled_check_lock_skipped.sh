@@ -705,32 +705,32 @@ case "$CHECK_NAME" in
       latest_decision_dry_run_line="$(load_latest_readiness_decision_dry_run "$readiness_session_date")"
       latest_decision_dry_run_status="missing"
       if ! latest_decision_dry_run_status="$(validate_readiness_decision_dry_run_line "$latest_decision_dry_run_line")"; then
-        echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy_decision_dry_run_$latest_decision_dry_run_status"
+        echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} reason=lock_busy_decision_dry_run_$latest_decision_dry_run_status"
         if [[ -n "$latest_decision_dry_run_line" ]]; then
           echo "$latest_decision_dry_run_line"
         fi
         echo "paper readiness prior pass lacks accepted entry-intent decision dry-run proof ($latest_decision_dry_run_status); lock busy remains blocking" >&2
         exit 48
       fi
-      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy_already_passed"
+      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} reason=lock_busy_already_passed"
       echo "$latest_decision_dry_run_line"
       echo "paper readiness lock busy after prior pass for session $readiness_session_date; not blocking entries"
       exit 0
     fi
     if [[ "$latest_readiness_status" == "passed" && "$readiness_is_current" == "false" ]]; then
-      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy_stale_pass"
+      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} reason=lock_busy_stale_pass"
       echo "paper readiness prior pass is older than latest supervisor start; lock busy remains blocking" >&2
       exit 48
     fi
     if [[ "$latest_readiness_status" == "passed" && "$readiness_is_current" == "true" && "$readiness_is_recent" == "false" ]]; then
-      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy_stale_pass"
+      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} reason=lock_busy_stale_pass"
       echo "paper readiness prior pass is older than max age ${PAPER_READINESS_MAX_PASS_AGE_MINUTES}m; lock busy remains blocking" >&2
       exit 48
     fi
-    echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} reason=lock_busy"
+    echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} reason=lock_busy"
     ;;
   paper_activity)
-    echo "scheduled check context: session_date=$session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}} reason=lock_busy"
+    echo "scheduled check context: session_date=$session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} strategy=${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}} reason=lock_busy"
     ;;
   session_guard)
     post_close_lock_max_age="${POST_CLOSE_LOCK_MAX_AGE_MINUTES:-30}"
@@ -738,7 +738,7 @@ case "$CHECK_NAME" in
       echo "POST_CLOSE_LOCK_MAX_AGE_MINUTES must be a positive integer" >&2
       exit 1
     fi
-    guard_proof_start="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"
+    guard_proof_start="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"
     guard_strategy="${SESSION_GUARD_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
     guard_min_trades="${SESSION_GUARD_MIN_TRADES:-10}"
     guard_min_pnl="${SESSION_GUARD_FAIL_BELOW_PNL:-0}"
@@ -777,7 +777,7 @@ case "$CHECK_NAME" in
       echo "POST_CLOSE_LOCK_MAX_AGE_MINUTES must be a positive integer" >&2
       exit 1
     fi
-    probe_proof_start="${PROFIT_PROBE_START_DATE:-2026-06-29}"
+    probe_proof_start="${PROFIT_PROBE_START_DATE:-2026-06-30}"
     probe_strategy="${PROFIT_PROBE_STRATEGY:-bull_flag}"
     probe_min_trades="${PROFIT_PROBE_MIN_TRADES:-10}"
     probe_min_pnl="${PROFIT_PROBE_MIN_PNL:-0.01}"
@@ -811,7 +811,7 @@ case "$CHECK_NAME" in
     echo "scheduled check context: session_date=$session_date proof_start=$probe_proof_start strategy=$probe_strategy min_trades=$probe_min_trades min_pnl=$probe_min_pnl reason=lock_busy"
     ;;
   paper_proof_status)
-    proof_start="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"
+    proof_start="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"
     proof_strategy="${PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
     proof_min_trades="${PROOF_STATUS_MIN_TRADES:-${PROFIT_PROBE_MIN_TRADES:-10}}"
     proof_min_pnl="${PROOF_STATUS_MIN_PNL:-${PROFIT_PROBE_MIN_PNL:-0.01}}"

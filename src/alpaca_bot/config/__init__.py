@@ -254,7 +254,7 @@ class Settings:
             ),
             profit_probe_start_date=_parse_date(
                 "PROFIT_PROBE_START_DATE",
-                values.get("PROFIT_PROBE_START_DATE", "2026-06-29"),
+                values.get("PROFIT_PROBE_START_DATE", "2026-06-30"),
             ),
             floor_raise_step=float(values.get("FLOOR_RAISE_STEP", "0.10")),
             drawdown_raise_pct=float(values.get("DRAWDOWN_RAISE_PCT", "0.05")),

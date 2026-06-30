@@ -1425,7 +1425,12 @@ def test_runtime_supervisor_blocks_paper_proof_entries_without_readiness_audit(
     monkeypatch,
 ) -> None:
     module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
-    settings = make_settings({"PAPER_PROOF_FREEZE": "true"})
+    settings = make_settings(
+        {
+            "PAPER_PROOF_FREEZE": "true",
+            "PROFIT_PROBE_START_DATE": "2026-06-29",
+        }
+    )
     now = datetime(2026, 6, 29, 14, 15, tzinfo=timezone.utc)
     audit_store = RecordingAuditEventStore()
     runtime = make_runtime_context(
@@ -1488,7 +1493,12 @@ def test_runtime_supervisor_allows_paper_proof_entries_after_readiness_audit(
     monkeypatch,
 ) -> None:
     module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
-    settings = make_settings({"PAPER_PROOF_FREEZE": "true"})
+    settings = make_settings(
+        {
+            "PAPER_PROOF_FREEZE": "true",
+            "PROFIT_PROBE_START_DATE": "2026-06-29",
+        }
+    )
     now = datetime(2026, 6, 29, 14, 15, tzinfo=timezone.utc)
     audit_store = RecordingAuditEventStore(
         events=[
@@ -1555,7 +1565,12 @@ def test_runtime_supervisor_allows_paper_proof_entries_after_readiness_audit(
 
 def test_runtime_supervisor_uses_direct_readiness_audit_lookup(monkeypatch) -> None:
     module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
-    settings = make_settings({"PAPER_PROOF_FREEZE": "true"})
+    settings = make_settings(
+        {
+            "PAPER_PROOF_FREEZE": "true",
+            "PROFIT_PROBE_START_DATE": "2026-06-29",
+        }
+    )
     now = datetime(2026, 6, 29, 14, 15, tzinfo=timezone.utc)
     readiness_event = AuditEvent(
         event_type="scheduled_check_completed",

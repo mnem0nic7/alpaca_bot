@@ -1077,7 +1077,7 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "payload->>'proof_start' = %s" in lock_skip
     assert "paper_readiness)" in lock_skip
     assert "paper_activity)" in lock_skip
-    assert "proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=${PAPER_ACTIVITY_STRATEGY" in lock_skip
+    assert "proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} strategy=${PAPER_ACTIVITY_STRATEGY" in lock_skip
     assert "session_guard)" in lock_skip
     assert "POST_CLOSE_LOCK_MAX_AGE_MINUTES" in lock_skip
     assert "load_latest_post_close_check_status" in lock_skip
@@ -1118,7 +1118,7 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "paper proof scenarios: status=$latest_scenario_status" in lock_skip
     assert '"$latest_status" == "pending" && "$latest_exit_code" == "43" && "$latest_proof" == "pending"' in lock_skip
     assert '"$latest_status" == "passed" && "$latest_exit_code" == "0" && "$latest_proof" == "passed"' in lock_skip
-    assert "PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}" in lock_skip
+    assert "PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}" in lock_skip
     assert "PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}" in lock_skip
     assert "exit 48" in lock_skip
     assert "payload ? 'trading_mode'" in lock_skip
@@ -1706,7 +1706,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_CLOSE_ONLY_ON_FAILURE="${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE:-true}"' in script
     assert "PAPER_READINESS_PRIOR_PROOF_START_DATE \\" in script
     assert 'PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-}"' in script
-    assert 'PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"' in script
+    assert 'PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"' in script
     assert "PAPER_READINESS_LOSING_STREAK_N \\" in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"' in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-${LOSING_STREAK_N:-3}}"' in script
@@ -2288,7 +2288,7 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert 'if [[ "$rc" -eq 43 ]]' in script
     assert (
         "scheduled check context: session_date=$(TZ=America/New_York date +%F) "
-        "proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=$PAPER_ACTIVITY_STRATEGY"
+        "proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} strategy=$PAPER_ACTIVITY_STRATEGY"
     ) in script
     assert "decision_record_count" in script
     assert "decision_log" in script
@@ -2372,7 +2372,7 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "emit_scheduled_context()" in script
     assert (
         'echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) '
-        'proof_start=${PROFIT_PROBE_START_DATE:-2026-06-29} strategy=$PAPER_ACTIVITY_STRATEGY"'
+        'proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} strategy=$PAPER_ACTIVITY_STRATEGY"'
     ) in script
     assert "emit_scheduled_context\n\n  if [[ \"${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE,,}\"" in script
     assert "emit_scheduled_context\n\nload_market_clock_status" in script
@@ -4146,7 +4146,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         'PROOF_STATUS_STRATEGY="${PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"'
     )
     assert script.index('source "$ENV_FILE"') < script.index(
-        'PROOF_STATUS_START_DATE="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"'
+        'PROOF_STATUS_START_DATE="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"'
     )
     assert "load_latest_completed_session_date" in script
     assert "load_next_market_session_date" in script
@@ -4736,9 +4736,9 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "SESSION_GUARD_DATE" in session_guard
     assert "SESSION_GUARD_FAIL_ON_DIAGNOSTICS \\" in session_guard
     assert 'SESSION_GUARD_FAIL_ON_DIAGNOSTICS="${SESSION_GUARD_FAIL_ON_DIAGNOSTICS:-true}"' in session_guard
-    assert 'SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"' in session_guard
+    assert 'SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"' in session_guard
     assert session_guard.index('source "$ENV_FILE"') < session_guard.index(
-        'SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-29}}"'
+        'SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"'
     )
     assert session_guard.index('source "$ENV_FILE"') < session_guard.index(
         'SESSION_GUARD_STRATEGY="${SESSION_GUARD_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"'
@@ -4775,9 +4775,9 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert profit_probe.index('source "$ENV_FILE"') < profit_probe.index("\nrestore_env_overrides\n")
     assert "PROFIT_PROBE_DATE" in profit_probe
     assert "PROFIT_PROBE_FAIL_ON_DIAGNOSTICS \\" in profit_probe
-    assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"' in profit_probe
+    assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-30}"' in profit_probe
     assert profit_probe.index('source "$ENV_FILE"') < profit_probe.index(
-        'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-29}"'
+        'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-30}"'
     )
     assert profit_probe.index('source "$ENV_FILE"') < profit_probe.index(
         'PROFIT_PROBE_STRATEGY="${PROFIT_PROBE_STRATEGY:-bull_flag}"'

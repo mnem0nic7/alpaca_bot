@@ -109,7 +109,7 @@ def test_paper_readiness_max_pass_age_minutes_env_override():
 
 def test_profit_probe_start_date_default_and_validation():
     settings = Settings.from_env(_base_env())
-    assert settings.profit_probe_start_date == date(2026, 6, 29)
+    assert settings.profit_probe_start_date == date(2026, 6, 30)
 
     with pytest.raises(ValueError, match="PROFIT_PROBE_START_DATE"):
         Settings.from_env(_base_env(PROFIT_PROBE_START_DATE="20260629"))

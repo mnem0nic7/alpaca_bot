@@ -442,7 +442,7 @@ if [[ -n "$readiness_age_minutes" ]]; then
 fi
 
 if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "passed" && "$readiness_is_current" == "true" && "$readiness_is_recent" == "true" ]]; then
-  proof_start="${PROFIT_PROBE_START_DATE:-2026-06-29}"
+  proof_start="${PROFIT_PROBE_START_DATE:-2026-06-30}"
   if [[ "${PAPER_READINESS_FORCE_REFRESH,,}" == "true" ]]; then
     echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=force_refresh"
     echo "paper readiness force refresh requested; rerunning final check"
@@ -464,13 +464,13 @@ if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "pa
 fi
 
 if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "passed" && "$readiness_is_current" == "false" ]]; then
-  proof_start="${PROFIT_PROBE_START_DATE:-2026-06-29}"
+  proof_start="${PROFIT_PROBE_START_DATE:-2026-06-30}"
   echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=stale_after_supervisor_start"
   echo "paper readiness prior pass is older than latest supervisor start; rerunning final check"
 fi
 
 if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "passed" && "$readiness_is_current" == "true" && "$readiness_is_recent" == "false" ]]; then
-  proof_start="${PROFIT_PROBE_START_DATE:-2026-06-29}"
+  proof_start="${PROFIT_PROBE_START_DATE:-2026-06-30}"
   echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=stale_by_age"
   echo "paper readiness prior pass is older than max age ${PAPER_READINESS_MAX_PASS_AGE_MINUTES}m; rerunning final check"
 fi
