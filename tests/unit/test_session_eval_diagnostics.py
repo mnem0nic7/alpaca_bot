@@ -258,6 +258,7 @@ def test_build_session_diagnostics_no_issues(monkeypatch):
     assert not diag.has_issues
     assert diag.cycle_errors == []
     assert diag.dispatch_failures == []
+    assert diag.stop_rejection_recoveries == []
     assert diag.failed_entries == []
     assert diag.stream_issues == []
     assert diag.open_positions == []
@@ -325,6 +326,12 @@ def test_build_session_diagnostics_cycle_errors(monkeypatch):
     ]
     assert dispatch_calls
     assert "order_dispatch_stop_price_rejected" in dispatch_calls[0]["event_types"]
+    recovery_calls = [
+        call
+        for call in call_log
+        if "recovery_exit_queued_stop_above_market" in call.get("event_types", [])
+    ]
+    assert recovery_calls
 
 
 def test_build_session_diagnostics_scopes_strategy_filters(monkeypatch):
@@ -570,6 +577,86 @@ def test_stream_failure_still_triggers_hard_guard_issue():
     )
 
     assert diag.proof_blocking_stream_issues == [event]
+    assert diag.has_guard_issues
+
+
+def test_unrecovered_stop_price_rejection_triggers_hard_guard_issue():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    event = AuditEvent(
+        event_type="order_dispatch_stop_price_rejected",
+        payload={"symbol": "AEVA", "error": "stop price rejected"},
+        symbol="AEVA",
+        created_at=datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc),
+    )
+    diag = SessionDiagnostics(
+        dispatch_failures=[event],
+        total_supervisor_cycles=10,
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.proof_blocking_dispatch_failures == [event]
+    assert diag.has_guard_issues
+
+
+def test_recovered_stop_price_rejection_is_diagnostic_only():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    rejected_at = datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc)
+    rejection = AuditEvent(
+        event_type="order_dispatch_stop_price_rejected",
+        payload={"symbol": "AEVA", "error": "stop price rejected"},
+        symbol="AEVA",
+        created_at=rejected_at,
+    )
+    recovery = AuditEvent(
+        event_type="recovery_exit_queued_stop_above_market",
+        payload={"symbol": "AEVA"},
+        symbol="AEVA",
+        created_at=rejected_at.replace(minute=1),
+    )
+    diag = SessionDiagnostics(
+        dispatch_failures=[rejection],
+        stop_rejection_recoveries=[recovery],
+        total_supervisor_cycles=10,
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.has_issues
+    assert diag.proof_blocking_dispatch_failures == []
+    assert not diag.has_guard_issues
+
+
+def test_stop_price_rejection_recovery_must_match_symbol_and_follow_rejection():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    rejected_at = datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc)
+    rejection = AuditEvent(
+        event_type="order_dispatch_stop_price_rejected",
+        payload={"symbol": "AEVA", "error": "stop price rejected"},
+        symbol="AEVA",
+        created_at=rejected_at,
+    )
+    earlier_same_symbol = AuditEvent(
+        event_type="recovery_exit_queued_stop_above_market",
+        payload={"symbol": "AEVA"},
+        symbol="AEVA",
+        created_at=rejected_at.replace(hour=13, minute=59, second=59),
+    )
+    later_other_symbol = AuditEvent(
+        event_type="recovery_exit_queued_stop_above_market",
+        payload={"symbol": "MXL"},
+        symbol="MXL",
+        created_at=rejected_at.replace(minute=1),
+    )
+    diag = SessionDiagnostics(
+        dispatch_failures=[rejection],
+        stop_rejection_recoveries=[earlier_same_symbol, later_other_symbol],
+        total_supervisor_cycles=10,
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.proof_blocking_dispatch_failures == [rejection]
     assert diag.has_guard_issues
 
 

@@ -291,6 +291,7 @@ class DecisionActivityStats:
 class SessionDiagnostics:
     cycle_errors: list[AuditEvent] = field(default_factory=list)
     dispatch_failures: list[AuditEvent] = field(default_factory=list)
+    stop_rejection_recoveries: list[AuditEvent] = field(default_factory=list)
     failed_entries: list[OrderRecord] = field(default_factory=list)
     stream_issues: list[AuditEvent] = field(default_factory=list)
     open_positions: list[PositionRecord] = field(default_factory=list)
@@ -325,16 +326,15 @@ class SessionDiagnostics:
         """Return True for diagnostics that should fail an EOD proof guard.
 
         Unfilled entry orders remain diagnostic output only. A stop-limit entry
-        can legitimately cancel without fill. A heartbeat-stale event also
-        remains diagnostic output only because quiet markets can produce no
-        trade updates while the stream thread is still alive. Missing cycles,
-        disabled entries, runtime errors, stream failures, reconciliation
-        issues, open exposure, active local orders, and missing decision
-        activity are proof-blocking.
+        can legitimately cancel without fill. A recovered stop-price rejection
+        and heartbeat-stale event also remain diagnostic output only. Missing
+        cycles, disabled entries, unrecovered runtime errors, stream failures,
+        reconciliation issues, open exposure, active local orders, and missing
+        decision activity are proof-blocking.
         """
         return any([
             self.cycle_errors,
-            self.dispatch_failures,
+            self.proof_blocking_dispatch_failures,
             self.proof_blocking_stream_issues,
             self.open_positions,
             self.active_orders,
@@ -346,12 +346,42 @@ class SessionDiagnostics:
         ])
 
     @property
+    def proof_blocking_dispatch_failures(self) -> list[AuditEvent]:
+        return [
+            failure
+            for failure in self.dispatch_failures
+            if not self._has_recovery_for_stop_price_rejection(failure)
+        ]
+
+    def _has_recovery_for_stop_price_rejection(self, failure: AuditEvent) -> bool:
+        if failure.event_type != "order_dispatch_stop_price_rejected":
+            return False
+        failure_symbol = _audit_event_symbol(failure)
+        if failure_symbol is None:
+            return False
+        return any(
+            recovery.event_type == "recovery_exit_queued_stop_above_market"
+            and _audit_event_symbol(recovery) == failure_symbol
+            and recovery.created_at >= failure.created_at
+            for recovery in self.stop_rejection_recoveries
+        )
+
+    @property
     def proof_blocking_stream_issues(self) -> list[AuditEvent]:
         return [
             issue
             for issue in self.stream_issues
             if issue.event_type != "stream_heartbeat_stale"
         ]
+
+
+def _audit_event_symbol(event: AuditEvent) -> str | None:
+    if event.symbol:
+        return event.symbol
+    symbol = event.payload.get("symbol")
+    if symbol is None:
+        return None
+    return str(symbol)
 
 
 def _build_session_diagnostics(
@@ -424,6 +454,15 @@ def _build_session_diagnostics(
                 "order_dispatch_failed",
                 "order_dispatch_stop_price_rejected",
             ],
+            since=session_start,
+            until=session_end,
+            limit=100,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            strategy_name=strategy_name,
+        ),
+        stop_rejection_recoveries=audit_store.list_by_event_types(
+            event_types=["recovery_exit_queued_stop_above_market"],
             since=session_start,
             until=session_end,
             limit=100,
