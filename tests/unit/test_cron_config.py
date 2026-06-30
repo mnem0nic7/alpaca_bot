@@ -3827,6 +3827,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "activity_check_status == \"skipped\"" in script
     assert "activity_audit_status = \"skipped\" if activity_due else \"ok\"" in script
     assert "activity_audit_status in {\"missing\", \"failed\", \"skipped\", \"stale\"}" in script
+    assert "elif not activity_due:" in script
+    assert "activity_audit_status = \"not_due\"" in script
     assert "activity_due and activity_audit_status == \"pending\"" in script
     assert "blockers.append(f\"activity_audit_{activity_audit_status}\")" in script
     assert "paper proof activity audit:" in script

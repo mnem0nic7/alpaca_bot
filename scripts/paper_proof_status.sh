@@ -1404,6 +1404,8 @@ if activity_target_session is not None:
             activity_audit_status = "skipped" if activity_due else "ok"
         elif activity_check_status == "pending":
             activity_audit_status = "pending"
+        elif not activity_due:
+            activity_audit_status = "not_due"
         else:
             activity_audit_status = "failed"
     elif activity_due:
