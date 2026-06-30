@@ -340,6 +340,7 @@ def test_order_store_status_update_preserves_existing_fill_columns() -> None:
         "filled_quantity = COALESCE(EXCLUDED.filled_quantity, orders.filled_quantity)"
         in sql
     )
+    assert "reason = COALESCE(EXCLUDED.reason, orders.reason)" in sql
 
 
 def test_order_store_lists_records_by_status() -> None:

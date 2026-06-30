@@ -605,6 +605,7 @@ def test_execute_cycle_intents_cancels_active_stops_and_submits_exit_order() -> 
         initial_stop_price=109.89,
         broker_order_id="broker-exit-1",
         signal_timestamp=now,
+        reason="eod_flatten",
     )
     event_types = [event.event_type for event in runtime.audit_event_store.appended]
     assert event_types == ["exit_order_reserved", "cycle_intent_executed"]

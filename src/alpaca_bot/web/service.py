@@ -111,7 +111,7 @@ class TradeRecord:
     quantity: int
     pnl: float
     slippage: float | None  # limit_price - fill_price; positive=favorable, negative=adverse
-    exit_reason: str = "eod"          # "stop" or "eod"
+    exit_reason: str = "eod"          # "stop", "profit_target", or "eod"
     hold_minutes: float | None = None  # (exit_time - entry_time).total_seconds() / 60
 
 
@@ -560,7 +560,7 @@ def _to_trade_record(row: dict) -> TradeRecord:
         if entry_time is not None and exit_time is not None
         else None
     )
-    exit_reason = "stop" if row.get("intent_type") == "stop" else "eod"
+    exit_reason = _exit_reason_from_order(row)
     return TradeRecord(
         symbol=row["symbol"],
         strategy_name=row.get("strategy_name", "breakout"),
@@ -582,7 +582,7 @@ def _row_to_replay_record(row: dict) -> ReplayTradeRecord:
     qty = row["qty"]
     pnl = (exit_ - entry) * qty
     return_pct = (exit_ - entry) / entry
-    exit_reason = "stop" if row.get("intent_type") == "stop" else "eod"
+    exit_reason = _exit_reason_from_order(row)
     return ReplayTradeRecord(
         symbol=row["symbol"],
         entry_price=entry,
@@ -594,6 +594,14 @@ def _row_to_replay_record(row: dict) -> ReplayTradeRecord:
         pnl=pnl,
         return_pct=return_pct,
     )
+
+
+def _exit_reason_from_order(row: dict) -> str:
+    if row.get("intent_type") == "stop":
+        return "stop"
+    if row.get("reason") == "profit_target":
+        return "profit_target"
+    return "eod"
 
 
 def _compute_sharpe_from_trade_records(trades: list[TradeRecord]) -> float | None:

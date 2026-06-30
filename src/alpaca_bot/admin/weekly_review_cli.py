@@ -144,7 +144,12 @@ def _records_to_replay_trades(records: list[dict]) -> list[ReplayTradeRecord]:
         exit_ = r["exit_price"]
         qty = r["qty"]
         return_pct = (exit_ - entry) / entry if entry != 0.0 else 0.0
-        exit_reason = "stop" if r.get("intent_type") == "stop" else "eod"
+        if r.get("intent_type") == "stop":
+            exit_reason = "stop"
+        elif r.get("reason") == "profit_target":
+            exit_reason = "profit_target"
+        else:
+            exit_reason = "eod"
         result.append(ReplayTradeRecord(
             symbol=r["symbol"],
             entry_price=entry,

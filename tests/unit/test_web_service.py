@@ -27,6 +27,7 @@ from alpaca_bot.web.service import (
     load_metrics_snapshot,
     total_deployed_notional,
 )
+from alpaca_bot.web.service import _row_to_replay_record
 
 
 def make_settings(**overrides: str) -> Settings:
@@ -675,6 +676,13 @@ def test_trade_record_exit_reason_and_hold_minutes() -> None:
     row_eod = {**row, "intent_type": "eod"}
     trade_eod = _to_trade_record(row_eod)
     assert trade_eod.exit_reason == "eod"
+
+    row_target = {**row, "intent_type": "exit", "reason": "profit_target"}
+    trade_target = _to_trade_record(row_target)
+    assert trade_target.exit_reason == "profit_target"
+
+    replay_target = _row_to_replay_record(row_target)
+    assert replay_target.exit_reason == "profit_target"
 
 
 def test_to_trade_record_option_pnl_multiplied_by_100() -> None:

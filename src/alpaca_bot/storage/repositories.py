@@ -321,7 +321,8 @@ _ORDER_SELECT_COLUMNS = """
     fill_price,
     filled_quantity,
     strategy_name,
-    reconciliation_miss_count
+    reconciliation_miss_count,
+    reason
 """
 
 
@@ -346,6 +347,7 @@ def _row_to_order_record(row: Any) -> OrderRecord:
         filled_quantity=float(row[16]) if row[16] is not None else None,
         strategy_name=row[17] if row[17] is not None else "breakout",
         reconciliation_miss_count=int(row[18]) if row[18] is not None else 0,
+        reason=row[19] if len(row) > 19 else None,
     )
 
 
@@ -384,13 +386,15 @@ class OrderStore:
                 filled_quantity,
                 created_at,
                 updated_at,
-                reconciliation_miss_count
+                reconciliation_miss_count,
+                reason
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (client_order_id)
             DO UPDATE SET
                 status = EXCLUDED.status,
                 quantity = EXCLUDED.quantity,
+                reason = COALESCE(EXCLUDED.reason, orders.reason),
                 stop_price = COALESCE(EXCLUDED.stop_price, orders.stop_price),
                 limit_price = COALESCE(EXCLUDED.limit_price, orders.limit_price),
                 initial_stop_price = COALESCE(EXCLUDED.initial_stop_price, orders.initial_stop_price),
@@ -421,6 +425,7 @@ class OrderStore:
                 order.created_at,
                 order.updated_at,
                 order.reconciliation_miss_count,
+                order.reason,
             ),
             commit=commit,
         )
@@ -734,6 +739,7 @@ class OrderStore:
                 x.symbol,
                 x.strategy_name,
                 x.intent_type,
+                x.reason,
                 (
                     SELECT e.fill_price
                     FROM orders e
@@ -811,15 +817,16 @@ class OrderStore:
                 "symbol": row[0],
                 "strategy_name": row[1],
                 "intent_type": row[2],
-                "entry_fill": float(row[3]) if row[3] is not None else None,
-                "entry_limit": float(row[4]) if row[4] is not None else None,
-                "entry_time": row[5],
-                "exit_fill": float(row[6]) if row[6] is not None else None,
-                "exit_time": row[7],
-                "qty": float(row[8]),
+                "reason": row[3],
+                "entry_fill": float(row[4]) if row[4] is not None else None,
+                "entry_limit": float(row[5]) if row[5] is not None else None,
+                "entry_time": row[6],
+                "exit_fill": float(row[7]) if row[7] is not None else None,
+                "exit_time": row[8],
+                "qty": float(row[9]),
             }
             for row in rows
-            if row[3] is not None and row[6] is not None
+            if row[4] is not None and row[7] is not None
         ]
 
     def list_trade_exits_in_range(
@@ -963,7 +970,7 @@ class OrderStore:
         Anchors on exit orders; correlated subquery finds the most recent
         matching entry fill. Rows without a correlated entry are excluded.
         Each dict: symbol, strategy_name, qty, entry_price, exit_price,
-                   entry_time, exit_time, pnl, hold_seconds, intent_type.
+                   entry_time, exit_time, pnl, hold_seconds, intent_type, reason.
         """
         rows = fetch_all(
             self._connection,
@@ -1000,7 +1007,8 @@ class OrderStore:
                     AND DATE(e.updated_at AT TIME ZONE %s)
                         = DATE(x.updated_at AT TIME ZONE %s)
                   ORDER BY e.updated_at DESC LIMIT 1) AS entry_time,
-                x.intent_type
+                x.intent_type,
+                x.reason
             FROM orders x
             WHERE x.trading_mode = %s
               AND x.strategy_version = %s
@@ -1045,6 +1053,7 @@ class OrderStore:
                 "pnl": (exit_fill - entry_fill) * qty,
                 "hold_seconds": hold_seconds,
                 "intent_type": row[7],
+                "reason": row[8],
             })
         return result
 

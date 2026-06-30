@@ -49,6 +49,7 @@ class OrderRecord:
     strategy_name: str = "breakout"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    reason: str | None = None
     stop_price: float | None = None
     limit_price: float | None = None
     initial_stop_price: float | None = None

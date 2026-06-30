@@ -130,6 +130,7 @@ def _make_trade_row(
     symbol: str = "AAPL",
     strategy_name: str = "breakout",
     intent_type: str = "exit",
+    reason: str | None = None,
     entry_fill: float = 100.0,
     exit_fill: float = 102.0,
     qty: int = 10,
@@ -140,6 +141,7 @@ def _make_trade_row(
         "symbol": symbol,
         "strategy_name": strategy_name,
         "intent_type": intent_type,
+        "reason": reason,
         "entry_fill": entry_fill,
         "entry_limit": entry_fill + 0.05,
         "entry_time": t0,
@@ -167,12 +169,21 @@ def test_row_to_trade_record_eod_exit():
     assert record.quantity == 10
 
 
+def test_row_to_trade_record_profit_target_exit():
+    from alpaca_bot.admin.session_eval_cli import _row_to_trade_record
+    row = _make_trade_row(intent_type="exit", reason="profit_target", exit_fill=103.0)
+    record = _row_to_trade_record(row)
+    assert record.exit_reason == "profit_target"
+    assert record.pnl > 0
+
+
 def test_list_closed_trades_includes_intent_type():
-    """list_closed_trades() return dict must include intent_type key."""
+    """list_closed_trades() return dict must include exit attribution keys."""
     row = (
         "AAPL",     # symbol
         "breakout", # strategy_name
         "stop",     # intent_type
+        None,       # reason
         100.0,      # entry_fill
         100.05,     # entry_limit
         datetime(2026, 5, 4, 10, 0, tzinfo=timezone.utc),  # entry_time
@@ -184,15 +195,18 @@ def test_list_closed_trades_includes_intent_type():
         "symbol": row[0],
         "strategy_name": row[1],
         "intent_type": row[2],
-        "entry_fill": float(row[3]) if row[3] is not None else None,
-        "entry_limit": float(row[4]) if row[4] is not None else None,
-        "entry_time": row[5],
-        "exit_fill": float(row[6]) if row[6] is not None else None,
-        "exit_time": row[7],
-        "qty": int(row[8]),
+        "reason": row[3],
+        "entry_fill": float(row[4]) if row[4] is not None else None,
+        "entry_limit": float(row[5]) if row[5] is not None else None,
+        "entry_time": row[6],
+        "exit_fill": float(row[7]) if row[7] is not None else None,
+        "exit_time": row[8],
+        "qty": int(row[9]),
     }
     assert "intent_type" in result
     assert result["intent_type"] == "stop"
+    assert "reason" in result
+    assert result["reason"] is None
     assert result["entry_fill"] == 100.0
     assert result["exit_fill"] == 98.0
 
