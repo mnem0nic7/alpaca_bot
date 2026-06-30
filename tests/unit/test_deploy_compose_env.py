@@ -74,6 +74,8 @@ def test_nightly_compose_sweeps_enabled_strategy_flags() -> None:
         "      - /data/candidate.env\n"
         "      - --strategies\n"
         "      - enabled\n"
+        "      - --max-combos\n"
+        "      - ${NIGHTLY_MAX_COMBOS:-24}\n"
     ) in nightly.group("body")
 
 
@@ -162,6 +164,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO=0.6" in env_text
     assert "BULL_FLAG_CONSOLIDATION_RANGE_PCT=0.5" in env_text
     assert "REPLAY_SLIPPAGE_BPS=2.0" in env_text
+    assert "NIGHTLY_MAX_COMBOS=24" in env_text
     assert "PAPER_PROOF_FREEZE=true" in env_text
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180" in env_text
     assert "PROFIT_PROBE_START_DATE=2026-06-29" in env_text
@@ -204,6 +207,7 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO=0.6" in script
     assert "BULL_FLAG_CONSOLIDATION_RANGE_PCT=0.5" in script
     assert 'REPLAY_SLIPPAGE_BPS="2.0"' in script
+    assert "NIGHTLY_MAX_COMBOS=24" in script
     assert 'PAPER_PROOF_FREEZE="true"' in script
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180" in script
     assert "PROFIT_PROBE_START_DATE=2026-06-29" in script

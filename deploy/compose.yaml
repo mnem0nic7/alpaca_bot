@@ -183,6 +183,8 @@ services:
       - /data/candidate.env
       - --strategies
       - enabled
+      - --max-combos
+      - ${NIGHTLY_MAX_COMBOS:-24}
     environment: *alpaca_bot_env
     depends_on:
       postgres:
