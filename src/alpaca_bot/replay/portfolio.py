@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType, evaluate_cycle
@@ -130,8 +130,13 @@ class PortfolioReplayRunner:
         )
         for bars in source_bars:
             for bar in bars:
-                stamps.add(bar.timestamp)
+                stamps.add(self._bar_close_time(bar))
         return sorted(stamps)
+
+    def _bar_close_time(self, bar: Bar) -> datetime:
+        # Alpaca intraday bars are start-stamped. The live supervisor only
+        # evaluates a bar after timestamp + timeframe has elapsed.
+        return bar.timestamp + timedelta(minutes=self.settings.entry_timeframe_minutes)
 
     def _daily_slice_for(self, symbol: str, now: datetime) -> Sequence[Bar]:
         lane = self._lanes[symbol]
@@ -173,7 +178,10 @@ class PortfolioReplayRunner:
             fresh: list[str] = []
             for sym, lane in self._lanes.items():
                 nxt = lane.cursor + 1
-                if nxt < len(lane.intraday) and lane.intraday[nxt].timestamp == now:
+                if (
+                    nxt < len(lane.intraday)
+                    and self._bar_close_time(lane.intraday[nxt]) == now
+                ):
                     lane.cursor = nxt
                     fresh.append(sym)
 
@@ -188,12 +196,20 @@ class PortfolioReplayRunner:
             if not fresh:
                 continue
 
-            # 2) One cross-sectional engine call over fresh symbols.
+            # 2) One cross-sectional engine call over all symbols that have a
+            # completed bar. The live supervisor evaluates the whole active
+            # watchlist each cycle using each symbol's most recent completed
+            # bar; restricting the replay candidate pool to symbols with a bar
+            # at this exact timestamp changes top-K selection on sparse data.
+            eligible = [
+                s for s, lane in self._lanes.items()
+                if lane.cursor >= 0
+            ]
             intraday_by_symbol = {
                 s: _BarPrefix(self._lanes[s].intraday, self._lanes[s].cursor + 1)
-                for s in fresh
+                for s in eligible
             }
-            daily_by_symbol = {s: self._daily_slice_for(s, now) for s in fresh}
+            daily_by_symbol = {s: self._daily_slice_for(s, now) for s in eligible}
             open_positions = [l.position for l in self._lanes.values() if l.position is not None]
             working_order_symbols = {
                 s for s, l in self._lanes.items() if l.working_order is not None
@@ -210,7 +226,7 @@ class PortfolioReplayRunner:
                 traded_symbols_today=traded_symbols,
                 entries_disabled=False,
                 signal_evaluator=self.signal_evaluator,
-                symbols=tuple(sorted(fresh)),
+                symbols=tuple(sorted(eligible)),
             )
 
             # 3) Route intents to lanes.
@@ -233,13 +249,15 @@ class PortfolioReplayRunner:
                 lane = self._lanes.get(intent.symbol)
                 if lane is None:
                     continue
-                if intent.symbol not in fresh_set:
-                    continue
                 if intent.intent_type == CycleIntentType.EXIT:
+                    if intent.symbol not in fresh_set:
+                        continue
                     closed, equity = self._eod_exit(lane, lane.intraday[lane.cursor], equity, traded_symbols)
                     if closed is not None:
                         trades.append(closed)
                 elif intent.intent_type == CycleIntentType.UPDATE_STOP:
+                    if intent.symbol not in fresh_set:
+                        continue
                     if lane.position is not None and intent.stop_price is not None:
                         if intent.stop_price > lane.position.stop_price:
                             lane.position.stop_price = intent.stop_price

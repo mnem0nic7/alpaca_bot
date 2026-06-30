@@ -19,10 +19,12 @@ from alpaca_bot.execution.alpaca import (
 from alpaca_bot.replay.report import BacktestReport, report_from_records
 from alpaca_bot.replay.runner import ReplayRunner
 from alpaca_bot.replay.splitter import split_scenario
+from alpaca_bot.risk.confidence import compute_confidence_scores
 from alpaca_bot.storage.db import connect_postgres
 from alpaca_bot.storage.models import EQUITY_SESSION_STATE_STRATEGY_NAME, AuditEvent
 from alpaca_bot.storage.repositories import (
     AuditEventStore,
+    ConfidenceFloorStore,
     DailySessionStateStore,
     DecisionLogStore,
     OrderStore,
@@ -109,6 +111,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     strategy_version = settings.strategy_version
     output_dir = Path(args.output_dir)
     now = datetime.now(timezone.utc)
+    account_equity = _resolve_account_equity(settings=settings, dry_run=args.dry_run)
 
     conn = connect_postgres(settings.database_url)
     try:
@@ -137,7 +140,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 1
             fetcher = BackfillFetcher(adapter, settings)
             results = fetcher.fetch_and_save(
-                symbols=symbols, days=args.days, output_dir=output_dir
+                symbols=symbols,
+                days=args.days,
+                output_dir=output_dir,
+                starting_equity=account_equity or 100_000.0,
             )
             if not results:
                 print(
@@ -190,6 +196,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 symbols=symbols,
                 dry_run=args.dry_run,
             )
+            confidence_floor = _load_confidence_floor(conn=conn, settings=settings)
+            confidence_scores = _load_strategy_confidence_scores(
+                conn=conn,
+                settings=settings,
+                confidence_floor=confidence_floor,
+            )
             all_scenarios = [ReplayRunner.load_scenario(f) for f in files]
             is_scenarios = []
             oos_scenarios = []
@@ -219,6 +231,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             for strat_name in strategy_names:
                 grid = STRATEGY_GRIDS.get(strat_name, DEFAULT_GRID)
                 signal_evaluator = STRATEGY_REGISTRY[strat_name]
+                strategy_equity = _effective_strategy_equity(
+                    account_equity=account_equity,
+                    confidence_scores=confidence_scores,
+                    confidence_floor=confidence_floor,
+                    strategy_name=strat_name,
+                )
+                if strategy_equity is not None:
+                    print(
+                        f"  [{strat_name}] replay sizing equity="
+                        f"${strategy_equity:,.2f}"
+                    )
+                strat_all_scenarios = _with_starting_equity(
+                    all_scenarios,
+                    strategy_equity,
+                )
+                strat_is_scenarios = _with_starting_equity(
+                    is_scenarios,
+                    strategy_equity,
+                )
+                strat_oos_scenarios = _with_starting_equity(
+                    oos_scenarios,
+                    strategy_equity,
+                )
 
                 grid_keys = set(grid.keys())
                 historical = [r for r in all_historical if set(r["params"].keys()) == grid_keys]
@@ -228,7 +263,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     print(f"  [{strat_name}] surrogate: fitted on {len(historical)} records")
 
                 candidates = run_multi_scenario_sweep(
-                    scenarios=is_scenarios,
+                    scenarios=strat_is_scenarios,
                     base_env=base_env,
                     grid=grid,
                     aggregate="pooled",
@@ -252,7 +287,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
                 oos_scores = evaluate_candidates_oos(
                     candidates=top10,
-                    oos_scenarios=oos_scenarios,
+                    oos_scenarios=strat_oos_scenarios,
                     base_env=base_env,
                     min_trades=3,
                     aggregate="pooled",
@@ -287,7 +322,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     if args.proof_guard:
                         guarded = _select_proof_guarded_candidate(
                             held_pairs=held_pairs,
-                            scenarios=all_scenarios,
+                            scenarios=strat_all_scenarios,
                             base_env=base_env,
                             signal_evaluator=signal_evaluator,
                             strategy_name=strat_name,
@@ -562,6 +597,84 @@ def _resolve_fractionable_symbols(
         f"(whole-share assumed for {non_fractionable_count})"
     )
     return fractionable
+
+
+def _resolve_account_equity(
+    *,
+    settings: Settings,
+    dry_run: bool,
+) -> float | None:
+    if dry_run:
+        return None
+    try:
+        broker = AlpacaExecutionAdapter.from_settings(settings)
+        equity = float(broker.get_account().equity)
+    except Exception as exc:
+        print(
+            "Warning: could not resolve account equity; replay scenarios will "
+            f"keep their stored starting equity: {exc}",
+            file=sys.stderr,
+        )
+        return None
+    print(f"Account equity for replay sizing: ${equity:,.2f}")
+    return equity
+
+
+def _load_confidence_floor(*, conn, settings: Settings) -> float:
+    try:
+        rec = ConfidenceFloorStore(conn).load(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+        )
+    except Exception as exc:
+        print(
+            f"Warning: could not load confidence floor; using settings value: {exc}",
+            file=sys.stderr,
+        )
+        return settings.confidence_floor
+    return rec.floor_value if rec is not None else settings.confidence_floor
+
+
+def _load_strategy_confidence_scores(
+    *,
+    conn,
+    settings: Settings,
+    confidence_floor: float,
+) -> dict[str, float]:
+    try:
+        weights = StrategyWeightStore(conn).load_all(
+            trading_mode=settings.trading_mode,
+            strategy_version=settings.strategy_version,
+        )
+    except Exception as exc:
+        print(
+            f"Warning: could not load strategy confidence scores; using floor: {exc}",
+            file=sys.stderr,
+        )
+        return {}
+    sharpes = {row.strategy_name: row.sharpe for row in weights}
+    return compute_confidence_scores(sharpes, confidence_floor)
+
+
+def _effective_strategy_equity(
+    *,
+    account_equity: float | None,
+    confidence_scores: dict[str, float],
+    confidence_floor: float,
+    strategy_name: str,
+) -> float | None:
+    if account_equity is None:
+        return None
+    return account_equity * confidence_scores.get(strategy_name, confidence_floor)
+
+
+def _with_starting_equity(scenarios: list, starting_equity: float | None) -> list:
+    if starting_equity is None:
+        return scenarios
+    return [
+        replace(scenario, starting_equity=starting_equity)
+        for scenario in scenarios
+    ]
 
 
 def _proof_guard_metrics(

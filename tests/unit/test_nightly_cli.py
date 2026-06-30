@@ -166,7 +166,13 @@ def test_nightly_cli_resolves_fractionable_symbols_for_live_sweep(monkeypatch, t
         def __init__(self, adapter, settings):
             pass
 
-        def fetch_and_save(self, *, symbols, days, output_dir):
+        def fetch_and_save(self, *, symbols, days, output_dir, starting_equity=100_000.0):
+            fetch_calls.append({
+                "symbols": list(symbols),
+                "days": days,
+                "output_dir": output_dir,
+                "starting_equity": starting_equity,
+            })
             return [
                 (module.Path(output_dir) / f"{symbol}_252d.json", 0, 0)
                 for symbol in symbols
@@ -177,13 +183,33 @@ def test_nightly_cli_resolves_fractionable_symbols_for_live_sweep(monkeypatch, t
         def from_settings(settings):
             return FakeExecutionAdapter()
 
+        def get_account(self):
+            return SimpleNamespace(equity=40_000.0)
+
         def get_fractionable_symbols(self, symbols):
             assert tuple(symbols) == ("AAPL", "MSFT")
             return frozenset({"AAPL"})
 
+    class FakeConfidenceFloorStore:
+        def __init__(self, conn):
+            pass
+
+        def load(self, *, trading_mode, strategy_version):
+            return SimpleNamespace(floor_value=0.25)
+
+    class FakeStrategyWeightStore:
+        def __init__(self, conn):
+            pass
+
+        def load_all(self, *, trading_mode, strategy_version):
+            return [SimpleNamespace(strategy_name="breakout", sharpe=0.0)]
+
+    fetch_calls: list[dict] = []
     monkeypatch.setattr(module, "AlpacaMarketDataAdapter", FakeMarketDataAdapter)
     monkeypatch.setattr(module, "BackfillFetcher", FakeFetcher)
     monkeypatch.setattr(module, "AlpacaExecutionAdapter", FakeExecutionAdapter)
+    monkeypatch.setattr(module, "ConfidenceFloorStore", FakeConfidenceFloorStore)
+    monkeypatch.setattr(module, "StrategyWeightStore", FakeStrategyWeightStore)
 
     cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
     sweep_calls: list[dict] = []
@@ -194,6 +220,7 @@ def test_nightly_cli_resolves_fractionable_symbols_for_live_sweep(monkeypatch, t
         return [cand]
 
     def fake_oos(candidates, oos_scenarios, **kw):
+        kw["oos_scenarios"] = oos_scenarios
         oos_calls.append(kw)
         return [None]
 
@@ -208,8 +235,15 @@ def test_nightly_cli_resolves_fractionable_symbols_for_live_sweep(monkeypatch, t
     result = module.main()
 
     assert result == 0
+    assert fetch_calls[0]["starting_equity"] == 40_000.0
     assert sweep_calls[0]["fractionable_symbols"] == frozenset({"AAPL"})
+    assert {scenario.starting_equity for scenario in sweep_calls[0]["scenarios"]} == {
+        10_000.0
+    }
     assert oos_calls[0]["fractionable_symbols"] == frozenset({"AAPL"})
+    assert {scenario.starting_equity for scenario in oos_calls[0]["oos_scenarios"]} == {
+        10_000.0
+    }
 
 
 def test_nightly_cli_dry_run_skips_backfill(monkeypatch, tmp_path):

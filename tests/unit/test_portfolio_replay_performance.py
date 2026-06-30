@@ -145,6 +145,7 @@ def test_portfolio_run_advances_sparse_lanes_without_timestamp_index(monkeypatch
     t0 = datetime(2026, 1, 4, 14, 30, tzinfo=timezone.utc)
     t1 = datetime(2026, 1, 4, 14, 45, tzinfo=timezone.utc)
     t2 = datetime(2026, 1, 4, 15, 0, tzinfo=timezone.utc)
+    t3 = datetime(2026, 1, 4, 15, 15, tzinfo=timezone.utc)
     prior_daily = [_bar("AAA", datetime(2026, 1, 3, tzinfo=timezone.utc))]
     scenarios = [
         ReplayScenario(
@@ -184,7 +185,7 @@ def test_portfolio_run_advances_sparse_lanes_without_timestamp_index(monkeypatch
 
     assert runner.run(scenarios) == []
     assert calls == [
-        (t0, ("AAA",), {"AAA": 1}),
-        (t1, ("BBB",), {"BBB": 1}),
-        (t2, ("AAA",), {"AAA": 2}),
+        (t1, ("AAA",), {"AAA": 1}),
+        (t2, ("AAA", "BBB"), {"AAA": 1, "BBB": 1}),
+        (t3, ("AAA", "BBB"), {"AAA": 2, "BBB": 1}),
     ]

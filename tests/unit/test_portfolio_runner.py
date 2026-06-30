@@ -42,9 +42,9 @@ def test_union_timeline_merges_and_dedupes_across_symbols():
     runner = PortfolioReplayRunner(settings, signal_evaluator=lambda **k: None, strategy_name="breakout")
     timeline = runner._build_timeline([a, b])
     assert timeline == [
-        _utc(2026, 1, 2, 14, 30),
         _utc(2026, 1, 2, 14, 45),
         _utc(2026, 1, 2, 15, 0),
+        _utc(2026, 1, 2, 15, 15),
     ]
 
 
@@ -105,6 +105,59 @@ def test_topk_cap_limits_concurrent_entries_to_max_open_positions(monkeypatch):
     trades = runner.run([mk("AAA"), mk("BBB")])
     # With one capacity slot and AAA ranked higher, only AAA should ever hold a position.
     assert {t.symbol for t in trades} == {"AAA"}
+
+
+def test_recent_nonfresh_symbol_reconsidered_after_capacity_frees():
+    """Live evaluates all symbols with recent completed bars, not just fresh bars."""
+    settings = Settings.from_env({**ENV, "MAX_OPEN_POSITIONS": "1", "REPLAY_SLIPPAGE_BPS": "0"})
+    t0 = _utc(2026, 1, 2, 14, 30)
+    t1 = _utc(2026, 1, 2, 14, 45)
+    t2 = _utc(2026, 1, 2, 15, 0)
+    from alpaca_bot.domain.models import EntrySignal
+
+    def fake_eval(*, symbol, intraday_bars, signal_index, daily_bars, settings):
+        bar = intraday_bars[signal_index]
+        if bar.timestamp != t0:
+            return None
+        strength = 1.05 if symbol == "AAA" else 1.02
+        return EntrySignal(
+            symbol=symbol,
+            signal_bar=bar,
+            entry_level=100.0,
+            relative_volume=2.0,
+            stop_price=99.0,
+            limit_price=round(100.0 * strength, 2),
+            initial_stop_price=99.0,
+            option_contract=None,
+        )
+
+    daily = [_bar("AAA", _utc(2026, 1, 1, 5, 0))]
+    aaa = ReplayScenario(
+        name="AAA",
+        symbol="AAA",
+        starting_equity=100000.0,
+        daily_bars=daily,
+        intraday_bars=[
+            _bar("AAA", t0, o=100, h=106, l=99, c=105, v=5000),
+            _bar("AAA", t1, o=105, h=107, l=98, c=100, v=5000),
+        ],
+    )
+    bbb = ReplayScenario(
+        name="BBB",
+        symbol="BBB",
+        starting_equity=100000.0,
+        daily_bars=[_bar("BBB", _utc(2026, 1, 1, 5, 0))],
+        intraday_bars=[
+            _bar("BBB", t0, o=100, h=103, l=99, c=102, v=5000),
+            # BBB has no t1 bar. Its t0 signal remains recent when t1 closes.
+            _bar("BBB", t2, o=102, h=104, l=98, c=99, v=5000),
+        ],
+    )
+
+    runner = PortfolioReplayRunner(settings, signal_evaluator=fake_eval, strategy_name="breakout")
+    trades = runner.run([aaa, bbb])
+
+    assert [trade.symbol for trade in trades] == ["AAA", "BBB"]
 
 
 def test_single_shared_equity_pool_not_per_symbol():
