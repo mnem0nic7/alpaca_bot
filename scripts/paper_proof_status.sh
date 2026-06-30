@@ -967,6 +967,22 @@ try:
         local_open_option_symbols = exposure_row[6] if exposure_row else "none"
         local_active_option_order_symbols = exposure_row[7] if exposure_row else "none"
 
+        cur.execute(
+            """
+            SELECT status, kill_switch_enabled, COALESCE(status_reason, '')
+            FROM trading_status
+            WHERE trading_mode = %s
+              AND strategy_version = %s
+            """,
+            (trading_mode.value, strategy_version),
+        )
+        trading_status_row = cur.fetchone()
+        trading_status_value = trading_status_row[0] if trading_status_row else ""
+        trading_status_kill_switch_enabled = (
+            bool(trading_status_row[1]) if trading_status_row else False
+        )
+        trading_status_reason = trading_status_row[2] if trading_status_row else ""
+
         unpaired_filled_exit_count = 0
         unpaired_filled_exit_symbols = "none"
         if proof_end >= proof_start:
@@ -1633,9 +1649,32 @@ else:
     if broker_account_status != "ok":
         blockers.append("broker_account_blocked")
 
+profit_lock_pause = (
+    ops_health_status != "ok"
+    and trading_status_value == "close_only"
+    and not trading_status_kill_switch_enabled
+    and trading_status_reason.startswith("paper profit lock")
+    and local_open_positions == 0
+    and local_active_orders == 0
+    and local_open_option_positions == 0
+    and local_active_option_orders == 0
+    and not broker_exposure_warning
+    and (broker_open_orders or 0) == 0
+    and (broker_open_positions or 0) == 0
+    and broker_account_status == "ok"
+)
+if profit_lock_pause:
+    blockers = [blocker for blocker in blockers if blocker != "ops_health_failed"]
+    ops_health_status = "ok"
+    ops_health_detail = (
+        f"{ops_health_detail or 'ops check failed'}; accepted flat paper profit lock"
+    )
+
 warnings = []
 if calendar_warning:
     warnings.append("calendar_warning")
+if profit_lock_pause:
+    warnings.append("profit_lock_pause")
 if not proof_not_started and 0 < trade_count:
     if trade_count < min_trades:
         if pnl < 0:
@@ -1679,6 +1718,7 @@ print(
     "paper proof runtime: "
     f"ops_status={ops_health_status} "
     f"ops_detail={ops_health_detail or 'none'} "
+    f"profit_lock_pause={str(profit_lock_pause).lower()} "
     f"image_status={runtime_image_health_status} "
     f"image_detail={runtime_image_health_detail or 'none'}"
 )

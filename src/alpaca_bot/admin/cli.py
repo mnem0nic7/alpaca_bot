@@ -638,12 +638,17 @@ def _run_close_excess(
             if (
                 order.intent_type == "entry"
                 and order.symbol == position.symbol
+                and order.strategy_name == position.strategy_name
                 and order.broker_order_id
             ):
                 broker.cancel_order(order.broker_order_id)  # type: ignore[union-attr]
 
         for order in stop_orders:
-            if order.intent_type == "stop" and order.symbol == position.symbol:
+            if (
+                order.intent_type == "stop"
+                and order.symbol == position.symbol
+                and order.strategy_name == position.strategy_name
+            ):
                 if order.broker_order_id:
                     broker.cancel_order(order.broker_order_id)  # type: ignore[union-attr]
                 order_store.save(
@@ -669,6 +674,7 @@ def _run_close_excess(
                 quantity=position.quantity,
                 trading_mode=trading_mode,
                 strategy_version=strategy_version,
+                strategy_name=position.strategy_name,
                 broker_order_id=broker_order.broker_order_id,
                 created_at=now,
                 updated_at=now,
@@ -681,6 +687,7 @@ def _run_close_excess(
                 symbol=position.symbol,
                 payload={
                     "symbol": position.symbol,
+                    "strategy_name": position.strategy_name,
                     "quantity": position.quantity,
                     "entry_price": str(position.entry_price),
                     "stop_pct": str(round(pct * 100, 2)),

@@ -495,6 +495,72 @@ def test_close_excess_submits_market_exits_for_positions_outside_top_n() -> None
     assert closed_event_symbols == {"MSFT", "SPY"}
 
 
+def test_close_excess_preserves_position_strategy_on_force_exit() -> None:
+    now = datetime(2026, 5, 5, 14, 0, tzinfo=timezone.utc)
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+
+    position = PositionRecord(
+        symbol="RARE",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        quantity=11.976,
+        entry_price=33.44,
+        stop_price=31.78,
+        initial_stop_price=31.78,
+        opened_at=now,
+    )
+    orders = [
+        OrderRecord(
+            client_order_id="bull_flag:v1-breakout:RARE:stop",
+            symbol="RARE",
+            side="sell",
+            intent_type="stop",
+            status="new",
+            quantity=11.976,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            strategy_name="bull_flag",
+            broker_order_id="broker-stop-bull-rare",
+        ),
+        OrderRecord(
+            client_order_id="breakout:v1-breakout:RARE:stop",
+            symbol="RARE",
+            side="sell",
+            intent_type="stop",
+            status="new",
+            quantity=11.976,
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            strategy_name="breakout",
+            broker_order_id="broker-stop-breakout-rare",
+        ),
+    ]
+    order_store = RecordingOrderStore(orders=orders)
+    position_store = RecordingPositionStore(positions=[position])
+    broker = RecordingBroker()
+
+    exit_code = main(
+        ["close-excess", "--keep", "0", "--mode", "paper", "--strategy-version", "v1-breakout"],
+        connect=lambda: connection,
+        trading_status_store_factory=StoreFactoryStub(RecordingTradingStatusStore()),
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        now=lambda: now,
+        broker_factory=lambda _: broker,
+        position_store_factory=StoreFactoryStub(position_store),
+        order_store_factory=StoreFactoryStub(order_store),
+    )
+
+    assert exit_code == 0
+    assert broker.cancel_calls == ["broker-stop-bull-rare"]
+    force_exit = next(order for order in order_store.saved if order.intent_type == "exit")
+    assert force_exit.strategy_name == "bull_flag"
+    assert force_exit.symbol == "RARE"
+    force_closed = next(e for e in audit_store.appended if e.event_type == "position_force_closed")
+    assert force_closed.payload["strategy_name"] == "bull_flag"
+
+
 def test_close_excess_dry_run_prints_plan_without_broker_calls() -> None:
     """close-excess --dry-run must print ranked table but make no broker calls or DB writes."""
     now = datetime(2026, 5, 5, 14, 0, tzinfo=timezone.utc)

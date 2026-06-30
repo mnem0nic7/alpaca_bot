@@ -2059,6 +2059,10 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "only_strategy_session_state_reasons" in script
     assert "is_after_configured_flatten_time" in script
     assert "post_flatten_strategy_blocked" in script
+    assert "profit_lock_flat_pause_active" in script
+    assert "only_profit_lock_pause_reasons" in script
+    assert "paper_profit_lock_pause=$paper_profit_lock_pause" in script
+    assert "BROKER_FLAT_CONTEXT=\"paper activity profit lock\"" in script
     assert "PAPER_ACTIVITY_STRATEGY contains unsupported characters" in script
     assert "emit_scheduled_context()" in script
     assert (
@@ -2535,6 +2539,76 @@ def test_paper_activity_allows_post_flatten_strategy_session_block(
     assert "post_flatten_strategy_blocked=true" in result.stdout
     assert "stock_open_positions=0" in result.stdout
     assert "active_stock_orders=0" in result.stdout
+    assert not docker_marker.exists()
+
+
+def test_paper_activity_allows_flat_profit_lock_pause(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    docker_marker = tmp_path / "docker_close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin close-only'; then\n"
+        f"  touch {docker_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin status'; then\n"
+        "  printf 'mode=paper strategy=v1-breakout status=close_only kill_switch=false reason=paper profit lock: stop-out projection negative updated_at=2026-06-29T16:00:00+00:00\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if printf '%s\\n' \"$*\" | grep -q -- '--entrypoint python admin'; then\n"
+        "  printf 'ok|100000.00|200000.00|5000.00|false|0|0|none|none\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '12|4|8|7840|0|2026-06-29 16:02:00+00|true|trading_status:close_only,runtime_reconciliation_mismatch|true|trading_status:close_only,runtime_reconciliation_mismatch|2026-06-29 16:01:00+00|4|8|7840|0|8|7840|2026-06-29 16:01:00+00|accepted/none/none:6,skipped_no_signal/none/none:7834|6|2026-06-29 16:01:00+00|6|filled:6|6|AEVA,DDOG,MXL,QLYS,RARE,VSEC|6|AEVA,DDOG,MXL,QLYS,RARE,VSEC|0||0||bull_flag|trading_status:close_only:4|trading_status:close_only:4|0|0|0|0\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_MIN_DECISION_RECORDS": "900",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "paper activity ok:" in result.stdout
+    assert "paper_profit_lock_pause=true" in result.stdout
+    assert "latest_cycle_entries_disabled=true" in result.stdout
+    assert "latest_bull_flag_blocked=true" in result.stdout
+    assert "stock_open_positions=0" in result.stdout
+    assert "active_stock_orders=0" in result.stdout
+    assert "broker_open_orders=0" in result.stdout
+    assert "broker_open_positions=0" in result.stdout
     assert not docker_marker.exists()
 
 
@@ -3773,6 +3847,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_RUNTIME_IMAGE_HEALTH_DETAIL" in script
     assert "cron_health_failed" in script
     assert "ops_health_failed" in script
+    assert "profit_lock_pause" in script
+    assert "accepted flat paper profit lock" in script
+    assert "trading_status_reason.startswith(\"paper profit lock\")" in script
     assert "runtime_image_health_failed" in script
     assert "compact_check_detail()" in script
     assert "paper proof automation:" in script
