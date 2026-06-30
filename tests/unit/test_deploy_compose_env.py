@@ -74,6 +74,7 @@ def test_nightly_compose_sweeps_enabled_strategy_flags() -> None:
         "      - /data/candidate.env\n"
         "      - --strategies\n"
         "      - enabled\n"
+        "      - --proof-guard\n"
         "      - --max-combos\n"
         "      - ${NIGHTLY_MAX_COMBOS:-24}\n"
     ) in nightly.group("body")

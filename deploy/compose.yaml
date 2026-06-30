@@ -183,6 +183,7 @@ services:
       - /data/candidate.env
       - --strategies
       - enabled
+      - --proof-guard
       - --max-combos
       - ${NIGHTLY_MAX_COMBOS:-24}
     environment: *alpaca_bot_env

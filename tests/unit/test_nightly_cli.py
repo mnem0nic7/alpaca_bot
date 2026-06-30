@@ -501,6 +501,69 @@ def test_nightly_cli_tighter_defaults_reject_marginal_oos_candidate(monkeypatch,
     assert not output_env.exists(), "no candidate env written when OOS/IS ratio < new default 0.6"
 
 
+def test_nightly_proof_guard_blocks_held_candidate(monkeypatch, tmp_path):
+    """--proof-guard rejects an OOS-held candidate when proof metrics regress."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    _patch_common_db(monkeypatch, module)
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", lambda **kw: [cand])
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [0.4])
+    monkeypatch.setattr(module, "_select_proof_guarded_candidate", lambda **kw: None)
+
+    output_env = tmp_path / "candidate.env"
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db",
+        "--output-dir", str(tmp_path),
+        "--output-env", str(output_env),
+        "--proof-guard",
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert not output_env.exists()
+
+
+def test_proof_guard_regressions_rejects_weaker_metrics():
+    from alpaca_bot.nightly import cli as module
+
+    baseline = module._ProofGuardMetrics(
+        trades=100,
+        total_pnl=100.0,
+        eventual_pass_rate=0.99,
+        first_threshold_pass_rate=0.62,
+        p95_sessions_to_pass=21,
+        slowest_sessions_to_pass=30,
+    )
+    candidate = module._ProofGuardMetrics(
+        trades=130,
+        total_pnl=75.0,
+        eventual_pass_rate=0.99,
+        first_threshold_pass_rate=0.58,
+        p95_sessions_to_pass=23,
+        slowest_sessions_to_pass=38,
+    )
+
+    regressions = module._proof_guard_regressions(
+        baseline=baseline,
+        candidate=candidate,
+    )
+
+    assert regressions == [
+        "total_pnl 75.00 < baseline 100.00",
+        "first_threshold_pass_rate 58.00% < baseline 62.00%",
+        "p95_sessions_to_pass 23 > baseline 21",
+        "slowest_sessions_to_pass 38 > baseline 30",
+    ]
+
+
 def test_nightly_viability_tiebreak_picks_higher_r(monkeypatch, tmp_path):
     """When two held candidates have equal OOS score, the one with higher R-multiple wins."""
     from alpaca_bot.nightly import cli as module

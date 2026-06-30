@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Sequence
@@ -32,6 +33,7 @@ from alpaca_bot.tuning.sweep import (
     DEFAULT_GRID,
     STRATEGY_GRIDS,
     TuningCandidate,
+    _pooled_report,
     _viability_key,
     evaluate_candidates_oos,
     run_multi_scenario_sweep,
@@ -62,6 +64,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Maximum trades per scenario to accept a candidate (0 = disabled)")
     parser.add_argument("--max-combos", type=int, default=0,
                         help="Maximum grid combinations to evaluate per strategy (0 = all)")
+    parser.add_argument("--proof-guard", action="store_true",
+                        help=(
+                            "Before writing a held candidate, require it to preserve "
+                            "current-parameter proof-horizon metrics on the active "
+                            "scenario set"
+                        ))
     parser.add_argument(
         "--strategies",
         default="enabled",
@@ -265,8 +273,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                               file=sys.stderr)
 
                 if held_pairs:
-                    best, best_oos = max(held_pairs, key=lambda p: _viability_key(p[0], p[1]))
-                    winners.append((strat_name, best, best_oos))
+                    if args.proof_guard:
+                        guarded = _select_proof_guarded_candidate(
+                            held_pairs=held_pairs,
+                            scenarios=all_scenarios,
+                            base_env=base_env,
+                            signal_evaluator=signal_evaluator,
+                            strategy_name=strat_name,
+                        )
+                    else:
+                        guarded = max(
+                            held_pairs,
+                            key=lambda p: _viability_key(p[0], p[1]),
+                        )
+                    if guarded is not None:
+                        best, best_oos = guarded
+                        winners.append((strat_name, best, best_oos))
 
             _print_strategy_results(winners, strategy_names, all_scenarios)
 
@@ -399,6 +421,237 @@ def main(argv: Sequence[str] | None = None) -> int:
             close()
 
     return 0
+
+
+@dataclass(frozen=True)
+class _ProofGuardMetrics:
+    trades: int
+    total_pnl: float
+    eventual_pass_rate: float | None
+    first_threshold_pass_rate: float | None
+    p95_sessions_to_pass: int | None
+    slowest_sessions_to_pass: int | None
+
+
+def _select_proof_guarded_candidate(
+    *,
+    held_pairs: Sequence[tuple[TuningCandidate, float]],
+    scenarios: list,
+    base_env: dict[str, str],
+    signal_evaluator,
+    strategy_name: str,
+) -> tuple[TuningCandidate, float] | None:
+    """Return the first held candidate that does not regress proof metrics."""
+
+    min_trades = int(base_env.get("PROFIT_PROBE_MIN_TRADES", "10"))
+    min_pnl = float(base_env.get("PROFIT_PROBE_MIN_PNL", "0.01"))
+    base_settings = Settings.from_env(base_env)
+    baseline_report = _pooled_report(
+        scenarios=scenarios,
+        settings=base_settings,
+        signal_evaluator=signal_evaluator,
+    )
+    if baseline_report is None:
+        print(f"  [{strategy_name}] proof guard: no baseline report — rejecting held candidates")
+        return None
+    baseline = _proof_guard_metrics(
+        scenarios=scenarios,
+        report=baseline_report,
+        settings=base_settings,
+        min_trades=min_trades,
+        min_pnl=min_pnl,
+    )
+    print(f"  [{strategy_name}] proof guard baseline: {_format_proof_guard_metrics(baseline)}")
+
+    for candidate, oos_score in sorted(
+        held_pairs,
+        key=lambda p: _viability_key(p[0], p[1]),
+        reverse=True,
+    ):
+        candidate_settings = Settings.from_env({**base_env, **candidate.params})
+        candidate_report = _pooled_report(
+            scenarios=scenarios,
+            settings=candidate_settings,
+            signal_evaluator=signal_evaluator,
+        )
+        if candidate_report is None:
+            print(
+                f"  [{strategy_name}] proof guard rejected params={candidate.params}: "
+                "no candidate report"
+            )
+            continue
+        metrics = _proof_guard_metrics(
+            scenarios=scenarios,
+            report=candidate_report,
+            settings=candidate_settings,
+            min_trades=min_trades,
+            min_pnl=min_pnl,
+        )
+        regressions = _proof_guard_regressions(baseline=baseline, candidate=metrics)
+        if not regressions:
+            print(
+                f"  [{strategy_name}] proof guard accepted params={candidate.params}: "
+                f"{_format_proof_guard_metrics(metrics)}"
+            )
+            return candidate, oos_score
+        print(
+            f"  [{strategy_name}] proof guard rejected params={candidate.params}: "
+            + "; ".join(regressions)
+            + f" (candidate {_format_proof_guard_metrics(metrics)})"
+        )
+    return None
+
+
+def _proof_guard_metrics(
+    *,
+    scenarios: list,
+    report,
+    settings: Settings,
+    min_trades: int,
+    min_pnl: float,
+) -> _ProofGuardMetrics:
+    sessions = sorted({
+        bar.timestamp.astimezone(settings.market_timezone).date()
+        for scenario in scenarios
+        for bar in scenario.intraday_bars
+    })
+    pnls_by_exit_session: dict[date, list[float]] = {}
+    for trade in report.trades:
+        exit_session = trade.exit_time.astimezone(settings.market_timezone).date()
+        pnls_by_exit_session.setdefault(exit_session, []).append(float(trade.pnl))
+
+    starts_eventually_passed = 0
+    starts_reaching_min_trades = 0
+    first_threshold_passes = 0
+    sessions_to_pass: list[int] = []
+
+    for start_index, _start_session in enumerate(sessions):
+        trade_count = 0
+        pnl = 0.0
+        first_threshold_seen = False
+        pass_index: int | None = None
+
+        for session_index in range(start_index, len(sessions)):
+            session = sessions[session_index]
+            session_pnls = pnls_by_exit_session.get(session, [])
+            if session_pnls:
+                trade_count += len(session_pnls)
+                pnl += sum(session_pnls)
+            if not first_threshold_seen and trade_count >= min_trades:
+                first_threshold_seen = True
+                starts_reaching_min_trades += 1
+                if pnl >= min_pnl:
+                    first_threshold_passes += 1
+            if trade_count >= min_trades and pnl >= min_pnl:
+                pass_index = session_index
+                break
+
+        if pass_index is not None:
+            starts_eventually_passed += 1
+            sessions_to_pass.append(pass_index - start_index + 1)
+
+    sessions_to_pass.sort()
+    return _ProofGuardMetrics(
+        trades=int(report.total_trades),
+        total_pnl=round(sum(float(trade.pnl) for trade in report.trades), 2),
+        eventual_pass_rate=(
+            starts_eventually_passed / len(sessions)
+            if sessions else None
+        ),
+        first_threshold_pass_rate=(
+            first_threshold_passes / starts_reaching_min_trades
+            if starts_reaching_min_trades else None
+        ),
+        p95_sessions_to_pass=_ceil_percentile(sessions_to_pass, 0.95),
+        slowest_sessions_to_pass=max(sessions_to_pass) if sessions_to_pass else None,
+    )
+
+
+def _proof_guard_regressions(
+    *,
+    baseline: _ProofGuardMetrics,
+    candidate: _ProofGuardMetrics,
+) -> list[str]:
+    regressions: list[str] = []
+    epsilon = 1e-9
+    if candidate.total_pnl + epsilon < baseline.total_pnl:
+        regressions.append(
+            f"total_pnl {candidate.total_pnl:.2f} < baseline {baseline.total_pnl:.2f}"
+        )
+    if _lt_optional(candidate.eventual_pass_rate, baseline.eventual_pass_rate, epsilon):
+        regressions.append(
+            "eventual_pass_rate "
+            f"{_fmt_pct(candidate.eventual_pass_rate)} < baseline "
+            f"{_fmt_pct(baseline.eventual_pass_rate)}"
+        )
+    if _lt_optional(
+        candidate.first_threshold_pass_rate,
+        baseline.first_threshold_pass_rate,
+        epsilon,
+    ):
+        regressions.append(
+            "first_threshold_pass_rate "
+            f"{_fmt_pct(candidate.first_threshold_pass_rate)} < baseline "
+            f"{_fmt_pct(baseline.first_threshold_pass_rate)}"
+        )
+    if _gt_optional(candidate.p95_sessions_to_pass, baseline.p95_sessions_to_pass):
+        regressions.append(
+            "p95_sessions_to_pass "
+            f"{_fmt_int(candidate.p95_sessions_to_pass)} > baseline "
+            f"{_fmt_int(baseline.p95_sessions_to_pass)}"
+        )
+    if _gt_optional(candidate.slowest_sessions_to_pass, baseline.slowest_sessions_to_pass):
+        regressions.append(
+            "slowest_sessions_to_pass "
+            f"{_fmt_int(candidate.slowest_sessions_to_pass)} > baseline "
+            f"{_fmt_int(baseline.slowest_sessions_to_pass)}"
+        )
+    return regressions
+
+
+def _ceil_percentile(values: list[int], pct: float) -> int | None:
+    if not values:
+        return None
+    index = int(len(values) * pct)
+    if len(values) * pct != index:
+        index += 1
+    index -= 1
+    index = max(0, min(len(values) - 1, index))
+    return values[index]
+
+
+def _lt_optional(candidate: float | None, baseline: float | None, epsilon: float) -> bool:
+    if baseline is None:
+        return False
+    if candidate is None:
+        return True
+    return candidate + epsilon < baseline
+
+
+def _gt_optional(candidate: int | None, baseline: int | None) -> bool:
+    if baseline is None:
+        return False
+    if candidate is None:
+        return True
+    return candidate > baseline
+
+
+def _format_proof_guard_metrics(metrics: _ProofGuardMetrics) -> str:
+    return (
+        f"trades={metrics.trades} pnl={metrics.total_pnl:.2f} "
+        f"eventual={_fmt_pct(metrics.eventual_pass_rate)} "
+        f"first={_fmt_pct(metrics.first_threshold_pass_rate)} "
+        f"p95={_fmt_int(metrics.p95_sessions_to_pass)} "
+        f"slowest={_fmt_int(metrics.slowest_sessions_to_pass)}"
+    )
+
+
+def _fmt_pct(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.2%}"
+
+
+def _fmt_int(value: int | None) -> str:
+    return "n/a" if value is None else str(value)
 
 
 def _weekdays_back(n: int) -> list[date]:
