@@ -174,7 +174,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "NIGHTLY_MAX_COMBOS=24" in env_text
     assert "PAPER_PROOF_FREEZE=true" in env_text
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180" in env_text
-    assert "PROFIT_PROBE_START_DATE=2026-06-29" in env_text
+    assert "PROFIT_PROBE_START_DATE=2026-06-30" in env_text
     assert "PROFIT_PROBE_STRATEGY=bull_flag" in env_text
     assert "PROFIT_PROBE_MIN_TRADES=10" in env_text
     assert "PROFIT_PROBE_MIN_PNL=0.01" in env_text
@@ -220,7 +220,7 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "NIGHTLY_MAX_COMBOS=24" in script
     assert 'PAPER_PROOF_FREEZE="true"' in script
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180" in script
-    assert "PROFIT_PROBE_START_DATE=2026-06-29" in script
+    assert "PROFIT_PROBE_START_DATE=2026-06-30" in script
     assert "PROFIT_PROBE_STRATEGY=bull_flag" in script
     assert "PROFIT_PROBE_MIN_TRADES=10" in script
     assert "PROFIT_PROBE_MIN_PNL=0.01" in script
