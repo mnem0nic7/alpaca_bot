@@ -204,6 +204,15 @@ close_only_on_activity_failure() {
     exit "$rc"
   fi
 
+  local status_line
+  if status_line="$(load_trading_status_line 2>/dev/null)" \
+    && [[ "$status_line" == *"status=close_only"* ]] \
+    && [[ "$status_line" == *"kill_switch=false"* ]] \
+    && [[ "$status_line" == *"reason=paper profit lock"* ]]; then
+    echo "paper activity preserving active paper profit lock after activity failure: $status_line"
+    exit "$rc"
+  fi
+
   local session_date
   session_date="$(TZ=America/New_York date +%F)"
   local reason="paper activity failed for session ${session_date}: post-open checks failed for strategy ${PAPER_ACTIVITY_STRATEGY:-unknown}"
@@ -825,51 +834,53 @@ if [[ "${latest_cycle_strategy_blocked:-false}" == "true" ]]; then
   fi
 fi
 
-if [[ "${dispatch_failures:-0}" -gt 0 ]]; then
-  echo "paper activity failed: order dispatch failure events in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes count=$dispatch_failures" >&2
-  exit 1
-fi
-
-if [[ "${stream_issues:-0}" -gt 0 ]]; then
-  echo "paper activity failed: trade update stream issues in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes count=$stream_issues" >&2
-  exit 1
-fi
-
-if [[ "${decision_cycles:-0}" -eq 0 && "${strategy_evidence_cycles:-0}" -eq 0 ]]; then
-  echo "paper activity failed: no decision cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes" >&2
-  exit 1
-fi
-
-if [[ "${strategy_evidence_cycles:-0}" -eq 0 ]]; then
-  echo "paper activity failed: no $PAPER_ACTIVITY_STRATEGY decision cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes" >&2
-  exit 1
-fi
-
-if [[ "${unmaterialized_accepted_symbol_count:-0}" -gt 0 ]]; then
-  echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY accepted_decisions=${strategy_accepted_decisions:-0} unmaterialized_accepted_symbols=[${unmaterialized_accepted_symbols:-}] accepted_symbols=[${accepted_symbols:-}] materialized_entry_symbols=[${materialized_entry_symbols:-}] recent_entry_orders=${recent_entry_orders:-0} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} latest_accepted_decision_log=${latest_accepted_decision_log:-none} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
-  exit 1
-fi
-
-if [[ "${stale_pending_entry_orders:-0}" -gt 0 ]]; then
-  echo "paper activity failed: stale pending entry orders count=${stale_pending_entry_orders:-0} max_age_minutes=$PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES symbols=[${stale_pending_entry_order_summary:-}]" >&2
-  exit 1
-fi
-
-if [[ "${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,}" == "true" ]]; then
-  if [[ "${strategy_decision_log_cycles:-0}" -eq 0 ]]; then
-    echo "paper activity failed: no $PAPER_ACTIVITY_STRATEGY decision_log cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes audit_cycles=${strategy_decision_cycles:-0} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
+if [[ "$paper_profit_lock_pause" != "true" ]]; then
+  if [[ "${dispatch_failures:-0}" -gt 0 ]]; then
+    echo "paper activity failed: order dispatch failure events in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes count=$dispatch_failures" >&2
     exit 1
   fi
 
-  if [[ "${strategy_decision_log_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" && "$has_stock_exposure" != "true" ]]; then
-    echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY decision_log_records=${strategy_decision_log_records:-0} below $PAPER_ACTIVITY_MIN_DECISION_RECORDS audit_records=${strategy_decision_records:-0} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
+  if [[ "${stream_issues:-0}" -gt 0 ]]; then
+    echo "paper activity failed: trade update stream issues in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes count=$stream_issues" >&2
     exit 1
   fi
-fi
 
-if [[ "${strategy_evidence_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" && "$has_stock_exposure" != "true" ]]; then
-  echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY decision_evidence_records=$strategy_evidence_records below $PAPER_ACTIVITY_MIN_DECISION_RECORDS audit_records=${strategy_decision_records:-0} decision_log_records=${strategy_decision_log_records:-0} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
-  exit 1
+  if [[ "${decision_cycles:-0}" -eq 0 && "${strategy_evidence_cycles:-0}" -eq 0 ]]; then
+    echo "paper activity failed: no decision cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes" >&2
+    exit 1
+  fi
+
+  if [[ "${strategy_evidence_cycles:-0}" -eq 0 ]]; then
+    echo "paper activity failed: no $PAPER_ACTIVITY_STRATEGY decision cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes" >&2
+    exit 1
+  fi
+
+  if [[ "${unmaterialized_accepted_symbol_count:-0}" -gt 0 ]]; then
+    echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY accepted_decisions=${strategy_accepted_decisions:-0} unmaterialized_accepted_symbols=[${unmaterialized_accepted_symbols:-}] accepted_symbols=[${accepted_symbols:-}] materialized_entry_symbols=[${materialized_entry_symbols:-}] recent_entry_orders=${recent_entry_orders:-0} stock_open_positions=${stock_open_positions:-0} active_stock_orders=${active_stock_orders:-0} latest_accepted_decision_log=${latest_accepted_decision_log:-none} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
+    exit 1
+  fi
+
+  if [[ "${stale_pending_entry_orders:-0}" -gt 0 ]]; then
+    echo "paper activity failed: stale pending entry orders count=${stale_pending_entry_orders:-0} max_age_minutes=$PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES symbols=[${stale_pending_entry_order_summary:-}]" >&2
+    exit 1
+  fi
+
+  if [[ "${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,}" == "true" ]]; then
+    if [[ "${strategy_decision_log_cycles:-0}" -eq 0 ]]; then
+      echo "paper activity failed: no $PAPER_ACTIVITY_STRATEGY decision_log cycles in last ${PAPER_ACTIVITY_WINDOW_MINUTES} minutes audit_cycles=${strategy_decision_cycles:-0} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
+      exit 1
+    fi
+
+    if [[ "${strategy_decision_log_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" && "$has_stock_exposure" != "true" ]]; then
+      echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY decision_log_records=${strategy_decision_log_records:-0} below $PAPER_ACTIVITY_MIN_DECISION_RECORDS audit_records=${strategy_decision_records:-0} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
+      exit 1
+    fi
+  fi
+
+  if [[ "${strategy_evidence_records:-0}" -lt "$PAPER_ACTIVITY_MIN_DECISION_RECORDS" && "$has_stock_exposure" != "true" ]]; then
+    echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY decision_evidence_records=$strategy_evidence_records below $PAPER_ACTIVITY_MIN_DECISION_RECORDS audit_records=${strategy_decision_records:-0} decision_log_records=${strategy_decision_log_records:-0} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
+    exit 1
+  fi
 fi
 
 broker_account_status="skipped"

@@ -2889,7 +2889,7 @@ def test_paper_activity_allows_flat_profit_lock_pause(tmp_path: Path) -> None:
         "  printf 'ok|100000.00|200000.00|5000.00|false|0|0|none|none\\n'\n"
         "  exit 0\n"
         "fi\n"
-        "printf '12|4|8|7840|0|2026-06-29 16:02:00+00|true|trading_status:close_only,runtime_reconciliation_mismatch|true|trading_status:close_only,entry_cadence_waiting_for_new_bar,runtime_reconciliation_mismatch|2026-06-29 16:01:00+00|4|8|7840|0|8|7840|2026-06-29 16:01:00+00|accepted/none/none:6,skipped_no_signal/none/none:7834|6|2026-06-29 16:01:00+00|6|filled:6|6|AEVA,DDOG,MXL,QLYS,RARE,VSEC|6|AEVA,DDOG,MXL,QLYS,RARE,VSEC|0||0||bull_flag|trading_status:close_only:4|trading_status:close_only:4,entry_cadence_waiting_for_new_bar:4|0|0|0|0\\n'\n"
+        "printf '12|4|8|882|0|2026-06-29 16:02:00+00|true|trading_status:close_only,runtime_reconciliation_mismatch|true|trading_status:close_only,entry_cadence_waiting_for_new_bar,runtime_reconciliation_mismatch|2026-06-29 16:01:00+00|4|8|882|0|8|882|2026-06-29 16:01:00+00|accepted/none/none:1,skipped_no_signal/none/none:881|1|2026-06-29 16:01:00+00|1|filled:1|1|AEVA|1|AEVA|0||0||bull_flag|trading_status:close_only:4|trading_status:close_only:4,entry_cadence_waiting_for_new_bar:4|0|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -3327,6 +3327,66 @@ def test_paper_activity_diagnostic_failure_does_not_apply_close_only(tmp_path: P
         "proof_start=2026-06-29 strategy=bull_flag"
     ) in result.stdout
     assert not docker_marker.exists()
+
+
+def test_paper_activity_failure_preserves_active_profit_lock(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    close_only_marker = tmp_path / "docker_close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin close-only'; then\n"
+        f"  touch {close_only_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin status'; then\n"
+        "  printf 'mode=paper strategy=v1-breakout status=close_only kill_switch=false reason=paper profit lock: stop-out projection negative updated_at=2026-06-29T16:00:00+00:00\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '0|0|0|0|0||false||false|||0|0|0|0|0|0|||0||0||0||0||0||0||bull_flag|||0|0|0|0\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "paper activity failed: no supervisor cycles" in result.stderr
+    assert "paper activity preserving active paper profit lock" in result.stdout
+    assert "reason=paper profit lock" in result.stdout
+    assert not close_only_marker.exists()
 
 
 def test_paper_activity_readiness_lock_busy_is_pending_without_close_only(tmp_path: Path) -> None:
