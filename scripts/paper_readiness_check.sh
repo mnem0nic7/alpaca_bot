@@ -1318,20 +1318,37 @@ if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
       exit 1
     fi
 
-    stock_exposure_counts="$(load_stock_exposure_counts)"
-    IFS='|' read -r open_positions active_orders <<< "$stock_exposure_counts"
+    same_session_profit_lock=false
+    if [[ "$status_line" == *"reason=paper profit lock"* ]]; then
+      status_updated_at="$(sed -n 's/.* updated_at=\([^ ]*\).*/\1/p' <<< "$status_line")"
+      status_session_date=""
+      if [[ -n "$status_updated_at" ]]; then
+        status_session_date="$(TZ=America/New_York date -d "$status_updated_at" +%F 2>/dev/null || true)"
+      fi
+      current_session_date="$(TZ=America/New_York date +%F)"
+      if [[ -z "$status_session_date" || "$status_session_date" == "$current_session_date" ]]; then
+        same_session_profit_lock=true
+      fi
+    fi
 
-    if [[ "$open_positions" == "0" && "$active_orders" == "0" ]]; then
-      BROKER_FLAT_CONTEXT="paper readiness" ./scripts/broker_flat_check.sh "$ENV_FILE"
-      echo "paper readiness auto-resuming stale close_only state"
-      "${compose[@]}" run -T --rm admin resume \
-        --mode paper \
-        --strategy-version "$STRATEGY_VERSION" \
-        --reason "pre-open paper readiness auto-resume"
-    elif [[ "$open_positions" != "0" ]]; then
-      echo "paper readiness found close_only with $open_positions open positions; refusing auto-resume" >&2
+    if [[ "$same_session_profit_lock" == "true" ]]; then
+      echo "paper readiness preserving same-session paper profit lock: $status_line"
     else
-      echo "paper readiness found close_only with $active_orders active orders; refusing auto-resume" >&2
+      stock_exposure_counts="$(load_stock_exposure_counts)"
+      IFS='|' read -r open_positions active_orders <<< "$stock_exposure_counts"
+
+      if [[ "$open_positions" == "0" && "$active_orders" == "0" ]]; then
+        BROKER_FLAT_CONTEXT="paper readiness" ./scripts/broker_flat_check.sh "$ENV_FILE"
+        echo "paper readiness auto-resuming stale close_only state"
+        "${compose[@]}" run -T --rm admin resume \
+          --mode paper \
+          --strategy-version "$STRATEGY_VERSION" \
+          --reason "pre-open paper readiness auto-resume"
+      elif [[ "$open_positions" != "0" ]]; then
+        echo "paper readiness found close_only with $open_positions open positions; refusing auto-resume" >&2
+      else
+        echo "paper readiness found close_only with $active_orders active orders; refusing auto-resume" >&2
+      fi
     fi
   fi
 fi

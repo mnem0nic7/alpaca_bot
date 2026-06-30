@@ -1872,6 +1872,11 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness refusing auto-resume after failed proof guard" in script
     assert "paper proof failed" in script
     assert "session guard failed" in script
+    assert "same_session_profit_lock" in script
+    assert "reason=paper profit lock" in script
+    assert "status_session_date" in script
+    assert "current_session_date" in script
+    assert "paper readiness preserving same-session paper profit lock" in script
     assert "paper readiness prior proof checks pending" in script
     assert "prior proof scheduled checks missing" in script
     assert "prior proof scheduled checks failed" in script
@@ -2584,7 +2589,7 @@ def test_paper_activity_allows_flat_profit_lock_pause(tmp_path: Path) -> None:
         "  printf 'ok|100000.00|200000.00|5000.00|false|0|0|none|none\\n'\n"
         "  exit 0\n"
         "fi\n"
-        "printf '12|4|8|7840|0|2026-06-29 16:02:00+00|true|trading_status:close_only,runtime_reconciliation_mismatch|true|trading_status:close_only,runtime_reconciliation_mismatch|2026-06-29 16:01:00+00|4|8|7840|0|8|7840|2026-06-29 16:01:00+00|accepted/none/none:6,skipped_no_signal/none/none:7834|6|2026-06-29 16:01:00+00|6|filled:6|6|AEVA,DDOG,MXL,QLYS,RARE,VSEC|6|AEVA,DDOG,MXL,QLYS,RARE,VSEC|0||0||bull_flag|trading_status:close_only:4|trading_status:close_only:4|0|0|0|0\\n'\n"
+        "printf '12|4|8|7840|0|2026-06-29 16:02:00+00|true|trading_status:close_only,runtime_reconciliation_mismatch|true|trading_status:close_only,entry_cadence_waiting_for_new_bar,runtime_reconciliation_mismatch|2026-06-29 16:01:00+00|4|8|7840|0|8|7840|2026-06-29 16:01:00+00|accepted/none/none:6,skipped_no_signal/none/none:7834|6|2026-06-29 16:01:00+00|6|filled:6|6|AEVA,DDOG,MXL,QLYS,RARE,VSEC|6|AEVA,DDOG,MXL,QLYS,RARE,VSEC|0||0||bull_flag|trading_status:close_only:4|trading_status:close_only:4,entry_cadence_waiting_for_new_bar:4|0|0|0|0\\n'\n"
     )
     fake_docker.chmod(0o755)
 

@@ -125,7 +125,7 @@ only_profit_lock_pause_reasons() {
       trading_status:close_only)
         has_close_only=true
         ;;
-      runtime_reconciliation_mismatch)
+      entry_cadence_waiting_for_new_bar|paper_readiness_check_missing|runtime_reconciliation_mismatch)
         ;;
       *)
         return 1
