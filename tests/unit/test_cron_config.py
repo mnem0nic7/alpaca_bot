@@ -212,6 +212,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "paper activity 10:25/10:35/12:00/14:35" in install_cron
     assert "proof status 17:28" in install_cron
     assert "scripts/apply_candidate.sh" in cron_text
+    assert "docker compose --env-file /etc/alpaca_bot/alpaca-bot.env -f deploy/compose.yaml run --rm nightly" in cron_text
+    assert "docker compose -f deploy/compose.yaml run --rm nightly" not in cron_text
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
     assert "expected HHMM must be a valid 24-hour time" in run_if_ny_time
     assert "date returned invalid HHMM" in run_if_ny_time
