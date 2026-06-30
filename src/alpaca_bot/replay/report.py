@@ -13,7 +13,7 @@ class ReplayTradeRecord:
     symbol: str
     entry_price: float
     exit_price: float
-    quantity: int
+    quantity: float
     entry_time: datetime
     exit_time: datetime
     exit_reason: str  # "stop" or "eod"
@@ -144,7 +144,7 @@ def _extract_trades(events: list[ReplayEvent]) -> list[ReplayTradeRecord]:
                 continue  # exit without matching fill — skip
             entry_price = float(fill.details["entry_price"])
             exit_price = float(event.details["exit_price"])
-            quantity = int(fill.details["quantity"])
+            quantity = float(fill.details["quantity"])
             pnl = (exit_price - entry_price) * quantity
             return_pct = (exit_price - entry_price) / entry_price
             if event.event_type == IntentType.STOP_HIT:

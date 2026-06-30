@@ -1,5 +1,8 @@
 # tests/unit/test_portfolio_pooled_trades.py
+from dataclasses import replace
 from datetime import datetime, timezone
+
+import pytest
 
 from alpaca_bot.config import Settings
 from alpaca_bot.domain.models import Bar, EntrySignal, ReplayScenario
@@ -55,6 +58,23 @@ def test_portfolio_pooled_trades_matches_pooledtradesfn_shape(monkeypatch):
     trades = portfolio_pooled_trades([_scn("AAA"), _scn("BBB")], settings, "breakout")
     assert {t.symbol for t in trades} == {"AAA", "BBB"}
     assert all(hasattr(t, "pnl") for t in trades)
+
+
+def test_portfolio_pooled_trades_scores_fractional_quantity_pnl(monkeypatch):
+    _fake_registry(monkeypatch)
+    settings = replace(
+        Settings.from_env({**ENV, "REPLAY_SLIPPAGE_BPS": "0"}),
+        fractionable_symbols=frozenset({"AAA"}),
+    )
+
+    trades = portfolio_pooled_trades([_scn("AAA")], settings, "breakout")
+
+    assert len(trades) == 1
+    trade = trades[0]
+    assert trade.quantity != int(trade.quantity)
+    assert trade.pnl == pytest.approx(
+        (trade.exit_price - trade.entry_price) * trade.quantity
+    )
 
 
 def test_portfolio_pooled_trades_reports_progress(monkeypatch):

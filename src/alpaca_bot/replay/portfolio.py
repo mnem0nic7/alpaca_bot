@@ -349,17 +349,10 @@ class PortfolioReplayRunner:
         return rec, equity
 
     def _record(self, pos, bar, exit_price, reason) -> ReplayTradeRecord:
-        # The audit objective scores ReplayTradeRecord.pnl. The single-symbol
-        # baseline computes that pnl from the TRUNCATED int quantity
-        # (report.py: `quantity = int(fill.details["quantity"]); pnl =
-        # (exit_price - entry_price) * quantity`). Compute pnl from
-        # int(pos.quantity) here so the portfolio runner's recorded pnl is
-        # byte-identical to the baseline for whole-share quantities and
-        # consistent (never float-vs-int divergent) for fractionable symbols —
-        # the audit must be apples-to-apples. Equity bookkeeping above keeps the
-        # float quantity, matching the single-symbol runner's float equity
-        # updates; only the recorded pnl uses the int.
-        qty = int(pos.quantity)
+        # Paper trading can fill fractional quantities. Score replay P&L from
+        # the same float quantity used for equity bookkeeping so audits and
+        # proof-horizon checks match live paper proof semantics.
+        qty = float(pos.quantity)
         pnl = (exit_price - pos.entry_price) * qty
         return ReplayTradeRecord(
             symbol=pos.symbol, entry_price=pos.entry_price, exit_price=exit_price,

@@ -147,6 +147,71 @@ def test_nightly_cli_forwards_max_combos(monkeypatch, tmp_path):
     assert callable(sweep_calls[0]["on_progress"])
 
 
+def test_nightly_cli_resolves_fractionable_symbols_for_live_sweep(monkeypatch, tmp_path):
+    """Scheduled nightly sweeps should model Alpaca paper fractionability."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    _patch_common_db(monkeypatch, module)
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    class FakeMarketDataAdapter:
+        @staticmethod
+        def from_settings(settings):
+            return object()
+
+    class FakeFetcher:
+        def __init__(self, adapter, settings):
+            pass
+
+        def fetch_and_save(self, *, symbols, days, output_dir):
+            return [
+                (module.Path(output_dir) / f"{symbol}_252d.json", 0, 0)
+                for symbol in symbols
+            ]
+
+    class FakeExecutionAdapter:
+        @staticmethod
+        def from_settings(settings):
+            return FakeExecutionAdapter()
+
+        def get_fractionable_symbols(self, symbols):
+            assert tuple(symbols) == ("AAPL", "MSFT")
+            return frozenset({"AAPL"})
+
+    monkeypatch.setattr(module, "AlpacaMarketDataAdapter", FakeMarketDataAdapter)
+    monkeypatch.setattr(module, "BackfillFetcher", FakeFetcher)
+    monkeypatch.setattr(module, "AlpacaExecutionAdapter", FakeExecutionAdapter)
+
+    cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
+    sweep_calls: list[dict] = []
+    oos_calls: list[dict] = []
+
+    def fake_sweep(**kw):
+        sweep_calls.append(kw)
+        return [cand]
+
+    def fake_oos(candidates, oos_scenarios, **kw):
+        oos_calls.append(kw)
+        return [None]
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
+    monkeypatch.setattr(module, "evaluate_candidates_oos", fake_oos)
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--no-db",
+        "--output-dir", str(tmp_path),
+        "--strategies", "breakout",
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert sweep_calls[0]["fractionable_symbols"] == frozenset({"AAPL"})
+    assert oos_calls[0]["fractionable_symbols"] == frozenset({"AAPL"})
+
+
 def test_nightly_cli_dry_run_skips_backfill(monkeypatch, tmp_path):
     """--dry-run must not instantiate AlpacaMarketDataAdapter or call fetch_and_save."""
     from alpaca_bot.nightly import cli as module
@@ -562,6 +627,56 @@ def test_proof_guard_regressions_rejects_weaker_metrics():
         "first_threshold_pass_rate 58.00% < baseline 62.00%",
         "p95_sessions_to_pass 23 > baseline 21",
         "slowest_sessions_to_pass 38 > baseline 30",
+    ]
+
+
+def test_proof_guard_forwards_fractionable_symbols(monkeypatch):
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.replay.report import BacktestReport
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    report = BacktestReport(
+        trades=(),
+        total_trades=0,
+        winning_trades=0,
+        losing_trades=0,
+        win_rate=None,
+        mean_return_pct=None,
+        max_drawdown_pct=None,
+        sharpe_ratio=None,
+    )
+    calls: list[dict] = []
+
+    def fake_pooled_report(**kw):
+        calls.append(kw)
+        return report
+
+    monkeypatch.setattr(module, "_pooled_report", fake_pooled_report)
+    scenario = SimpleNamespace(
+        intraday_bars=[
+            SimpleNamespace(timestamp=datetime(2026, 6, 29, 14, 0, tzinfo=timezone.utc))
+        ]
+    )
+    candidate = TuningCandidate(
+        params={"BREAKOUT_LOOKBACK_BARS": "20"},
+        report=report,
+        score=0.5,
+    )
+
+    selected = module._select_proof_guarded_candidate(
+        held_pairs=[(candidate, 0.4)],
+        scenarios=[scenario],
+        base_env=dict(os.environ),
+        signal_evaluator=None,
+        strategy_name="breakout",
+        fractionable_symbols=frozenset({"AAPL"}),
+    )
+
+    assert selected == (candidate, 0.4)
+    assert [call["settings"].fractionable_symbols for call in calls] == [
+        frozenset({"AAPL"}),
+        frozenset({"AAPL"}),
     ]
 
 

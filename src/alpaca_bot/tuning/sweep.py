@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import itertools
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Callable
 
 from alpaca_bot.config import Settings
@@ -124,6 +124,17 @@ def _parse_grid(specs: list[str]) -> ParameterGrid:
             sys.exit(f"Invalid --grid spec: {spec!r}. Expected KEY=v1,v2,...")
         grid[key.strip()] = [v.strip() for v in values.split(",")]
     return grid
+
+
+def _settings_from_env(
+    values: dict[str, str],
+    *,
+    fractionable_symbols: frozenset[str] | None = None,
+) -> Settings:
+    settings = Settings.from_env(values)
+    if fractionable_symbols is None:
+        return settings
+    return replace(settings, fractionable_symbols=fractionable_symbols)
 
 
 def score_report(
@@ -256,6 +267,7 @@ def run_sweep(
     max_drawdown_pct: float = 0.0,
     max_trades: int = 0,
     signal_evaluator: "StrategySignalEvaluator | None" = None,
+    fractionable_symbols: frozenset[str] | None = None,
 ) -> list[TuningCandidate]:
     """Run a parameter grid sweep over `scenario`.
 
@@ -270,7 +282,10 @@ def run_sweep(
         overrides = dict(zip(keys, combo))
         merged_env = {**base_env, **overrides}
         try:
-            settings = Settings.from_env(merged_env)
+            settings = _settings_from_env(
+                merged_env,
+                fractionable_symbols=fractionable_symbols,
+            )
         except ValueError:
             continue  # invalid combination — skip silently
 
@@ -304,6 +319,7 @@ def run_multi_scenario_sweep(
     surrogate: "SurrogateModel | None" = None,
     max_combos: int = 0,
     on_progress: Callable[[str], None] | None = None,
+    fractionable_symbols: frozenset[str] | None = None,
 ) -> list[TuningCandidate]:
     """Run a parameter grid sweep across multiple scenarios.
 
@@ -335,7 +351,10 @@ def run_multi_scenario_sweep(
         overrides = dict(zip(keys, combo))
         merged_env = {**base_env, **overrides}
         try:
-            settings = Settings.from_env(merged_env)
+            settings = _settings_from_env(
+                merged_env,
+                fractionable_symbols=fractionable_symbols,
+            )
         except ValueError:
             if on_progress is not None:
                 on_progress(
@@ -423,6 +442,7 @@ def evaluate_candidates_oos(
     max_drawdown_pct: float = 0.0,
     max_trades: int = 0,
     signal_evaluator: "StrategySignalEvaluator | None" = None,
+    fractionable_symbols: frozenset[str] | None = None,
 ) -> list[float | None]:
     """Score each candidate against OOS scenarios; returns a parallel list of scores.
 
@@ -434,7 +454,10 @@ def evaluate_candidates_oos(
     for candidate in candidates:
         merged_env = {**base_env, **candidate.params}
         try:
-            settings = Settings.from_env(merged_env)
+            settings = _settings_from_env(
+                merged_env,
+                fractionable_symbols=fractionable_symbols,
+            )
         except ValueError:
             scores.append(None)
             continue

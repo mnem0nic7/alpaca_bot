@@ -39,7 +39,7 @@ def _make_result(events: list[ReplayEvent]) -> ReplayResult:
     )
 
 
-def _fill(entry_price: float = 150.0, quantity: int = 10, t: datetime = _T0) -> ReplayEvent:
+def _fill(entry_price: float = 150.0, quantity: float = 10, t: datetime = _T0) -> ReplayEvent:
     return ReplayEvent(
         event_type=IntentType.ENTRY_FILLED,
         symbol="AAPL",
@@ -90,6 +90,19 @@ def test_stop_fill_trade_pnl_correct() -> None:
     assert trade.pnl == pytest.approx((148.0 - 150.0) * 10)
     assert trade.exit_reason == "stop"
     assert trade.return_pct == pytest.approx((148.0 - 150.0) / 150.0)
+
+
+def test_fractional_quantity_trade_pnl_uses_full_quantity() -> None:
+    result = _make_result([
+        _fill(entry_price=150.0, quantity=2.75),
+        _stop_exit(exit_price=148.0),
+    ])
+    report = build_backtest_report(result)
+
+    assert report.total_trades == 1
+    trade = report.trades[0]
+    assert trade.quantity == pytest.approx(2.75)
+    assert trade.pnl == pytest.approx((148.0 - 150.0) * 2.75)
 
 
 def test_eod_fill_trade_pnl_correct() -> None:

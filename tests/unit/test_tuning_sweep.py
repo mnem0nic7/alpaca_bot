@@ -340,6 +340,46 @@ def test_run_multi_scenario_sweep_pooled_scores_total_report(monkeypatch) -> Non
     assert candidates[0].score == pytest.approx(1.25)
 
 
+def test_run_multi_scenario_sweep_forwards_fractionable_symbols(monkeypatch) -> None:
+    """Nightly can make pooled tuning use the same fractionability model as paper."""
+    import alpaca_bot.tuning.sweep as sweep_module
+
+    quiet = _make_quiet_scenario()
+    calls = []
+    pooled = BacktestReport(
+        trades=(),
+        total_trades=4,
+        winning_trades=3,
+        losing_trades=1,
+        win_rate=0.75,
+        mean_return_pct=0.01,
+        max_drawdown_pct=0.01,
+        annualized_sharpe=1.25,
+        profit_factor=1.5,
+    )
+
+    def fake_pooled_report(**kwargs):
+        calls.append(kwargs)
+        return pooled
+
+    monkeypatch.setattr(sweep_module, "_pooled_report", fake_pooled_report)
+
+    run_multi_scenario_sweep(
+        scenarios=[quiet],
+        base_env=_base_env(),
+        grid={
+            "BREAKOUT_LOOKBACK_BARS": ["20"],
+            "RELATIVE_VOLUME_THRESHOLD": ["1.5"],
+            "DAILY_SMA_PERIOD": ["20"],
+        },
+        aggregate="pooled",
+        min_trades_per_scenario=3,
+        fractionable_symbols=frozenset({"AAPL"}),
+    )
+
+    assert calls[0]["settings"].fractionable_symbols == frozenset({"AAPL"})
+
+
 def test_run_multi_scenario_sweep_max_combos_limits_grid_and_reports_progress(
     monkeypatch,
 ) -> None:
@@ -675,6 +715,52 @@ def test_evaluate_candidates_oos_pooled_scores_total_report(monkeypatch) -> None
     )
 
     assert scores == [pytest.approx(1.75)]
+
+
+def test_evaluate_candidates_oos_forwards_fractionable_symbols(monkeypatch) -> None:
+    """OOS scoring must preserve the paper fractionability set too."""
+    import alpaca_bot.tuning.sweep as sweep_module
+
+    quiet = _make_quiet_scenario()
+    calls = []
+    pooled = BacktestReport(
+        trades=(),
+        total_trades=5,
+        winning_trades=4,
+        losing_trades=1,
+        win_rate=0.8,
+        mean_return_pct=0.02,
+        max_drawdown_pct=0.01,
+        annualized_sharpe=1.75,
+        profit_factor=2.0,
+    )
+
+    def fake_pooled_report(**kwargs):
+        calls.append(kwargs)
+        return pooled
+
+    monkeypatch.setattr(sweep_module, "_pooled_report", fake_pooled_report)
+
+    candidate = TuningCandidate(
+        params={
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "DAILY_SMA_PERIOD": "20",
+        },
+        report=None,
+        score=1.0,
+    )
+
+    evaluate_candidates_oos(
+        candidates=[candidate],
+        oos_scenarios=[quiet],
+        base_env=_base_env(),
+        min_trades=3,
+        aggregate="pooled",
+        fractionable_symbols=frozenset({"AAPL"}),
+    )
+
+    assert calls[0]["settings"].fractionable_symbols == frozenset({"AAPL"})
 
 
 def test_score_report_disqualifies_on_excessive_drawdown() -> None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Sequence
@@ -11,7 +11,11 @@ from typing import Sequence
 from alpaca_bot.admin.session_eval_cli import _row_to_trade_record
 from alpaca_bot.backfill.fetcher import BackfillFetcher
 from alpaca_bot.config import Settings
-from alpaca_bot.execution.alpaca import AlpacaCredentialsError, AlpacaMarketDataAdapter
+from alpaca_bot.execution.alpaca import (
+    AlpacaCredentialsError,
+    AlpacaExecutionAdapter,
+    AlpacaMarketDataAdapter,
+)
 from alpaca_bot.replay.report import BacktestReport, report_from_records
 from alpaca_bot.replay.runner import ReplayRunner
 from alpaca_bot.replay.splitter import split_scenario
@@ -181,6 +185,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.strategies,
                 enabled_strategy_names=enabled_strategy_names,
             )
+            fractionable_symbols = _resolve_fractionable_symbols(
+                settings=settings,
+                symbols=symbols,
+                dry_run=args.dry_run,
+            )
             all_scenarios = [ReplayRunner.load_scenario(f) for f in files]
             is_scenarios = []
             oos_scenarios = []
@@ -232,6 +241,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     on_progress=lambda msg, strat=strat_name: print(
                         f"  [{strat}] {msg}"
                     ),
+                    fractionable_symbols=fractionable_symbols,
                 )
                 scored = [c for c in candidates if c.score is not None]
 
@@ -249,6 +259,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     max_drawdown_pct=args.max_drawdown_pct,
                     max_trades=args.max_trades,
                     signal_evaluator=signal_evaluator,
+                    fractionable_symbols=fractionable_symbols,
                 )
 
                 held_pairs = [
@@ -280,6 +291,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             base_env=base_env,
                             signal_evaluator=signal_evaluator,
                             strategy_name=strat_name,
+                            fractionable_symbols=fractionable_symbols,
                         )
                     else:
                         guarded = max(
@@ -445,12 +457,16 @@ def _select_proof_guarded_candidate(
     base_env: dict[str, str],
     signal_evaluator,
     strategy_name: str,
+    fractionable_symbols: frozenset[str] | None = None,
 ) -> tuple[TuningCandidate, float] | None:
     """Return the first held candidate that does not regress proof metrics."""
 
     min_trades = int(base_env.get("PROFIT_PROBE_MIN_TRADES", "10"))
     min_pnl = float(base_env.get("PROFIT_PROBE_MIN_PNL", "0.01"))
-    base_settings = Settings.from_env(base_env)
+    base_settings = _settings_with_fractionable(
+        Settings.from_env(base_env),
+        fractionable_symbols=fractionable_symbols,
+    )
     baseline_report = _pooled_report(
         scenarios=scenarios,
         settings=base_settings,
@@ -473,7 +489,10 @@ def _select_proof_guarded_candidate(
         key=lambda p: _viability_key(p[0], p[1]),
         reverse=True,
     ):
-        candidate_settings = Settings.from_env({**base_env, **candidate.params})
+        candidate_settings = _settings_with_fractionable(
+            Settings.from_env({**base_env, **candidate.params}),
+            fractionable_symbols=fractionable_symbols,
+        )
         candidate_report = _pooled_report(
             scenarios=scenarios,
             settings=candidate_settings,
@@ -505,6 +524,44 @@ def _select_proof_guarded_candidate(
             + f" (candidate {_format_proof_guard_metrics(metrics)})"
         )
     return None
+
+
+def _settings_with_fractionable(
+    settings: Settings,
+    *,
+    fractionable_symbols: frozenset[str] | None,
+) -> Settings:
+    if fractionable_symbols is None:
+        return settings
+    return replace(settings, fractionable_symbols=fractionable_symbols)
+
+
+def _resolve_fractionable_symbols(
+    *,
+    settings: Settings,
+    symbols: Sequence[str],
+    dry_run: bool,
+) -> frozenset[str]:
+    symbol_tuple = tuple(symbols)
+    if dry_run or not symbol_tuple:
+        return frozenset()
+    try:
+        broker = AlpacaExecutionAdapter.from_settings(settings)
+        fractionable = broker.get_fractionable_symbols(symbol_tuple)
+    except Exception as exc:
+        print(
+            "Warning: could not resolve fractionable symbols; replay sizing will "
+            f"assume whole-share quantities: {exc}",
+            file=sys.stderr,
+        )
+        return frozenset()
+    symbol_count = len(symbol_tuple)
+    non_fractionable_count = symbol_count - len(fractionable)
+    print(
+        f"Fractionable symbols: {len(fractionable)}/{symbol_count} active "
+        f"(whole-share assumed for {non_fractionable_count})"
+    )
+    return fractionable
 
 
 def _proof_guard_metrics(
