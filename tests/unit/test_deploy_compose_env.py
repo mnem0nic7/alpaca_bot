@@ -33,6 +33,9 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "ENABLE_SPREAD_FILTER",
         "ENABLE_PROFIT_TARGET",
         "PROFIT_TARGET_R",
+        "ENABLE_BREAKEVEN_STOP",
+        "BREAKEVEN_TRIGGER_PCT",
+        "BREAKEVEN_TRAIL_PCT",
         "REPLAY_SLIPPAGE_BPS",
     }
 
@@ -57,6 +60,9 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
     assert "ENABLE_SPREAD_FILTER: ${ENABLE_SPREAD_FILTER:-false}" in compose_text
     assert "ENABLE_PROFIT_TARGET: ${ENABLE_PROFIT_TARGET:-false}" in compose_text
     assert "PROFIT_TARGET_R: ${PROFIT_TARGET_R:-2.0}" in compose_text
+    assert "ENABLE_BREAKEVEN_STOP: ${ENABLE_BREAKEVEN_STOP:-true}" in compose_text
+    assert "BREAKEVEN_TRIGGER_PCT: ${BREAKEVEN_TRIGGER_PCT:-0.0025}" in compose_text
+    assert "BREAKEVEN_TRAIL_PCT: ${BREAKEVEN_TRAIL_PCT:-0.002}" in compose_text
     assert "MAX_LOSS_PER_TRADE_DOLLARS: ${MAX_LOSS_PER_TRADE_DOLLARS:-}" in compose_text
 
 
@@ -185,11 +191,14 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "TRAILING_STOP_PROFIT_TRIGGER_R=1.0" in env_text
     assert "ENABLE_VIX_FILTER=false" in env_text
     assert "ENABLE_SECTOR_FILTER=false" in env_text
-    assert "ENABLE_VWAP_ENTRY_FILTER=true" in env_text
+    assert "ENABLE_VWAP_ENTRY_FILTER=false" in env_text
     assert "ENABLE_PROFIT_TRAIL=true" in env_text
     assert "PROFIT_TRAIL_PCT=0.90" in env_text
     assert "ENABLE_PROFIT_TARGET=true" in env_text
     assert "PROFIT_TARGET_R=3.0" in env_text
+    assert "ENABLE_BREAKEVEN_STOP=true" in env_text
+    assert "BREAKEVEN_TRIGGER_PCT=0.005" in env_text
+    assert "BREAKEVEN_TRAIL_PCT=0.002" in env_text
     assert "ENABLE_REGIME_FILTER=false" in env_text
     assert "ENABLE_NEWS_FILTER=false" in env_text
     assert "ENABLE_SPREAD_FILTER=false" in env_text
@@ -225,13 +234,18 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "TRAILING_STOP_PROFIT_TRIGGER_R=1.0" in script
     assert 'ENABLE_VIX_FILTER="false"' in script
     assert 'ENABLE_SECTOR_FILTER="false"' in script
-    assert 'ENABLE_VWAP_ENTRY_FILTER="true"' in script
+    assert 'ENABLE_VWAP_ENTRY_FILTER="false"' in script
     assert 'ENABLE_PROFIT_TRAIL="true"' in script
     assert "PROFIT_TRAIL_PCT=0.90" in script
     assert 'ENABLE_PROFIT_TARGET="true"' in script
     assert 'PROFIT_TARGET_R="3.0"' in script
     assert "ENABLE_PROFIT_TARGET=$ENABLE_PROFIT_TARGET" in script
     assert "PROFIT_TARGET_R=$PROFIT_TARGET_R" in script
+    assert 'ENABLE_BREAKEVEN_STOP="true"' in script
+    assert 'BREAKEVEN_TRIGGER_PCT="0.005"' in script
+    assert "ENABLE_BREAKEVEN_STOP=$ENABLE_BREAKEVEN_STOP" in script
+    assert "BREAKEVEN_TRIGGER_PCT=$BREAKEVEN_TRIGGER_PCT" in script
+    assert "BREAKEVEN_TRAIL_PCT=$BREAKEVEN_TRAIL_PCT" in script
     assert "ENABLE_NEWS_FILTER=false" in script
     assert "ENABLE_SPREAD_FILTER=false" in script
     assert "OPTION_CHAIN_SYMBOLS=" in script
