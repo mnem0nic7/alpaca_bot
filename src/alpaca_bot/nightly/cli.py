@@ -321,6 +321,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     env_written = True
             else:
                 print("\nNo walk-forward held candidates across all strategies — current parameters remain active.")
+                if args.output_env:
+                    output_env = Path(args.output_env)
+                    if output_env.exists():
+                        output_env.unlink()
+                        print(f"Removed stale candidate env at {args.output_env}")
 
             best_strat = winners[0][0] if winners else None
             best_score = winners[0][2] if winners else None

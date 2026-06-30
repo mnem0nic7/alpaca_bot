@@ -518,6 +518,7 @@ def test_nightly_proof_guard_blocks_held_candidate(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "_select_proof_guarded_candidate", lambda **kw: None)
 
     output_env = tmp_path / "candidate.env"
+    output_env.write_text("BREAKOUT_LOOKBACK_BARS=10\n")
     monkeypatch.setattr(sys, "argv", [
         "nightly", "--dry-run", "--no-db",
         "--output-dir", str(tmp_path),
@@ -983,6 +984,7 @@ def test_nightly_no_winners_writes_no_candidate_env(monkeypatch, tmp_path):
                         lambda candidates, oos_scenarios, **kw: [None])
 
     output_env = tmp_path / "candidate.env"
+    output_env.write_text("RELATIVE_VOLUME_THRESHOLD=1.5\n")
     monkeypatch.setattr(sys, "argv", [
         "nightly", "--dry-run", "--no-db",
         "--output-dir", str(tmp_path),
