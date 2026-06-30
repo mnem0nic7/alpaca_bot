@@ -3573,7 +3573,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "  printf 'paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00 latest_event=trade_update_stream_started:2026-06-29T12:59:59+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00 grace_seconds=120\\n'\n"
         "  printf 'paper proof readiness audit: status=ok target_session=2026-06-29 check_status=passed created_at=2026-06-29T13:20:00+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00\\n'\n"
         "  printf 'paper proof readiness decision dry run: status=ok strategy=bull_flag as_of=2026-06-26T15:30:00-04:00 active=980 decision_records=965 accepted=1 entry_intents=1 sample=TPB:39.62732912119471@87.05\\n'\n"
-        "  printf 'paper proof activity audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 10:35 America/New_York check=passed:0:2026-06-29T14:26:00+00:00\\n'\n"
+        "  printf 'paper proof activity audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 10:45 America/New_York check=passed:0:2026-06-29T14:36:00+00:00\\n'\n"
         "  printf 'paper proof post-close audit: status=ok target_session=2026-06-29 due=true due_after=2026-06-29 17:25 America/New_York session_guard=passed:0:2026-06-29T21:10:00+00:00 paper_profit_probe=pending:43:2026-06-29T21:20:00+00:00\\n'\n"
         "  printf 'paper proof scheduled check: name=paper_profit_probe status=pending exit_code=43 session_date=2026-06-26 proof_start=2026-06-29 created_at=2026-06-27T22:00:00.000000Z\\n'\n"
         "  printf 'paper proof progress: status=pending closed_trades=3 required_trades=10 pnl=12.34 required_pnl=0.01 window=2026-06-29..2026-06-29 first_exit_session=2026-06-29 latest_exit_session=2026-06-29\\n'\n"
@@ -3813,8 +3813,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "reject_reasons={readiness_decision_dry_run_reject_reasons or 'none'}" in script
     assert "sample={readiness_decision_dry_run_sample or 'none'}" in script
     assert "activity_target_session = None" in script
-    assert "activity_first_due_time = time(10, 35)" in script
-    assert "activity_first_check_time = time(10, 25)" in script
+    assert "activity_first_check_time = time(10, 35)" in script
+    assert "activity_first_due_time = time(10, 45)" in script
     assert "activity_late_check_time = time(14, 35)" in script
     assert "activity_late_due_time = time(14, 45)" in script
     assert "activity_required_since = datetime.combine" in script

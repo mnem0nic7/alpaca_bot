@@ -1355,8 +1355,8 @@ activity_check_exit_code = "unknown"
 activity_check_created_text = "none"
 activity_audit_status = "not_started"
 if activity_target_session is not None:
-    activity_first_due_time = time(10, 35)
-    activity_first_check_time = time(10, 25)
+    activity_first_check_time = time(10, 35)
+    activity_first_due_time = time(10, 45)
     activity_late_check_time = time(14, 35)
     activity_late_due_time = time(14, 45)
     if current_market_datetime.date() > activity_target_session or (
