@@ -20,4 +20,4 @@ set -a
 source "$ENV_FILE"
 set +a
 
-docker compose -f "$COMPOSE_FILE" run --rm --entrypoint alpaca-bot-ops-check admin "$@"
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" run --rm --entrypoint alpaca-bot-ops-check admin "$@"

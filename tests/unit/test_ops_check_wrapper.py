@@ -50,7 +50,9 @@ def test_ops_check_wrapper_consumes_positional_env_file(tmp_path: Path) -> None:
 
     assert result.returncode == 0, result.stderr
     docker_args = (tmp_path / "docker_args.txt").read_text().splitlines()
-    assert str(env_file) not in docker_args
+    assert docker_args[:3] == ["compose", "--env-file", str(env_file)]
+    admin_index = docker_args.index("admin")
+    assert str(env_file) not in docker_args[admin_index:]
     assert docker_args[-3:] == ["admin", "--expect-trading-mode", "paper"]
 
 
@@ -66,4 +68,5 @@ def test_ops_check_wrapper_uses_env_var_when_first_arg_is_flag(tmp_path: Path) -
 
     assert result.returncode == 0, result.stderr
     docker_args = (tmp_path / "docker_args.txt").read_text().splitlines()
+    assert docker_args[:3] == ["compose", "--env-file", str(env_file)]
     assert docker_args[-3:] == ["admin", "--expect-trading-mode", "paper"]

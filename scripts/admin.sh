@@ -15,4 +15,4 @@ set -a
 source "$ENV_FILE"
 set +a
 
-docker compose -f "$COMPOSE_FILE" run --rm admin "$@"
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" run --rm admin "$@"
