@@ -97,6 +97,21 @@ only_readiness_missing_reasons() {
   return 0
 }
 
+only_runtime_reconciliation_reasons() {
+  local reasons="${1:-}"
+  if [[ -z "$reasons" ]]; then
+    return 1
+  fi
+  local reason
+  IFS=',' read -ra _paper_activity_reasons <<< "$reasons"
+  for reason in "${_paper_activity_reasons[@]}"; do
+    if [[ "$reason" != "runtime_reconciliation_mismatch" ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
 only_strategy_session_state_reasons() {
   local reasons="${1:-}"
   if [[ -z "$reasons" ]]; then
@@ -723,6 +738,10 @@ if [[ "${latest_cycle_entries_disabled:-false}" == "true" ]]; then
     echo "paper activity pending: latest supervisor cycle still had entries disabled for paper_readiness_check_missing; waiting for post-repair cycle"
     exit 43
   fi
+  if only_runtime_reconciliation_reasons "${latest_cycle_disabled_reasons:-}"; then
+    echo "paper activity pending: latest supervisor cycle still had entries disabled for runtime_reconciliation_mismatch; waiting for post-reconciliation cycle"
+    exit 43
+  fi
   reason_suffix=""
   if [[ -n "${latest_cycle_disabled_reasons:-}" ]]; then
     reason_suffix=" reasons=$latest_cycle_disabled_reasons"
@@ -734,6 +753,10 @@ fi
 if [[ "${latest_cycle_strategy_blocked:-false}" == "true" ]]; then
   if only_readiness_missing_reasons "${latest_cycle_strategy_disabled_reasons:-}"; then
     echo "paper activity pending: latest $PAPER_ACTIVITY_STRATEGY cycle still had entries disabled for paper_readiness_check_missing; waiting for post-repair cycle"
+    exit 43
+  fi
+  if only_runtime_reconciliation_reasons "${latest_cycle_strategy_disabled_reasons:-}"; then
+    echo "paper activity pending: latest $PAPER_ACTIVITY_STRATEGY cycle still had entries disabled for runtime_reconciliation_mismatch; waiting for post-reconciliation cycle"
     exit 43
   fi
   if only_strategy_session_state_reasons "${latest_cycle_strategy_disabled_reasons:-}" \
