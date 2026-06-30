@@ -1876,7 +1876,9 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "same_session_profit_lock" in script
     assert "reason=paper profit lock" in script
     assert "status_session_date" in script
+    assert 'current_session_date="$(TZ=America/New_York date +%F)"' in script
     assert 'readiness_session_date="$PAPER_READINESS_SESSION_DATE"' in script
+    assert '"$status_session_date" == "$current_session_date"' in script
     assert "paper readiness preserving same-session paper profit lock" in script
     assert "paper readiness ops check accepting same-session paper profit lock" in script
     assert "same-session paper profit lock has $active_orders active stock orders" in script
@@ -2004,7 +2006,7 @@ def test_paper_readiness_auto_resumes_stale_profit_lock(tmp_path: Path) -> None:
         "if [[ \"$*\" == *'2026-06-30T16:39:25+00:00'* ]]; then\n"
         "  printf '2026-06-30\\n'\n"
         "elif [[ \"$*\" == *'+%F'* ]]; then\n"
-        "  printf '2026-06-30\\n'\n"
+        "  printf '2026-07-01\\n'\n"
         "elif [[ \"$*\" == *'+%u'* ]]; then\n"
         "  printf '3\\n'\n"
         "elif [[ \"$*\" == *'+%H:%M'* ]]; then\n"

@@ -1325,8 +1325,11 @@ if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
       if [[ -n "$status_updated_at" ]]; then
         status_session_date="$(TZ=America/New_York date -d "$status_updated_at" +%F 2>/dev/null || true)"
       fi
+      current_session_date="$(TZ=America/New_York date +%F)"
       readiness_session_date="$PAPER_READINESS_SESSION_DATE"
-      if [[ -z "$status_session_date" || "$status_session_date" == "$readiness_session_date" ]]; then
+      if [[ -z "$status_session_date" \
+        || "$status_session_date" == "$current_session_date" \
+        || "$status_session_date" == "$readiness_session_date" ]]; then
         same_session_profit_lock=true
       fi
     fi
