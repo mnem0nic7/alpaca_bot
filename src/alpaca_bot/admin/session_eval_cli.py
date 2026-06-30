@@ -300,9 +300,13 @@ class SessionDiagnostics:
     total_supervisor_cycles: int = 0
     entries_disabled_cycles: int = 0
     entries_disabled_reasons: dict[str, int] = field(default_factory=dict)
+    latest_entries_disabled: bool = False
+    latest_entries_disabled_reasons: tuple[str, ...] = ()
     strategy_name: str | None = None
     strategy_disabled_cycles: int = 0
     strategy_disabled_reasons: dict[str, int] = field(default_factory=dict)
+    latest_strategy_disabled: bool = False
+    latest_strategy_disabled_reasons: tuple[str, ...] = ()
     decision_activity: DecisionActivityStats = field(default_factory=DecisionActivityStats)
 
     @property
@@ -327,10 +331,13 @@ class SessionDiagnostics:
 
         Unfilled entry orders remain diagnostic output only. A stop-limit entry
         can legitimately cancel without fill. A recovered stop-price rejection
-        and heartbeat-stale event also remain diagnostic output only. Missing
-        cycles, disabled entries, unrecovered runtime errors, stream failures,
-        reconciliation issues, open exposure, active local orders, and missing
-        decision activity are proof-blocking.
+        and heartbeat-stale event also remain diagnostic output only. Recovered
+        disabled-entry and runtime-reconciliation cycles stay visible in the
+        report but do not fail the hard guard once the latest supervisor state
+        is clean. Missing cycles, currently disabled entries, unrecovered
+        runtime errors, stream failures, unresolved reconciliation issues, open
+        exposure, active local orders, and missing decision activity are
+        proof-blocking.
         """
         return any([
             self.cycle_errors,
@@ -338,9 +345,9 @@ class SessionDiagnostics:
             self.proof_blocking_stream_issues,
             self.open_positions,
             self.active_orders,
-            self.reconciliation_issues,
-            self.entries_disabled_cycles,
-            self.strategy_disabled_cycles,
+            self.proof_blocking_reconciliation_issues,
+            self.proof_blocking_entries_disabled_cycles,
+            self.proof_blocking_strategy_disabled_cycles,
             self.total_supervisor_cycles == 0,
             self.total_supervisor_cycles > 0 and self.decision_activity.records == 0,
         ])
@@ -365,6 +372,33 @@ class SessionDiagnostics:
             and recovery.created_at >= failure.created_at
             for recovery in self.stop_rejection_recoveries
         )
+
+    @property
+    def proof_blocking_reconciliation_issues(self) -> list[AuditEvent]:
+        latest_reconciliation_block = (
+            self.latest_entries_disabled
+            and "runtime_reconciliation_mismatch" in self.latest_entries_disabled_reasons
+        )
+        return [
+            issue
+            for issue in self.reconciliation_issues
+            if issue.event_type != "runtime_reconciliation_detected"
+            or latest_reconciliation_block
+        ]
+
+    @property
+    def proof_blocking_entries_disabled_cycles(self) -> int:
+        return self.entries_disabled_cycles if self.latest_entries_disabled else 0
+
+    @property
+    def proof_blocking_strategy_disabled_cycles(self) -> int:
+        if not self.latest_strategy_disabled:
+            return 0
+        if set(self.latest_strategy_disabled_reasons) <= {
+            "strategy_session_state_entries_disabled",
+        }:
+            return 0
+        return self.strategy_disabled_cycles
 
     @property
     def proof_blocking_stream_issues(self) -> list[AuditEvent]:
@@ -431,6 +465,21 @@ def _build_session_diagnostics(
         strategy_name=strategy_name,
     )
     decision_activity = _load_decision_activity_stats(
+        conn,
+        session_start=session_start,
+        session_end=session_end,
+        trading_mode=trading_mode,
+        strategy_version=strategy_version,
+        strategy_name=strategy_name,
+    )
+    latest_entries_disabled, latest_entries_disabled_reasons = _load_latest_entries_disabled_state(
+        conn,
+        session_start=session_start,
+        session_end=session_end,
+        trading_mode=trading_mode,
+        strategy_version=strategy_version,
+    )
+    latest_strategy_disabled, latest_strategy_disabled_reasons = _load_latest_strategy_disabled_state(
         conn,
         session_start=session_start,
         session_end=session_end,
@@ -509,9 +558,13 @@ def _build_session_diagnostics(
         total_supervisor_cycles=total_cycles,
         entries_disabled_cycles=disabled_cycles,
         entries_disabled_reasons=disabled_reasons,
+        latest_entries_disabled=latest_entries_disabled,
+        latest_entries_disabled_reasons=latest_entries_disabled_reasons,
         strategy_name=strategy_name,
         strategy_disabled_cycles=strategy_disabled_cycles,
         strategy_disabled_reasons=strategy_disabled_reasons,
+        latest_strategy_disabled=latest_strategy_disabled,
+        latest_strategy_disabled_reasons=latest_strategy_disabled_reasons,
         decision_activity=decision_activity,
     )
 
@@ -582,6 +635,44 @@ def _load_entries_disabled_cycle_stats(
         except ValueError:
             continue
     return (int(row[0] or 0), int(row[1] or 0), reasons)
+
+
+def _load_latest_entries_disabled_state(
+    conn: ConnectionProtocol,
+    *,
+    session_start: datetime,
+    session_end: datetime,
+    trading_mode: TradingMode | str,
+    strategy_version: str,
+) -> tuple[bool, tuple[str, ...]]:
+    trading_mode_value = trading_mode.value if isinstance(trading_mode, TradingMode) else str(trading_mode)
+    try:
+        row = fetch_one(
+            conn,
+            """
+            SELECT
+              COALESCE((payload->>'entries_disabled')::boolean, false),
+              COALESCE(ARRAY(
+                SELECT jsonb_array_elements_text(
+                  COALESCE(payload->'entries_disabled_reasons', '[]'::jsonb)
+                )
+              ), ARRAY[]::text[])
+            FROM audit_events
+            WHERE event_type = 'supervisor_cycle'
+              AND created_at >= %s
+              AND created_at < %s
+              AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)
+              AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (session_start, session_end, trading_mode_value, strategy_version),
+        )
+    except Exception:
+        return (False, ())
+    if row is None:
+        return (False, ())
+    return (bool(row[0]), _coerce_reason_tuple(row[1]))
 
 
 def _load_strategy_disabled_cycle_stats(
@@ -694,6 +785,68 @@ def _load_strategy_disabled_cycle_stats(
         except ValueError:
             continue
     return (int(row[0] or 0), reasons)
+
+
+def _load_latest_strategy_disabled_state(
+    conn: ConnectionProtocol,
+    *,
+    session_start: datetime,
+    session_end: datetime,
+    trading_mode: TradingMode | str,
+    strategy_version: str,
+    strategy_name: str | None,
+) -> tuple[bool, tuple[str, ...]]:
+    if not strategy_name:
+        return (False, ())
+    trading_mode_value = trading_mode.value if isinstance(trading_mode, TradingMode) else str(trading_mode)
+    try:
+        row = fetch_one(
+            conn,
+            """
+            SELECT
+              COALESCE(COALESCE(payload->'blocked_strategy_names', '[]'::jsonb) ? %s, false),
+              COALESCE(ARRAY(
+                SELECT jsonb_array_elements_text(
+                  COALESCE(
+                    payload->'strategy_entries_disabled_reasons'->%s,
+                    '[]'::jsonb
+                  )
+                )
+              ), ARRAY[]::text[])
+            FROM audit_events
+            WHERE event_type = 'supervisor_cycle'
+              AND created_at >= %s
+              AND created_at < %s
+              AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = %s)
+              AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = %s)
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (
+                strategy_name,
+                strategy_name,
+                session_start,
+                session_end,
+                trading_mode_value,
+                strategy_version,
+            ),
+        )
+    except Exception:
+        return (False, ())
+    if row is None:
+        return (False, ())
+    return (bool(row[0]), _coerce_reason_tuple(row[1]))
+
+
+def _coerce_reason_tuple(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        stripped = value.strip("{}")
+        if not stripped:
+            return ()
+        return tuple(part for part in stripped.split(",") if part)
+    return tuple(str(reason) for reason in value)
 
 
 def _load_decision_activity_stats(

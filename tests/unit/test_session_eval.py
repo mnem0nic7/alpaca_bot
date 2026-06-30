@@ -538,6 +538,30 @@ def test_load_entries_disabled_cycle_stats_parses_colon_reasons(monkeypatch):
     }
 
 
+def test_load_latest_entries_disabled_state_parses_reasons(monkeypatch):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    calls: list[tuple] = []
+
+    def fake_fetch_one(*args, **kwargs):
+        calls.append(args)
+        return (True, ["runtime_reconciliation_mismatch"])
+
+    monkeypatch.setattr(cli_module, "fetch_one", fake_fetch_one)
+
+    disabled, reasons = cli_module._load_latest_entries_disabled_state(
+        object(),
+        session_start=datetime(2026, 5, 4, tzinfo=timezone.utc),
+        session_end=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        trading_mode="paper",
+        strategy_version="v1",
+    )
+
+    assert disabled is True
+    assert reasons == ("runtime_reconciliation_mismatch",)
+    assert "ORDER BY created_at DESC" in calls[0][1]
+
+
 def test_load_strategy_disabled_cycle_stats_parses_reasons(monkeypatch):
     import alpaca_bot.admin.session_eval_cli as cli_module
 
@@ -572,6 +596,31 @@ def test_load_strategy_disabled_cycle_stats_parses_reasons(monkeypatch):
     assert calls
     assert "bull_flag" in calls[0][2]
     assert "America/New_York" in calls[0][2]
+
+
+def test_load_latest_strategy_disabled_state_parses_reasons(monkeypatch):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    calls: list[tuple] = []
+
+    def fake_fetch_one(*args, **kwargs):
+        calls.append(args)
+        return (True, ["confidence_score_absent"])
+
+    monkeypatch.setattr(cli_module, "fetch_one", fake_fetch_one)
+
+    disabled, reasons = cli_module._load_latest_strategy_disabled_state(
+        object(),
+        session_start=datetime(2026, 5, 4, tzinfo=timezone.utc),
+        session_end=datetime(2026, 5, 5, tzinfo=timezone.utc),
+        trading_mode="paper",
+        strategy_version="v1",
+        strategy_name="bull_flag",
+    )
+
+    assert disabled is True
+    assert reasons == ("confidence_score_absent",)
+    assert calls[0][2][:2] == ("bull_flag", "bull_flag")
 
 
 def test_load_strategy_disabled_cycle_stats_excludes_post_flatten_state_blocks(monkeypatch):

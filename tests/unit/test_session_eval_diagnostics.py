@@ -264,6 +264,10 @@ def test_build_session_diagnostics_no_issues(monkeypatch):
     assert diag.open_positions == []
     assert diag.active_orders == []
     assert diag.reconciliation_issues == []
+    assert diag.latest_entries_disabled is False
+    assert diag.latest_entries_disabled_reasons == ()
+    assert diag.latest_strategy_disabled is False
+    assert diag.latest_strategy_disabled_reasons == ()
 
 
 def test_build_session_diagnostics_cycle_errors(monkeypatch):
@@ -577,6 +581,144 @@ def test_stream_failure_still_triggers_hard_guard_issue():
     )
 
     assert diag.proof_blocking_stream_issues == [event]
+    assert diag.has_guard_issues
+
+
+def test_recovered_entries_disabled_cycles_are_diagnostic_only():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    diag = SessionDiagnostics(
+        entries_disabled_cycles=4,
+        total_supervisor_cycles=10,
+        latest_entries_disabled=False,
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.has_issues
+    assert diag.proof_blocking_entries_disabled_cycles == 0
+    assert not diag.has_guard_issues
+
+
+def test_latest_entries_disabled_cycle_triggers_hard_guard_issue():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    diag = SessionDiagnostics(
+        entries_disabled_cycles=4,
+        total_supervisor_cycles=10,
+        latest_entries_disabled=True,
+        latest_entries_disabled_reasons=("trading_status:close_only",),
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.proof_blocking_entries_disabled_cycles == 4
+    assert diag.has_guard_issues
+
+
+def test_recovered_strategy_disabled_cycles_are_diagnostic_only():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    diag = SessionDiagnostics(
+        strategy_name="bull_flag",
+        strategy_disabled_cycles=4,
+        total_supervisor_cycles=10,
+        latest_strategy_disabled=False,
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.has_issues
+    assert diag.proof_blocking_strategy_disabled_cycles == 0
+    assert not diag.has_guard_issues
+
+
+def test_latest_strategy_disabled_cycle_triggers_hard_guard_issue():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    diag = SessionDiagnostics(
+        strategy_name="bull_flag",
+        strategy_disabled_cycles=4,
+        total_supervisor_cycles=10,
+        latest_strategy_disabled=True,
+        latest_strategy_disabled_reasons=("confidence_score_absent",),
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.proof_blocking_strategy_disabled_cycles == 4
+    assert diag.has_guard_issues
+
+
+def test_post_flatten_strategy_state_block_is_diagnostic_only():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    diag = SessionDiagnostics(
+        strategy_name="bull_flag",
+        strategy_disabled_cycles=4,
+        total_supervisor_cycles=10,
+        latest_strategy_disabled=True,
+        latest_strategy_disabled_reasons=("strategy_session_state_entries_disabled",),
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.has_issues
+    assert diag.proof_blocking_strategy_disabled_cycles == 0
+    assert not diag.has_guard_issues
+
+
+def test_recovered_runtime_reconciliation_is_diagnostic_only():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    event = AuditEvent(
+        event_type="runtime_reconciliation_detected",
+        payload={"mismatch_count": 2},
+        created_at=datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc),
+    )
+    diag = SessionDiagnostics(
+        reconciliation_issues=[event],
+        total_supervisor_cycles=10,
+        latest_entries_disabled=False,
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.has_issues
+    assert diag.proof_blocking_reconciliation_issues == []
+    assert not diag.has_guard_issues
+
+
+def test_unresolved_runtime_reconciliation_triggers_hard_guard_issue():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    event = AuditEvent(
+        event_type="runtime_reconciliation_detected",
+        payload={"mismatch_count": 2},
+        created_at=datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc),
+    )
+    diag = SessionDiagnostics(
+        reconciliation_issues=[event],
+        total_supervisor_cycles=10,
+        latest_entries_disabled=True,
+        latest_entries_disabled_reasons=("runtime_reconciliation_mismatch",),
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.proof_blocking_reconciliation_issues == [event]
+    assert diag.has_guard_issues
+
+
+def test_reconciliation_miss_still_triggers_hard_guard_issue():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    event = AuditEvent(
+        event_type="reconciliation_miss_count_incremented",
+        payload={"client_order_id": "order-1"},
+        created_at=datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc),
+    )
+    diag = SessionDiagnostics(
+        reconciliation_issues=[event],
+        total_supervisor_cycles=10,
+        latest_entries_disabled=False,
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.proof_blocking_reconciliation_issues == [event]
     assert diag.has_guard_issues
 
 
