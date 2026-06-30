@@ -1908,7 +1908,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_value RISK_PER_TRADE_PCT 0.01" in script
     assert "require_env_value STOP_LIMIT_BUFFER_PCT 0.0005" in script
     assert "require_env_value ENTRY_STOP_PRICE_BUFFER 0.02" in script
-    assert "require_env_value_or_unset ATR_PERIOD 14" in script
+    assert "require_env_value_or_unset ATR_PERIOD 20" in script
     assert "require_env_value_or_unset ATR_STOP_MULTIPLIER 1.0" in script
     assert "require_env_value TRAILING_STOP_ATR_MULTIPLIER 1.0" in script
     assert "require_env_value_or_unset TRAILING_STOP_PROFIT_TRIGGER_R 1.0" in script
@@ -3987,7 +3987,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "int(settings.max_open_positions) == 4" in script
     assert "abs(float(settings.max_portfolio_exposure_pct) - 0.30)" in script
     assert "abs(float(settings.daily_loss_limit_pct) - 0.01)" in script
-    assert "int(settings.atr_period) == 14" in script
+    assert "int(settings.atr_period) == 20" in script
     assert "abs(float(settings.atr_stop_multiplier) - 1.0)" in script
     assert "abs(float(settings.trailing_stop_atr_multiplier) - 1.0)" in script
     assert "abs(float(settings.trailing_stop_profit_trigger_r) - 1.0)" in script

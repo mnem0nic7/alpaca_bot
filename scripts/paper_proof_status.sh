@@ -1542,7 +1542,7 @@ posture_status = (
         and abs(float(settings.daily_loss_limit_pct) - 0.01) < 1e-9
         and abs(float(settings.stop_limit_buffer_pct) - 0.0005) < 1e-9
         and abs(float(settings.entry_stop_price_buffer) - 0.02) < 1e-9
-        and int(settings.atr_period) == 14
+        and int(settings.atr_period) == 20
         and abs(float(settings.atr_stop_multiplier) - 1.0) < 1e-9
         and abs(float(settings.trailing_stop_atr_multiplier) - 1.0) < 1e-9
         and abs(float(settings.trailing_stop_profit_trigger_r) - 1.0) < 1e-9
