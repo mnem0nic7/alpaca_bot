@@ -388,7 +388,17 @@ class TestProtectiveStopOnPartialFill:
             signal_timestamp=NOW,
         )
         runtime = _make_runtime(orders=[entry_order, accepted_stop])
-        broker = RecordingBroker()
+
+        class BrokerEchoingNonTotalQty(RecordingBroker):
+            def replace_order(self, **kwargs):
+                self.replace_calls.append(dict(kwargs))
+                return SimpleNamespace(
+                    broker_order_id=kwargs["order_id"],
+                    status=self.status,
+                    quantity=1,
+                )
+
+        broker = BrokerEchoingNonTotalQty()
 
         update = _make_trade_update(
             status="filled",

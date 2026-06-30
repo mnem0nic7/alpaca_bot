@@ -306,6 +306,64 @@ def test_dispatch_pending_orders_submits_entry_and_stop_orders_and_persists_upda
     assert report["submitted_count"] == 2
 
 
+def test_dispatch_pending_orders_preserves_local_quantity_when_broker_echoes_non_total_qty() -> None:
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 6, 29, 14, 15, tzinfo=timezone.utc)
+    entry_order = OrderRecord(
+        client_order_id="bull_flag:v1-breakout:2026-06-29:S:entry:2026-06-29T14:15:00+00:00",
+        symbol="S",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=50.699,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=now,
+        updated_at=now,
+        stop_price=17.00,
+        limit_price=17.01,
+        initial_stop_price=16.16,
+        signal_timestamp=now,
+    )
+
+    class BrokerEchoingNonTotalQty(RecordingBroker):
+        def submit_stop_limit_entry(self, **kwargs: object) -> SimpleNamespace:
+            self.entry_calls.append(dict(kwargs))
+            return SimpleNamespace(
+                client_order_id=kwargs["client_order_id"],
+                broker_order_id="broker-entry-s",
+                symbol=kwargs["symbol"],
+                side="buy",
+                status="ACCEPTED",
+                quantity=1,
+            )
+
+    order_store = RecordingOrderStore([entry_order])
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=RecordingAuditEventStore(),
+        connection=FakeConnection(),
+    )
+    broker = BrokerEchoingNonTotalQty()
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    assert broker.entry_calls == [
+        {
+            "symbol": "S",
+            "quantity": 50.699,
+            "stop_price": 17.00,
+            "limit_price": 17.01,
+            "client_order_id": entry_order.client_order_id,
+        }
+    ]
+    assert order_store.saved[-1].status == "accepted"
+    assert order_store.saved[-1].quantity == 50.699
+    assert report["submitted_count"] == 1
+
+
 def test_dispatch_pending_orders_returns_empty_report_when_no_pending_orders() -> None:
     _, dispatch_pending_orders = load_order_dispatch_api()
     settings = make_settings()

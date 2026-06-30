@@ -549,6 +549,64 @@ def test_apply_trade_update_for_filled_entry_queues_pending_protective_stop_orde
     assert report["protective_stop_queued"] is True
 
 
+def test_apply_trade_update_preserves_fractional_entry_quantity_when_event_qty_is_not_total() -> None:
+    apply_trade_update = load_trade_update_api()
+    settings = make_settings()
+    timestamp = datetime(2026, 6, 29, 14, 15, tzinfo=timezone.utc)
+    signal_timestamp = datetime(2026, 6, 29, 14, 0, tzinfo=timezone.utc)
+    existing_order = OrderRecord(
+        client_order_id="bull_flag:v1-breakout:2026-06-29:S:entry:2026-06-29T14:15:00+00:00",
+        symbol="S",
+        side="buy",
+        intent_type="entry",
+        status="accepted",
+        quantity=50.699,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=signal_timestamp,
+        updated_at=signal_timestamp,
+        stop_price=17.00,
+        limit_price=17.01,
+        initial_stop_price=16.16,
+        broker_order_id="broker-entry-s",
+        signal_timestamp=signal_timestamp,
+    )
+    runtime = SimpleNamespace(
+        connection=SimpleNamespace(commit=lambda: None),
+        order_store=RecordingOrderStore(existing_order),
+        position_store=RecordingPositionStore(),
+        audit_event_store=RecordingAuditEventStore(),
+    )
+
+    report = apply_trade_update(
+        settings=settings,
+        runtime=runtime,  # type: ignore[arg-type]
+        update={
+            "event": "fill",
+            "client_order_id": existing_order.client_order_id,
+            "broker_order_id": "broker-entry-s",
+            "symbol": "S",
+            "side": "buy",
+            "status": "FILLED",
+            "qty": 1,
+            "filled_qty": 50.699,
+            "filled_avg_price": 17.01,
+            "timestamp": timestamp.isoformat(),
+        },
+        now=timestamp,
+    )
+
+    saved_entry = runtime.order_store.saved[0]
+    saved_stop = runtime.order_store.saved[1]
+    saved_position = runtime.position_store.saved[0]
+    assert saved_entry.quantity == 50.699
+    assert saved_entry.filled_quantity == 50.699
+    assert saved_stop.quantity == 50.699
+    assert saved_position.quantity == 50.699
+    assert report["protective_stop_queued"] is True
+
+
 def test_apply_trade_update_for_filled_stop_removes_matching_position() -> None:
     apply_trade_update = load_trade_update_api()
     settings = make_settings()
@@ -698,6 +756,57 @@ def test_apply_trade_update_for_filled_exit_removes_matching_position() -> None:
     ]
     assert runtime.order_store.saved[-1].status == "filled"
     assert report["position_updated"] is True
+    assert report["position_cleared"] is True
+
+
+def test_apply_trade_update_preserves_exit_quantity_when_event_qty_is_not_total() -> None:
+    apply_trade_update = load_trade_update_api()
+    settings = make_settings()
+    timestamp = datetime(2026, 6, 29, 19, 47, tzinfo=timezone.utc)
+    existing_order = OrderRecord(
+        client_order_id="bull_flag:v1-breakout:2026-06-29:EVTC:exit:2026-06-29T19:46:44+00:00",
+        symbol="EVTC",
+        side="sell",
+        intent_type="exit",
+        status="accepted",
+        quantity=10.101,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=timestamp,
+        updated_at=timestamp,
+        initial_stop_price=27.04,
+        broker_order_id="broker-exit-evtc",
+        signal_timestamp=timestamp,
+    )
+    runtime = SimpleNamespace(
+        connection=SimpleNamespace(commit=lambda: None),
+        order_store=RecordingOrderStore(existing_order),
+        position_store=RecordingPositionStore(),
+        audit_event_store=RecordingAuditEventStore(),
+    )
+
+    report = apply_trade_update(
+        settings=settings,
+        runtime=runtime,  # type: ignore[arg-type]
+        update={
+            "event": "fill",
+            "client_order_id": existing_order.client_order_id,
+            "broker_order_id": "broker-exit-evtc",
+            "symbol": "EVTC",
+            "side": "sell",
+            "status": "FILLED",
+            "qty": 6,
+            "filled_qty": 10.101,
+            "filled_avg_price": 27.52,
+            "timestamp": timestamp.isoformat(),
+        },
+        now=timestamp,
+    )
+
+    saved_exit = runtime.order_store.saved[-1]
+    assert saved_exit.quantity == 10.101
+    assert saved_exit.filled_quantity == 10.101
     assert report["position_cleared"] is True
 
 

@@ -514,7 +514,7 @@ def dispatch_pending_orders(
                         side=order.side,
                         intent_type=order.intent_type,
                         status=normalized_status,
-                        quantity=float(broker_order.quantity),
+                        quantity=order.quantity,
                         trading_mode=order.trading_mode,
                         strategy_version=order.strategy_version,
                         strategy_name=order.strategy_name,

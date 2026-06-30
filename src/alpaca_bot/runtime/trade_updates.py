@@ -230,7 +230,7 @@ def _apply_trade_update_locked(
         side=matched_order.side,
         intent_type=matched_order.intent_type,
         status=normalized.status,
-        quantity=normalized.quantity or matched_order.quantity,
+        quantity=matched_order.quantity,
         trading_mode=matched_order.trading_mode,
         strategy_version=matched_order.strategy_version,
         strategy_name=matched_order.strategy_name,
@@ -673,7 +673,7 @@ def _replace_broker_backed_stop_quantities(
             or stop_order.broker_order_id
         )
         new_status = str(getattr(broker_order, "status", stop_order.status)).lower()
-        new_quantity = float(getattr(broker_order, "quantity", replacement.quantity))
+        new_quantity = replacement.quantity
         updated_stop = OrderRecord(
             client_order_id=stop_order.client_order_id,
             symbol=stop_order.symbol,
