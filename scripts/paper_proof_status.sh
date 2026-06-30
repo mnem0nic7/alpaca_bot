@@ -1429,6 +1429,8 @@ if activity_target_session is not None:
         activity_audit_status = "missing"
 post_close_due = False
 post_close_due_after = "none"
+post_close_required_since = None
+post_close_required_since_text = "none"
 post_close_audit_status = "not_started"
 post_close_pass_evidence_ready = False
 post_close_check_statuses = {
@@ -1441,6 +1443,12 @@ if post_close_target_session is not None:
         f"{post_close_target_session.isoformat()} "
         f"{due_time.strftime('%H:%M')} {settings.market_timezone.key}"
     )
+    post_close_required_since = datetime.combine(
+        post_close_target_session,
+        time(16, 30),
+        settings.market_timezone,
+    ).astimezone(timezone.utc)
+    post_close_required_since_text = post_close_required_since.isoformat()
     post_close_due = current_market_datetime.date() > post_close_target_session or (
         current_market_datetime.date() == post_close_target_session
         and current_market_datetime.time() >= due_time
@@ -1448,8 +1456,17 @@ if post_close_target_session is not None:
     post_close_audit_status = "not_due"
     for check_name, status, exit_code, created_at in post_close_audit_rows:
         created_text = created_at.isoformat() if created_at is not None else "none"
+        check_status = status or "unknown"
+        if created_at is not None and post_close_required_since is not None:
+            created_utc = created_at
+            if created_utc.tzinfo is None:
+                created_utc = created_utc.replace(tzinfo=timezone.utc)
+            else:
+                created_utc = created_utc.astimezone(timezone.utc)
+            if created_utc < post_close_required_since:
+                check_status = "stale"
         post_close_check_statuses[check_name] = (
-            f"{status or 'unknown'}:{exit_code or 'unknown'}:{created_text}"
+            f"{check_status}:{exit_code or 'unknown'}:{created_text}"
         )
     if post_close_due:
         missing_checks = [
@@ -1457,6 +1474,7 @@ if post_close_target_session is not None:
             for name, status in post_close_check_statuses.items()
             if status == "missing"
         ]
+        stale_checks = []
         failed_checks = []
         session_guard_parts = post_close_check_statuses["session_guard"].split(":")
         session_guard_status = session_guard_parts[0]
@@ -1470,12 +1488,18 @@ if post_close_target_session is not None:
         profit_probe_acceptable = profit_probe_status == "passed" or (
             profit_probe_status == "pending" and profit_probe_exit_code == "43"
         )
+        if session_guard_status == "stale":
+            stale_checks.append("session_guard")
+        if profit_probe_status == "stale":
+            stale_checks.append("paper_profit_probe")
         if session_guard_status != "missing" and not session_guard_acceptable:
             failed_checks.append("session_guard")
         if profit_probe_status != "missing" and not profit_probe_acceptable:
             failed_checks.append("paper_profit_probe")
         if missing_checks:
             post_close_audit_status = "missing"
+        elif stale_checks:
+            post_close_audit_status = "stale"
         elif failed_checks:
             post_close_audit_status = "failed"
         else:
@@ -1629,7 +1653,7 @@ if activity_audit_status in {"missing", "failed", "skipped", "stale"} or (
     activity_due and activity_audit_status == "pending"
 ):
     blockers.append(f"activity_audit_{activity_audit_status}")
-if post_close_audit_status in {"missing", "failed"}:
+if post_close_audit_status in {"missing", "failed", "stale"}:
     blockers.append(f"post_close_audit_{post_close_audit_status}")
 if local_open_positions > 0:
     blockers.append("local_open_positions")
@@ -1776,6 +1800,7 @@ print(
     f"target_session={post_close_target_session.isoformat() if post_close_target_session else 'none'} "
     f"due={str(post_close_due).lower()} "
     f"due_after={post_close_due_after} "
+    f"required_since={post_close_required_since_text} "
     f"session_guard={post_close_check_statuses['session_guard']} "
     f"paper_profit_probe={post_close_check_statuses['paper_profit_probe']}"
 )

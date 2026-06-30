@@ -4351,8 +4351,14 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "payload->>'proof_start' = %s" in script
     assert "due_time = time(17, 25)" in script
     assert "post_close_due_after" in script
+    assert "post_close_required_since = None" in script
+    assert "post_close_required_since_text = \"none\"" in script
+    assert "time(16, 30)" in script
+    assert "created_utc < post_close_required_since" in script
+    assert "check_status = \"stale\"" in script
     assert "post_close_audit_status = \"not_due\"" in script
     assert "post_close_audit_status = \"missing\"" in script
+    assert "post_close_audit_status = \"stale\"" in script
     assert "post_close_audit_status = \"failed\"" in script
     assert "post_close_audit_status = \"ok\"" in script
     assert "session_guard_parts = post_close_check_statuses[\"session_guard\"].split(\":\")" in script
@@ -4365,6 +4371,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "profit_probe_acceptable = profit_probe_status == \"passed\"" in script
     assert "if session_guard_status != \"missing\" and not session_guard_acceptable" in script
     assert "if profit_probe_status != \"missing\" and not profit_probe_acceptable" in script
+    assert "elif stale_checks:" in script
     assert "session_guard_acceptable and profit_probe_status == \"passed\"" in script
     assert "session_guard_status == \"passed\" and profit_probe_status == \"passed\"" not in script
     assert "profitable_enough = trade_count >= min_trades and pnl >= min_pnl" in script
@@ -4394,6 +4401,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert 'proof_status = "failing"' not in script
     assert "elif profitable_enough and not post_close_pass_evidence_ready" in script
     assert "profit_probe_status == \"pending\" and profit_probe_exit_code == \"43\"" in script
+    assert "post_close_audit_status in {\"missing\", \"failed\", \"stale\"}" in script
     assert "blockers.append(f\"post_close_audit_{post_close_audit_status}\")" in script
     assert "paper proof post-close audit:" in script
     assert "status={post_close_audit_status}" in script
@@ -4404,6 +4412,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "if fail_on_issues and proof_status == \"pending\"" in script
     assert "raise SystemExit(43)" in script
     assert "due={str(post_close_due).lower()}" in script
+    assert "required_since={post_close_required_since_text}" in script
     assert "session_guard={post_close_check_statuses['session_guard']}" in script
     assert "paper_profit_probe={post_close_check_statuses['paper_profit_probe']}" in script
     assert "strategy_disabled" in script
