@@ -122,6 +122,10 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "deploy ops check accepting flat paper profit lock" in deploy_text
     assert "printf 'close_only\\n'" in deploy_text
     assert "printf 'enabled\\n'" in deploy_text
+    assert "run_deploy_ops_check()" in deploy_text
+    assert 'expected_status="$(load_deploy_ops_expected_trading_status)"' in deploy_text
+    assert 'retry_expected_status="$(load_deploy_ops_expected_trading_status)"' in deploy_text
+    assert "deploy ops check retrying after flat paper profit lock transition" in deploy_text
     assert "verify_paper_decision_dry_run()" in deploy_text
     assert "Paper decision dry run skipped because DEPLOY_REQUIRE_DECISION_DRY_RUN=false" in deploy_text
     assert 'PAPER_DECISION_DRY_RUN_STRATEGY="$DEPLOY_DECISION_DRY_RUN_STRATEGY"' in deploy_text
@@ -131,8 +135,8 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert '"$ROOT_DIR/scripts/paper_decision_dry_run.sh" "$ENV_FILE"' in deploy_text
     assert '--expect-trading-mode "${TRADING_MODE}"' in deploy_text
     assert '--expect-strategy-version "${STRATEGY_VERSION}"' in deploy_text
-    assert 'deploy_ops_expected_trading_status="$(load_deploy_ops_expected_trading_status)"' in deploy_text
-    assert '--expect-trading-status "$deploy_ops_expected_trading_status"' in deploy_text
+    assert '--expect-trading-status "$expected_status"' in deploy_text
+    assert "--expect-trading-status close_only" in deploy_text
     assert "--expect-kill-switch false" in deploy_text
     assert "--expect-only-enabled-strategy bull_flag" in deploy_text
     assert 'compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")' in deploy_text

@@ -94,6 +94,48 @@ load_deploy_ops_expected_trading_status() {
   printf 'enabled\n'
 }
 
+run_deploy_ops_check() {
+  local expected_status
+  local retry_expected_status
+  local rc
+
+  expected_status="$(load_deploy_ops_expected_trading_status)"
+
+  set +e
+  "${compose[@]}" run --rm --entrypoint alpaca-bot-ops-check admin \
+    --url http://web:8080/healthz \
+    --expect-worker \
+    --wait-seconds 60 \
+    --expect-trading-mode "${TRADING_MODE}" \
+    --expect-strategy-version "${STRATEGY_VERSION}" \
+    --expect-trading-status "$expected_status" \
+    --expect-kill-switch false \
+    --expect-only-enabled-strategy bull_flag
+  rc="$?"
+  set -e
+
+  if [[ "$rc" -eq 0 ]]; then
+    return 0
+  fi
+
+  retry_expected_status="$(load_deploy_ops_expected_trading_status)"
+  if [[ "$expected_status" != "close_only" && "$retry_expected_status" == "close_only" ]]; then
+    echo "deploy ops check retrying after flat paper profit lock transition" >&2
+    "${compose[@]}" run --rm --entrypoint alpaca-bot-ops-check admin \
+      --url http://web:8080/healthz \
+      --expect-worker \
+      --wait-seconds 60 \
+      --expect-trading-mode "${TRADING_MODE}" \
+      --expect-strategy-version "${STRATEGY_VERSION}" \
+      --expect-trading-status close_only \
+      --expect-kill-switch false \
+      --expect-only-enabled-strategy bull_flag
+    return
+  fi
+
+  return "$rc"
+}
+
 refresh_paper_readiness() {
   local attempt
   local rc
@@ -251,18 +293,9 @@ fi
 "${compose[@]}" up -d --force-recreate web
 
 if credentials_ready; then
-  deploy_ops_expected_trading_status="$(load_deploy_ops_expected_trading_status)"
   remove_supervisor_container
   "${compose[@]}" up -d --force-recreate supervisor
-  "${compose[@]}" run --rm --entrypoint alpaca-bot-ops-check admin \
-    --url http://web:8080/healthz \
-    --expect-worker \
-    --wait-seconds 60 \
-    --expect-trading-mode "${TRADING_MODE}" \
-    --expect-strategy-version "${STRATEGY_VERSION}" \
-    --expect-trading-status "$deploy_ops_expected_trading_status" \
-    --expect-kill-switch false \
-    --expect-only-enabled-strategy bull_flag
+  run_deploy_ops_check
   if paper_proof_enabled; then
     refresh_paper_readiness
   fi
