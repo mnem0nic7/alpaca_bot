@@ -470,6 +470,13 @@ class FailingBroker:
         )
 
 
+class DuplicateClientIdBroker(FailingBroker):
+    """Broker that raises Alpaca's duplicate client_order_id response."""
+
+    def submit_stop_limit_entry(self, **kwargs: object) -> None:
+        raise RuntimeError('{"code":40010001,"message":"client_order_id must be unique"}')
+
+
 def test_dispatch_records_error_status_on_broker_failure() -> None:
     _, dispatch_pending_orders = load_order_dispatch_api()
     settings = make_settings()
@@ -512,6 +519,55 @@ def test_dispatch_records_error_status_on_broker_failure() -> None:
     assert audit_store.appended[1].payload["strategy_version"] == "v1-breakout"
     assert audit_store.appended[1].payload["strategy_name"] == "breakout"
     # No orders counted as submitted
+    assert report["submitted_count"] == 0
+
+
+def test_dispatch_marks_duplicate_entry_client_order_id_non_fatal() -> None:
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 6, 29, 16, 25, tzinfo=timezone.utc)
+    entry_order = OrderRecord(
+        client_order_id="bull_flag:v1-breakout:2026-06-29:CRWD:entry:2026-06-29T16:00:00+00:00",
+        symbol="CRWD",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=0.265,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=now,
+        updated_at=now,
+        stop_price=754.44,
+        limit_price=754.82,
+        initial_stop_price=742.30,
+        signal_timestamp=datetime(2026, 6, 29, 16, 0, tzinfo=timezone.utc),
+    )
+    order_store = RecordingOrderStore([entry_order])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
+
+    report = dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=DuplicateClientIdBroker(),
+        now=now,
+    )
+
+    assert len(order_store.saved) == 2
+    assert order_store.saved[0].status == "submitting"
+    assert order_store.saved[1].status == "expired"
+    assert order_store.saved[1].client_order_id == entry_order.client_order_id
+    assert [event.event_type for event in audit_store.appended] == [
+        "order_dispatch_submitting",
+        "entry_order_duplicate_client_id",
+    ]
+    assert audit_store.appended[1].symbol == "CRWD"
+    assert audit_store.appended[1].payload["duplicate_client_order_id"] is True
+    assert not any(
+        event.event_type == "order_dispatch_failed"
+        for event in audit_store.appended
+    )
     assert report["submitted_count"] == 0
 
 

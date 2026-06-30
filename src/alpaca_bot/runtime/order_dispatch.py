@@ -28,6 +28,13 @@ def _is_unrecoverable_stop_error(exc: Exception) -> bool:
     return any(code in msg for code in _UNRECOVERABLE_STOP_CODES)
 
 
+def _is_duplicate_client_order_id_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return "client_order_id" in msg and (
+        "must be unique" in msg or "40010001" in msg
+    )
+
+
 class OrderStoreProtocol(Protocol):
     def list_by_status(
         self,
@@ -429,12 +436,19 @@ def dispatch_pending_orders(
             is_unrecoverable_stop = (
                 order.intent_type == "stop" and _is_unrecoverable_stop_error(exc)
             )
-            final_status = "canceled" if is_unrecoverable_stop else "error"
-            audit_event_type = (
-                "order_dispatch_stop_price_rejected"
-                if is_unrecoverable_stop
-                else "order_dispatch_failed"
+            is_duplicate_entry_client_id = (
+                order.intent_type == "entry"
+                and _is_duplicate_client_order_id_error(exc)
             )
+            if is_unrecoverable_stop:
+                final_status = "canceled"
+                audit_event_type = "order_dispatch_stop_price_rejected"
+            elif is_duplicate_entry_client_id:
+                final_status = "expired"
+                audit_event_type = "entry_order_duplicate_client_id"
+            else:
+                final_status = "error"
+                audit_event_type = "order_dispatch_failed"
             with lock_ctx:
                 try:
                     runtime.audit_event_store.append(
@@ -451,6 +465,7 @@ def dispatch_pending_orders(
                                 "client_order_id": order.client_order_id,
                                 "stop_price": order.stop_price,
                                 "timestamp": timestamp.isoformat(),
+                                "duplicate_client_order_id": is_duplicate_entry_client_id,
                             },
                             created_at=timestamp,
                         ),
@@ -485,6 +500,8 @@ def dispatch_pending_orders(
                         pass
                     raise
             if notifier is not None:
+                if is_duplicate_entry_client_id:
+                    continue
                 try:
                     notifier.send(
                         subject=f"Order dispatch failed: {order.symbol} {order.intent_type}",

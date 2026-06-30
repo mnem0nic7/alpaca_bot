@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 
 
 class OrderStoreProtocol(Protocol):
+    def load(self, client_order_id: str) -> OrderRecord | None: ...
+
     def save(self, order: OrderRecord, *, commit: bool = True) -> None: ...
 
 
@@ -136,9 +138,39 @@ def run_cycle(
                         commit=False,
                     )
                 else:
+                    client_order_id = intent.client_order_id or ""
+                    existing_order = _load_existing_order(
+                        runtime.order_store,
+                        client_order_id,
+                    )
+                    if existing_order is not None:
+                        runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="entry_intent_duplicate_skipped",
+                                symbol=intent.symbol,
+                                payload={
+                                    "client_order_id": client_order_id,
+                                    "existing_status": getattr(existing_order, "status", None),
+                                    "existing_broker_order_id": getattr(
+                                        existing_order,
+                                        "broker_order_id",
+                                        None,
+                                    ),
+                                    "strategy_name": intent.strategy_name,
+                                    "signal_timestamp": (
+                                        intent.signal_timestamp.isoformat()
+                                        if intent.signal_timestamp else None
+                                    ),
+                                    "cycle_timestamp": now.isoformat(),
+                                },
+                                created_at=now,
+                            ),
+                            commit=False,
+                        )
+                        continue
                     runtime.order_store.save(
                         OrderRecord(
-                            client_order_id=intent.client_order_id or "",
+                            client_order_id=client_order_id,
                             symbol=intent.symbol,
                             side="buy",
                             intent_type=intent.intent_type.value,
@@ -221,3 +253,12 @@ def run_cycle(
                         pass
 
     return result
+
+
+def _load_existing_order(
+    order_store: object,
+    client_order_id: str,
+) -> OrderRecord | None:
+    if not client_order_id or not hasattr(order_store, "load"):
+        return None
+    return order_store.load(client_order_id)

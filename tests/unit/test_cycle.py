@@ -46,12 +46,20 @@ class CountingConnection:
 
 
 class RecordingOrderStore:
-    def __init__(self) -> None:
+    def __init__(self, existing_orders: list[OrderRecord] | None = None) -> None:
+        self._orders = {
+            order.client_order_id: order
+            for order in existing_orders or []
+        }
         self.saved: list[OrderRecord] = []
         self.commit_args: list[bool] = []
 
+    def load(self, client_order_id: str) -> OrderRecord | None:
+        return self._orders.get(client_order_id)
+
     def save(self, order: OrderRecord, *, commit: bool = True) -> None:
         self.saved.append(order)
+        self._orders[order.client_order_id] = order
         self.commit_args.append(commit)
 
 
@@ -178,6 +186,78 @@ def test_run_cycle_saves_all_entry_intents_with_single_commit() -> None:
     assert connection.commit_count == 1, (
         f"Exactly one connection.commit() must fire; got {connection.commit_count}"
     )
+
+
+def test_run_cycle_skips_duplicate_entry_client_order_id_without_overwriting_existing_order() -> None:
+    """A same-signal retry must not overwrite an existing broker order row.
+
+    Alpaca rejects reused client_order_id values even after a prior order is
+    canceled, so preserving the terminal row lets traded-symbol guards block the
+    duplicate instead of turning it back into pending_submit.
+    """
+    from alpaca_bot.runtime.cycle import run_cycle
+    import alpaca_bot.runtime.cycle as cycle_module
+
+    settings = _make_settings()
+    now = datetime(2026, 6, 29, 16, 25, tzinfo=timezone.utc)
+    intent = _make_entry_intent("CRWD", now)
+    existing_order = OrderRecord(
+        client_order_id=intent.client_order_id or "",
+        symbol="CRWD",
+        side="buy",
+        intent_type="entry",
+        status="canceled",
+        quantity=0.265,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="breakout",
+        created_at=datetime(2026, 6, 29, 16, 15, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 6, 29, 16, 22, tzinfo=timezone.utc),
+        stop_price=754.44,
+        limit_price=754.82,
+        initial_stop_price=742.30,
+        broker_order_id="broker-crwd-entry",
+        signal_timestamp=now,
+    )
+    order_store = RecordingOrderStore(existing_orders=[existing_order])
+    audit_store = RecordingAuditEventStore()
+    connection = CountingConnection()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=audit_store,
+        connection=connection,
+    )
+
+    duplicate_result = CycleResult(as_of=now, intents=[intent])
+    original = cycle_module.evaluate_cycle
+    cycle_module.evaluate_cycle = lambda **_: duplicate_result
+    try:
+        run_cycle(
+            settings=settings,
+            runtime=runtime,
+            now=now,
+            equity=100_000.0,
+            intraday_bars_by_symbol={},
+            daily_bars_by_symbol={},
+            open_positions=[],
+            working_order_symbols=set(),
+            traded_symbols_today=set(),
+            entries_disabled=False,
+        )
+    finally:
+        cycle_module.evaluate_cycle = original
+
+    assert order_store.saved == []
+    duplicate_events = [
+        event for event in audit_store.appended
+        if event.event_type == "entry_intent_duplicate_skipped"
+    ]
+    assert len(duplicate_events) == 1
+    assert duplicate_events[0].symbol == "CRWD"
+    assert duplicate_events[0].payload["client_order_id"] == intent.client_order_id
+    assert duplicate_events[0].payload["existing_status"] == "canceled"
+    assert duplicate_events[0].payload["existing_broker_order_id"] == "broker-crwd-entry"
+    assert connection.commit_count == 1
 
 
 class RecordingOptionOrderStore:
