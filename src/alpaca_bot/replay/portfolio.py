@@ -189,7 +189,7 @@ class PortfolioReplayRunner:
             for sym in fresh:
                 lane = self._lanes[sym]
                 bar = lane.intraday[lane.cursor]
-                equity = self._resolve_order(lane, bar, equity)
+                equity = self._resolve_order(lane, bar, equity, traded_symbols)
                 closed, equity = self._resolve_exits(lane, bar, equity, traded_symbols)
                 trades.extend(closed)
 
@@ -297,7 +297,13 @@ class PortfolioReplayRunner:
             quantity=intent.quantity,
         )
 
-    def _resolve_order(self, lane: _Lane, bar: Bar, equity: float) -> float:
+    def _resolve_order(
+        self,
+        lane: _Lane,
+        bar: Bar,
+        equity: float,
+        traded_symbols: set[tuple[str, date]],
+    ) -> float:
         order = lane.working_order
         if order is None or bar.timestamp != order.active_bar_timestamp:
             return equity
@@ -305,6 +311,9 @@ class PortfolioReplayRunner:
             bar=bar, stop_price=order.stop_price, limit_price=order.limit_price
         )
         if raw is None:
+            traded_symbols.add(
+                (order.symbol, session_day(order.signal_timestamp, self.settings))
+            )
             lane.working_order = None
             return equity
         fill = entry_fill_price(

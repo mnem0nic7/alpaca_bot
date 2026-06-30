@@ -77,6 +77,62 @@ def test_portfolio_pooled_trades_scores_fractional_quantity_pnl(monkeypatch):
     )
 
 
+def test_portfolio_replay_blocks_same_day_retry_after_unfilled_entry_attempt(
+    monkeypatch,
+):
+    def fake_eval(*, symbol, intraday_bars, signal_index, daily_bars, settings):
+        del symbol, daily_bars, settings
+        bar = intraday_bars[signal_index]
+        if bar.timestamp == _utc(14, 30):
+            return EntrySignal(
+                symbol="AAA",
+                signal_bar=bar,
+                entry_level=110.0,
+                relative_volume=2.0,
+                stop_price=110.0,
+                limit_price=111.0,
+                initial_stop_price=100.0,
+                option_contract=None,
+            )
+        if bar.timestamp == _utc(15, 0):
+            return EntrySignal(
+                symbol="AAA",
+                signal_bar=bar,
+                entry_level=100.0,
+                relative_volume=2.0,
+                stop_price=100.0,
+                limit_price=101.0,
+                initial_stop_price=99.0,
+                option_contract=None,
+            )
+        return None
+
+    monkeypatch.setattr(
+        "alpaca_bot.strategy.STRATEGY_REGISTRY", {"breakout": fake_eval}, raising=False
+    )
+    monkeypatch.setattr(
+        "alpaca_bot.replay.portfolio.STRATEGY_REGISTRY", {"breakout": fake_eval}, raising=False
+    )
+    settings = Settings.from_env({**ENV, "REPLAY_SLIPPAGE_BPS": "0"})
+    intraday = [
+        _bar("AAA", _utc(14, 30), o=100, h=101, l=99, c=100, v=5000),
+        _bar("AAA", _utc(14, 45), o=100, h=105, l=99, c=100, v=5000),
+        _bar("AAA", _utc(15, 0), o=100, h=101, l=99, c=100, v=5000),
+        _bar("AAA", _utc(15, 15), o=100, h=101, l=98, c=99, v=5000),
+    ]
+    scenario = ReplayScenario(
+        name="AAA",
+        symbol="AAA",
+        starting_equity=100000.0,
+        daily_bars=[_bar("AAA", datetime(2026, 1, 1, 5, 0, tzinfo=timezone.utc))],
+        intraday_bars=intraday,
+    )
+
+    trades = portfolio_pooled_trades([scenario], settings, "breakout")
+
+    assert trades == []
+
+
 def test_portfolio_pooled_trades_reports_progress(monkeypatch):
     _fake_registry(monkeypatch)
     settings = Settings.from_env(ENV)

@@ -229,7 +229,7 @@ def test_portfolio_fill_preserves_engine_selected_quantity():
     )
     lane.cursor = 1
 
-    runner._resolve_order(lane, lane.intraday[lane.cursor], 100000.0)
+    runner._resolve_order(lane, lane.intraday[lane.cursor], 100000.0, set())
 
     assert lane.position is not None
     assert lane.position.quantity == 123.0
