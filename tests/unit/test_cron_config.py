@@ -1057,6 +1057,9 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "umask 000" in wrapper
     assert 'chmod a+rw "$LOCK_FILE"' in wrapper
     assert "cannot create lock file" in wrapper
+    assert 'exec {LOCK_FD}<"$LOCK_FILE"' in wrapper
+    assert 'flock -n -E 75 "$LOCK_FD"' in wrapper
+    assert 'exec {LOCK_FD}<&-' in wrapper
     assert '"$ROOT_DIR/scripts/run_check_with_audit.sh"' in wrapper
     assert '"$ROOT_DIR/scripts/scheduled_check_lock_skipped.sh"' in wrapper
     assert 'if [[ "$rc" -eq 75 ]]' in wrapper

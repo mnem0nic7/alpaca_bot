@@ -29,9 +29,19 @@ if [[ ! -e "$LOCK_FILE" ]]; then
 fi
 chmod a+rw "$LOCK_FILE" 2>/dev/null || true
 
-flock -n -E 75 "$LOCK_FILE" \
+if ! exec {LOCK_FD}<"$LOCK_FILE"; then
+  echo "run_locked_check_with_audit.sh cannot open lock file: $LOCK_FILE" >&2
+  exit 73
+fi
+
+if flock -n -E 75 "$LOCK_FD"; then
   "$ROOT_DIR/scripts/run_check_with_audit.sh" "$CHECK_NAME" "$ENV_FILE" "$@"
-rc="$?"
+  rc="$?"
+else
+  rc="$?"
+fi
+
+exec {LOCK_FD}<&-
 
 if [[ "$rc" -eq 0 ]]; then
   exit 0
