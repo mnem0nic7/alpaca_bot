@@ -536,6 +536,43 @@ def test_unfilled_entries_do_not_trigger_hard_guard_issue():
     assert not diag.has_guard_issues
 
 
+def test_stream_heartbeat_stale_does_not_trigger_hard_guard_issue():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    event = AuditEvent(
+        event_type="stream_heartbeat_stale",
+        payload={"timeout_seconds": 300},
+        created_at=datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc),
+    )
+    diag = SessionDiagnostics(
+        stream_issues=[event],
+        total_supervisor_cycles=10,
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.has_issues
+    assert diag.proof_blocking_stream_issues == []
+    assert not diag.has_guard_issues
+
+
+def test_stream_failure_still_triggers_hard_guard_issue():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    event = AuditEvent(
+        event_type="trade_update_stream_failed",
+        payload={"error": "stream disconnected"},
+        created_at=datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc),
+    )
+    diag = SessionDiagnostics(
+        stream_issues=[event],
+        total_supervisor_cycles=10,
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.proof_blocking_stream_issues == [event]
+    assert diag.has_guard_issues
+
+
 def test_print_with_open_positions(capsys):
     """Open positions at EOD print a ⚠ line with symbol."""
     from alpaca_bot.admin.session_eval_cli import _print_session_diagnostics, SessionDiagnostics

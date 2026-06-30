@@ -92,7 +92,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help=(
             "Exit non-zero when operational diagnostics show missing cycles, "
-            "blocked entries, runtime errors, stream issues, reconciliation issues, "
+            "blocked entries, runtime errors, stream failures, reconciliation issues, "
             "or missing decision activity."
         ),
     )
@@ -325,14 +325,17 @@ class SessionDiagnostics:
         """Return True for diagnostics that should fail an EOD proof guard.
 
         Unfilled entry orders remain diagnostic output only. A stop-limit entry
-        can legitimately cancel without fill; missing cycles, disabled entries,
-        runtime errors, stream/reconciliation issues, open exposure, active
-        local orders, and missing decision activity are proof-blocking.
+        can legitimately cancel without fill. A heartbeat-stale event also
+        remains diagnostic output only because quiet markets can produce no
+        trade updates while the stream thread is still alive. Missing cycles,
+        disabled entries, runtime errors, stream failures, reconciliation
+        issues, open exposure, active local orders, and missing decision
+        activity are proof-blocking.
         """
         return any([
             self.cycle_errors,
             self.dispatch_failures,
-            self.stream_issues,
+            self.proof_blocking_stream_issues,
             self.open_positions,
             self.active_orders,
             self.reconciliation_issues,
@@ -341,6 +344,14 @@ class SessionDiagnostics:
             self.total_supervisor_cycles == 0,
             self.total_supervisor_cycles > 0 and self.decision_activity.records == 0,
         ])
+
+    @property
+    def proof_blocking_stream_issues(self) -> list[AuditEvent]:
+        return [
+            issue
+            for issue in self.stream_issues
+            if issue.event_type != "stream_heartbeat_stale"
+        ]
 
 
 def _build_session_diagnostics(
