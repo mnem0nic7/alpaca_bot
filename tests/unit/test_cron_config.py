@@ -3817,6 +3817,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "activity_first_due_time = time(10, 45)" in script
     assert "activity_late_check_time = time(14, 35)" in script
     assert "activity_late_due_time = time(14, 45)" in script
+    assert "AND payload->>'proof_start' = %s" in script
     assert "activity_required_since = datetime.combine" in script
     assert "activity_required_since_text = activity_required_since.isoformat()" in script
     assert "payload->>'check_name' = 'paper_activity'" in script

@@ -617,6 +617,7 @@ try:
               WHERE event_type = 'scheduled_check_completed'
                 AND payload->>'trading_mode' = %s
                 AND payload->>'strategy_version' = %s
+                AND payload->>'proof_start' = %s
                 AND payload->>'check_name' IN (
                   'paper_readiness',
                   'paper_activity',
@@ -627,7 +628,7 @@ try:
             ) latest
             ORDER BY check_name
             """,
-            (trading_mode.value, strategy_version),
+            (trading_mode.value, strategy_version, proof_start.isoformat()),
         )
         scheduled_checks = cur.fetchall()
 
