@@ -100,6 +100,7 @@ TERMINAL_ENTRY_ATTEMPT_STATUSES = (
     "error",
 )
 ENTRY_ATTEMPT_STATUSES = ACTIVE_ENTRY_STATUSES + TERMINAL_ENTRY_ATTEMPT_STATUSES
+ENTRY_CADENCE_DISABLED_REASON = "entry_cadence_waiting_for_new_bar"
 
 
 def _completed_intraday_bars_by_symbol(
@@ -128,6 +129,24 @@ def _completed_intraday_bars_by_symbol(
                 completed_bars.append(bar)
         completed[symbol] = completed_bars
     return completed
+
+
+def _latest_completed_intraday_bar_timestamp(
+    bars_by_symbol: dict[str, list[Bar]],
+) -> datetime | None:
+    latest: datetime | None = None
+    for bars in bars_by_symbol.values():
+        if not bars:
+            continue
+        bar_ts = bars[-1].timestamp
+        normalized = (
+            bar_ts.replace(tzinfo=timezone.utc)
+            if bar_ts.tzinfo is None
+            else bar_ts.astimezone(timezone.utc)
+        )
+        if latest is None or normalized > latest:
+            latest = normalized
+    return latest
 
 
 def _bar_interval_overlaps_position(
@@ -257,6 +276,8 @@ class RuntimeSupervisor:
         self._session_external_upnl_baseline: dict[date, float] = {}
         # Dates where _loss_limit_fired was seeded from DB (not a live breach).
         self._loss_limit_loaded_from_db: set[date] = set()
+        # Latest completed signal bar for which new entry intents were enabled.
+        self._last_entry_enabled_bar_at: dict[date, datetime] = {}
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
@@ -801,6 +822,15 @@ class RuntimeSupervisor:
             timestamp=timestamp,
             timeframe_minutes=self.settings.entry_timeframe_minutes,
         )
+        latest_completed_entry_bar_at = _latest_completed_intraday_bar_timestamp(
+            completed_intraday_bars_by_symbol
+        )
+        previous_entry_bar_at = self._last_entry_enabled_bar_at.get(session_date)
+        entry_cadence_disabled = (
+            latest_completed_entry_bar_at is not None
+            and previous_entry_bar_at is not None
+            and latest_completed_entry_bar_at <= previous_entry_bar_at
+        )
         open_positions = self._apply_highest_price_updates(
             open_positions, completed_intraday_bars_by_symbol
         )
@@ -1007,6 +1037,7 @@ class RuntimeSupervisor:
         all_cycle_results: list[tuple[str, object]] = []
         entries_disabled_strategies: set[str] = set()
         strategy_entries_disabled_reasons: dict[str, tuple[str, ...]] = {}
+        entry_cadence_used = False
         # Track occupied slots globally across all strategies so no single
         # strategy can exceed the portfolio-wide max_open_positions cap.
         global_occupied_slots = len(
@@ -1059,12 +1090,19 @@ class RuntimeSupervisor:
                     confidence_score = confidence_floor  # used for sizing (entries disabled anyway)
 
                 if strategy_name in _losing_streak_excluded:
-                    strategy_entries_disabled = True
                     strategy_disabled_reasons.append("losing_streak_excluded")
 
-                if strategy_entries_disabled:
+                dispatch_blocks_strategy = bool(strategy_disabled_reasons)
+                if entry_cadence_disabled:
+                    strategy_disabled_reasons.append(ENTRY_CADENCE_DISABLED_REASON)
+                strategy_entries_disabled = bool(strategy_disabled_reasons)
+
+                if dispatch_blocks_strategy:
                     entries_disabled_strategies.add(strategy_name)
+                if strategy_entries_disabled:
                     strategy_entries_disabled_reasons[strategy_name] = tuple(strategy_disabled_reasons)
+                elif latest_completed_entry_bar_at is not None:
+                    entry_cadence_used = True
 
                 effective_equity = account.equity * confidence_score
                 cycle_result = self._cycle_runner(
@@ -1192,11 +1230,14 @@ class RuntimeSupervisor:
                         )
                     except Exception:
                         logger.exception(
-                            "Notifier failed to send strategy cycle error alert for %s", strategy_name
+                            "Notifier failed to send strategy cycle error alert for %s",
+                            strategy_name,
                         )
 
         from types import SimpleNamespace as _SN
         cycle_result = all_cycle_results[-1][1] if all_cycle_results else _SN(intents=[])
+        if entry_cadence_used and latest_completed_entry_bar_at is not None:
+            self._last_entry_enabled_bar_at[session_date] = latest_completed_entry_bar_at
 
         dispatch_kwargs = {
             "settings": self.settings,

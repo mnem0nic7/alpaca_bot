@@ -1126,6 +1126,78 @@ def test_runtime_supervisor_run_cycle_once_gathers_runtime_inputs_and_dispatches
     ]
 
 
+def test_runtime_supervisor_only_enables_new_entries_once_per_completed_signal_bar(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    first_now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    second_now_same_bar = first_now + timedelta(minutes=1)
+    third_now_next_bar = first_now + timedelta(minutes=15)
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=first_now, count=21),
+            "MSFT": make_bar_series("MSFT", end=first_now, count=21),
+            "SPY": make_bar_series("SPY", end=first_now, count=21),
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=first_now, count=20, days=True),
+            "MSFT": make_bar_series("MSFT", end=first_now, count=20, days=True),
+            "SPY": make_bar_series("SPY", end=first_now, count=20, days=True),
+        },
+    )
+    cycle_calls: list[dict[str, object]] = []
+    dispatch_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: cycle_calls.append(kwargs) or SimpleNamespace(intents=[]),
+    )
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0},
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: first_now)
+    repeated_report = supervisor.run_cycle_once(now=lambda: second_now_same_bar)
+    reopened_report = supervisor.run_cycle_once(now=lambda: third_now_next_bar)
+
+    from alpaca_bot.strategy import STRATEGY_REGISTRY
+    strategy_count = len(STRATEGY_REGISTRY)
+    first_cycle = cycle_calls[:strategy_count]
+    repeated_cycle = cycle_calls[strategy_count: strategy_count * 2]
+    reopened_cycle = cycle_calls[strategy_count * 2:]
+
+    assert all(call["entries_disabled"] is False for call in first_cycle)
+    assert all(call["entries_disabled"] is True for call in repeated_cycle)
+    assert all(call["entries_disabled"] is False for call in reopened_cycle)
+    assert repeated_report.entries_disabled is False
+    assert repeated_report.entries_disabled_reasons == ()
+    assert repeated_report.blocked_strategy_names == ()
+    assert set(repeated_report.strategy_entries_disabled_reasons) == set(STRATEGY_REGISTRY)
+    assert all(
+        reasons == (module.ENTRY_CADENCE_DISABLED_REASON,)
+        for reasons in repeated_report.strategy_entries_disabled_reasons.values()
+    )
+    assert reopened_report.strategy_entries_disabled_reasons == {}
+    assert "allowed_intent_types" not in dispatch_calls[1]
+    assert dispatch_calls[1]["blocked_strategy_names"] == set()
+
+
 def test_run_cycle_once_continues_when_closed_order_lookup_fails(monkeypatch) -> None:
     module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
     settings = make_settings()
