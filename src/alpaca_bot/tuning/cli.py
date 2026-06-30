@@ -61,9 +61,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Maximum allowed IS/OOS drawdown to accept a candidate (0.0 = disabled)")
     parser.add_argument("--max-trades", type=int, default=0,
                         help="Maximum trades per scenario to accept a candidate (0 = disabled)")
+    parser.add_argument("--max-combos", type=int, default=0,
+                        help="Maximum grid combinations to evaluate (0 = all)")
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
 
     validate_pct: float = args.validate_pct
+    if args.max_combos < 0:
+        sys.exit(f"--max-combos must be non-negative, got {args.max_combos}")
     if validate_pct != 0.0:
         if not (0.0 < validate_pct < 1.0):
             sys.exit(f"--validate-pct must be in (0.0, 1.0), got {validate_pct}")
@@ -139,6 +143,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             max_drawdown_pct=args.max_drawdown_pct,
             max_trades=args.max_trades,
             signal_evaluator=signal_evaluator,
+            max_combos=args.max_combos,
+            on_progress=lambda msg: print(f"[sweep] {msg}", file=sys.stderr),
         )
         scenario_name = "+".join(s.name for s in all_scenarios)
 

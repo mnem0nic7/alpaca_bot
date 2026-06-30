@@ -108,7 +108,43 @@ def test_nightly_cli_runs_evolve_and_writes_output_env(monkeypatch, tmp_path):
     assert "BREAKOUT_LOOKBACK_BARS=20" in output_env.read_text()
     assert sweep_calls[0]["aggregate"] == "pooled"
     assert sweep_calls[0]["min_trades_per_scenario"] == 3
+    assert sweep_calls[0]["max_combos"] == 0
     assert oos_calls[0]["aggregate"] == "pooled"
+
+
+def test_nightly_cli_forwards_max_combos(monkeypatch, tmp_path):
+    """--max-combos is passed to the pooled sweep so long runs can be capped."""
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    _make_scenario_files(tmp_path)
+    _patch_common_db(monkeypatch, module)
+    monkeypatch.setattr(module, "split_scenario", _fake_split)
+
+    cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
+    sweep_calls: list[dict] = []
+
+    def fake_sweep(**kw):
+        sweep_calls.append(kw)
+        return [cand]
+
+    monkeypatch.setattr(module, "run_multi_scenario_sweep", fake_sweep)
+    monkeypatch.setattr(module, "evaluate_candidates_oos",
+                        lambda candidates, oos_scenarios, **kw: [0.4])
+
+    monkeypatch.setattr(sys, "argv", [
+        "nightly", "--dry-run", "--no-db",
+        "--output-dir", str(tmp_path),
+        "--strategies", "breakout",
+        "--max-combos", "5",
+    ])
+
+    result = module.main()
+
+    assert result == 0
+    assert sweep_calls[0]["max_combos"] == 5
+    assert callable(sweep_calls[0]["on_progress"])
 
 
 def test_nightly_cli_dry_run_skips_backfill(monkeypatch, tmp_path):

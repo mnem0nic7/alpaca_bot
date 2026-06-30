@@ -340,6 +340,71 @@ def test_run_multi_scenario_sweep_pooled_scores_total_report(monkeypatch) -> Non
     assert candidates[0].score == pytest.approx(1.25)
 
 
+def test_run_multi_scenario_sweep_max_combos_limits_grid_and_reports_progress(
+    monkeypatch,
+) -> None:
+    """max_combos caps work after grid ordering and emits progress callbacks."""
+    import alpaca_bot.tuning.sweep as sweep_module
+
+    quiet = _make_quiet_scenario()
+    calls: list[dict] = []
+    progress: list[str] = []
+    pooled = BacktestReport(
+        trades=(),
+        total_trades=4,
+        winning_trades=3,
+        losing_trades=1,
+        win_rate=0.75,
+        mean_return_pct=0.01,
+        max_drawdown_pct=0.01,
+        annualized_sharpe=1.25,
+        profit_factor=1.5,
+    )
+
+    def fake_pooled_report(**kwargs):
+        calls.append(kwargs)
+        return pooled
+
+    monkeypatch.setattr(sweep_module, "_pooled_report", fake_pooled_report)
+
+    grid: ParameterGrid = {
+        "BREAKOUT_LOOKBACK_BARS": ["15", "20", "25"],
+        "RELATIVE_VOLUME_THRESHOLD": ["1.5"],
+        "DAILY_SMA_PERIOD": ["20"],
+    }
+    candidates = run_multi_scenario_sweep(
+        scenarios=[quiet],
+        base_env=_base_env(),
+        grid=grid,
+        aggregate="pooled",
+        min_trades_per_scenario=3,
+        max_combos=2,
+        on_progress=progress.append,
+    )
+
+    assert len(candidates) == 2
+    assert len(calls) == 2
+    assert [c.params["BREAKOUT_LOOKBACK_BARS"] for c in candidates] == ["15", "20"]
+    assert calls[0]["progress_label"] == "combo 1/2"
+    assert any("combo 1/2 complete" in line for line in progress)
+    assert any("combo 2/2 complete" in line for line in progress)
+
+
+def test_run_multi_scenario_sweep_rejects_negative_max_combos() -> None:
+    quiet = _make_quiet_scenario()
+    with pytest.raises(ValueError, match="max_combos"):
+        run_multi_scenario_sweep(
+            scenarios=[quiet],
+            base_env=_base_env(),
+            grid={
+                "BREAKOUT_LOOKBACK_BARS": ["20"],
+                "RELATIVE_VOLUME_THRESHOLD": ["1.5"],
+                "DAILY_SMA_PERIOD": ["20"],
+            },
+            max_combos=-1,
+        )
+
+
 # ---------------------------------------------------------------------------
 # STRATEGY_GRIDS
 # ---------------------------------------------------------------------------

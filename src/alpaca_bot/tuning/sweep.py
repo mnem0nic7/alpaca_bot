@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from alpaca_bot.config import Settings
 from alpaca_bot.domain.models import ReplayScenario
@@ -224,6 +224,8 @@ def _pooled_report(
     scenarios: list[ReplayScenario],
     settings: Settings,
     signal_evaluator: "StrategySignalEvaluator | None" = None,
+    on_progress: Callable[[str], None] | None = None,
+    progress_label: str | None = None,
 ) -> BacktestReport | None:
     """Replay scenarios as one cross-sectional portfolio and report pooled trades."""
 
@@ -233,7 +235,11 @@ def _pooled_report(
         settings,
         signal_evaluator=signal_evaluator,
         strategy_name="pooled",
-    ).run(scenarios)
+    ).run(
+        scenarios,
+        on_progress=on_progress,
+        progress_label=progress_label,
+    )
     return report_from_records(
         trades,
         starting_equity=float(scenarios[0].starting_equity),
@@ -296,6 +302,8 @@ def run_multi_scenario_sweep(
     max_trades: int = 0,
     signal_evaluator: "StrategySignalEvaluator | None" = None,
     surrogate: "SurrogateModel | None" = None,
+    max_combos: int = 0,
+    on_progress: Callable[[str], None] | None = None,
 ) -> list[TuningCandidate]:
     """Run a parameter grid sweep across multiple scenarios.
 
@@ -307,6 +315,8 @@ def run_multi_scenario_sweep(
     interpreted as a minimum total trade count for the pooled report.
     """
     effective_grid = grid if grid is not None else DEFAULT_GRID
+    if max_combos < 0:
+        raise ValueError("max_combos must be non-negative")
     keys = list(effective_grid.keys())
     value_lists = [effective_grid[k] for k in keys]
 
@@ -316,13 +326,21 @@ def run_multi_scenario_sweep(
             key=lambda combo: surrogate.predict(dict(zip(keys, combo))) or 0.0,
             reverse=True,
         )
+    if max_combos > 0:
+        all_combos = all_combos[:max_combos]
+
+    total_combos = len(all_combos)
     candidates: list[TuningCandidate] = []
-    for combo in all_combos:
+    for combo_index, combo in enumerate(all_combos, start=1):
         overrides = dict(zip(keys, combo))
         merged_env = {**base_env, **overrides}
         try:
             settings = Settings.from_env(merged_env)
         except ValueError:
+            if on_progress is not None:
+                on_progress(
+                    f"combo {combo_index}/{total_combos} skipped invalid params={overrides}"
+                )
             continue
 
         if aggregate == "pooled":
@@ -330,6 +348,8 @@ def run_multi_scenario_sweep(
                 scenarios=scenarios,
                 settings=settings,
                 signal_evaluator=signal_evaluator,
+                on_progress=on_progress,
+                progress_label=f"combo {combo_index}/{total_combos}",
             )
             agg_score = (
                 score_report(
@@ -344,6 +364,13 @@ def run_multi_scenario_sweep(
             candidates.append(
                 TuningCandidate(params=overrides, report=agg_report, score=agg_score)
             )
+            if on_progress is not None:
+                trades = agg_report.total_trades if agg_report is not None else 0
+                score = "none" if agg_score is None else f"{agg_score:.4f}"
+                on_progress(
+                    f"combo {combo_index}/{total_combos} complete "
+                    f"score={score} trades={trades} params={overrides}"
+                )
             continue
 
         per_scenario_reports: list[BacktestReport | None] = []
@@ -371,6 +398,13 @@ def run_multi_scenario_sweep(
 
         agg_report = _aggregate_reports(per_scenario_reports)
         candidates.append(TuningCandidate(params=overrides, report=agg_report, score=agg_score))
+        if on_progress is not None:
+            trades = agg_report.total_trades if agg_report is not None else 0
+            score = "none" if agg_score is None else f"{agg_score:.4f}"
+            on_progress(
+                f"combo {combo_index}/{total_combos} complete "
+                f"score={score} trades={trades} params={overrides}"
+            )
 
     return sorted(
         candidates,

@@ -60,6 +60,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Maximum allowed IS/OOS drawdown to accept a candidate (0.0 = disabled)")
     parser.add_argument("--max-trades", type=int, default=0,
                         help="Maximum trades per scenario to accept a candidate (0 = disabled)")
+    parser.add_argument("--max-combos", type=int, default=0,
+                        help="Maximum grid combinations to evaluate per strategy (0 = all)")
     parser.add_argument(
         "--strategies",
         default="enabled",
@@ -76,6 +78,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true",
                         help="Skip Alpaca API calls; use existing scenario files in --output-dir")
     args = parser.parse_args(list(argv) if argv is not None else sys.argv[1:])
+
+    if args.max_combos < 0:
+        print("--max-combos must be non-negative", file=sys.stderr)
+        return 1
 
     base_env = dict(os.environ)
     if args.trading_mode:
@@ -214,6 +220,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     max_trades=args.max_trades,
                     signal_evaluator=signal_evaluator,
                     surrogate=surrogate,
+                    max_combos=args.max_combos,
+                    on_progress=lambda msg, strat=strat_name: print(
+                        f"  [{strat}] {msg}"
+                    ),
                 )
                 scored = [c for c in candidates if c.score is not None]
 
