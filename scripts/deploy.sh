@@ -61,6 +61,39 @@ paper_proof_enabled() {
   [[ "${TRADING_MODE:-}" == "paper" && "${paper_proof_freeze,,}" == "true" ]]
 }
 
+load_deploy_trading_status_line() {
+  "${compose[@]}" run -T --rm admin status \
+    --mode "${TRADING_MODE}" \
+    --strategy-version "${STRATEGY_VERSION}"
+}
+
+load_deploy_ops_expected_trading_status() {
+  local status_line
+
+  if ! paper_proof_enabled; then
+    printf 'enabled\n'
+    return
+  fi
+
+  if ! status_line="$(load_deploy_trading_status_line 2>/dev/null)"; then
+    printf 'enabled\n'
+    return
+  fi
+
+  if [[ "$status_line" == *"status=close_only"* \
+    && "$status_line" == *"kill_switch=false"* \
+    && "$status_line" == *"reason=paper profit lock"* ]]; then
+    if BROKER_FLAT_CONTEXT="deploy profit lock" \
+      "$ROOT_DIR/scripts/broker_flat_check.sh" "$ENV_FILE" >&2; then
+      echo "deploy ops check accepting flat paper profit lock: $status_line" >&2
+      printf 'close_only\n'
+      return
+    fi
+  fi
+
+  printf 'enabled\n'
+}
+
 refresh_paper_readiness() {
   local attempt
   local rc
@@ -218,6 +251,7 @@ fi
 "${compose[@]}" up -d --force-recreate web
 
 if credentials_ready; then
+  deploy_ops_expected_trading_status="$(load_deploy_ops_expected_trading_status)"
   remove_supervisor_container
   "${compose[@]}" up -d --force-recreate supervisor
   "${compose[@]}" run --rm --entrypoint alpaca-bot-ops-check admin \
@@ -226,7 +260,7 @@ if credentials_ready; then
     --wait-seconds 60 \
     --expect-trading-mode "${TRADING_MODE}" \
     --expect-strategy-version "${STRATEGY_VERSION}" \
-    --expect-trading-status enabled \
+    --expect-trading-status "$deploy_ops_expected_trading_status" \
     --expect-kill-switch false \
     --expect-only-enabled-strategy bull_flag
   if paper_proof_enabled; then

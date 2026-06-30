@@ -115,6 +115,13 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "REQUIRE_CRON_HEALTH must be true or false" in deploy_text
     assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in deploy_text
     assert "Cron health check skipped because REQUIRE_CRON_HEALTH=false" in deploy_text
+    assert "load_deploy_trading_status_line()" in deploy_text
+    assert "load_deploy_ops_expected_trading_status()" in deploy_text
+    assert "reason=paper profit lock" in deploy_text
+    assert 'BROKER_FLAT_CONTEXT="deploy profit lock"' in deploy_text
+    assert "deploy ops check accepting flat paper profit lock" in deploy_text
+    assert "printf 'close_only\\n'" in deploy_text
+    assert "printf 'enabled\\n'" in deploy_text
     assert "verify_paper_decision_dry_run()" in deploy_text
     assert "Paper decision dry run skipped because DEPLOY_REQUIRE_DECISION_DRY_RUN=false" in deploy_text
     assert 'PAPER_DECISION_DRY_RUN_STRATEGY="$DEPLOY_DECISION_DRY_RUN_STRATEGY"' in deploy_text
@@ -124,7 +131,8 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert '"$ROOT_DIR/scripts/paper_decision_dry_run.sh" "$ENV_FILE"' in deploy_text
     assert '--expect-trading-mode "${TRADING_MODE}"' in deploy_text
     assert '--expect-strategy-version "${STRATEGY_VERSION}"' in deploy_text
-    assert "--expect-trading-status enabled" in deploy_text
+    assert 'deploy_ops_expected_trading_status="$(load_deploy_ops_expected_trading_status)"' in deploy_text
+    assert '--expect-trading-status "$deploy_ops_expected_trading_status"' in deploy_text
     assert "--expect-kill-switch false" in deploy_text
     assert "--expect-only-enabled-strategy bull_flag" in deploy_text
     assert 'compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")' in deploy_text
