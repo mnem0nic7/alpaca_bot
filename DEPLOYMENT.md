@@ -260,7 +260,7 @@ git checkout <target-revision>
 If the worker does not start, inspect logs with Docker:
 
 ```bash
-docker compose -f deploy/compose.yaml logs --tail=200 supervisor
+docker compose --env-file /etc/alpaca_bot/alpaca-bot.env -f deploy/compose.yaml logs --tail=200 supervisor
 ```
 
 To verify the local dashboard:
@@ -290,8 +290,8 @@ This repo includes an example reverse-proxy config at [deploy/Caddyfile.example]
 If you only want to verify the local database is healthy:
 
 ```bash
-docker compose -f deploy/compose.yaml ps postgres
-docker compose -f deploy/compose.yaml logs --tail=100 postgres
+docker compose --env-file /etc/alpaca_bot/alpaca-bot.env -f deploy/compose.yaml ps postgres
+docker compose --env-file /etc/alpaca_bot/alpaca-bot.env -f deploy/compose.yaml logs --tail=100 postgres
 ```
 
 ## Admin command examples
