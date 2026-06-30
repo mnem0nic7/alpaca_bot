@@ -1877,6 +1877,11 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "status_session_date" in script
     assert "current_session_date" in script
     assert "paper readiness preserving same-session paper profit lock" in script
+    assert "paper readiness ops check accepting same-session paper profit lock" in script
+    assert "same-session paper profit lock has $active_orders active stock orders" in script
+    assert "paper readiness session entry block check accepted for same-session paper profit lock" in script
+    assert "ops_expected_trading_status=\"enabled\"" in script
+    assert "ops_expected_trading_status=\"close_only\"" in script
     assert "paper readiness prior proof checks pending" in script
     assert "prior proof scheduled checks missing" in script
     assert "prior proof scheduled checks failed" in script
@@ -1899,6 +1904,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "check_name = 'paper_profit_probe' AND status IN ('passed', 'pending')" not in script
     assert "session $PAPER_READINESS_SESSION_DATE has entry-blocking state" in script
     assert "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0" in script
+    assert "paper readiness session entry block check accepted for same-session paper profit lock" in script
     assert "paper readiness session entry block check skipped after flatten" in script
     assert "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED" in script
     assert "IN ('_global', '_equity')" in script
@@ -1909,7 +1915,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "non_loss_days_newer" in script
     assert "losing_streak >= (:'losing_streak_n')::int" in script
     assert "pre-open paper readiness auto-resume" in script
-    assert "--expect-trading-status enabled" in script
+    assert '--expect-trading-status "$ops_expected_trading_status"' in script
     assert "--expect-only-enabled-strategy bull_flag" in script
     assert "require_env_value MARKET_DATA_FEED iex" in script
     assert "require_env_value DAILY_SMA_PERIOD 20" in script

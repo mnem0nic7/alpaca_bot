@@ -1305,6 +1305,7 @@ fi
 
 echo "paper readiness option positions ok: net_open=0 active_orders=0"
 
+same_session_profit_lock=false
 if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
   status_line="$("${compose[@]}" run -T --rm admin status \
     --mode paper \
@@ -1318,7 +1319,6 @@ if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
       exit 1
     fi
 
-    same_session_profit_lock=false
     if [[ "$status_line" == *"reason=paper profit lock"* ]]; then
       status_updated_at="$(sed -n 's/.* updated_at=\([^ ]*\).*/\1/p' <<< "$status_line")"
       status_session_date=""
@@ -1507,13 +1507,15 @@ SQL
     <<< "$session_entry_blocks"
 
   if [[ "${blocked_session_state_count:-0}" != "0" ]]; then
-    if is_after_configured_flatten_time; then
+    if [[ "${same_session_profit_lock:-false}" == "true" ]]; then
+      echo "paper readiness session entry block check accepted for same-session paper profit lock: session=$PAPER_READINESS_SESSION_DATE blocked=$blocked_session_state_count names=[$blocked_session_state_names]"
+    elif is_after_configured_flatten_time; then
       echo "paper readiness session entry block check skipped after flatten: session=$PAPER_READINESS_SESSION_DATE blocked=$blocked_session_state_count names=[$blocked_session_state_names]"
     else
-    echo \
-      "paper readiness failed: session $PAPER_READINESS_SESSION_DATE has entry-blocking state for [$blocked_session_state_names]" \
-      >&2
-    exit 1
+      echo \
+        "paper readiness failed: session $PAPER_READINESS_SESSION_DATE has entry-blocking state for [$blocked_session_state_names]" \
+        >&2
+      exit 1
     fi
   else
     echo "paper readiness session entry blocks ok: session=$PAPER_READINESS_SESSION_DATE blocked=0"
@@ -1644,6 +1646,26 @@ else
   echo "paper readiness flat exposure check skipped"
 fi
 
+ops_expected_trading_status="enabled"
+if [[ "${same_session_profit_lock:-false}" == "true" ]]; then
+  stock_exposure_counts="$(load_stock_exposure_counts)"
+  IFS='|' read -r open_positions active_orders <<< "$stock_exposure_counts"
+
+  if [[ "${open_positions:-0}" != "0" ]]; then
+    echo "paper readiness failed: same-session paper profit lock has $open_positions open stock positions" >&2
+    exit 1
+  fi
+
+  if [[ "${active_orders:-0}" != "0" ]]; then
+    echo "paper readiness failed: same-session paper profit lock has $active_orders active stock orders" >&2
+    exit 1
+  fi
+
+  BROKER_FLAT_CONTEXT="paper readiness profit lock" ./scripts/broker_flat_check.sh "$ENV_FILE"
+  echo "paper readiness ops check accepting same-session paper profit lock"
+  ops_expected_trading_status="close_only"
+fi
+
 "${compose[@]}" run -T --rm \
   --entrypoint alpaca-bot-ops-check admin \
   --url http://web:8080/healthz \
@@ -1651,6 +1673,6 @@ fi
   --wait-seconds 60 \
   --expect-trading-mode paper \
   --expect-strategy-version "$STRATEGY_VERSION" \
-  --expect-trading-status enabled \
+  --expect-trading-status "$ops_expected_trading_status" \
   --expect-kill-switch false \
   --expect-only-enabled-strategy bull_flag
