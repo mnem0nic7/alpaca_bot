@@ -405,13 +405,13 @@ require_env_value ENTRY_WINDOW_START 10:00
 require_env_value ENTRY_WINDOW_END 15:30
 require_env_value FLATTEN_TIME 15:45
 require_env_true PAPER_PROOF_FREEZE
-require_env_true ENABLE_VWAP_ENTRY_FILTER
+require_env_false_or_unset ENABLE_VWAP_ENTRY_FILTER
 require_env_true ENABLE_PROFIT_TRAIL
 require_env_value PROFIT_TRAIL_PCT 0.90
 require_env_true ENABLE_PROFIT_TARGET
 require_env_value PROFIT_TARGET_R 3.0
 require_env_true_or_unset ENABLE_BREAKEVEN_STOP
-require_env_value_or_unset BREAKEVEN_TRIGGER_PCT 0.0025
+require_env_value BREAKEVEN_TRIGGER_PCT 0.005
 require_env_value_or_unset BREAKEVEN_TRAIL_PCT 0.002
 require_env_false_or_unset EXTENDED_HOURS_ENABLED
 require_env_false_or_unset ENABLE_VIX_FILTER
@@ -483,9 +483,9 @@ check("paper_proof_freeze", settings.paper_proof_freeze, True)
 check("enable_profit_target", settings.enable_profit_target, True)
 check("profit_target_r", settings.profit_target_r, 3.0)
 check("enable_breakeven_stop", settings.enable_breakeven_stop, True)
-check("breakeven_trigger_pct", settings.breakeven_trigger_pct, 0.0025)
+check("breakeven_trigger_pct", settings.breakeven_trigger_pct, 0.005)
 check("breakeven_trail_pct", settings.breakeven_trail_pct, 0.002)
-check("enable_vwap_entry_filter", settings.enable_vwap_entry_filter, True)
+check("enable_vwap_entry_filter", settings.enable_vwap_entry_filter, False)
 check("enable_vix_filter", settings.enable_vix_filter, False)
 check("enable_sector_filter", settings.enable_sector_filter, False)
 check("enable_regime_filter", settings.enable_regime_filter, False)

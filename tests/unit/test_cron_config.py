@@ -1842,7 +1842,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     ) in script
     assert 'check("enable_profit_trail", settings.enable_profit_trail, True)' in script
     assert 'check("paper_proof_freeze", settings.paper_proof_freeze, True)' in script
-    assert 'check("enable_vwap_entry_filter", settings.enable_vwap_entry_filter, True)' in script
+    assert 'check("enable_vwap_entry_filter", settings.enable_vwap_entry_filter, False)' in script
     assert 'check("enable_news_filter", settings.enable_news_filter, False)' in script
     assert "require_env_value MAX_LOSS_PER_TRADE_DOLLARS 20.0" in script
     assert 'check("max_loss_per_trade_dollars", settings.max_loss_per_trade_dollars, 20.0)' in script
@@ -1917,13 +1917,13 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_value ENTRY_WINDOW_END 15:30" in script
     assert "require_env_value FLATTEN_TIME 15:45" in script
     assert "require_env_true PAPER_PROOF_FREEZE" in script
-    assert "require_env_true ENABLE_VWAP_ENTRY_FILTER" in script
+    assert "require_env_false_or_unset ENABLE_VWAP_ENTRY_FILTER" in script
     assert "require_env_true ENABLE_PROFIT_TRAIL" in script
     assert "require_env_value PROFIT_TRAIL_PCT 0.90" in script
     assert "require_env_true ENABLE_PROFIT_TARGET" in script
     assert "require_env_value PROFIT_TARGET_R 3.0" in script
     assert "require_env_true_or_unset ENABLE_BREAKEVEN_STOP" in script
-    assert "require_env_value_or_unset BREAKEVEN_TRIGGER_PCT 0.0025" in script
+    assert "require_env_value BREAKEVEN_TRIGGER_PCT 0.005" in script
     assert "require_env_value_or_unset BREAKEVEN_TRAIL_PCT 0.002" in script
     assert "require_env_false_or_unset EXTENDED_HOURS_ENABLED" in script
     assert "require_env_false_or_unset ENABLE_VIX_FILTER" in script
@@ -4006,13 +4006,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "bull_flag_consolidation_range_pct="
         "{settings.bull_flag_consolidation_range_pct:g}"
     ) in script
-    assert "bool(settings.enable_vwap_entry_filter)" in script
+    assert "not bool(settings.enable_vwap_entry_filter)" in script
     assert "bool(settings.enable_profit_trail)" in script
     assert "abs(float(settings.profit_trail_pct) - 0.90)" in script
     assert "bool(settings.enable_profit_target)" in script
     assert "abs(float(settings.profit_target_r) - 3.0)" in script
     assert "bool(settings.enable_breakeven_stop)" in script
-    assert "abs(float(settings.breakeven_trigger_pct) - 0.0025)" in script
+    assert "abs(float(settings.breakeven_trigger_pct) - 0.005)" in script
     assert "abs(float(settings.breakeven_trail_pct) - 0.002)" in script
     assert "not bool(settings.enable_vix_filter)" in script
     assert "not bool(settings.enable_sector_filter)" in script

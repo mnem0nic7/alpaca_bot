@@ -1552,13 +1552,13 @@ posture_status = (
         and as_hhmm(settings.entry_window_start) == "10:00"
         and as_hhmm(settings.entry_window_end) == "15:30"
         and as_hhmm(settings.flatten_time) == "15:45"
-        and bool(settings.enable_vwap_entry_filter)
+        and not bool(settings.enable_vwap_entry_filter)
         and bool(settings.enable_profit_trail)
         and abs(float(settings.profit_trail_pct) - 0.90) < 1e-9
         and bool(settings.enable_profit_target)
         and abs(float(settings.profit_target_r) - 3.0) < 1e-9
         and bool(settings.enable_breakeven_stop)
-        and abs(float(settings.breakeven_trigger_pct) - 0.0025) < 1e-9
+        and abs(float(settings.breakeven_trigger_pct) - 0.005) < 1e-9
         and abs(float(settings.breakeven_trail_pct) - 0.002) < 1e-9
         and not bool(settings.enable_vix_filter)
         and not bool(settings.enable_sector_filter)
