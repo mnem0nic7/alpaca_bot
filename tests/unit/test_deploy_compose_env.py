@@ -93,7 +93,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "DEPLOY_PROOF_SETTLE_SECONDS must be a non-negative integer" in deploy_text
     assert 'DEPLOY_REQUIRE_DECISION_DRY_RUN="${DEPLOY_REQUIRE_DECISION_DRY_RUN:-true}"' in deploy_text
     assert "DEPLOY_REQUIRE_DECISION_DRY_RUN must be true or false" in deploy_text
-    assert 'DEPLOY_READINESS_REFRESH_RETRIES="${DEPLOY_READINESS_REFRESH_RETRIES:-3}"' in deploy_text
+    assert 'DEPLOY_READINESS_REFRESH_RETRIES="${DEPLOY_READINESS_REFRESH_RETRIES:-10}"' in deploy_text
     assert (
         'DEPLOY_READINESS_REFRESH_RETRY_SECONDS="${DEPLOY_READINESS_REFRESH_RETRY_SECONDS:-20}"'
         in deploy_text
