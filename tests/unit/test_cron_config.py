@@ -2345,10 +2345,9 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "has_stock_exposure" in script
     assert "decision_evidence_records" in script
     assert "payload->>'strategy_name' = :'paper_activity_strategy'" in script
-    assert (
-        "AND (NOT (payload ? 'strategy_name') OR payload->>'strategy_name' = :'paper_activity_strategy')"
-        in script
-    )
+    assert "dispatch_failure.payload->>'strategy_name' = :'paper_activity_strategy'" in script
+    assert "recovery_exit_queued_stop_above_market" in script
+    assert "stop_recovery.created_at >= dispatch_failure.created_at" in script
     assert "strategy_decision_cycles" in script
     assert "strategy_decision_records" in script
     assert "-v trading_mode=" in script

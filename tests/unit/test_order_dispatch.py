@@ -1879,7 +1879,7 @@ class GenericStopFailingBroker:
 
 
 def test_circuit_breaker_42210000_marks_canceled_and_emits_audit() -> None:
-    """Alpaca 42210000 on a stop order must mark status='canceled' and emit order_dispatch_stop_price_rejected."""
+    """Alpaca 42210000 on a breached stop queues a recovery exit."""
     _, dispatch_pending_orders = load_order_dispatch_api()
     settings = make_settings()
     now = datetime(2026, 5, 12, 15, 0, tzinfo=timezone.utc)
@@ -1911,9 +1911,20 @@ def test_circuit_breaker_42210000_marks_canceled_and_emits_audit() -> None:
     final_statuses = [o.status for o in order_store.saved]
     assert "canceled" in final_statuses, f"42210000 stop must be marked canceled, got {final_statuses}"
     assert "error" not in final_statuses, "42210000 stop must not be marked error"
+    recovery_exits = [
+        order
+        for order in order_store.saved
+        if order.intent_type == "exit" and order.status == "pending_submit"
+    ]
+    assert len(recovery_exits) == 1
+    assert recovery_exits[0].client_order_id == "stop_recovery:v1-breakout:2026-05-12:AAPL:exit"
+    assert recovery_exits[0].side == "sell"
+    assert recovery_exits[0].quantity == 10
+    assert recovery_exits[0].reason == "stop_price_rejected"
 
     event_types = [e.event_type for e in audit_store.appended]
     assert "order_dispatch_stop_price_rejected" in event_types
+    assert "recovery_exit_queued_stop_above_market" in event_types
     assert "order_dispatch_failed" not in event_types
     rejected_event = next(
         event
@@ -1923,6 +1934,74 @@ def test_circuit_breaker_42210000_marks_canceled_and_emits_audit() -> None:
     assert rejected_event.payload["trading_mode"] == "paper"
     assert rejected_event.payload["strategy_version"] == "v1-breakout"
     assert rejected_event.payload["strategy_name"] == "breakout"
+    recovery_event = next(
+        event
+        for event in audit_store.appended
+        if event.event_type == "recovery_exit_queued_stop_above_market"
+    )
+    assert recovery_event.payload["queued"] is True
+    assert recovery_event.payload["source"] == "order_dispatch_stop_price_rejected"
+    assert recovery_event.payload["stop_client_order_id"] == stop_order.client_order_id
+
+
+def test_42210000_stop_rejection_reuses_active_exit_order() -> None:
+    """Do not queue a duplicate market exit when one is already active."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    now = datetime(2026, 5, 12, 15, 0, tzinfo=timezone.utc)
+    stop_order = OrderRecord(
+        client_order_id="startup_recovery:v1-breakout:2026-05-12:AAPL:stop",
+        symbol="AAPL",
+        side="sell",
+        intent_type="stop",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        stop_price=185.0,
+        initial_stop_price=185.0,
+        signal_timestamp=None,
+    )
+    active_exit = OrderRecord(
+        client_order_id="stop_recovery:v1-breakout:2026-05-12:AAPL:exit",
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=now,
+        updated_at=now,
+        reason="stop_price_rejected",
+    )
+    order_store = RecordingOrderStore([stop_order], extra_orders=[active_exit])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=order_store, audit_event_store=audit_store, connection=FakeConnection()
+    )
+
+    dispatch_pending_orders(
+        settings=settings, runtime=runtime, broker=StopFailingBrokerWith42210000(), now=now
+    )
+
+    recovery_exits = [
+        order
+        for order in order_store.saved
+        if order.intent_type == "exit" and order.status == "pending_submit"
+    ]
+    assert recovery_exits == []
+    assert any(order.status == "canceled" for order in order_store.saved)
+    recovery_event = next(
+        event
+        for event in audit_store.appended
+        if event.event_type == "recovery_exit_queued_stop_above_market"
+    )
+    assert recovery_event.payload["queued"] is False
+    assert recovery_event.payload["reason"] == "active_exit_order_exists"
+    assert recovery_event.payload["active_exit_client_order_id"] == active_exit.client_order_id
 
 
 def test_non_42210000_stop_error_still_marks_error() -> None:

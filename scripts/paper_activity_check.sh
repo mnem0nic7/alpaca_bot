@@ -672,17 +672,37 @@ SELECT
     SELECT COUNT(*)::int
     FROM active_strategy_orders
   ), 0),
-  COUNT(*) FILTER (
-    WHERE event_type IN (
-      'order_dispatch_failed',
-      'order_dispatch_stop_price_rejected'
-    )
-      AND created_at >= COALESCE(
+  COALESCE((
+    SELECT COUNT(*)::int
+    FROM recent dispatch_failure
+    WHERE dispatch_failure.event_type IN (
+        'order_dispatch_failed',
+        'order_dispatch_stop_price_rejected'
+      )
+      AND dispatch_failure.created_at >= COALESCE(
         (SELECT created_at FROM latest_supervisor_started),
         NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
       )
-      AND (NOT (payload ? 'strategy_name') OR payload->>'strategy_name' = :'paper_activity_strategy')
-  )::int,
+      AND (
+        NOT (dispatch_failure.payload ? 'strategy_name')
+        OR dispatch_failure.payload->>'strategy_name' = :'paper_activity_strategy'
+      )
+      AND (
+        dispatch_failure.event_type <> 'order_dispatch_stop_price_rejected'
+        OR NOT EXISTS (
+          SELECT 1
+          FROM recent stop_recovery
+          WHERE stop_recovery.event_type = 'recovery_exit_queued_stop_above_market'
+            AND stop_recovery.created_at >= dispatch_failure.created_at
+            AND COALESCE(stop_recovery.payload->>'symbol', '') =
+                COALESCE(dispatch_failure.payload->>'symbol', '')
+            AND (
+              NOT (stop_recovery.payload ? 'strategy_name')
+              OR stop_recovery.payload->>'strategy_name' = :'paper_activity_strategy'
+            )
+        )
+      )
+  ), 0)::int,
   COALESCE((
     SELECT COUNT(*)::int
     FROM recent stream_issue

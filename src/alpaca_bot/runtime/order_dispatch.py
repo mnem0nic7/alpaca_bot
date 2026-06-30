@@ -15,6 +15,22 @@ from alpaca_bot.storage import AuditEvent, OrderRecord
 logger = logging.getLogger(__name__)
 
 _UNRECOVERABLE_STOP_CODES = frozenset({"42210000"})
+ACTIVE_EXIT_STATUSES = (
+    "pending_submit",
+    "submitting",
+    "pending_new",
+    "new",
+    "accepted",
+    "accepted_for_bidding",
+    "submitted",
+    "partially_filled",
+    "held",
+    "pending_replace",
+    "pending_cancel",
+    "stopped",
+    "suspended",
+    "done_for_day",
+)
 
 
 def entry_order_next_bar_expiry_age(settings: Settings) -> timedelta:
@@ -33,6 +49,67 @@ def _is_duplicate_client_order_id_error(exc: Exception) -> bool:
     return "client_order_id" in msg and (
         "must be unique" in msg or "40010001" in msg
     )
+
+
+def _stop_rejection_implies_exit(order: OrderRecord, exc: Exception) -> bool:
+    if order.intent_type != "stop":
+        return False
+    msg = str(exc).lower()
+    if order.side == "buy":
+        return "stop price must be greater than current price" in msg
+    return "stop price must be less than current price" in msg
+
+
+def _stop_rejection_exit_order(
+    *,
+    settings: Settings,
+    order: OrderRecord,
+    timestamp: datetime,
+) -> OrderRecord:
+    session_date = timestamp.astimezone(settings.market_timezone).date().isoformat()
+    return OrderRecord(
+        client_order_id=(
+            f"stop_recovery:{settings.strategy_version}:"
+            f"{session_date}:{order.symbol}:exit"
+        ),
+        symbol=order.symbol,
+        side=order.side,
+        intent_type="exit",
+        status="pending_submit",
+        quantity=order.quantity,
+        trading_mode=order.trading_mode,
+        strategy_version=order.strategy_version,
+        strategy_name=order.strategy_name,
+        created_at=timestamp,
+        updated_at=timestamp,
+        reason="stop_price_rejected",
+        stop_price=None,
+        limit_price=None,
+        initial_stop_price=None,
+        broker_order_id=None,
+        signal_timestamp=None,
+    )
+
+
+def _active_exit_order(
+    *,
+    runtime: RuntimeProtocol,
+    settings: Settings,
+    order: OrderRecord,
+) -> OrderRecord | None:
+    active_orders = runtime.order_store.list_by_status(
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        statuses=list(ACTIVE_EXIT_STATUSES),
+    )
+    for active in active_orders:
+        if (
+            active.intent_type == "exit"
+            and active.symbol == order.symbol
+            and active.strategy_name == order.strategy_name
+        ):
+            return active
+    return None
 
 
 class OrderStoreProtocol(Protocol):
@@ -440,6 +517,15 @@ def dispatch_pending_orders(
                 order.intent_type == "entry"
                 and _is_duplicate_client_order_id_error(exc)
             )
+            recovery_exit_order = (
+                _stop_rejection_exit_order(
+                    settings=settings,
+                    order=order,
+                    timestamp=timestamp,
+                )
+                if is_unrecoverable_stop and _stop_rejection_implies_exit(order, exc)
+                else None
+            )
             if is_unrecoverable_stop:
                 final_status = "canceled"
                 audit_event_type = "order_dispatch_stop_price_rejected"
@@ -451,6 +537,15 @@ def dispatch_pending_orders(
                 audit_event_type = "order_dispatch_failed"
             with lock_ctx:
                 try:
+                    active_exit_order = (
+                        _active_exit_order(
+                            runtime=runtime,
+                            settings=settings,
+                            order=order,
+                        )
+                        if recovery_exit_order is not None
+                        else None
+                    )
                     runtime.audit_event_store.append(
                         AuditEvent(
                             event_type=audit_event_type,
@@ -471,6 +566,38 @@ def dispatch_pending_orders(
                         ),
                         commit=False,
                     )
+                    if recovery_exit_order is not None:
+                        recovery_payload = {
+                            "client_order_id": recovery_exit_order.client_order_id,
+                            "source": "order_dispatch_stop_price_rejected",
+                            "stop_client_order_id": order.client_order_id,
+                            "stop_price": order.stop_price,
+                            "quantity": order.quantity,
+                            "side": order.side,
+                            "error": str(exc),
+                            "queued": active_exit_order is None,
+                        }
+                        if active_exit_order is not None:
+                            recovery_payload.update(
+                                {
+                                    "reason": "active_exit_order_exists",
+                                    "active_exit_client_order_id": (
+                                        active_exit_order.client_order_id
+                                    ),
+                                    "active_exit_status": active_exit_order.status,
+                                }
+                            )
+                        else:
+                            runtime.order_store.save(recovery_exit_order, commit=False)
+                        runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="recovery_exit_queued_stop_above_market",
+                                symbol=order.symbol,
+                                payload=recovery_payload,
+                                created_at=timestamp,
+                            ),
+                            commit=False,
+                        )
                     runtime.order_store.save(
                         OrderRecord(
                             client_order_id=order.client_order_id,
