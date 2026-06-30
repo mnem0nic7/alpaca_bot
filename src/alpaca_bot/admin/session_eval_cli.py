@@ -40,6 +40,16 @@ ACTIVE_ORDER_STATUSES = (
     "done_for_day",
 )
 
+PROFIT_LOCK_PAUSE_DISABLED_REASONS = frozenset({
+    "entry_cadence_waiting_for_new_bar",
+    "paper_readiness_check_missing",
+    "runtime_reconciliation_mismatch",
+    "trading_status:close_only",
+})
+PROFIT_LOCK_PAUSE_STRATEGY_DISABLED_REASONS = (
+    PROFIT_LOCK_PAUSE_DISABLED_REASONS | {"strategy_session_state_entries_disabled"}
+)
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
@@ -308,6 +318,10 @@ class SessionDiagnostics:
     latest_strategy_disabled: bool = False
     latest_strategy_disabled_reasons: tuple[str, ...] = ()
     decision_activity: DecisionActivityStats = field(default_factory=DecisionActivityStats)
+    trading_mode_value: str = ""
+    trading_status_value: str | None = None
+    trading_status_kill_switch_enabled: bool = False
+    trading_status_reason: str = ""
 
     @property
     def has_issues(self) -> bool:
@@ -378,6 +392,7 @@ class SessionDiagnostics:
         latest_reconciliation_block = (
             self.latest_entries_disabled
             and "runtime_reconciliation_mismatch" in self.latest_entries_disabled_reasons
+            and not self.latest_entries_disabled_is_profit_lock_pause
         )
         return [
             issue
@@ -388,11 +403,15 @@ class SessionDiagnostics:
 
     @property
     def proof_blocking_entries_disabled_cycles(self) -> int:
+        if self.latest_entries_disabled_is_profit_lock_pause:
+            return 0
         return self.entries_disabled_cycles if self.latest_entries_disabled else 0
 
     @property
     def proof_blocking_strategy_disabled_cycles(self) -> int:
         if not self.latest_strategy_disabled:
+            return 0
+        if self.latest_strategy_disabled_is_profit_lock_pause:
             return 0
         if set(self.latest_strategy_disabled_reasons) <= {
             "strategy_session_state_entries_disabled",
@@ -407,6 +426,37 @@ class SessionDiagnostics:
             for issue in self.stream_issues
             if issue.event_type != "stream_heartbeat_stale"
         ]
+
+    @property
+    def flat_paper_profit_lock_pause(self) -> bool:
+        return (
+            self.trading_mode_value == "paper"
+            and self.trading_status_value == "close_only"
+            and not self.trading_status_kill_switch_enabled
+            and self.trading_status_reason.startswith("paper profit lock")
+            and not self.open_positions
+            and not self.active_orders
+        )
+
+    @property
+    def latest_entries_disabled_is_profit_lock_pause(self) -> bool:
+        latest_reasons = set(self.latest_entries_disabled_reasons)
+        return (
+            self.latest_entries_disabled
+            and self.flat_paper_profit_lock_pause
+            and "trading_status:close_only" in latest_reasons
+            and latest_reasons <= PROFIT_LOCK_PAUSE_DISABLED_REASONS
+        )
+
+    @property
+    def latest_strategy_disabled_is_profit_lock_pause(self) -> bool:
+        latest_reasons = set(self.latest_strategy_disabled_reasons)
+        return (
+            self.latest_strategy_disabled
+            and self.flat_paper_profit_lock_pause
+            and "trading_status:close_only" in latest_reasons
+            and latest_reasons <= PROFIT_LOCK_PAUSE_STRATEGY_DISABLED_REASONS
+        )
 
 
 def _audit_event_symbol(event: AuditEvent) -> str | None:
@@ -487,6 +537,13 @@ def _build_session_diagnostics(
         strategy_version=strategy_version,
         strategy_name=strategy_name,
     )
+    trading_status_value, trading_status_kill_switch_enabled, trading_status_reason = (
+        _load_trading_status_context(
+            conn,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+        )
+    )
 
     return SessionDiagnostics(
         cycle_errors=audit_store.list_by_event_types(
@@ -566,7 +623,38 @@ def _build_session_diagnostics(
         latest_strategy_disabled=latest_strategy_disabled,
         latest_strategy_disabled_reasons=latest_strategy_disabled_reasons,
         decision_activity=decision_activity,
+        trading_mode_value=trading_mode.value,
+        trading_status_value=trading_status_value,
+        trading_status_kill_switch_enabled=trading_status_kill_switch_enabled,
+        trading_status_reason=trading_status_reason,
     )
+
+
+def _load_trading_status_context(
+    conn: ConnectionProtocol,
+    *,
+    trading_mode: TradingMode | str,
+    strategy_version: str,
+) -> tuple[str | None, bool, str]:
+    trading_mode_value = (
+        trading_mode.value if isinstance(trading_mode, TradingMode) else str(trading_mode)
+    )
+    try:
+        row = fetch_one(
+            conn,
+            """
+            SELECT status, kill_switch_enabled, COALESCE(status_reason, '')
+            FROM trading_status
+            WHERE trading_mode = %s
+              AND strategy_version = %s
+            """,
+            (trading_mode_value, strategy_version),
+        )
+    except Exception:
+        return (None, False, "")
+    if row is None:
+        return (None, False, "")
+    return (str(row[0]), bool(row[1]), str(row[2] or ""))
 
 
 def _load_entries_disabled_cycle_stats(
