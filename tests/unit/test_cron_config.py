@@ -1053,6 +1053,10 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     readiness_if_needed = Path("scripts/paper_readiness_if_needed.sh").read_text()
 
     assert "flock -n -E 75" in wrapper
+    assert 'if [[ ! -e "$LOCK_FILE" ]]' in wrapper
+    assert "umask 000" in wrapper
+    assert 'chmod a+rw "$LOCK_FILE"' in wrapper
+    assert "cannot create lock file" in wrapper
     assert '"$ROOT_DIR/scripts/run_check_with_audit.sh"' in wrapper
     assert '"$ROOT_DIR/scripts/scheduled_check_lock_skipped.sh"' in wrapper
     assert 'if [[ "$rc" -eq 75 ]]' in wrapper

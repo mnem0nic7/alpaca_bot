@@ -17,6 +17,18 @@ if [[ "$#" -eq 0 ]]; then
   exit 2
 fi
 
+if [[ ! -e "$LOCK_FILE" ]]; then
+  original_umask="$(umask)"
+  umask 000
+  if ! : > "$LOCK_FILE"; then
+    umask "$original_umask"
+    echo "run_locked_check_with_audit.sh cannot create lock file: $LOCK_FILE" >&2
+    exit 73
+  fi
+  umask "$original_umask"
+fi
+chmod a+rw "$LOCK_FILE" 2>/dev/null || true
+
 flock -n -E 75 "$LOCK_FILE" \
   "$ROOT_DIR/scripts/run_check_with_audit.sh" "$CHECK_NAME" "$ENV_FILE" "$@"
 rc="$?"
