@@ -5021,10 +5021,15 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "and readiness_row_is_current(row)" in script
     assert "readiness_decision_dry_run_row[3]" in script
     assert "readiness_audit_status" in script
-    assert "readiness_audit_status = \"stale\"" in script
-    assert "readiness_audit_status = \"stale_by_age\"" in script
+    assert "readiness_due_time = time(9, 25)" in script
+    assert "readiness_required_since_text = readiness_required_since.isoformat()" in script
+    assert 'readiness_audit_status = "missing" if readiness_due else "not_due"' in script
+    assert "readiness_stale_status = \"stale\"" in script
+    assert "readiness_stale_status = \"stale_by_age\"" in script
+    assert "readiness_due and readiness_audit_status not in {\"ok\", \"not_due\"}" in script
     assert "readiness_audit_{readiness_audit_status}" in script
     assert "readiness_decision_dry_run_status" in script
+    assert "elif readiness_audit_status == \"ok\" and readiness_decision_dry_run_status != \"ok\"" in script
     assert "readiness_decision_dry_run_{readiness_decision_dry_run_status}" in script
     assert "readiness_decision_dry_run_strategy != strategy_name" in script
     assert "readiness_decision_dry_run_status = \"strategy_mismatch\"" in script
@@ -5040,6 +5045,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "paper proof readiness audit:" in script
     assert "status={readiness_audit_status}" in script
     assert "target_session={readiness_target_session.isoformat()}" in script
+    assert "due={str(readiness_due).lower()}" in script
+    assert "due_after={readiness_due_after}" in script
+    assert "required_since={readiness_required_since_text}" in script
     assert "check_status={readiness_audit_check_status}" in script
     assert "created_at={readiness_audit_created_text}" in script
     assert "age_minutes={readiness_audit_age_text}" in script

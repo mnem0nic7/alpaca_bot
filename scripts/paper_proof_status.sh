@@ -533,6 +533,23 @@ if current_market_date >= proof_start and (
 ):
     activity_target_session = current_market_date
 market_timezone = settings.market_timezone.key
+readiness_due = False
+readiness_first_check_time = time(9, 15)
+readiness_due_time = time(9, 25)
+readiness_required_since = datetime.combine(
+    readiness_target_session,
+    readiness_first_check_time,
+    settings.market_timezone,
+).astimezone(timezone.utc)
+readiness_required_since_text = readiness_required_since.isoformat()
+readiness_due_after = (
+    f"{readiness_target_session.isoformat()} "
+    f"{readiness_due_time.strftime('%H:%M')} {settings.market_timezone.key}"
+)
+readiness_due = current_market_datetime.date() > readiness_target_session or (
+    current_market_datetime.date() == readiness_target_session
+    and current_market_datetime.time() >= readiness_due_time
+)
 
 conn = connect_postgres(settings.database_url)
 try:
@@ -1198,7 +1215,7 @@ def readiness_row_has_decision_dry_run(row) -> bool:
 readiness_audit_check_status = "missing"
 readiness_audit_created_at = None
 readiness_audit_age_minutes = None
-readiness_audit_status = "missing"
+readiness_audit_status = "missing" if readiness_due else "not_due"
 if readiness_audit_row:
     readiness_audit_check_status = readiness_audit_row[0] or "unknown"
     readiness_audit_created_at = readiness_audit_row[1]
@@ -1220,15 +1237,25 @@ if readiness_audit_row:
             // 60
         ),
     )
+    readiness_stale_status = ""
     if (
         latest_supervisor_started_at is not None
         and readiness_audit_created_at < latest_supervisor_started_at
     ):
-        readiness_audit_status = "stale"
+        readiness_stale_status = "stale"
     elif readiness_audit_age_minutes > readiness_max_pass_age_minutes:
-        readiness_audit_status = "stale_by_age"
-    elif readiness_audit_check_status == "passed":
-        readiness_audit_status = "ok"
+        readiness_stale_status = "stale_by_age"
+    if readiness_audit_check_status == "passed":
+        if readiness_stale_status and readiness_due:
+            readiness_audit_status = readiness_stale_status
+        elif readiness_stale_status:
+            readiness_audit_status = "not_due"
+        else:
+            readiness_audit_status = "ok"
+    elif readiness_audit_check_status == "pending":
+        readiness_audit_status = "pending"
+    elif not readiness_due:
+        readiness_audit_status = "not_due"
     else:
         readiness_audit_status = readiness_audit_check_status
 readiness_audit_created_text = (
@@ -1677,9 +1704,11 @@ if runtime_image_health_status != "ok":
     blockers.append("runtime_image_health_failed")
 if stream_status != "ok":
     blockers.append(f"stream_{stream_status}")
-if readiness_audit_status != "ok":
+if readiness_audit_status in {"missing", "failed", "skipped", "stale", "stale_by_age"} or (
+    readiness_due and readiness_audit_status not in {"ok", "not_due"}
+):
     blockers.append(f"readiness_audit_{readiness_audit_status}")
-elif readiness_decision_dry_run_status != "ok":
+elif readiness_audit_status == "ok" and readiness_decision_dry_run_status != "ok":
     blockers.append(f"readiness_decision_dry_run_{readiness_decision_dry_run_status}")
 if activity_audit_status in {"missing", "failed", "skipped", "stale"} or (
     activity_due and activity_audit_status == "pending"
@@ -1790,6 +1819,9 @@ print(
     "paper proof readiness audit: "
     f"status={readiness_audit_status} "
     f"target_session={readiness_target_session.isoformat()} "
+    f"due={str(readiness_due).lower()} "
+    f"due_after={readiness_due_after} "
+    f"required_since={readiness_required_since_text} "
     f"check_status={readiness_audit_check_status} "
     f"created_at={readiness_audit_created_text} "
     f"age_minutes={readiness_audit_age_text} "
