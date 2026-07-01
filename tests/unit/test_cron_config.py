@@ -5233,6 +5233,9 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "active_symbols = tuple(symbol for symbol in enabled_symbols if symbol not in ignored_symbols)" in script
     assert "AlpacaExecutionAdapter.from_settings(settings)" in script
     assert "AlpacaMarketDataAdapter.from_settings(settings)" in script
+    assert "now = datetime.now(settings.market_timezone)" in script
+    assert "close_at + timedelta(minutes=30)" in script
+    assert "completed_sessions.append(session.session_date)" in script
     assert "get_fractionable_symbols(active_symbols)" in script
     assert "replace(settings, fractionable_symbols=fractionable_symbols)" in script
     assert "from collections import Counter" in script

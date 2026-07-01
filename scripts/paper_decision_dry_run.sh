@@ -185,14 +185,22 @@ def _latest_completed_session_date(
     broker: AlpacaExecutionAdapter,
     settings: Settings,
 ) -> date:
-    today = datetime.now(settings.market_timezone).date()
-    calendar = broker.get_market_calendar(start=today - timedelta(days=14), end=today)
-    previous_sessions = [day.session_date for day in calendar if day.session_date < today]
-    if previous_sessions:
-        return max(previous_sessions)
-    sessions = [day.session_date for day in calendar if day.session_date <= today]
-    if sessions:
-        return max(sessions)
+    now = datetime.now(settings.market_timezone)
+    calendar = broker.get_market_calendar(
+        start=now.date() - timedelta(days=14),
+        end=now.date(),
+    )
+    completed_sessions = []
+    for session in calendar:
+        close_at = session.close_at
+        if close_at.tzinfo is None:
+            close_at = close_at.replace(tzinfo=settings.market_timezone)
+        else:
+            close_at = close_at.astimezone(settings.market_timezone)
+        if now >= close_at + timedelta(minutes=30):
+            completed_sessions.append(session.session_date)
+    if completed_sessions:
+        return max(completed_sessions)
     print("paper decision dry run failed: no completed market session found", file=sys.stderr)
     raise SystemExit(1)
 
