@@ -101,6 +101,9 @@ class Settings:
     confidence_floor: float = 0.25
     paper_proof_freeze: bool = False
     paper_readiness_max_pass_age_minutes: int = 180
+    paper_readiness_min_watchlist_symbols: int = 900
+    paper_readiness_decision_dry_run_min_records: int = 900
+    paper_readiness_decision_dry_run_min_evaluations: int = 6
     profit_probe_start_date: date = date(2026, 6, 29)
     floor_raise_step: float = 0.10
     drawdown_raise_pct: float = 0.05
@@ -251,6 +254,15 @@ class Settings:
             ),
             paper_readiness_max_pass_age_minutes=int(
                 values.get("PAPER_READINESS_MAX_PASS_AGE_MINUTES", "180")
+            ),
+            paper_readiness_min_watchlist_symbols=int(
+                values.get("PAPER_READINESS_MIN_WATCHLIST_SYMBOLS", "900")
+            ),
+            paper_readiness_decision_dry_run_min_records=int(
+                values.get("PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS", "900")
+            ),
+            paper_readiness_decision_dry_run_min_evaluations=int(
+                values.get("PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS", "6")
             ),
             profit_probe_start_date=_parse_date(
                 "PROFIT_PROBE_START_DATE",
@@ -493,6 +505,16 @@ class Settings:
         )
         if self.paper_readiness_max_pass_age_minutes < 1:
             raise ValueError("PAPER_READINESS_MAX_PASS_AGE_MINUTES must be positive")
+        if self.paper_readiness_min_watchlist_symbols < 1:
+            raise ValueError("PAPER_READINESS_MIN_WATCHLIST_SYMBOLS must be positive")
+        if self.paper_readiness_decision_dry_run_min_records < 0:
+            raise ValueError(
+                "PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS must be non-negative"
+            )
+        if self.paper_readiness_decision_dry_run_min_evaluations < 1:
+            raise ValueError(
+                "PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS must be positive"
+            )
         if self.entry_stop_price_buffer <= 0:
             raise ValueError("ENTRY_STOP_PRICE_BUFFER must be positive")
         if self.daily_sma_period < 2:

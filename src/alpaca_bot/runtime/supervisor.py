@@ -2569,10 +2569,69 @@ class RuntimeSupervisor:
         self, payload: dict[str, object]
     ) -> bool:
         expected_proof_start = self.settings.profit_probe_start_date.isoformat()
-        return (
-            payload.get("status") == "passed"
-            and payload.get("proof_start") == expected_proof_start
+        if (
+            payload.get("status") != "passed"
+            or payload.get("proof_start") != expected_proof_start
+        ):
+            return False
+        return self._paper_readiness_decision_dry_run_allows_entries(payload)
+
+    def _paper_readiness_decision_dry_run_allows_entries(
+        self, payload: dict[str, object]
+    ) -> bool:
+        strategy = str(payload.get("decision_dry_run_strategy") or "").strip()
+        as_of = str(payload.get("decision_dry_run_as_of") or "").strip()
+        active = self._payload_int(payload, "decision_dry_run_active")
+        records = self._payload_int(payload, "decision_dry_run_records")
+        accepted = self._payload_int(payload, "decision_dry_run_accepted")
+        entry_intents = self._payload_int(payload, "decision_dry_run_entry_intents")
+        evaluations = self._payload_int(payload, "decision_dry_run_evaluations")
+        min_records = self._payload_int(
+            payload, "decision_dry_run_min_decision_records"
         )
+        max_accepted = self._payload_int(payload, "decision_dry_run_max_accepted")
+        max_entry_intents = self._payload_int(
+            payload, "decision_dry_run_max_entry_intents"
+        )
+
+        if not strategy or not as_of:
+            return False
+        if (
+            active is None
+            or active < self.settings.paper_readiness_min_watchlist_symbols
+        ):
+            return False
+        if (
+            records is None
+            or records < self.settings.paper_readiness_decision_dry_run_min_records
+        ):
+            return False
+        if (
+            evaluations is None
+            or evaluations
+            < self.settings.paper_readiness_decision_dry_run_min_evaluations
+        ):
+            return False
+        if (
+            min_records is not None
+            and min_records
+            < self.settings.paper_readiness_decision_dry_run_min_records
+        ):
+            return False
+
+        accepted_evidence = max(accepted or 0, max_accepted or 0)
+        entry_intent_evidence = max(entry_intents or 0, max_entry_intents or 0)
+        return accepted_evidence > 0 and entry_intent_evidence > 0
+
+    @staticmethod
+    def _payload_int(payload: dict[str, object], key: str) -> int | None:
+        value = payload.get(key)
+        if value is None:
+            return None
+        try:
+            return int(str(value))
+        except (TypeError, ValueError):
+            return None
 
     def _paper_readiness_audit_is_expired(
         self,
