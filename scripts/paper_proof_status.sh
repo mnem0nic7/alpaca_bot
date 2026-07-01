@@ -480,6 +480,17 @@ if next_session_warning:
 readiness_target_session = next_market_session or current_market_date
 if readiness_target_session < proof_start:
     readiness_target_session = proof_start
+readiness_expected_decision_dry_run_session = None
+(
+    readiness_expected_decision_dry_run_session,
+    readiness_previous_session_warning,
+) = load_previous_market_session_date(settings, before_date=readiness_target_session)
+if readiness_previous_session_warning:
+    calendar_warning = (
+        f"{calendar_warning}; {readiness_previous_session_warning}"
+        if calendar_warning
+        else readiness_previous_session_warning
+    )
 (
     broker_open_orders,
     broker_open_positions,
@@ -1314,6 +1325,20 @@ readiness_decision_dry_run_max_accepted_value = parse_int_or_none(
 readiness_decision_dry_run_max_entry_intents_value = parse_int_or_none(
     readiness_decision_dry_run_max_entry_intents
 )
+readiness_decision_dry_run_as_of_session = None
+if readiness_decision_dry_run_as_of:
+    try:
+        readiness_as_of_raw = readiness_decision_dry_run_as_of
+        if readiness_as_of_raw.endswith("Z"):
+            readiness_as_of_raw = readiness_as_of_raw[:-1] + "+00:00"
+        readiness_as_of = datetime.fromisoformat(readiness_as_of_raw)
+        if readiness_as_of.tzinfo is None:
+            readiness_as_of = readiness_as_of.replace(tzinfo=settings.market_timezone)
+        readiness_decision_dry_run_as_of_session = readiness_as_of.astimezone(
+            settings.market_timezone
+        ).date()
+    except ValueError:
+        readiness_decision_dry_run_as_of_session = None
 readiness_decision_dry_run_status = "ok"
 if not (
     readiness_decision_dry_run_strategy
@@ -1331,8 +1356,15 @@ elif (
     or readiness_decision_dry_run_records_value is None
     or readiness_decision_dry_run_accepted_value is None
     or readiness_decision_dry_run_entry_intents_value is None
+    or readiness_decision_dry_run_as_of_session is None
 ):
     readiness_decision_dry_run_status = "invalid"
+elif (
+    readiness_expected_decision_dry_run_session is not None
+    and readiness_decision_dry_run_as_of_session
+    != readiness_expected_decision_dry_run_session
+):
+    readiness_decision_dry_run_status = "session_mismatch"
 elif readiness_decision_dry_run_active_value < min_watchlist_symbols:
     readiness_decision_dry_run_status = "active_under_minimum"
 elif readiness_decision_dry_run_records_value < min_decision_dry_run_records:
@@ -1769,6 +1801,7 @@ print(
     f"status={readiness_decision_dry_run_status} "
     f"strategy={readiness_decision_dry_run_strategy or 'none'} "
     f"as_of={readiness_decision_dry_run_as_of or 'none'} "
+    f"required_as_of_session={readiness_expected_decision_dry_run_session.isoformat() if readiness_expected_decision_dry_run_session else 'unknown'} "
     f"active={readiness_decision_dry_run_active or 'none'} "
     f"required_active={min_watchlist_symbols} "
     f"decision_records={readiness_decision_dry_run_records or 'none'} "

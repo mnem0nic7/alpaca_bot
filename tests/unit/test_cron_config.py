@@ -4810,6 +4810,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "image_status={runtime_image_health_status}" in script
     assert "image_detail={runtime_image_health_detail or 'none'}" in script
     assert "readiness_target_session = next_market_session or current_market_date" in script
+    assert "readiness_expected_decision_dry_run_session" in script
+    assert "readiness_previous_session_warning" in script
     assert "if readiness_target_session < proof_start" in script
     assert "event_type = 'supervisor_started'" in script
     assert "latest_supervisor_started_at" in script
@@ -4871,6 +4873,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "readiness_decision_dry_run_{readiness_decision_dry_run_status}" in script
     assert "readiness_decision_dry_run_strategy != strategy_name" in script
     assert "readiness_decision_dry_run_status = \"strategy_mismatch\"" in script
+    assert "readiness_decision_dry_run_status = \"session_mismatch\"" in script
     assert "readiness_decision_dry_run_status = \"active_under_minimum\"" in script
     assert "readiness_decision_dry_run_status = \"records_under_minimum\"" in script
     assert "readiness_decision_dry_run_status = \"evaluations_under_minimum\"" in script
@@ -4887,6 +4890,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "age_minutes={readiness_audit_age_text}" in script
     assert "max_age_minutes={readiness_max_pass_age_minutes}" in script
     assert "paper proof readiness decision dry run:" in script
+    assert "required_as_of_session=" in script
     assert "required_active={min_watchlist_symbols}" in script
     assert "decision_records={readiness_decision_dry_run_records or 'none'}" in script
     assert "required_records={min_decision_dry_run_records}" in script
