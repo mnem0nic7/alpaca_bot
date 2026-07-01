@@ -2257,6 +2257,154 @@ def test_paper_readiness_preserves_profit_lock_on_current_wall_date(
     assert not close_only_marker.exists()
 
 
+def test_paper_readiness_preserves_profit_lock_when_auto_resume_disabled(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "MARKET_DATA_FEED=iex",
+                "DAILY_SMA_PERIOD=20",
+                "BREAKOUT_LOOKBACK_BARS=20",
+                "RELATIVE_VOLUME_LOOKBACK_BARS=20",
+                "RELATIVE_VOLUME_THRESHOLD=2.0",
+                "ENTRY_TIMEFRAME_MINUTES=15",
+                "MAX_OPEN_POSITIONS=4",
+                "REPLAY_SLIPPAGE_BPS=2.0",
+                "RISK_PER_TRADE_PCT=0.01",
+                "MAX_POSITION_PCT=0.05",
+                "MAX_LOSS_PER_TRADE_DOLLARS=20.0",
+                "MAX_PORTFOLIO_EXPOSURE_PCT=0.30",
+                "DAILY_LOSS_LIMIT_PCT=0.01",
+                "STOP_LIMIT_BUFFER_PCT=0.0005",
+                "ENTRY_STOP_PRICE_BUFFER=0.02",
+                "TRAILING_STOP_ATR_MULTIPLIER=1.0",
+                "INTRADAY_CONSECUTIVE_LOSS_GATE=0",
+                "ENTRY_WINDOW_START=10:00",
+                "ENTRY_WINDOW_END=15:30",
+                "FLATTEN_TIME=15:45",
+                "PAPER_PROOF_FREEZE=true",
+                "ENABLE_PROFIT_TRAIL=true",
+                "PROFIT_TRAIL_PCT=0.90",
+                "ENABLE_PROFIT_TARGET=true",
+                "PROFIT_TARGET_R=3.0",
+                "BREAKEVEN_TRIGGER_PCT=0.005",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$*\" == *'2026-06-30T16:39:25+00:00'* ]]; then\n"
+        "  printf '2026-06-30\\n'\n"
+        "elif [[ \"$*\" == *'+%F'* ]]; then\n"
+        "  printf '2026-06-30\\n'\n"
+        "elif [[ \"$*\" == *'+%u'* ]]; then\n"
+        "  printf '2\\n'\n"
+        "elif [[ \"$*\" == *'+%H:%M'* ]]; then\n"
+        "  printf '13:15\\n'\n"
+        "else\n"
+        "  /usr/bin/date \"$@\"\n"
+        "fi\n"
+    )
+    fake_date.chmod(0o755)
+
+    resume_marker = tmp_path / "resume_called"
+    close_only_marker = tmp_path / "close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "args=\"$*\"\n"
+        "input=\"$(cat || true)\"\n"
+        "if [[ \"$args\" == *' admin close-only'* ]]; then\n"
+        f"  touch {close_only_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "if [[ \"$args\" == *' admin status'* ]]; then\n"
+        "  printf 'mode=paper strategy=v1-breakout status=close_only kill_switch=false reason=paper profit lock: stop-out projection negative updated_at=2026-06-30T16:39:25+00:00\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$args\" == *' admin resume'* ]]; then\n"
+        f"  touch {resume_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "if [[ \"$args\" == *'--entrypoint alpaca-bot-ops-check admin'* ]]; then\n"
+        "  printf 'status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=close_only kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$args\" == *' exec -T postgres psql'* ]]; then\n"
+        "  if [[ \"$input\" == *'COUNT(*) FILTER'* && \"$input\" == *'FROM symbol_watchlist'* ]]; then\n"
+        "    printf '900|900|0\\n'\n"
+        "  elif [[ \"$input\" == *'FROM strategy_flags'* && \"$input\" == *'FROM strategy_weights'* ]]; then\n"
+        "    printf 'ok|bull_flag|bull_flag|1.000000|0\\n'\n"
+        "  elif [[ \"$input\" == *'confidence_floor_store'* ]]; then\n"
+        "    printf 'ok|0.250000\\n'\n"
+        "  elif [[ \"$input\" == *'FROM positions'* && \"$input\" == *'FROM orders'* ]]; then\n"
+        "    printf '0|0\\n'\n"
+        "  elif [[ \"$input\" == *'FROM option_orders'* ]]; then\n"
+        "    printf '0\\n'\n"
+        "  elif [[ \"$input\" == *'entries_disabled = TRUE'* ]]; then\n"
+        "    printf '1|_global\\n'\n"
+        "  else\n"
+        "    printf 'unexpected psql call\\n%s\\n' \"$input\" >&2\n"
+        "    exit 98\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$args\" == *'--entrypoint python admin'* ]]; then\n"
+        "  if [[ \"$input\" == *'ConfidenceFloorStore'* ]]; then\n"
+        "    printf 'ok|100000.00|100000.00|0.000000|0.050000|ok|200000.00|5000.00|false\\n'\n"
+        "  elif [[ \"$input\" == *'list_open_orders'* ]]; then\n"
+        "    printf 'paper readiness profit lock broker exposure ok: open_orders=0 open_positions=0\\n'\n"
+        "  else\n"
+        "    printf 'paper readiness container Settings ok\\n'\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf 'unexpected docker call: %s\\n%s\\n' \"$args\" \"$input\" >&2\n"
+        "exit 98\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_readiness_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_READINESS_AUTO_RESUME": "false",
+            "PAPER_READINESS_SESSION_DATE": "2026-07-01",
+            "PAPER_READINESS_PREVIOUS_SESSION_DATE": "2026-06-30",
+            "PAPER_READINESS_REQUIRE_MARKET_DATA": "false",
+            "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE": "false",
+            "PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS": "false",
+            "PAPER_READINESS_REQUIRE_DECISION_DRY_RUN": "false",
+            "PAPER_READINESS_REQUIRE_SCENARIOS": "false",
+            "PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS": "false",
+            "PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR": "false",
+            "PAPER_READINESS_REQUIRE_FLAT": "false",
+            "PAPER_READINESS_CLOSE_ONLY_ON_FAILURE": "false",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "paper readiness preserving same-session paper profit lock" in result.stdout
+    assert "paper readiness auto-resuming stale close_only state" not in result.stdout
+    assert "paper readiness ops check accepting same-session paper profit lock" in result.stdout
+    assert not resume_marker.exists()
+    assert not close_only_marker.exists()
+
+
 def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     script = Path("scripts/paper_activity_check.sh").read_text()
 

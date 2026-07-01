@@ -1306,52 +1306,50 @@ fi
 echo "paper readiness option positions ok: net_open=0 active_orders=0"
 
 same_session_profit_lock=false
-if [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
-  status_line="$("${compose[@]}" run -T --rm admin status \
-    --mode paper \
-    --strategy-version "$STRATEGY_VERSION")"
+status_line="$("${compose[@]}" run -T --rm admin status \
+  --mode paper \
+  --strategy-version "$STRATEGY_VERSION")"
 
-  if [[ "$status_line" == *"status=close_only"* ]] \
-    && [[ "$status_line" == *"kill_switch=false"* ]]; then
-    if [[ "$status_line" == *"paper proof failed"* ]] \
-      || [[ "$status_line" == *"session guard failed"* ]]; then
-      echo "paper readiness refusing auto-resume after failed proof guard: $status_line" >&2
-      exit 1
+if [[ "$status_line" == *"status=close_only"* ]] \
+  && [[ "$status_line" == *"kill_switch=false"* ]]; then
+  if [[ "$status_line" == *"paper proof failed"* ]] \
+    || [[ "$status_line" == *"session guard failed"* ]]; then
+    echo "paper readiness refusing auto-resume after failed proof guard: $status_line" >&2
+    exit 1
+  fi
+
+  if [[ "$status_line" == *"reason=paper profit lock"* ]]; then
+    status_updated_at="$(sed -n 's/.* updated_at=\([^ ]*\).*/\1/p' <<< "$status_line")"
+    status_session_date=""
+    if [[ -n "$status_updated_at" ]]; then
+      status_session_date="$(TZ=America/New_York date -d "$status_updated_at" +%F 2>/dev/null || true)"
     fi
-
-    if [[ "$status_line" == *"reason=paper profit lock"* ]]; then
-      status_updated_at="$(sed -n 's/.* updated_at=\([^ ]*\).*/\1/p' <<< "$status_line")"
-      status_session_date=""
-      if [[ -n "$status_updated_at" ]]; then
-        status_session_date="$(TZ=America/New_York date -d "$status_updated_at" +%F 2>/dev/null || true)"
-      fi
-      current_session_date="$(TZ=America/New_York date +%F)"
-      readiness_session_date="$PAPER_READINESS_SESSION_DATE"
-      if [[ -z "$status_session_date" \
-        || "$status_session_date" == "$current_session_date" \
-        || "$status_session_date" == "$readiness_session_date" ]]; then
-        same_session_profit_lock=true
-      fi
+    current_session_date="$(TZ=America/New_York date +%F)"
+    readiness_session_date="$PAPER_READINESS_SESSION_DATE"
+    if [[ -z "$status_session_date" \
+      || "$status_session_date" == "$current_session_date" \
+      || "$status_session_date" == "$readiness_session_date" ]]; then
+      same_session_profit_lock=true
     fi
+  fi
 
-    if [[ "$same_session_profit_lock" == "true" ]]; then
-      echo "paper readiness preserving same-session paper profit lock: $status_line"
+  if [[ "$same_session_profit_lock" == "true" ]]; then
+    echo "paper readiness preserving same-session paper profit lock: $status_line"
+  elif [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
+    stock_exposure_counts="$(load_stock_exposure_counts)"
+    IFS='|' read -r open_positions active_orders <<< "$stock_exposure_counts"
+
+    if [[ "$open_positions" == "0" && "$active_orders" == "0" ]]; then
+      BROKER_FLAT_CONTEXT="paper readiness" ./scripts/broker_flat_check.sh "$ENV_FILE"
+      echo "paper readiness auto-resuming stale close_only state"
+      "${compose[@]}" run -T --rm admin resume \
+        --mode paper \
+        --strategy-version "$STRATEGY_VERSION" \
+        --reason "pre-open paper readiness auto-resume"
+    elif [[ "$open_positions" != "0" ]]; then
+      echo "paper readiness found close_only with $open_positions open positions; refusing auto-resume" >&2
     else
-      stock_exposure_counts="$(load_stock_exposure_counts)"
-      IFS='|' read -r open_positions active_orders <<< "$stock_exposure_counts"
-
-      if [[ "$open_positions" == "0" && "$active_orders" == "0" ]]; then
-        BROKER_FLAT_CONTEXT="paper readiness" ./scripts/broker_flat_check.sh "$ENV_FILE"
-        echo "paper readiness auto-resuming stale close_only state"
-        "${compose[@]}" run -T --rm admin resume \
-          --mode paper \
-          --strategy-version "$STRATEGY_VERSION" \
-          --reason "pre-open paper readiness auto-resume"
-      elif [[ "$open_positions" != "0" ]]; then
-        echo "paper readiness found close_only with $open_positions open positions; refusing auto-resume" >&2
-      else
-        echo "paper readiness found close_only with $active_orders active orders; refusing auto-resume" >&2
-      fi
+      echo "paper readiness found close_only with $active_orders active orders; refusing auto-resume" >&2
     fi
   fi
 fi
