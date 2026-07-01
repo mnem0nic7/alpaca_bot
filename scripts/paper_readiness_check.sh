@@ -50,6 +50,8 @@ capture_env_overrides \
   PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES \
   PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS \
   PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX \
+  PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIOS \
+  PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIO_MAX \
   PAPER_READINESS_SCENARIO_DIR \
   PAPER_READINESS_PREVIOUS_SESSION_DATE \
   PAPER_READINESS_SESSION_DATE
@@ -90,6 +92,8 @@ PAPER_READINESS_DECISION_DRY_RUN_STRATEGY="${PAPER_READINESS_DECISION_DRY_RUN_ST
 PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES="${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}"
 PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS="${PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS:-true}"
 PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX="${PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX:-5}"
+PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIOS="${PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIOS:-true}"
+PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIO_MAX="${PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIO_MAX:-5}"
 PAPER_READINESS_SCENARIO_DIR="${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}"
 PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-}"
 PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"
@@ -136,6 +140,13 @@ case "${PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS,,}" in
   true|false) ;;
   *)
     echo "PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS must be true or false" >&2
+    exit 1
+    ;;
+esac
+case "${PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIOS,,}" in
+  true|false) ;;
+  *)
+    echo "PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIOS must be true or false" >&2
     exit 1
     ;;
 esac
@@ -323,6 +334,11 @@ fi
 
 if [[ ! "$PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX" =~ ^[0-9]+$ ]]; then
   echo "PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX must be a non-negative integer" >&2
+  exit 1
+fi
+
+if [[ ! "$PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIO_MAX" =~ ^[0-9]+$ ]]; then
+  echo "PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIO_MAX must be a non-negative integer" >&2
   exit 1
 fi
 
@@ -726,6 +742,200 @@ for symbol in symbols:
 PY
 }
 
+load_repair_ignored_scenario_symbols() {
+  "${compose[@]}" exec -T postgres psql \
+    -U "$POSTGRES_USER" \
+    -d "$POSTGRES_DB" \
+    -tA <<'SQL'
+WITH latest_ignore AS (
+  SELECT DISTINCT ON (symbol)
+    symbol,
+    payload
+  FROM audit_events
+  WHERE event_type = 'WATCHLIST_IGNORE'
+    AND symbol IS NOT NULL
+    AND COALESCE(payload->>'trading_mode', 'paper') = 'paper'
+  ORDER BY symbol, created_at DESC, event_id DESC
+)
+SELECT w.symbol
+FROM symbol_watchlist w
+JOIN latest_ignore li ON li.symbol = w.symbol
+WHERE w.trading_mode = 'paper'
+  AND w.enabled = TRUE
+  AND COALESCE(w.ignored, FALSE) = TRUE
+  AND (
+    (
+      li.payload->>'ignored_by' = 'paper_readiness_check'
+      AND li.payload->>'reason' = 'scenario freshness repair before paper readiness'
+    )
+    OR (
+      li.payload->>'ignored_by' = 'codex'
+      AND li.payload->>'reason' LIKE 'scenario freshness missing %'
+    )
+  )
+ORDER BY w.symbol;
+SQL
+}
+
+detect_fresh_scenario_symbols() {
+  local candidate_symbols="$1"
+
+  PAPER_READINESS_CANDIDATE_SYMBOLS="$candidate_symbols" \
+  PAPER_READINESS_EXPECTED_SCENARIO_DATE="$PAPER_READINESS_PREVIOUS_SESSION_DATE" \
+  PAPER_READINESS_SCENARIO_DIR="$PAPER_READINESS_SCENARIO_DIR" \
+    python3 <<'PY'
+from __future__ import annotations
+
+from datetime import date, datetime
+import json
+import os
+from pathlib import Path
+
+symbols = [
+    line.strip().upper()
+    for line in os.environ.get("PAPER_READINESS_CANDIDATE_SYMBOLS", "").splitlines()
+    if line.strip()
+]
+scenario_dir = Path(os.environ["PAPER_READINESS_SCENARIO_DIR"])
+expected_date = date.fromisoformat(os.environ["PAPER_READINESS_EXPECTED_SCENARIO_DATE"])
+
+
+def parse_bar_date(raw: str) -> date:
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    return datetime.fromisoformat(raw).date()
+
+
+for symbol in symbols:
+    path = scenario_dir / f"{symbol}_252d.json"
+    if not path.exists():
+        continue
+
+    try:
+        payload = json.loads(path.read_text())
+    except Exception:
+        continue
+
+    daily = payload.get("daily_bars") or []
+    intraday = payload.get("intraday_bars") or []
+    if not daily or not intraday:
+        continue
+
+    daily_max = max(parse_bar_date(bar["timestamp"]) for bar in daily)
+    intraday_max = max(parse_bar_date(bar["timestamp"]) for bar in intraday)
+    if daily_max >= expected_date and intraday_max >= expected_date:
+        print(symbol)
+PY
+}
+
+auto_unignore_repaired_scenario_symbols() {
+  if [[ "${PAPER_READINESS_REQUIRE_SCENARIOS,,}" != "true" ]]; then
+    return 0
+  fi
+  if [[ "${PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIOS,,}" != "true" ]]; then
+    return 0
+  fi
+  if [[ ! -d "$PAPER_READINESS_SCENARIO_DIR" ]]; then
+    return 0
+  fi
+
+  local candidate_symbols
+  candidate_symbols="$(load_repair_ignored_scenario_symbols)"
+  if [[ -z "$candidate_symbols" ]]; then
+    return 0
+  fi
+
+  local fresh_symbols
+  fresh_symbols="$(detect_fresh_scenario_symbols "$candidate_symbols")"
+  if [[ -z "$fresh_symbols" ]]; then
+    return 0
+  fi
+
+  local fresh_count
+  fresh_count="$(printf '%s\n' "$fresh_symbols" | sed '/^[[:space:]]*$/d' | wc -l | tr -d '[:space:]')"
+  if [[ "$PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIO_MAX" -eq 0 ]] \
+    || (( 10#$fresh_count > 10#$PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIO_MAX )); then
+    echo \
+      "paper readiness repaired scenario auto-unignore skipped: repaired=$fresh_count max=$PAPER_READINESS_AUTO_UNIGNORE_REPAIRED_SCENARIO_MAX" \
+      >&2
+    return 0
+  fi
+
+  "${compose[@]}" run -T --rm \
+    -e PAPER_READINESS_REPAIRED_SCENARIO_SYMBOLS="$fresh_symbols" \
+    -e PAPER_READINESS_EXPECTED_SCENARIO_DATE="$PAPER_READINESS_PREVIOUS_SESSION_DATE" \
+    --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+import os
+
+from alpaca_bot.config import Settings
+from alpaca_bot.storage.db import connect_postgres
+
+symbols = [
+    symbol.strip().upper()
+    for symbol in os.environ.get("PAPER_READINESS_REPAIRED_SCENARIO_SYMBOLS", "").splitlines()
+    if symbol.strip()
+]
+
+settings = Settings.from_env()
+conn = connect_postgres(settings.database_url)
+unignored: list[str] = []
+try:
+    with conn.cursor() as cur:
+        for symbol in symbols:
+            cur.execute(
+                """
+                UPDATE symbol_watchlist
+                SET ignored = FALSE
+                WHERE trading_mode = %s
+                  AND symbol = %s
+                  AND enabled = TRUE
+                  AND COALESCE(ignored, FALSE) = TRUE
+                """,
+                (settings.trading_mode.value, symbol),
+            )
+            if cur.rowcount:
+                unignored.append(symbol)
+                cur.execute(
+                    """
+                    INSERT INTO audit_events (event_type, symbol, payload, created_at)
+                    VALUES (%s, %s, %s::jsonb, %s)
+                    """,
+                    (
+                        "WATCHLIST_UNIGNORE",
+                        symbol,
+                        json.dumps(
+                            {
+                                "unignored_by": "paper_readiness_check",
+                                "reason": (
+                                    "scenario freshness repaired before paper readiness"
+                                ),
+                                "expected_session": os.environ[
+                                    "PAPER_READINESS_EXPECTED_SCENARIO_DATE"
+                                ],
+                                "trading_mode": settings.trading_mode.value,
+                            },
+                            sort_keys=True,
+                        ),
+                        datetime.now(timezone.utc),
+                    ),
+                )
+    conn.commit()
+finally:
+    conn.close()
+
+if unignored:
+    print(
+        "paper readiness auto-unignored repaired scenario symbols: "
+        f"count={len(unignored)} symbols={','.join(unignored)} "
+        f"expected_session={os.environ['PAPER_READINESS_EXPECTED_SCENARIO_DATE']}"
+    )
+PY
+}
+
 auto_ignore_stale_scenario_symbols() {
   if [[ "${PAPER_READINESS_REQUIRE_SCENARIOS,,}" != "true" ]]; then
     return 0
@@ -842,6 +1052,19 @@ if ignored:
     )
 PY
 }
+
+watchlist_counts="$(load_watchlist_counts)"
+IFS='|' read -r entry_watchlist_symbols enabled_watchlist_symbols ignored_watchlist_symbols \
+  <<< "$watchlist_counts"
+
+if [[ "${entry_watchlist_symbols:-0}" -lt "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" ]]; then
+  echo \
+    "paper readiness failed: entry watchlist has ${entry_watchlist_symbols:-0} active symbols; expected at least $PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" \
+    >&2
+  exit 1
+fi
+
+auto_unignore_repaired_scenario_symbols
 
 watchlist_counts="$(load_watchlist_counts)"
 IFS='|' read -r entry_watchlist_symbols enabled_watchlist_symbols ignored_watchlist_symbols \
