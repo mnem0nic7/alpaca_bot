@@ -907,8 +907,7 @@ def test_runtime_supervisor_startup_runs_reconciliation_syncs_positions_and_atta
     assert attach_calls[0]["runtime"] is runtime
     assert attach_calls[0]["stream"] is stream
     assert attach_calls[0]["broker"] is broker
-    assert callable(attach_calls[0]["now"])
-    assert attach_calls[0]["now"]() == now
+    assert attach_calls[0]["now"] is None
     assert stream.run_started.wait(timeout=1.0)
     assert stream.run_calls == 1
     completed_events = [
@@ -4759,14 +4758,14 @@ def test_stream_restart_replaces_stream_when_stop_does_not_join(monkeypatch) -> 
     stale_stream = StopIgnoringStream()
     replacement_stream = FakeStream(block_until_stop=True)
     stream_factory_calls: list[Settings] = []
-    attach_calls: list[object] = []
+    attach_calls: list[dict[str, object]] = []
 
     def stream_factory(resolved_settings: Settings) -> object:
         stream_factory_calls.append(resolved_settings)
         return replacement_stream
 
     def recording_stream_attacher(**kwargs) -> object:
-        attach_calls.append(kwargs["stream"])
+        attach_calls.append(kwargs)
         kwargs["stream"].subscribe_trade_updates(object())
         return object()
 
@@ -4800,7 +4799,8 @@ def test_stream_restart_replaces_stream_when_stop_does_not_join(monkeypatch) -> 
         assert replacement_thread.is_alive()
         assert stale_stream.stop_calls == 1
         assert stream_factory_calls == [settings]
-        assert attach_calls == [replacement_stream]
+        assert attach_calls[-1]["stream"] is replacement_stream
+        assert attach_calls[-1]["now"] is None
         restart_events = [
             event
             for event in runtime.audit_event_store.appended
