@@ -1739,6 +1739,9 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "PAPER_READINESS_CLOSE_ONLY_ON_FAILURE must be true or false" in script
     assert "close_only_on_readiness_failure" in script
     assert "trap close_only_on_readiness_failure EXIT" in script
+    assert "load_trading_status_line" in script
+    assert "paper readiness preserving active paper profit lock after readiness failure" in script
+    assert 'BROKER_FLAT_CONTEXT="paper readiness failure profit lock"' in script
     assert "paper readiness failed for session ${PAPER_READINESS_SESSION_DATE:-unknown}: pre-open checks failed" in script
     assert "paper readiness warning: failed to apply close-only after readiness failure" in script
     assert 'PAPER_READINESS_SESSION_DATE="${PAPER_READINESS_SESSION_DATE:-$(load_readiness_session_date)}"' in script
@@ -2701,6 +2704,73 @@ def test_paper_readiness_preserves_profit_lock_when_auto_resume_disabled(
     assert "paper readiness auto-resuming stale close_only state" not in result.stdout
     assert "paper readiness ops check accepting same-session paper profit lock" in result.stdout
     assert not resume_marker.exists()
+    assert not close_only_marker.exists()
+
+
+def test_paper_readiness_failure_preserves_active_profit_lock(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+
+    close_only_marker = tmp_path / "close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "args=\"$*\"\n"
+        "input=\"$(cat || true)\"\n"
+        "if [[ \"$args\" == *' admin close-only'* ]]; then\n"
+        f"  touch {close_only_marker}\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$args\" == *' admin status'* ]]; then\n"
+        "  printf 'mode=paper strategy=v1-breakout status=close_only kill_switch=false reason=paper profit lock: stop-out projection negative updated_at=2026-06-30T16:39:25+00:00\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$args\" == *'--entrypoint python admin'* ]]; then\n"
+        "  if [[ \"$input\" == *'list_open_orders'* ]]; then\n"
+        "    printf 'paper readiness failure profit lock broker exposure ok: open_orders=0 open_positions=0\\n'\n"
+        "    exit 0\n"
+        "  fi\n"
+        "fi\n"
+        "printf 'unexpected docker call: %s\\n%s\\n' \"$args\" \"$input\" >&2\n"
+        "exit 98\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_readiness_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_READINESS_SESSION_DATE": "2026-06-30",
+            "PAPER_READINESS_PREVIOUS_SESSION_DATE": "2026-06-29",
+            "PAPER_READINESS_MIN_WATCHLIST_SYMBOLS": "not-an-int",
+            "PAPER_READINESS_CLOSE_ONLY_ON_FAILURE": "true",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 1
+    assert "PAPER_READINESS_MIN_WATCHLIST_SYMBOLS must be a positive integer" in result.stderr
+    assert (
+        "paper readiness preserving active paper profit lock after readiness failure"
+        in result.stdout
+    )
     assert not close_only_marker.exists()
 
 

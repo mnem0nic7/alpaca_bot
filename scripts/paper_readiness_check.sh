@@ -279,6 +279,13 @@ fi
 
 echo "scheduled check context: session_date=$PAPER_READINESS_SESSION_DATE previous_session_date=$PAPER_READINESS_PREVIOUS_SESSION_DATE proof_start=$PAPER_READINESS_PRIOR_PROOF_START_DATE"
 
+load_trading_status_line() {
+  "${compose[@]}" run -T --rm admin \
+    status \
+    --mode paper \
+    --strategy-version "${STRATEGY_VERSION:-v1-breakout}"
+}
+
 close_only_on_readiness_failure() {
   local rc="$?"
   trap - EXIT
@@ -288,6 +295,17 @@ close_only_on_readiness_failure() {
   fi
 
   if [[ "${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE,,}" != "true" ]]; then
+    exit "$rc"
+  fi
+
+  local status_line
+  if status_line="$(load_trading_status_line 2>/dev/null)" \
+    && [[ "$status_line" == *"status=close_only"* ]] \
+    && [[ "$status_line" == *"kill_switch=false"* ]] \
+    && [[ "$status_line" == *"reason=paper profit lock"* ]] \
+    && BROKER_FLAT_CONTEXT="paper readiness failure profit lock" \
+      ./scripts/broker_flat_check.sh "$ENV_FILE" >/dev/null; then
+    echo "paper readiness preserving active paper profit lock after readiness failure: $status_line"
     exit "$rc"
   fi
 
