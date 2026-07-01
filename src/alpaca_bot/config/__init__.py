@@ -102,6 +102,7 @@ class Settings:
     paper_proof_freeze: bool = False
     paper_readiness_max_pass_age_minutes: int = 180
     paper_readiness_min_watchlist_symbols: int = 900
+    paper_readiness_decision_dry_run_strategy: str = "bull_flag"
     paper_readiness_decision_dry_run_min_records: int = 900
     paper_readiness_decision_dry_run_min_evaluations: int = 6
     profit_probe_start_date: date = date(2026, 6, 29)
@@ -257,6 +258,10 @@ class Settings:
             ),
             paper_readiness_min_watchlist_symbols=int(
                 values.get("PAPER_READINESS_MIN_WATCHLIST_SYMBOLS", "900")
+            ),
+            paper_readiness_decision_dry_run_strategy=values.get(
+                "PAPER_READINESS_DECISION_DRY_RUN_STRATEGY",
+                values.get("PROFIT_PROBE_STRATEGY", "bull_flag"),
             ),
             paper_readiness_decision_dry_run_min_records=int(
                 values.get("PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS", "900")
@@ -507,6 +512,17 @@ class Settings:
             raise ValueError("PAPER_READINESS_MAX_PASS_AGE_MINUTES must be positive")
         if self.paper_readiness_min_watchlist_symbols < 1:
             raise ValueError("PAPER_READINESS_MIN_WATCHLIST_SYMBOLS must be positive")
+        if not self.paper_readiness_decision_dry_run_strategy:
+            raise ValueError(
+                "PAPER_READINESS_DECISION_DRY_RUN_STRATEGY must not be empty"
+            )
+        if any(
+            not (char.isalnum() or char in "_:-")
+            for char in self.paper_readiness_decision_dry_run_strategy
+        ):
+            raise ValueError(
+                "PAPER_READINESS_DECISION_DRY_RUN_STRATEGY contains unsupported characters"
+            )
         if self.paper_readiness_decision_dry_run_min_records < 0:
             raise ValueError(
                 "PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS must be non-negative"

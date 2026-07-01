@@ -2596,6 +2596,8 @@ class RuntimeSupervisor:
 
         if not strategy or not as_of:
             return False
+        if strategy != self.settings.paper_readiness_decision_dry_run_strategy:
+            return False
         if (
             active is None
             or active < self.settings.paper_readiness_min_watchlist_symbols

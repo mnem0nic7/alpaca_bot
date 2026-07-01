@@ -110,22 +110,36 @@ def test_paper_readiness_max_pass_age_minutes_env_override():
 def test_paper_readiness_decision_dry_run_thresholds_default_and_overrides():
     settings = Settings.from_env(_base_env())
     assert settings.paper_readiness_min_watchlist_symbols == 900
+    assert settings.paper_readiness_decision_dry_run_strategy == "bull_flag"
     assert settings.paper_readiness_decision_dry_run_min_records == 900
     assert settings.paper_readiness_decision_dry_run_min_evaluations == 6
 
     settings = Settings.from_env(
         _base_env(
             PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="17",
+            PAPER_READINESS_DECISION_DRY_RUN_STRATEGY="custom_flag",
             PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS="23",
             PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS="2",
         )
     )
     assert settings.paper_readiness_min_watchlist_symbols == 17
+    assert settings.paper_readiness_decision_dry_run_strategy == "custom_flag"
     assert settings.paper_readiness_decision_dry_run_min_records == 23
     assert settings.paper_readiness_decision_dry_run_min_evaluations == 2
 
+    settings = Settings.from_env(_base_env(PROFIT_PROBE_STRATEGY="probe_flag"))
+    assert settings.paper_readiness_decision_dry_run_strategy == "probe_flag"
+
     with pytest.raises(ValueError, match="PAPER_READINESS_MIN_WATCHLIST_SYMBOLS"):
         Settings.from_env(_base_env(PAPER_READINESS_MIN_WATCHLIST_SYMBOLS="0"))
+    with pytest.raises(
+        ValueError, match="PAPER_READINESS_DECISION_DRY_RUN_STRATEGY"
+    ):
+        Settings.from_env(_base_env(PAPER_READINESS_DECISION_DRY_RUN_STRATEGY=""))
+    with pytest.raises(
+        ValueError, match="PAPER_READINESS_DECISION_DRY_RUN_STRATEGY"
+    ):
+        Settings.from_env(_base_env(PAPER_READINESS_DECISION_DRY_RUN_STRATEGY="bad flag"))
     with pytest.raises(
         ValueError, match="PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS"
     ):

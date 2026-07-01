@@ -1753,6 +1753,84 @@ def test_runtime_supervisor_blocks_readiness_without_decision_dry_run(
     assert dispatch_calls[0]["blocked_strategy_names"] == active_strategy_names
 
 
+def test_runtime_supervisor_blocks_readiness_with_wrong_decision_dry_run_strategy(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings(
+        {
+            "PAPER_PROOF_FREEZE": "true",
+            "PROFIT_PROBE_START_DATE": "2026-06-29",
+        }
+    )
+    now = datetime(2026, 6, 29, 14, 15, tzinfo=timezone.utc)
+    readiness_event = AuditEvent(
+        event_type="scheduled_check_completed",
+        payload=paper_readiness_pass_payload(
+            decision_dry_run_strategy="other_flag",
+        ),
+        created_at=datetime(2026, 6, 29, 13, 55, tzinfo=timezone.utc),
+    )
+    supervisor_event = AuditEvent(
+        event_type="supervisor_started",
+        payload={},
+        created_at=datetime(2026, 6, 29, 13, 50, tzinfo=timezone.utc),
+    )
+    audit_store = DirectLookupAuditEventStore(
+        readiness_event=readiness_event,
+        supervisor_started_event=supervisor_event,
+    )
+    runtime = make_runtime_context(
+        settings,
+        audit_event_store=audit_store,
+        position_store=RecordingPositionStore(),
+    )
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=20, days=True)
+        },
+    )
+    stream = FakeStream()
+    cycle_calls: list[dict[str, object]] = []
+    dispatch_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: cycle_calls.append(kwargs) or SimpleNamespace(intents=[]),
+    )
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0},
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=stream,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    report = supervisor.run_cycle_once(
+        now=lambda: now,
+        session_type=module.SessionType.REGULAR,
+    )
+
+    active_strategy_names = set(import_module("alpaca_bot.strategy").STRATEGY_REGISTRY)
+    assert report.entries_disabled is True
+    assert report.entries_disabled_reasons == ("paper_readiness_check_missing",)
+    assert cycle_calls[0]["entries_disabled"] is True
+    assert set(report.blocked_strategy_names) == active_strategy_names
+    assert dispatch_calls[0]["allowed_intent_types"] == {"stop", "exit"}
+    assert dispatch_calls[0]["blocked_strategy_names"] == active_strategy_names
+
+
 def test_runtime_supervisor_blocks_direct_readiness_for_wrong_proof_start(
     monkeypatch,
 ) -> None:
