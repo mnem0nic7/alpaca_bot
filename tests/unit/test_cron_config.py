@@ -1800,6 +1800,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="$PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS"' in script
     assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED"' in script
     assert 'PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="$PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES"' in script
+    assert 'PAPER_DECISION_DRY_RUN_SESSION_DATE="$PAPER_READINESS_PREVIOUS_SESSION_DATE"' in script
     assert "paper readiness decision dry run check skipped" in script
     assert "PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS" in script
     assert "run_watchlist_asset_check" in script
