@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 
@@ -1808,6 +1809,11 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper readiness watchlist Alpaca asset check skipped" in script
     assert "paper readiness Alpaca non-fractionable symbols" in script
     assert "run_scenario_freshness_check" in script
+    assert 'PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS="${PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS:-true}"' in script
+    assert 'PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX="${PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX:-5}"' in script
+    assert "auto_ignore_stale_scenario_symbols" in script
+    assert "paper readiness auto-ignored stale scenario symbols" in script
+    assert "paper readiness stale scenario auto-ignore skipped" in script
     assert "PAPER_READINESS_ACTIVE_SYMBOLS" in script
     assert "PAPER_READINESS_EXPECTED_SCENARIO_DATE" in script
     assert 'scenario_dir / f"{symbol}_252d.json"' in script
@@ -1964,6 +1970,149 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_false_or_unset ENABLE_OPTIONS_TRADING" in script
     assert "require_env_empty_or_unset OPTION_CHAIN_SYMBOLS" in script
     assert 'check("option_chain_symbols", settings.option_chain_symbols, ())' in script
+
+
+def test_paper_readiness_auto_ignores_bounded_stale_scenario_symbols(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "MARKET_DATA_FEED=iex",
+                "DAILY_SMA_PERIOD=20",
+                "BREAKOUT_LOOKBACK_BARS=20",
+                "RELATIVE_VOLUME_LOOKBACK_BARS=20",
+                "RELATIVE_VOLUME_THRESHOLD=2.0",
+                "ENTRY_TIMEFRAME_MINUTES=15",
+                "MAX_OPEN_POSITIONS=4",
+                "REPLAY_SLIPPAGE_BPS=2.0",
+                "RISK_PER_TRADE_PCT=0.01",
+                "MAX_POSITION_PCT=0.05",
+                "MAX_LOSS_PER_TRADE_DOLLARS=20.0",
+                "MAX_PORTFOLIO_EXPOSURE_PCT=0.30",
+                "DAILY_LOSS_LIMIT_PCT=0.01",
+                "STOP_LIMIT_BUFFER_PCT=0.0005",
+                "ENTRY_STOP_PRICE_BUFFER=0.02",
+                "TRAILING_STOP_ATR_MULTIPLIER=1.0",
+                "INTRADAY_CONSECUTIVE_LOSS_GATE=0",
+                "ENTRY_WINDOW_START=10:00",
+                "ENTRY_WINDOW_END=15:30",
+                "FLATTEN_TIME=15:45",
+                "PAPER_PROOF_FREEZE=true",
+                "ENABLE_PROFIT_TRAIL=true",
+                "PROFIT_TRAIL_PCT=0.90",
+                "ENABLE_PROFIT_TARGET=true",
+                "PROFIT_TARGET_R=3.0",
+                "BREAKEVEN_TRIGGER_PCT=0.005",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+    fresh_payload = {
+        "name": "GOOD_252d",
+        "symbol": "GOOD",
+        "daily_bars": [{"timestamp": "2026-06-30T04:00:00+00:00"}],
+        "intraday_bars": [{"timestamp": "2026-06-30T19:45:00+00:00"}],
+    }
+    stale_payload = {
+        "name": "STALE_252d",
+        "symbol": "STALE",
+        "daily_bars": [{"timestamp": "2026-06-29T04:00:00+00:00"}],
+        "intraday_bars": [{"timestamp": "2026-06-29T19:45:00+00:00"}],
+    }
+    (scenario_dir / "GOOD_252d.json").write_text(json.dumps(fresh_payload))
+    (scenario_dir / "STALE_252d.json").write_text(json.dumps(stale_payload))
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    ignore_marker = tmp_path / "stale_ignored"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "args=\"$*\"\n"
+        "input=\"$(cat || true)\"\n"
+        "if [[ \"$args\" == *'PAPER_READINESS_STALE_SCENARIO_RECORDS='* ]]; then\n"
+        f"  touch {ignore_marker}\n"
+        "  printf 'paper readiness auto-ignored stale scenario symbols: count=1 symbols=STALE expected_session=2026-06-30\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$args\" == *'--entrypoint alpaca-bot-ops-check admin'* ]]; then\n"
+        "  printf 'status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$args\" == *' admin status'* ]]; then\n"
+        "  printf 'mode=paper strategy=v1-breakout status=enabled kill_switch=false reason=- updated_at=2026-07-01T13:15:00+00:00\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$args\" == *' exec -T postgres psql'* ]]; then\n"
+        "  if [[ \"$input\" == *'COUNT(*) FILTER'* && \"$input\" == *'FROM symbol_watchlist'* ]]; then\n"
+        f"    if [[ -f {ignore_marker} ]]; then printf '1|2|1\\n'; else printf '2|2|0\\n'; fi\n"
+        "  elif [[ \"$input\" == *'SELECT symbol'* && \"$input\" == *'FROM symbol_watchlist'* ]]; then\n"
+        f"    if [[ -f {ignore_marker} ]]; then printf 'GOOD\\n'; else printf 'GOOD\\nSTALE\\n'; fi\n"
+        "  elif [[ \"$input\" == *'FROM strategy_flags'* && \"$input\" == *'FROM strategy_weights'* ]]; then\n"
+        "    printf 'ok|bull_flag|bull_flag|1.000000|0\\n'\n"
+        "  elif [[ \"$input\" == *'confidence_floor_store'* ]]; then\n"
+        "    printf 'ok|0.250000\\n'\n"
+        "  elif [[ \"$input\" == *'FROM option_orders'* ]]; then\n"
+        "    printf '0\\n'\n"
+        "  else\n"
+        "    printf 'unexpected psql call\\n%s\\n' \"$input\" >&2\n"
+        "    exit 98\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"$args\" == *'--entrypoint python admin'* ]]; then\n"
+        "  if [[ \"$input\" == *'ConfidenceFloorStore'* ]]; then\n"
+        "    printf 'ok|100000.00|100000.00|0.000000|0.050000|ok|200000.00|5000.00|false\\n'\n"
+        "  else\n"
+        "    printf 'paper readiness container Settings ok\\n'\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf 'unexpected docker call: %s\\n%s\\n' \"$args\" \"$input\" >&2\n"
+        "exit 98\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_readiness_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_READINESS_SESSION_DATE": "2026-07-01",
+            "PAPER_READINESS_PREVIOUS_SESSION_DATE": "2026-06-30",
+            "PAPER_READINESS_MIN_WATCHLIST_SYMBOLS": "1",
+            "PAPER_READINESS_REQUIRE_MARKET_DATA": "false",
+            "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE": "false",
+            "PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS": "false",
+            "PAPER_READINESS_REQUIRE_DECISION_DRY_RUN": "false",
+            "PAPER_READINESS_REQUIRE_PRIOR_PROOF_CHECKS": "false",
+            "PAPER_READINESS_REQUIRE_SESSION_UNBLOCKED": "false",
+            "PAPER_READINESS_REQUIRE_LOSING_STREAK_CLEAR": "false",
+            "PAPER_READINESS_REQUIRE_FLAT": "false",
+            "PAPER_READINESS_CLOSE_ONLY_ON_FAILURE": "false",
+            "PAPER_READINESS_SCENARIO_DIR": str(scenario_dir),
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "paper readiness auto-ignored stale scenario symbols" in result.stdout
+    assert "paper readiness watchlist ok: active=1 enabled=2 ignored=1" in result.stdout
+    assert (
+        "paper readiness scenario freshness ok: active=1 expected_session=2026-06-30"
+        in result.stdout
+    )
+    assert ignore_marker.exists()
 
 
 def test_paper_readiness_auto_resumes_stale_profit_lock(tmp_path: Path) -> None:

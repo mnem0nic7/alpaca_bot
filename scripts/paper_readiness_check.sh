@@ -48,6 +48,8 @@ capture_env_overrides \
   PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED \
   PAPER_READINESS_DECISION_DRY_RUN_STRATEGY \
   PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES \
+  PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS \
+  PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX \
   PAPER_READINESS_SCENARIO_DIR \
   PAPER_READINESS_PREVIOUS_SESSION_DATE \
   PAPER_READINESS_SESSION_DATE
@@ -86,6 +88,8 @@ PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_READINESS_DECISION_DRY_RUN
 PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}"
 PAPER_READINESS_DECISION_DRY_RUN_STRATEGY="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
 PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES="${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}"
+PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS="${PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS:-true}"
+PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX="${PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX:-5}"
 PAPER_READINESS_SCENARIO_DIR="${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}"
 PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-}"
 PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"
@@ -125,6 +129,13 @@ case "${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED,,}" in
   true|false) ;;
   *)
     echo "PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED must be true or false" >&2
+    exit 1
+    ;;
+esac
+case "${PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS,,}" in
+  true|false) ;;
+  *)
+    echo "PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS must be true or false" >&2
     exit 1
     ;;
 esac
@@ -307,6 +318,11 @@ fi
 
 if [[ ! "$PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS" =~ ^[0-9]+$ ]]; then
   echo "PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" >&2
+  exit 1
+fi
+
+if [[ ! "$PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX" =~ ^[0-9]+$ ]]; then
+  echo "PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX must be a non-negative integer" >&2
   exit 1
 fi
 
@@ -620,10 +636,11 @@ else
   echo "paper readiness market data check skipped"
 fi
 
-watchlist_counts="$("${compose[@]}" exec -T postgres psql \
-  -U "$POSTGRES_USER" \
-  -d "$POSTGRES_DB" \
-  -tA -F '|' <<'SQL'
+load_watchlist_counts() {
+  "${compose[@]}" exec -T postgres psql \
+    -U "$POSTGRES_USER" \
+    -d "$POSTGRES_DB" \
+    -tA -F '|' <<'SQL'
 SELECT
   COUNT(*) FILTER (WHERE enabled = TRUE AND COALESCE(ignored, FALSE) = FALSE)::int,
   COUNT(*) FILTER (WHERE enabled = TRUE)::int,
@@ -631,20 +648,7 @@ SELECT
 FROM symbol_watchlist
 WHERE trading_mode = 'paper';
 SQL
-)"
-
-IFS='|' read -r entry_watchlist_symbols enabled_watchlist_symbols ignored_watchlist_symbols \
-  <<< "$watchlist_counts"
-
-if [[ "${entry_watchlist_symbols:-0}" -lt "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" ]]; then
-  echo \
-    "paper readiness failed: entry watchlist has ${entry_watchlist_symbols:-0} active symbols; expected at least $PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" \
-    >&2
-  exit 1
-fi
-
-echo \
-  "paper readiness watchlist ok: active=$entry_watchlist_symbols enabled=$enabled_watchlist_symbols ignored=$ignored_watchlist_symbols"
+}
 
 load_active_watchlist_symbols() {
   "${compose[@]}" exec -T postgres psql \
@@ -659,6 +663,212 @@ WHERE trading_mode = 'paper'
 ORDER BY symbol;
 SQL
 }
+
+detect_stale_scenario_records() {
+  local active_symbols
+  active_symbols="$(load_active_watchlist_symbols)"
+
+  PAPER_READINESS_ACTIVE_SYMBOLS="$active_symbols" \
+  PAPER_READINESS_EXPECTED_SCENARIO_DATE="$PAPER_READINESS_PREVIOUS_SESSION_DATE" \
+  PAPER_READINESS_SCENARIO_DIR="$PAPER_READINESS_SCENARIO_DIR" \
+    python3 <<'PY'
+from __future__ import annotations
+
+from datetime import date, datetime
+import json
+import os
+from pathlib import Path
+
+symbols = [
+    line.strip().upper()
+    for line in os.environ.get("PAPER_READINESS_ACTIVE_SYMBOLS", "").splitlines()
+    if line.strip()
+]
+scenario_dir = Path(os.environ["PAPER_READINESS_SCENARIO_DIR"])
+expected_date = date.fromisoformat(os.environ["PAPER_READINESS_EXPECTED_SCENARIO_DATE"])
+
+
+def parse_bar_date(raw: str) -> date:
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    return datetime.fromisoformat(raw).date()
+
+
+for symbol in symbols:
+    reasons: list[str] = []
+    path = scenario_dir / f"{symbol}_252d.json"
+    if not path.exists():
+        reasons.append("missing")
+    else:
+        try:
+            payload = json.loads(path.read_text())
+        except Exception as exc:
+            reasons.append(f"unreadable:{type(exc).__name__}")
+        else:
+            daily = payload.get("daily_bars") or []
+            intraday = payload.get("intraday_bars") or []
+            if not daily:
+                reasons.append("empty_daily")
+            else:
+                daily_max = max(parse_bar_date(bar["timestamp"]) for bar in daily)
+                if daily_max < expected_date:
+                    reasons.append(f"stale_daily:{daily_max.isoformat()}")
+
+            if not intraday:
+                reasons.append("empty_intraday")
+            else:
+                intraday_max = max(parse_bar_date(bar["timestamp"]) for bar in intraday)
+                if intraday_max < expected_date:
+                    reasons.append(f"stale_intraday:{intraday_max.isoformat()}")
+
+    if reasons:
+        print(f"{symbol}|{';'.join(reasons)}")
+PY
+}
+
+auto_ignore_stale_scenario_symbols() {
+  if [[ "${PAPER_READINESS_REQUIRE_SCENARIOS,,}" != "true" ]]; then
+    return 0
+  fi
+  if [[ "${PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS,,}" != "true" ]]; then
+    return 0
+  fi
+  if [[ ! -d "$PAPER_READINESS_SCENARIO_DIR" ]]; then
+    return 0
+  fi
+
+  local stale_records
+  stale_records="$(detect_stale_scenario_records)"
+  if [[ -z "$stale_records" ]]; then
+    return 0
+  fi
+
+  local stale_count
+  stale_count="$(printf '%s\n' "$stale_records" | sed '/^[[:space:]]*$/d' | wc -l | tr -d '[:space:]')"
+  if [[ "$PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX" -eq 0 ]] \
+    || (( 10#$stale_count > 10#$PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX )); then
+    echo \
+      "paper readiness stale scenario auto-ignore skipped: stale=$stale_count max=$PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX" \
+      >&2
+    return 0
+  fi
+
+  local remaining_symbols
+  remaining_symbols=$(( 10#$entry_watchlist_symbols - 10#$stale_count ))
+  if (( remaining_symbols < 10#$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS )); then
+    echo \
+      "paper readiness stale scenario auto-ignore skipped: remaining=$remaining_symbols required=$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" \
+      >&2
+    return 0
+  fi
+
+  "${compose[@]}" run -T --rm \
+    -e PAPER_READINESS_STALE_SCENARIO_RECORDS="$stale_records" \
+    -e PAPER_READINESS_EXPECTED_SCENARIO_DATE="$PAPER_READINESS_PREVIOUS_SESSION_DATE" \
+    --entrypoint python admin <<'PY'
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import json
+import os
+
+from alpaca_bot.config import Settings
+from alpaca_bot.storage.db import connect_postgres
+
+records: list[tuple[str, str]] = []
+for raw in os.environ.get("PAPER_READINESS_STALE_SCENARIO_RECORDS", "").splitlines():
+    raw = raw.strip()
+    if not raw or "|" not in raw:
+        continue
+    symbol, reason = raw.split("|", 1)
+    symbol = symbol.strip().upper()
+    reason = reason.strip()
+    if symbol:
+        records.append((symbol, reason))
+
+settings = Settings.from_env()
+conn = connect_postgres(settings.database_url)
+ignored: list[str] = []
+try:
+    with conn.cursor() as cur:
+        for symbol, reason in records:
+            cur.execute(
+                """
+                UPDATE symbol_watchlist
+                SET ignored = TRUE
+                WHERE trading_mode = %s
+                  AND symbol = %s
+                  AND enabled = TRUE
+                  AND COALESCE(ignored, FALSE) = FALSE
+                """,
+                (settings.trading_mode.value, symbol),
+            )
+            if cur.rowcount:
+                ignored.append(symbol)
+                cur.execute(
+                    """
+                    INSERT INTO audit_events (event_type, symbol, payload, created_at)
+                    VALUES (%s, %s, %s::jsonb, %s)
+                    """,
+                    (
+                        "WATCHLIST_IGNORE",
+                        symbol,
+                        json.dumps(
+                            {
+                                "ignored_by": "paper_readiness_check",
+                                "reason": (
+                                    "scenario freshness repair before paper readiness"
+                                ),
+                                "scenario_problem": reason,
+                                "expected_session": os.environ[
+                                    "PAPER_READINESS_EXPECTED_SCENARIO_DATE"
+                                ],
+                                "trading_mode": settings.trading_mode.value,
+                            },
+                            sort_keys=True,
+                        ),
+                        datetime.now(timezone.utc),
+                    ),
+                )
+    conn.commit()
+finally:
+    conn.close()
+
+if ignored:
+    print(
+        "paper readiness auto-ignored stale scenario symbols: "
+        f"count={len(ignored)} symbols={','.join(ignored)} "
+        f"expected_session={os.environ['PAPER_READINESS_EXPECTED_SCENARIO_DATE']}"
+    )
+PY
+}
+
+watchlist_counts="$(load_watchlist_counts)"
+IFS='|' read -r entry_watchlist_symbols enabled_watchlist_symbols ignored_watchlist_symbols \
+  <<< "$watchlist_counts"
+
+if [[ "${entry_watchlist_symbols:-0}" -lt "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" ]]; then
+  echo \
+    "paper readiness failed: entry watchlist has ${entry_watchlist_symbols:-0} active symbols; expected at least $PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" \
+    >&2
+  exit 1
+fi
+
+auto_ignore_stale_scenario_symbols
+
+watchlist_counts="$(load_watchlist_counts)"
+IFS='|' read -r entry_watchlist_symbols enabled_watchlist_symbols ignored_watchlist_symbols \
+  <<< "$watchlist_counts"
+
+if [[ "${entry_watchlist_symbols:-0}" -lt "$PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" ]]; then
+  echo \
+    "paper readiness failed: entry watchlist has ${entry_watchlist_symbols:-0} active symbols; expected at least $PAPER_READINESS_MIN_WATCHLIST_SYMBOLS" \
+    >&2
+  exit 1
+fi
+
+echo \
+  "paper readiness watchlist ok: active=$entry_watchlist_symbols enabled=$enabled_watchlist_symbols ignored=$ignored_watchlist_symbols"
 
 run_active_data_coverage_check() {
   local active_symbols
