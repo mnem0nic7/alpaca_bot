@@ -95,7 +95,8 @@ else
 fi
 
 if [[ "$cron_active" != "true" ]] \
-  && ps -eo comm= | grep -Eq '^(cron|crond)$'; then
+  && ps -eo pid=,ppid=,comm= \
+    | awk '$2 == 1 && ($3 == "cron" || $3 == "crond") { found = 1 } END { exit(found ? 0 : 1) }'; then
   cron_active=true
 fi
 

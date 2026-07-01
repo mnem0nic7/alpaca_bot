@@ -240,7 +240,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "scheduled log target is not writable" in cron_health
     assert "scheduled log directory is not writable" in cron_health
     assert "systemctl is-active --quiet cron" in cron_health
-    assert "ps -eo comm=" in cron_health
+    assert "ps -eo pid=,ppid=,comm=" in cron_health
+    assert '$2 == 1 && ($3 == "cron" || $3 == "crond")' in cron_health
     assert "run_locked_check_with_audit.sh" in cron_health
     assert 'bash -n "$path"' in cron_health
     assert "required scheduled script has syntax errors" in cron_health
