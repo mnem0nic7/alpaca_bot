@@ -3547,6 +3547,66 @@ def test_paper_activity_latest_runtime_reconciliation_cycle_is_pending(
     assert not docker_marker.exists()
 
 
+def test_paper_activity_latest_strategy_runtime_reconciliation_with_cadence_is_pending(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    docker_marker = tmp_path / "docker_close_only_called"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q ' admin close-only'; then\n"
+        f"  touch {docker_marker}\n"
+        "  exit 99\n"
+        "fi\n"
+        "printf '12|2|8|7840|0|2026-06-29 16:02:00+00|false||true|entry_cadence_waiting_for_new_bar,runtime_reconciliation_mismatch|2026-06-29 16:01:00+00|2|8|7840|0|8|7840|2026-06-29 16:01:00+00|skipped_no_signal/none/none:7838,rejected/vwap_filter/below_vwap:2|0||0||0||0||0||bull_flag||entry_cadence_waiting_for_new_bar:2,runtime_reconciliation_mismatch:2|0|0|0|0\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_MIN_DECISION_RECORDS": "900",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+    assert (
+        "paper activity pending: latest bull_flag cycle still had entries disabled "
+        "for runtime_reconciliation_mismatch"
+    ) in result.stdout
+    assert not docker_marker.exists()
+
+
 def test_paper_activity_fails_when_broker_account_is_blocked(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     env_file.write_text(

@@ -102,14 +102,21 @@ only_runtime_reconciliation_reasons() {
   if [[ -z "$reasons" ]]; then
     return 1
   fi
-  local reason
+  local reason has_runtime=false
   IFS=',' read -ra _paper_activity_reasons <<< "$reasons"
   for reason in "${_paper_activity_reasons[@]}"; do
-    if [[ "$reason" != "runtime_reconciliation_mismatch" ]]; then
-      return 1
-    fi
+    case "$reason" in
+      runtime_reconciliation_mismatch)
+        has_runtime=true
+        ;;
+      entry_cadence_waiting_for_new_bar)
+        ;;
+      *)
+        return 1
+        ;;
+    esac
   done
-  return 0
+  [[ "$has_runtime" == "true" ]]
 }
 
 only_profit_lock_pause_reasons() {
