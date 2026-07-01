@@ -124,6 +124,48 @@ PY
   fallback_readiness_session_date
 }
 
+load_previous_readiness_session_date() {
+  local readiness_session_date="$1"
+  local lookup
+  local previous_session_date
+
+  lookup="$(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
+    -e READINESS_SESSION_DATE="$readiness_session_date" \
+    --entrypoint python admin <<'PY' || true
+from __future__ import annotations
+
+from datetime import date, timedelta
+import os
+
+from alpaca_bot.config import Settings
+from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+
+settings = Settings.from_env()
+session_date = date.fromisoformat(os.environ["READINESS_SESSION_DATE"])
+calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+    start=session_date - timedelta(days=14),
+    end=session_date - timedelta(days=1),
+)
+previous = [
+    session.session_date
+    for session in calendar
+    if session.session_date < session_date
+]
+if previous:
+    print(f"paper_readiness_previous_session_date={max(previous).isoformat()}")
+PY
+)"
+
+  previous_session_date="$(
+    printf '%s\n' "$lookup" \
+      | sed -n 's/^paper_readiness_previous_session_date=//p' \
+      | tail -n 1
+  )"
+  if [[ "$previous_session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    echo "$previous_session_date"
+  fi
+}
+
 load_latest_readiness_status() {
   local readiness_session_date="$1"
   local lookup
@@ -344,8 +386,10 @@ decision_dry_run_field() {
 
 validate_readiness_decision_dry_run_line() {
   local line="$1"
+  local expected_as_of_session="${2:-}"
   local strategy
   local as_of
+  local as_of_session
   local active
   local decision_records
   local accepted
@@ -384,6 +428,17 @@ validate_readiness_decision_dry_run_line() {
   if [[ "$strategy" != "$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY" ]]; then
     echo "strategy_mismatch"
     return 1
+  fi
+  if [[ -n "$expected_as_of_session" ]]; then
+    as_of_session="$(TZ=America/New_York date -d "$as_of" +%F 2>/dev/null || true)"
+    if [[ -z "$as_of_session" ]]; then
+      echo "invalid"
+      return 1
+    fi
+    if [[ "$as_of_session" != "$expected_as_of_session" ]]; then
+      echo "session_mismatch"
+      return 1
+    fi
   fi
   if [[ ! "$active" =~ ^[0-9]+$ || ! "$decision_records" =~ ^[0-9]+$ || ! "$accepted" =~ ^[0-9]+$ || ! "$entry_intents" =~ ^[0-9]+$ ]]; then
     echo "invalid"
@@ -683,6 +738,7 @@ case "$CHECK_NAME" in
       exit 1
     fi
     readiness_session_date="$(load_readiness_session_date)"
+    expected_decision_dry_run_session="$(load_previous_readiness_session_date "$readiness_session_date")"
     latest_readiness="$(load_latest_readiness_status "$readiness_session_date")"
     latest_readiness_status=""
     readiness_created_at=""
@@ -704,7 +760,7 @@ case "$CHECK_NAME" in
     if [[ "$latest_readiness_status" == "passed" && "$readiness_is_current" == "true" && "$readiness_is_recent" == "true" ]]; then
       latest_decision_dry_run_line="$(load_latest_readiness_decision_dry_run "$readiness_session_date")"
       latest_decision_dry_run_status="missing"
-      if ! latest_decision_dry_run_status="$(validate_readiness_decision_dry_run_line "$latest_decision_dry_run_line")"; then
+      if ! latest_decision_dry_run_status="$(validate_readiness_decision_dry_run_line "$latest_decision_dry_run_line" "$expected_decision_dry_run_session")"; then
         echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} reason=lock_busy_decision_dry_run_$latest_decision_dry_run_status"
         if [[ -n "$latest_decision_dry_run_line" ]]; then
           echo "$latest_decision_dry_run_line"

@@ -133,8 +133,10 @@ decision_dry_run_field() {
 
 validate_readiness_decision_dry_run_line() {
   local line="$1"
+  local expected_as_of_session="${2:-}"
   local strategy
   local as_of
+  local as_of_session
   local active
   local decision_records
   local accepted
@@ -173,6 +175,17 @@ validate_readiness_decision_dry_run_line() {
   if [[ "$strategy" != "$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY" ]]; then
     echo "strategy_mismatch"
     return 1
+  fi
+  if [[ -n "$expected_as_of_session" ]]; then
+    as_of_session="$(TZ=America/New_York date -d "$as_of" +%F 2>/dev/null || true)"
+    if [[ -z "$as_of_session" ]]; then
+      echo "invalid"
+      return 1
+    fi
+    if [[ "$as_of_session" != "$expected_as_of_session" ]]; then
+      echo "session_mismatch"
+      return 1
+    fi
   fi
   if [[ ! "$active" =~ ^[0-9]+$ || ! "$decision_records" =~ ^[0-9]+$ || ! "$accepted" =~ ^[0-9]+$ || ! "$entry_intents" =~ ^[0-9]+$ ]]; then
     echo "invalid"
@@ -268,6 +281,7 @@ else:
 
 conn = connect_postgres(settings.database_url)
 dry_run_row = None
+expected_dry_run_session = ""
 try:
     with conn.cursor() as cur:
         cur.execute(
@@ -351,6 +365,20 @@ try:
             ),
         )
         dry_run_row = cur.fetchone()
+        try:
+            calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+                start=session_date - timedelta(days=14),
+                end=session_date - timedelta(days=1),
+            )
+            previous_sessions = [
+                session.session_date
+                for session in calendar
+                if session.session_date < session_date
+            ]
+            if previous_sessions:
+                expected_dry_run_session = max(previous_sessions).isoformat()
+        except Exception:
+            expected_dry_run_session = ""
 finally:
     conn.close()
 
@@ -374,6 +402,8 @@ print(
     f"{session_date.isoformat()}|{status}|{readiness_created_at}|"
     f"{supervisor_started_at}|{readiness_age_minutes}"
 )
+if expected_dry_run_session:
+    print(f"paper_readiness_expected_decision_dry_run_session={expected_dry_run_session}")
 if dry_run_row and dry_run_row[0]:
     keys = (
         "strategy",
@@ -418,6 +448,11 @@ latest_readiness="$(
     | sed -n 's/^paper_readiness_latest_status=//p' \
     | tail -n 1
 )"
+expected_decision_dry_run_session="$(
+  printf '%s\n' "$latest_readiness_output" \
+    | sed -n 's/^paper_readiness_expected_decision_dry_run_session=//p' \
+    | tail -n 1
+)"
 latest_decision_dry_run_line="$(
   printf '%s\n' "$latest_readiness_output" \
     | sed -n 's/^paper_readiness_latest_decision_dry_run=//p' \
@@ -453,7 +488,7 @@ if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "pa
     exec "$PAPER_READINESS_CHECK_SCRIPT" "$ENV_FILE"
   fi
   latest_decision_dry_run_status="missing"
-  if ! latest_decision_dry_run_status="$(validate_readiness_decision_dry_run_line "$latest_decision_dry_run_line")"; then
+  if ! latest_decision_dry_run_status="$(validate_readiness_decision_dry_run_line "$latest_decision_dry_run_line" "$expected_decision_dry_run_session")"; then
     echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=decision_dry_run_$latest_decision_dry_run_status"
     if [[ -n "$latest_decision_dry_run_line" ]]; then
       echo "$latest_decision_dry_run_line"

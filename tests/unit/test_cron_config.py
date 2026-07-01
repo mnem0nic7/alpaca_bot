@@ -397,6 +397,54 @@ def test_paper_readiness_final_retry_reruns_after_pass_with_zero_entry_intents(
     assert "paper readiness already passed for session 2026-06-29" not in result.stdout
 
 
+def test_paper_readiness_final_retry_reruns_after_pass_with_stale_dry_run_session(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_latest_status=2026-06-30|passed|2026-06-30T13:20:00.000000Z|2026-06-30T13:00:00.000000Z\\n'\n"
+        "printf 'paper_readiness_expected_decision_dry_run_session=2026-06-29\\n'\n"
+        "printf 'paper_readiness_latest_decision_dry_run=paper decision dry run ok: strategy=bull_flag as_of=2026-06-26T11:30:00-04:00 active=980 decision_records=941 accepted=3 entry_intents=3 sample_times=10:30,11:30,12:30,13:30,14:30,15:30 evaluations=6 min_decision_records=929 max_accepted=3 max_entry_intents=3\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+    fake_readiness = tmp_path / "paper_readiness_check.sh"
+    fake_readiness.write_text("#!/usr/bin/env bash\nprintf 'fresh readiness ran\\n'\n")
+    fake_readiness.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_readiness_if_needed.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_READINESS_CHECK_SCRIPT": str(fake_readiness),
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "scheduled check context: session_date=2026-06-30 "
+        "proof_start=2026-06-29 reason=decision_dry_run_session_mismatch"
+    ) in result.stdout
+    assert "paper decision dry run ok: strategy=bull_flag" in result.stdout
+    assert "fresh readiness ran" in result.stdout
+    assert "paper readiness already passed for session 2026-06-30" not in result.stdout
+
+
 def test_paper_readiness_force_refresh_reruns_after_recent_pass_without_age(
     tmp_path: Path,
 ) -> None:
@@ -816,6 +864,60 @@ def test_paper_readiness_lock_skip_blocks_pass_with_zero_entry_intents(
     assert (
         "lacks accepted entry-intent decision dry-run proof "
         "(entry_intents_under_minimum)"
+    ) in result.stderr
+
+
+def test_paper_readiness_lock_skip_blocks_pass_with_stale_dry_run_session(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-07-04\\n'\n")
+    fake_date.chmod(0o755)
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_session_date=2026-07-06\\n'\n"
+        "printf 'paper_readiness_previous_session_date=2026-07-02\\n'\n"
+        "printf 'paper_readiness_latest_status=passed|2026-07-06T13:20:00.000000Z|2026-07-06T13:00:00.000000Z\\n'\n"
+        "printf 'paper_readiness_latest_decision_dry_run=paper decision dry run ok: strategy=bull_flag as_of=2026-06-26T11:30:00-04:00 active=980 decision_records=941 accepted=3 entry_intents=3 sample_times=10:30,11:30,12:30,13:30,14:30,15:30 evaluations=6 min_decision_records=929 max_accepted=3 max_entry_intents=3\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_readiness",
+            str(tmp_path / "readiness.lock"),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={"PATH": f"{fake_bin}:/usr/bin:/bin"},
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 48
+    assert (
+        "scheduled check context: session_date=2026-07-06 "
+        "proof_start=2026-06-29 "
+        "reason=lock_busy_decision_dry_run_session_mismatch"
+    ) in result.stdout
+    assert "paper decision dry run ok: strategy=bull_flag" in result.stdout
+    assert (
+        "lacks accepted entry-intent decision dry-run proof "
+        "(session_mismatch)"
     ) in result.stderr
 
 
