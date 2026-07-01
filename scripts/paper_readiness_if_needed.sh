@@ -249,6 +249,7 @@ validate_readiness_decision_dry_run_line() {
 }
 
 latest_readiness="$("${compose[@]}" run -T --rm \
+  -e PAPER_READINESS_SESSION_DATE="${PAPER_READINESS_SESSION_DATE:-}" \
   --entrypoint python admin <<'PY' || true
 from __future__ import annotations
 

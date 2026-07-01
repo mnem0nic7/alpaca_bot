@@ -445,6 +445,59 @@ def test_paper_readiness_final_retry_reruns_after_pass_with_stale_dry_run_sessio
     assert "paper readiness already passed for session 2026-06-30" not in result.stdout
 
 
+def test_paper_readiness_final_retry_honors_session_override_in_lookup(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-30",
+                "STRATEGY_VERSION=v1-breakout",
+                "PAPER_READINESS_CHECK_SCRIPT=/bin/false",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "args=\"$*\"\n"
+        "if [[ \"$args\" == *'PAPER_READINESS_SESSION_DATE=2026-07-01'* ]]; then\n"
+        "  printf 'paper_readiness_latest_status=2026-07-01|passed|2026-07-01T13:20:00.000000Z|2026-07-01T13:00:00.000000Z|5\\n'\n"
+        "  printf 'paper_readiness_expected_decision_dry_run_session=2026-06-30\\n'\n"
+        "  printf 'paper_readiness_latest_decision_dry_run=paper decision dry run ok: strategy=bull_flag as_of=2026-06-30T14:30:00-04:00 active=980 decision_records=941 accepted=3 entry_intents=3 sample_times=10:30,11:30,12:30,13:30,14:30,15:30 evaluations=6 min_decision_records=929 max_accepted=3 max_entry_intents=3\\n'\n"
+        "else\n"
+        "  printf 'paper_readiness_latest_status=2026-06-30|passed|2026-06-30T13:20:00.000000Z|2026-06-30T13:00:00.000000Z|5\\n'\n"
+        "  printf 'paper_readiness_expected_decision_dry_run_session=2026-06-29\\n'\n"
+        "  printf 'paper_readiness_latest_decision_dry_run=paper decision dry run ok: strategy=bull_flag as_of=2026-06-29T14:30:00-04:00 active=980 decision_records=941 accepted=3 entry_intents=3 sample_times=10:30,11:30,12:30,13:30,14:30,15:30 evaluations=6 min_decision_records=929 max_accepted=3 max_entry_intents=3\\n'\n"
+        "fi\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_readiness_if_needed.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_READINESS_SESSION_DATE": "2026-07-01",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "scheduled check context: session_date=2026-07-01 "
+        "proof_start=2026-06-30 reason=already_passed"
+    ) in result.stdout
+    assert "as_of=2026-06-30T14:30:00-04:00" in result.stdout
+    assert "paper readiness already passed for session 2026-07-01" in result.stdout
+    assert "paper readiness already passed for session 2026-06-30" not in result.stdout
+
+
 def test_paper_readiness_force_refresh_reruns_after_recent_pass_without_age(
     tmp_path: Path,
 ) -> None:
