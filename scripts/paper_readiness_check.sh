@@ -302,10 +302,11 @@ close_only_on_readiness_failure() {
   if status_line="$(load_trading_status_line 2>/dev/null)" \
     && [[ "$status_line" == *"status=close_only"* ]] \
     && [[ "$status_line" == *"kill_switch=false"* ]] \
-    && [[ "$status_line" == *"reason=paper profit lock"* ]] \
-    && BROKER_FLAT_CONTEXT="paper readiness failure profit lock" \
+    && { [[ "$status_line" == *"reason=paper profit lock"* ]] \
+      || [[ "$status_line" == *"reason=paper proof risk lock"* ]]; } \
+    && BROKER_FLAT_CONTEXT="paper readiness failure accepted close-only lock" \
       ./scripts/broker_flat_check.sh "$ENV_FILE" >/dev/null; then
-    echo "paper readiness preserving active paper profit lock after readiness failure: $status_line"
+    echo "paper readiness preserving active paper close-only lock after readiness failure: $status_line"
     exit "$rc"
   fi
 
@@ -1758,6 +1759,7 @@ fi
 echo "paper readiness option positions ok: net_open=0 active_orders=0"
 
 same_session_profit_lock=false
+same_session_proof_risk_lock=false
 status_line="$("${compose[@]}" run -T --rm admin status \
   --mode paper \
   --strategy-version "$STRATEGY_VERSION")"
@@ -1770,7 +1772,8 @@ if [[ "$status_line" == *"status=close_only"* ]] \
     exit 1
   fi
 
-  if [[ "$status_line" == *"reason=paper profit lock"* ]]; then
+  if [[ "$status_line" == *"reason=paper profit lock"* ]] \
+    || [[ "$status_line" == *"reason=paper proof risk lock"* ]]; then
     status_updated_at="$(sed -n 's/.* updated_at=\([^ ]*\).*/\1/p' <<< "$status_line")"
     status_session_date=""
     if [[ -n "$status_updated_at" ]]; then
@@ -1781,12 +1784,18 @@ if [[ "$status_line" == *"status=close_only"* ]] \
     if [[ -z "$status_session_date" \
       || "$status_session_date" == "$current_session_date" \
       || "$status_session_date" == "$readiness_session_date" ]]; then
-      same_session_profit_lock=true
+      if [[ "$status_line" == *"reason=paper profit lock"* ]]; then
+        same_session_profit_lock=true
+      else
+        same_session_proof_risk_lock=true
+      fi
     fi
   fi
 
   if [[ "$same_session_profit_lock" == "true" ]]; then
     echo "paper readiness preserving same-session paper profit lock: $status_line"
+  elif [[ "$same_session_proof_risk_lock" == "true" ]]; then
+    echo "paper readiness preserving same-session paper proof risk lock: $status_line"
   elif [[ "$PAPER_READINESS_AUTO_RESUME" == "true" ]]; then
     stock_exposure_counts="$(load_stock_exposure_counts)"
     IFS='|' read -r open_positions active_orders <<< "$stock_exposure_counts"
@@ -1962,6 +1971,8 @@ SQL
   if [[ "${blocked_session_state_count:-0}" != "0" ]]; then
     if [[ "${same_session_profit_lock:-false}" == "true" ]]; then
       echo "paper readiness session entry block check accepted for same-session paper profit lock: session=$PAPER_READINESS_SESSION_DATE blocked=$blocked_session_state_count names=[$blocked_session_state_names]"
+    elif [[ "${same_session_proof_risk_lock:-false}" == "true" ]]; then
+      echo "paper readiness session entry block check accepted for same-session paper proof risk lock: session=$PAPER_READINESS_SESSION_DATE blocked=$blocked_session_state_count names=[$blocked_session_state_names]"
     elif is_after_configured_flatten_time; then
       echo "paper readiness session entry block check skipped after flatten: session=$PAPER_READINESS_SESSION_DATE blocked=$blocked_session_state_count names=[$blocked_session_state_names]"
     else
@@ -2100,22 +2111,23 @@ else
 fi
 
 ops_expected_trading_status="enabled"
-if [[ "${same_session_profit_lock:-false}" == "true" ]]; then
+if [[ "${same_session_profit_lock:-false}" == "true" \
+  || "${same_session_proof_risk_lock:-false}" == "true" ]]; then
   stock_exposure_counts="$(load_stock_exposure_counts)"
   IFS='|' read -r open_positions active_orders <<< "$stock_exposure_counts"
 
   if [[ "${open_positions:-0}" != "0" ]]; then
-    echo "paper readiness failed: same-session paper profit lock has $open_positions open stock positions" >&2
+    echo "paper readiness failed: same-session paper close-only lock has $open_positions open stock positions" >&2
     exit 1
   fi
 
   if [[ "${active_orders:-0}" != "0" ]]; then
-    echo "paper readiness failed: same-session paper profit lock has $active_orders active stock orders" >&2
+    echo "paper readiness failed: same-session paper close-only lock has $active_orders active stock orders" >&2
     exit 1
   fi
 
-  BROKER_FLAT_CONTEXT="paper readiness profit lock" ./scripts/broker_flat_check.sh "$ENV_FILE"
-  echo "paper readiness ops check accepting same-session paper profit lock"
+  BROKER_FLAT_CONTEXT="paper readiness accepted close-only lock" ./scripts/broker_flat_check.sh "$ENV_FILE"
+  echo "paper readiness ops check accepting same-session paper close-only lock"
   ops_expected_trading_status="close_only"
 fi
 

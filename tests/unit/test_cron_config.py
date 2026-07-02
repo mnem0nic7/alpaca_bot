@@ -1895,8 +1895,8 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "close_only_on_readiness_failure" in script
     assert "trap close_only_on_readiness_failure EXIT" in script
     assert "load_trading_status_line" in script
-    assert "paper readiness preserving active paper profit lock after readiness failure" in script
-    assert 'BROKER_FLAT_CONTEXT="paper readiness failure profit lock"' in script
+    assert "paper readiness preserving active paper close-only lock after readiness failure" in script
+    assert 'BROKER_FLAT_CONTEXT="paper readiness failure accepted close-only lock"' in script
     assert "paper readiness failed for session ${PAPER_READINESS_SESSION_DATE:-unknown}: pre-open checks failed" in script
     assert "paper readiness warning: failed to apply close-only after readiness failure" in script
     assert 'PAPER_READINESS_SESSION_DATE="${PAPER_READINESS_SESSION_DATE:-$(load_readiness_session_date)}"' in script
@@ -2053,15 +2053,19 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "paper proof failed" in script
     assert "session guard failed" in script
     assert "same_session_profit_lock" in script
+    assert "same_session_proof_risk_lock" in script
     assert "reason=paper profit lock" in script
+    assert "reason=paper proof risk lock" in script
     assert "status_session_date" in script
     assert 'current_session_date="$(TZ=America/New_York date +%F)"' in script
     assert 'readiness_session_date="$PAPER_READINESS_SESSION_DATE"' in script
     assert '"$status_session_date" == "$current_session_date"' in script
     assert "paper readiness preserving same-session paper profit lock" in script
-    assert "paper readiness ops check accepting same-session paper profit lock" in script
-    assert "same-session paper profit lock has $active_orders active stock orders" in script
+    assert "paper readiness preserving same-session paper proof risk lock" in script
+    assert "paper readiness ops check accepting same-session paper close-only lock" in script
+    assert "same-session paper close-only lock has $active_orders active stock orders" in script
     assert "paper readiness session entry block check accepted for same-session paper profit lock" in script
+    assert "paper readiness session entry block check accepted for same-session paper proof risk lock" in script
     assert "ops_expected_trading_status=\"enabled\"" in script
     assert "ops_expected_trading_status=\"close_only\"" in script
     assert "paper readiness prior proof checks pending" in script
@@ -2710,7 +2714,7 @@ def test_paper_readiness_preserves_profit_lock_on_current_wall_date(
     assert result.returncode == 0, result.stderr
     assert "paper readiness preserving same-session paper profit lock" in result.stdout
     assert "paper readiness auto-resuming stale close_only state" not in result.stdout
-    assert "paper readiness ops check accepting same-session paper profit lock" in result.stdout
+    assert "paper readiness ops check accepting same-session paper close-only lock" in result.stdout
     assert not resume_marker.exists()
     assert not close_only_marker.exists()
 
@@ -2858,7 +2862,7 @@ def test_paper_readiness_preserves_profit_lock_when_auto_resume_disabled(
     assert result.returncode == 0, result.stderr
     assert "paper readiness preserving same-session paper profit lock" in result.stdout
     assert "paper readiness auto-resuming stale close_only state" not in result.stdout
-    assert "paper readiness ops check accepting same-session paper profit lock" in result.stdout
+    assert "paper readiness ops check accepting same-session paper close-only lock" in result.stdout
     assert not resume_marker.exists()
     assert not close_only_marker.exists()
 
@@ -2924,7 +2928,7 @@ def test_paper_readiness_failure_preserves_active_profit_lock(
     assert result.returncode == 1
     assert "PAPER_READINESS_MIN_WATCHLIST_SYMBOLS must be a positive integer" in result.stderr
     assert (
-        "paper readiness preserving active paper profit lock after readiness failure"
+        "paper readiness preserving active paper close-only lock after readiness failure"
         in result.stdout
     )
     assert not close_only_marker.exists()

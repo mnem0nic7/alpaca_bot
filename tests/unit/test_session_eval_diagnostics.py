@@ -644,6 +644,36 @@ def test_flat_profit_lock_entries_disabled_cycles_are_diagnostic_only():
     assert not diag.has_guard_issues
 
 
+def test_flat_proof_risk_lock_entries_disabled_cycles_are_diagnostic_only():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    event = AuditEvent(
+        event_type="runtime_reconciliation_detected",
+        payload={"mismatch_count": 1},
+        created_at=datetime(2026, 5, 11, 14, 0, tzinfo=timezone.utc),
+    )
+    diag = SessionDiagnostics(
+        reconciliation_issues=[event],
+        entries_disabled_cycles=4,
+        total_supervisor_cycles=10,
+        latest_entries_disabled=True,
+        latest_entries_disabled_reasons=(
+            "trading_status:close_only",
+            "runtime_reconciliation_mismatch",
+        ),
+        trading_mode_value="paper",
+        trading_status_value="close_only",
+        trading_status_reason="paper proof risk lock: 10th trade closed",
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.has_issues
+    assert diag.flat_paper_proof_risk_lock_pause
+    assert diag.proof_blocking_entries_disabled_cycles == 0
+    assert diag.proof_blocking_reconciliation_issues == []
+    assert not diag.has_guard_issues
+
+
 def test_non_profit_lock_close_only_still_blocks_entries_disabled_cycles():
     from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
 
@@ -714,6 +744,30 @@ def test_flat_profit_lock_strategy_disabled_cycles_are_diagnostic_only():
         trading_mode_value="paper",
         trading_status_value="close_only",
         trading_status_reason="paper profit lock: stop-out projection negative",
+        decision_activity=DecisionActivityStats(cycles=2, records=20),
+    )
+
+    assert diag.has_issues
+    assert diag.proof_blocking_strategy_disabled_cycles == 0
+    assert not diag.has_guard_issues
+
+
+def test_flat_proof_risk_lock_strategy_disabled_cycles_are_diagnostic_only():
+    from alpaca_bot.admin.session_eval_cli import DecisionActivityStats, SessionDiagnostics
+
+    diag = SessionDiagnostics(
+        strategy_name="bull_flag",
+        strategy_disabled_cycles=4,
+        total_supervisor_cycles=10,
+        latest_strategy_disabled=True,
+        latest_strategy_disabled_reasons=(
+            "trading_status:close_only",
+            "entry_cadence_waiting_for_new_bar",
+            "runtime_reconciliation_mismatch",
+        ),
+        trading_mode_value="paper",
+        trading_status_value="close_only",
+        trading_status_reason="paper proof risk lock: 10th trade closed",
         decision_activity=DecisionActivityStats(cycles=2, records=20),
     )
 

@@ -392,7 +392,7 @@ class SessionDiagnostics:
         latest_reconciliation_block = (
             self.latest_entries_disabled
             and "runtime_reconciliation_mismatch" in self.latest_entries_disabled_reasons
-            and not self.latest_entries_disabled_is_profit_lock_pause
+            and not self.latest_entries_disabled_is_accepted_close_only_pause
         )
         return [
             issue
@@ -403,7 +403,7 @@ class SessionDiagnostics:
 
     @property
     def proof_blocking_entries_disabled_cycles(self) -> int:
-        if self.latest_entries_disabled_is_profit_lock_pause:
+        if self.latest_entries_disabled_is_accepted_close_only_pause:
             return 0
         return self.entries_disabled_cycles if self.latest_entries_disabled else 0
 
@@ -411,7 +411,7 @@ class SessionDiagnostics:
     def proof_blocking_strategy_disabled_cycles(self) -> int:
         if not self.latest_strategy_disabled:
             return 0
-        if self.latest_strategy_disabled_is_profit_lock_pause:
+        if self.latest_strategy_disabled_is_accepted_close_only_pause:
             return 0
         if set(self.latest_strategy_disabled_reasons) <= {
             "strategy_session_state_entries_disabled",
@@ -439,6 +439,21 @@ class SessionDiagnostics:
         )
 
     @property
+    def flat_paper_proof_risk_lock_pause(self) -> bool:
+        return (
+            self.trading_mode_value == "paper"
+            and self.trading_status_value == "close_only"
+            and not self.trading_status_kill_switch_enabled
+            and self.trading_status_reason.startswith("paper proof risk lock")
+            and not self.open_positions
+            and not self.active_orders
+        )
+
+    @property
+    def flat_paper_accepted_close_only_pause(self) -> bool:
+        return self.flat_paper_profit_lock_pause or self.flat_paper_proof_risk_lock_pause
+
+    @property
     def latest_entries_disabled_is_profit_lock_pause(self) -> bool:
         latest_reasons = set(self.latest_entries_disabled_reasons)
         return (
@@ -449,6 +464,23 @@ class SessionDiagnostics:
         )
 
     @property
+    def latest_entries_disabled_is_proof_risk_lock_pause(self) -> bool:
+        latest_reasons = set(self.latest_entries_disabled_reasons)
+        return (
+            self.latest_entries_disabled
+            and self.flat_paper_proof_risk_lock_pause
+            and "trading_status:close_only" in latest_reasons
+            and latest_reasons <= PROFIT_LOCK_PAUSE_DISABLED_REASONS
+        )
+
+    @property
+    def latest_entries_disabled_is_accepted_close_only_pause(self) -> bool:
+        return (
+            self.latest_entries_disabled_is_profit_lock_pause
+            or self.latest_entries_disabled_is_proof_risk_lock_pause
+        )
+
+    @property
     def latest_strategy_disabled_is_profit_lock_pause(self) -> bool:
         latest_reasons = set(self.latest_strategy_disabled_reasons)
         return (
@@ -456,6 +488,23 @@ class SessionDiagnostics:
             and self.flat_paper_profit_lock_pause
             and "trading_status:close_only" in latest_reasons
             and latest_reasons <= PROFIT_LOCK_PAUSE_STRATEGY_DISABLED_REASONS
+        )
+
+    @property
+    def latest_strategy_disabled_is_proof_risk_lock_pause(self) -> bool:
+        latest_reasons = set(self.latest_strategy_disabled_reasons)
+        return (
+            self.latest_strategy_disabled
+            and self.flat_paper_proof_risk_lock_pause
+            and "trading_status:close_only" in latest_reasons
+            and latest_reasons <= PROFIT_LOCK_PAUSE_STRATEGY_DISABLED_REASONS
+        )
+
+    @property
+    def latest_strategy_disabled_is_accepted_close_only_pause(self) -> bool:
+        return (
+            self.latest_strategy_disabled_is_profit_lock_pause
+            or self.latest_strategy_disabled_is_proof_risk_lock_pause
         )
 
 
