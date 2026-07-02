@@ -3049,6 +3049,7 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "proof_risk_lock_pause_active" in script
     assert "paper_proof_risk_lock_pause=$paper_proof_risk_lock_pause" in script
     assert "reason=paper proof risk lock" in script
+    assert "BROKER_FLAT_CONTEXT=\"paper activity proof risk lock\"" in script
     assert "BROKER_FLAT_CONTEXT=\"paper activity profit lock\"" in script
     assert "PAPER_ACTIVITY_STRATEGY contains unsupported characters" in script
     assert "emit_scheduled_context()" in script
@@ -4964,6 +4965,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "trading_status_reason.startswith(\"paper proof risk lock\")" in script
     assert "local_active_entry_orders == 0" in script
     assert "projected_risk_lock_pnl >= min_pnl" in script
+    assert "unscored_current_session_trades" in script
+    assert "sealed_profitable_enough" in script
+    assert "paper proof sealed current-session progress:" in script
+    assert "awaiting_completed_proof_session" in script
     assert "trading_status_reason.startswith(\"paper profit lock\")" in script
     assert "runtime_image_health_failed" in script
     assert "compact_check_detail()" in script

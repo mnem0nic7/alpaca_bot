@@ -1159,6 +1159,7 @@ try:
 
     order_store = OrderStore(conn)
     trades = []
+    unscored_current_session_trades = []
     if proof_end >= proof_start:
         for session_date in date_range(proof_start, proof_end):
             trades.extend(
@@ -1170,6 +1171,14 @@ try:
                     market_timezone=market_timezone,
                 )
             )
+    if current_market_date > proof_end and current_market_date >= proof_start:
+        unscored_current_session_trades = order_store.list_closed_trades(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            session_date=current_market_date,
+            strategy_name=strategy_name,
+            market_timezone=market_timezone,
+        )
 finally:
     conn.close()
 
@@ -1183,8 +1192,18 @@ trade_pnl_rows = [
     (trade, (trade["exit_fill"] - trade["entry_fill"]) * trade["qty"])
     for trade in trades
 ]
+unscored_current_session_trade_pnl_rows = [
+    (trade, (trade["exit_fill"] - trade["entry_fill"]) * trade["qty"])
+    for trade in unscored_current_session_trades
+]
 pnl = sum(trade_pnl for _, trade_pnl in trade_pnl_rows)
 trade_count = len(trades)
+unscored_current_session_pnl = sum(
+    trade_pnl for _, trade_pnl in unscored_current_session_trade_pnl_rows
+)
+unscored_current_session_trade_count = len(unscored_current_session_trades)
+sealed_trade_count = trade_count + unscored_current_session_trade_count
+sealed_pnl = pnl + unscored_current_session_pnl
 wins = sum(1 for _, trade_pnl in trade_pnl_rows if trade_pnl > 0)
 losses = sum(1 for _, trade_pnl in trade_pnl_rows if trade_pnl < 0)
 flats = trade_count - wins - losses
@@ -1665,6 +1684,7 @@ if post_close_target_session is not None:
             )
 proof_not_started = proof_end < proof_start
 profitable_enough = trade_count >= min_trades and pnl >= min_pnl
+sealed_profitable_enough = sealed_trade_count >= min_trades and sealed_pnl >= min_pnl
 if proof_not_started:
     proof_status = "pending"
 elif profitable_enough and post_close_pass_evidence_ready:
@@ -1881,7 +1901,7 @@ proof_risk_lock_open_ok = (
 )
 proof_risk_lock_flat_ok = (
     not proof_not_started
-    and profitable_enough
+    and sealed_profitable_enough
     and local_open_positions == 0
     and local_active_orders == 0
     and local_open_option_positions == 0
@@ -1934,6 +1954,8 @@ elif proof_not_started:
     proof_reason = "awaiting_completed_proof_session"
 elif profitable_enough and not post_close_pass_evidence_ready:
     proof_reason = "awaiting_post_close_audit"
+elif sealed_profitable_enough and latest_completed_session != current_market_date:
+    proof_reason = "awaiting_completed_proof_session"
 elif trade_count < min_trades:
     proof_reason = "awaiting_min_trades"
 else:
@@ -2175,6 +2197,17 @@ print(
     f"window={proof_window} "
     f"first_exit_session={first_exit_session or 'none'} "
     f"latest_exit_session={latest_exit_session or 'none'}"
+)
+print(
+    "paper proof sealed current-session progress: "
+    f"closed_trades={sealed_trade_count} "
+    f"scoreable_closed_trades={trade_count} "
+    f"unscored_current_session_trades={unscored_current_session_trade_count} "
+    f"sealed_pnl={sealed_pnl:.2f} "
+    f"scoreable_pnl={pnl:.2f} "
+    f"unscored_current_session_pnl={unscored_current_session_pnl:.2f} "
+    f"required_trades={min_trades} "
+    f"required_pnl={min_pnl:.2f}"
 )
 print(
     "paper proof scoring: "

@@ -197,15 +197,21 @@ profit_lock_flat_pause_active() {
 proof_risk_lock_pause_active() {
   local reasons="${1:-}"
   only_profit_lock_pause_reasons "$reasons" || return 1
-  [[ "${has_stock_exposure:-false}" == "true" ]] || return 1
-  [[ "${stock_open_positions:-0}" -gt 0 ]] || return 1
-  [[ "${active_stock_orders:-0}" -eq "${stock_open_positions:-0}" ]] || return 1
 
   local status_line
   status_line="$(load_trading_status_line 2>/dev/null)" || return 1
   [[ "$status_line" == *"status=close_only"* ]] || return 1
   [[ "$status_line" == *"kill_switch=false"* ]] || return 1
   [[ "$status_line" == *"reason=paper proof risk lock"* ]] || return 1
+
+  if [[ "${has_stock_exposure:-false}" == "true" ]]; then
+    [[ "${stock_open_positions:-0}" -gt 0 ]] || return 1
+    [[ "${active_stock_orders:-0}" -eq "${stock_open_positions:-0}" ]] || return 1
+    return 0
+  fi
+
+  BROKER_FLAT_CONTEXT="paper activity proof risk lock" \
+    ./scripts/broker_flat_check.sh "$ENV_FILE" >/dev/null
 }
 
 close_only_on_activity_failure() {
