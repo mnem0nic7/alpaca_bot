@@ -3046,6 +3046,9 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "profit_lock_flat_pause_active" in script
     assert "only_profit_lock_pause_reasons" in script
     assert "paper_profit_lock_pause=$paper_profit_lock_pause" in script
+    assert "proof_risk_lock_pause_active" in script
+    assert "paper_proof_risk_lock_pause=$paper_proof_risk_lock_pause" in script
+    assert "reason=paper proof risk lock" in script
     assert "BROKER_FLAT_CONTEXT=\"paper activity profit lock\"" in script
     assert "PAPER_ACTIVITY_STRATEGY contains unsupported characters" in script
     assert "emit_scheduled_context()" in script
@@ -4945,6 +4948,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "--expect-only-enabled-strategy \"$PROOF_STATUS_STRATEGY\"" in script
     assert "PROOF_STATUS_OPS_HEALTH_STATUS" in script
     assert "PROOF_STATUS_OPS_HEALTH_DETAIL" in script
+    assert "PROOF_STATUS_OPS_CLOSE_ONLY_HEALTH_STATUS" in script
+    assert "PROOF_STATUS_OPS_CLOSE_ONLY_HEALTH_DETAIL" in script
     assert "PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT" in script
     assert "runtime_image_health_check.sh" in script
     assert "PROOF_STATUS_RUNTIME_IMAGE_HEALTH_STATUS" in script
@@ -4952,7 +4957,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "cron_health_failed" in script
     assert "ops_health_failed" in script
     assert "profit_lock_pause" in script
+    assert "proof_risk_lock_pause" in script
     assert "accepted flat paper profit lock" in script
+    assert "accepted paper proof risk lock" in script
+    assert "ops_close_only_health_status == \"ok\"" in script
+    assert "trading_status_reason.startswith(\"paper proof risk lock\")" in script
+    assert "local_active_entry_orders == 0" in script
+    assert "projected_risk_lock_pnl >= min_pnl" in script
     assert "trading_status_reason.startswith(\"paper profit lock\")" in script
     assert "runtime_image_health_failed" in script
     assert "compact_check_detail()" in script

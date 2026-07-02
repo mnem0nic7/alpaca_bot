@@ -165,6 +165,22 @@ if ! ops_health_detail="$(./scripts/ops_check.sh "$ENV_FILE" \
 fi
 ops_health_detail="$(compact_check_detail "$ops_health_detail")"
 
+ops_close_only_health_status="skipped"
+ops_close_only_health_detail=""
+if [[ "$ops_health_status" != "ok" ]]; then
+  ops_close_only_health_status="ok"
+  if ! ops_close_only_health_detail="$(./scripts/ops_check.sh "$ENV_FILE" \
+    --expect-trading-mode "$trading_mode" \
+    --expect-strategy-version "$STRATEGY_VERSION" \
+    --expect-trading-status close_only \
+    --expect-kill-switch false \
+    --expect-only-enabled-strategy "$PROOF_STATUS_STRATEGY" \
+    2>&1)"; then
+    ops_close_only_health_status="failed"
+  fi
+  ops_close_only_health_detail="$(compact_check_detail "$ops_close_only_health_detail")"
+fi
+
 runtime_image_health_status="ok"
 if ! runtime_image_health_detail="$("$PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT" "$ENV_FILE" 2>&1)"; then
   runtime_image_health_status="failed"
@@ -200,6 +216,8 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_CRON_HEALTH_DETAIL="$cron_health_detail" \
   -e PROOF_STATUS_OPS_HEALTH_STATUS="$ops_health_status" \
   -e PROOF_STATUS_OPS_HEALTH_DETAIL="$ops_health_detail" \
+  -e PROOF_STATUS_OPS_CLOSE_ONLY_HEALTH_STATUS="$ops_close_only_health_status" \
+  -e PROOF_STATUS_OPS_CLOSE_ONLY_HEALTH_DETAIL="$ops_close_only_health_detail" \
   -e PROOF_STATUS_RUNTIME_IMAGE_HEALTH_STATUS="$runtime_image_health_status" \
   -e PROOF_STATUS_RUNTIME_IMAGE_HEALTH_DETAIL="$runtime_image_health_detail" \
   -e PROOF_STATUS_FAIL_ON_ISSUES="$PROOF_STATUS_FAIL_ON_ISSUES" \
@@ -258,6 +276,12 @@ def format_problem_summary(problems: dict[str, list[str]]) -> str:
             )
             parts.append(f"{name}:{len(values)}:{examples}")
     return ";".join(parts) if parts else "none"
+
+
+def parse_symbol_set(raw: str | None) -> set[str]:
+    if raw is None or raw == "none":
+        return set()
+    return {symbol for symbol in raw.split(",") if symbol and symbol != "none"}
 
 
 def format_trade_pnl_atom(trade: dict, pnl: float) -> str:
@@ -459,6 +483,12 @@ cron_health_status = os.environ.get("PROOF_STATUS_CRON_HEALTH_STATUS", "unknown"
 cron_health_detail = os.environ.get("PROOF_STATUS_CRON_HEALTH_DETAIL", "").strip()
 ops_health_status = os.environ.get("PROOF_STATUS_OPS_HEALTH_STATUS", "unknown")
 ops_health_detail = os.environ.get("PROOF_STATUS_OPS_HEALTH_DETAIL", "").strip()
+ops_close_only_health_status = os.environ.get(
+    "PROOF_STATUS_OPS_CLOSE_ONLY_HEALTH_STATUS", "skipped"
+)
+ops_close_only_health_detail = os.environ.get(
+    "PROOF_STATUS_OPS_CLOSE_ONLY_HEALTH_DETAIL", ""
+).strip()
 runtime_image_health_status = os.environ.get(
     "PROOF_STATUS_RUNTIME_IMAGE_HEALTH_STATUS", "unknown"
 )
@@ -994,6 +1024,73 @@ try:
         local_active_order_symbols = exposure_row[5] if exposure_row else "none"
         local_open_option_symbols = exposure_row[6] if exposure_row else "none"
         local_active_option_order_symbols = exposure_row[7] if exposure_row else "none"
+
+        cur.execute(
+            """
+            SELECT
+              (
+                SELECT COUNT(*)::int
+                FROM orders
+                WHERE trading_mode = %s
+                  AND strategy_version = %s
+                  AND intent_type = 'entry'
+                  AND side = 'buy'
+                  AND status IN (
+                    'pending_submit',
+                    'submitting',
+                    'pending_new',
+                    'new',
+                    'accepted',
+                    'accepted_for_bidding',
+                    'submitted',
+                    'partially_filled',
+                    'held',
+                    'pending_replace',
+                    'pending_cancel',
+                    'stopped',
+                    'suspended',
+                    'done_for_day'
+                  )
+              ) AS active_entry_orders,
+              (
+                SELECT COUNT(*)::int
+                FROM orders
+                WHERE trading_mode = %s
+                  AND strategy_version = %s
+                  AND intent_type = 'stop'
+                  AND side = 'sell'
+                  AND status IN (
+                    'pending_submit',
+                    'submitting',
+                    'pending_new',
+                    'new',
+                    'accepted',
+                    'accepted_for_bidding',
+                    'submitted',
+                    'partially_filled',
+                    'held',
+                    'pending_replace',
+                    'pending_cancel',
+                    'stopped',
+                    'suspended',
+                    'done_for_day'
+                  )
+              ) AS active_stop_orders
+            """,
+            (
+                trading_mode.value,
+                strategy_version,
+                trading_mode.value,
+                strategy_version,
+            ),
+        )
+        risk_lock_order_row = cur.fetchone()
+        local_active_entry_orders = (
+            int(risk_lock_order_row[0] or 0) if risk_lock_order_row else 0
+        )
+        local_active_stop_orders = (
+            int(risk_lock_order_row[1] or 0) if risk_lock_order_row else 0
+        )
 
         cur.execute(
             """
@@ -1755,11 +1852,68 @@ if profit_lock_pause:
         f"{ops_health_detail or 'ops check failed'}; accepted flat paper profit lock"
     )
 
+local_position_symbol_set = parse_symbol_set(local_open_position_symbols)
+local_active_order_symbol_set = parse_symbol_set(local_active_order_symbols)
+broker_position_symbol_set = parse_symbol_set(broker_open_position_symbols)
+broker_order_symbol_set = parse_symbol_set(broker_open_order_symbols)
+max_loss_per_trade = float(settings.max_loss_per_trade_dollars or 0.0)
+open_stock_exposure_count = max(local_open_positions, broker_open_positions or 0)
+projected_risk_lock_pnl = pnl - (max_loss_per_trade * open_stock_exposure_count)
+proof_risk_lock_open_ok = (
+    not proof_not_started
+    and trade_count < min_trades
+    and trade_count + local_open_positions >= min_trades
+    and local_open_positions > 0
+    and local_active_entry_orders == 0
+    and local_active_stop_orders >= local_open_positions
+    and local_active_orders == local_active_stop_orders
+    and local_open_option_positions == 0
+    and local_active_option_orders == 0
+    and not broker_exposure_warning
+    and broker_account_status == "ok"
+    and (broker_open_positions or 0) == local_open_positions
+    and (broker_open_orders or 0) == local_active_stop_orders
+    and local_position_symbol_set == local_active_order_symbol_set
+    and local_position_symbol_set == broker_position_symbol_set
+    and local_position_symbol_set == broker_order_symbol_set
+    and max_loss_per_trade > 0
+    and projected_risk_lock_pnl >= min_pnl
+)
+proof_risk_lock_flat_ok = (
+    not proof_not_started
+    and profitable_enough
+    and local_open_positions == 0
+    and local_active_orders == 0
+    and local_open_option_positions == 0
+    and local_active_option_orders == 0
+    and not broker_exposure_warning
+    and (broker_open_orders or 0) == 0
+    and (broker_open_positions or 0) == 0
+    and broker_account_status == "ok"
+)
+proof_risk_lock_pause = (
+    ops_health_status != "ok"
+    and ops_close_only_health_status == "ok"
+    and trading_status_value == "close_only"
+    and not trading_status_kill_switch_enabled
+    and trading_status_reason.startswith("paper proof risk lock")
+    and (proof_risk_lock_open_ok or proof_risk_lock_flat_ok)
+)
+if proof_risk_lock_pause:
+    blockers = [blocker for blocker in blockers if blocker != "ops_health_failed"]
+    ops_health_status = "ok"
+    ops_health_detail = (
+        f"{ops_health_detail or 'ops check failed'}; "
+        f"accepted paper proof risk lock; close_only_health={ops_close_only_health_detail or 'ok'}"
+    )
+
 warnings = []
 if calendar_warning:
     warnings.append("calendar_warning")
 if profit_lock_pause:
     warnings.append("profit_lock_pause")
+if proof_risk_lock_pause:
+    warnings.append("proof_risk_lock_pause")
 if not proof_not_started and 0 < trade_count:
     if trade_count < min_trades:
         if pnl < 0:
@@ -1804,6 +1958,7 @@ print(
     f"ops_status={ops_health_status} "
     f"ops_detail={ops_health_detail or 'none'} "
     f"profit_lock_pause={str(profit_lock_pause).lower()} "
+    f"proof_risk_lock_pause={str(proof_risk_lock_pause).lower()} "
     f"image_status={runtime_image_health_status} "
     f"image_detail={runtime_image_health_detail or 'none'}"
 )
