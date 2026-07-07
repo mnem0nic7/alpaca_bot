@@ -1,14 +1,16 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 from typing import Any
 
-from alpaca_bot.domain.models import OptionContract
+from alpaca_bot.config import Settings
+from alpaca_bot.domain.models import Bar, EntrySignal, OptionContract
+from alpaca_bot.strategy import StrategySignalEvaluator
 
 
 @dataclass(frozen=True)
@@ -97,6 +99,44 @@ class PointInTimeOptionChains(Mapping[str, tuple[OptionContract, ...]]):
         if self.as_of is None:
             raise RuntimeError("PointInTimeOptionChains.as_of must be set before use")
         return self.as_of
+
+
+@dataclass
+class PointInTimeOptionSignalEvaluator:
+    evaluator: StrategySignalEvaluator
+    chains: PointInTimeOptionChains
+
+    def __call__(
+        self,
+        *,
+        symbol: str,
+        intraday_bars: Sequence[Bar],
+        signal_index: int,
+        daily_bars: Sequence[Bar],
+        settings: Settings,
+    ) -> EntrySignal | None:
+        if signal_index < 0 or signal_index >= len(intraday_bars):
+            return None
+        signal_bar = intraday_bars[signal_index]
+        self.chains.set_as_of(
+            signal_bar.timestamp
+            + timedelta(minutes=settings.entry_timeframe_minutes)
+        )
+        return self.evaluator(
+            symbol=symbol,
+            intraday_bars=intraday_bars,
+            signal_index=signal_index,
+            daily_bars=daily_bars,
+            settings=settings,
+        )
+
+
+def make_point_in_time_option_evaluator(
+    factory: Callable[[Mapping[str, Sequence[OptionContract]]], StrategySignalEvaluator],
+    ledger: OptionChainSnapshotLedger,
+) -> PointInTimeOptionSignalEvaluator:
+    chains = PointInTimeOptionChains(ledger)
+    return PointInTimeOptionSignalEvaluator(factory(chains), chains)
 
 
 def append_option_chain_snapshot(

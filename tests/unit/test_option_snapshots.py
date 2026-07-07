@@ -5,14 +5,17 @@ import json
 
 import pytest
 
-from alpaca_bot.domain.models import OptionContract
+from alpaca_bot.config import Settings
+from alpaca_bot.domain.models import Bar, EntrySignal, OptionContract
 from alpaca_bot.replay.option_snapshots import (
     OptionChainSnapshot,
     OptionChainSnapshotLedger,
     PointInTimeOptionChains,
     append_option_chain_snapshot,
     load_option_chain_snapshot_ledger,
+    make_point_in_time_option_evaluator,
 )
+from tests.unit.helpers import _base_env
 
 
 def _contract(
@@ -30,6 +33,25 @@ def _contract(
         ask=ask,
         delta=0.52,
         open_interest=240,
+    )
+
+
+def _settings(**overrides: str) -> Settings:
+    env = _base_env()
+    env.update({"ENTRY_TIMEFRAME_MINUTES": "5"})
+    env.update(overrides)
+    return Settings.from_env(env)
+
+
+def _bar(timestamp: datetime) -> Bar:
+    return Bar(
+        symbol="ACHR",
+        timestamp=timestamp,
+        open=10.0,
+        high=10.4,
+        low=9.8,
+        close=10.2,
+        volume=1000.0,
     )
 
 
@@ -185,6 +207,101 @@ def test_point_in_time_option_chains_matches_factory_mapping_contract():
     assert len(mapping) == 2
     assert mapping.get("ACHR", ())[0].ask == pytest.approx(1.55)
     assert mapping.get("METC", ()) == ()
+
+
+def test_point_in_time_option_evaluator_uses_chain_available_at_evaluation_time():
+    ledger = OptionChainSnapshotLedger(
+        (
+            OptionChainSnapshot(
+                cycle_at=datetime(2026, 7, 7, 14, 30, tzinfo=timezone.utc),
+                chains_by_symbol={"ACHR": (_contract(ask=1.35),)},
+            ),
+            OptionChainSnapshot(
+                cycle_at=datetime(2026, 7, 7, 14, 35, tzinfo=timezone.utc),
+                chains_by_symbol={"ACHR": (_contract(ask=1.55),)},
+            ),
+            OptionChainSnapshot(
+                cycle_at=datetime(2026, 7, 7, 14, 36, tzinfo=timezone.utc),
+                chains_by_symbol={"ACHR": (_contract(ask=9.99),)},
+            ),
+        )
+    )
+
+    def factory(chains):
+        def evaluate(
+            *,
+            symbol,
+            intraday_bars,
+            signal_index,
+            daily_bars,
+            settings,
+        ):
+            del daily_bars, settings
+            contracts = chains.get(symbol, ())
+            if not contracts:
+                return None
+            contract = contracts[0]
+            bar = intraday_bars[signal_index]
+            return EntrySignal(
+                symbol=symbol,
+                signal_bar=bar,
+                entry_level=bar.close,
+                relative_volume=1.0,
+                stop_price=0.0,
+                limit_price=contract.ask,
+                initial_stop_price=0.01,
+                option_contract=contract,
+            )
+
+        return evaluate
+
+    evaluator = make_point_in_time_option_evaluator(factory, ledger)
+    bars = [_bar(datetime(2026, 7, 7, 14, 30, tzinfo=timezone.utc))]
+
+    signal = evaluator(
+        symbol="ACHR",
+        intraday_bars=bars,
+        signal_index=0,
+        daily_bars=[],
+        settings=_settings(),
+    )
+
+    assert signal is not None
+    assert signal.option_contract is not None
+    assert signal.option_contract.ask == pytest.approx(1.55)
+    assert signal.limit_price == pytest.approx(1.55)
+
+
+def test_point_in_time_option_evaluator_returns_none_for_invalid_signal_index():
+    ledger = OptionChainSnapshotLedger(
+        (
+            OptionChainSnapshot(
+                cycle_at=datetime(2026, 7, 7, 14, 30, tzinfo=timezone.utc),
+                chains_by_symbol={"ACHR": (_contract(),)},
+            ),
+        )
+    )
+
+    def factory(chains):
+        del chains
+
+        def evaluate(**kwargs):
+            raise AssertionError("invalid signal indexes must not call evaluator")
+
+        return evaluate
+
+    evaluator = make_point_in_time_option_evaluator(factory, ledger)
+
+    assert (
+        evaluator(
+            symbol="ACHR",
+            intraday_bars=[],
+            signal_index=0,
+            daily_bars=[],
+            settings=_settings(),
+        )
+        is None
+    )
 
 
 def test_load_option_chain_snapshot_reports_file_and_line_for_bad_rows(tmp_path):
