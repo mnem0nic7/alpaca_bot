@@ -189,6 +189,9 @@ PROOF_CURRENT_EXECUTION_FIELDS = {
     "min_entry_fill_rate": "proof_current_execution_min_entry_fill_rate",
     "accepted_to_fill_rate": "proof_current_execution_accepted_to_fill_rate",
     "filled_symbols": "proof_current_execution_filled_symbols",
+    "expired_symbols": "proof_current_execution_expired_symbols",
+    "active_symbols": "proof_current_execution_active_symbols",
+    "maintenance_drained_symbols": "proof_current_execution_maintenance_drained_symbols",
 }
 DECISION_DRY_RUN_FIELDS = {
     "strategy": "decision_dry_run_strategy",

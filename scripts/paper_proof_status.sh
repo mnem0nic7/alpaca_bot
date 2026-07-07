@@ -1527,6 +1527,9 @@ try:
         current_session_entry_order_settled_count = 0
         current_session_entry_order_settled_filled_count = 0
         current_session_entry_order_filled_symbols = "none"
+        current_session_entry_order_expired_symbols = "none"
+        current_session_entry_order_active_symbols = "none"
+        current_session_entry_order_maintenance_drained_symbols = "none"
         if proof_end >= proof_start:
             cur.execute(
                 """
@@ -1891,7 +1894,26 @@ try:
                         AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
                     ),
                     'none'
-                  ) AS filled_symbols
+                  ) AS filled_symbols,
+                  COALESCE(
+                    string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                      WHERE NOT maintenance_drained
+                        AND (strategy_expired OR status = 'expired')
+                    ),
+                    'none'
+                  ) AS expired_symbols,
+                  COALESCE(
+                    string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                      WHERE NOT maintenance_drained AND status = ANY(%s)
+                    ),
+                    'none'
+                  ) AS active_symbols,
+                  COALESCE(
+                    string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                      WHERE maintenance_drained
+                    ),
+                    'none'
+                  ) AS maintenance_drained_symbols
                 FROM entry_orders
                 """,
                 (
@@ -1900,6 +1922,7 @@ try:
                     proof_strategy_names,
                     market_timezone,
                     current_market_date,
+                    list(ACTIVE_ORDER_STATUSES),
                     list(ACTIVE_ORDER_STATUSES),
                     list(ACTIVE_ORDER_STATUSES),
                     list(ACTIVE_ORDER_STATUSES),
@@ -1936,6 +1959,15 @@ try:
                 )
                 current_session_entry_order_filled_symbols = (
                     current_session_execution_row[9] or "none"
+                )
+                current_session_entry_order_expired_symbols = (
+                    current_session_execution_row[10] or "none"
+                )
+                current_session_entry_order_active_symbols = (
+                    current_session_execution_row[11] or "none"
+                )
+                current_session_entry_order_maintenance_drained_symbols = (
+                    current_session_execution_row[12] or "none"
                 )
 
         unpaired_filled_exit_count = 0
@@ -4012,7 +4044,10 @@ print(
     f"entry_fill_rate={current_session_entry_order_fill_rate_text} "
     f"min_entry_fill_rate={execution_min_entry_fill_rate:.2f} "
     f"accepted_to_fill_rate={current_session_accepted_to_fill_rate_text} "
-    f"filled_symbols={current_session_entry_order_filled_symbols}"
+    f"filled_symbols={current_session_entry_order_filled_symbols} "
+    f"expired_symbols={current_session_entry_order_expired_symbols} "
+    f"active_symbols={current_session_entry_order_active_symbols} "
+    f"maintenance_drained_symbols={current_session_entry_order_maintenance_drained_symbols}"
 )
 print(
     "paper proof sealed current-session progress: "

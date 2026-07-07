@@ -2085,6 +2085,12 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"settled_entry_fill_rate": "proof_current_execution_settled_entry_fill_rate"' in script
     assert '"min_entry_fill_rate": "proof_current_execution_min_entry_fill_rate"' in script
     assert '"filled_symbols": "proof_current_execution_filled_symbols"' in script
+    assert '"expired_symbols": "proof_current_execution_expired_symbols"' in script
+    assert '"active_symbols": "proof_current_execution_active_symbols"' in script
+    assert (
+        '"maintenance_drained_symbols": '
+        '"proof_current_execution_maintenance_drained_symbols"'
+    ) in script
     assert "DECISION_DRY_RUN_FIELDS" in script
     assert "DECISION_DRY_RUN_STRATEGIES_FIELDS" in script
     assert '"decision_records": "decision_dry_run_records"' in script
@@ -5795,6 +5801,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert ") AS strategy_expired" in script
     assert "AND NOT strategy_expired" in script
     assert "AND (strategy_expired OR status = 'expired')" in script
+    assert ") AS expired_symbols" in script
+    assert ") AS active_symbols" in script
+    assert ") AS maintenance_drained_symbols" in script
     assert "COUNT(*) FILTER (WHERE maintenance_drained)::int" in script
     assert "effective_entry_fill_rate_source" in script
     assert "capacity_reject_rate > execution_max_capacity_reject_rate" in script
@@ -6228,6 +6237,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     )
     assert "settled_entry_fill_rate={current_session_settled_entry_fill_rate_text}" in script
     assert "accepted_to_fill_rate={current_session_accepted_to_fill_rate_text}" in script
+    assert "filled_symbols={current_session_entry_order_filled_symbols}" in script
+    assert "expired_symbols={current_session_entry_order_expired_symbols}" in script
+    assert "active_symbols={current_session_entry_order_active_symbols}" in script
+    assert (
+        "maintenance_drained_symbols="
+        "{current_session_entry_order_maintenance_drained_symbols}"
+    ) in script
     assert "settled_entry_fill_rate" in script
     assert "paper proof scoring:" in script
     assert "scoreable_closed_trades={trade_count}" in script
