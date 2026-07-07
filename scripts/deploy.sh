@@ -9,6 +9,8 @@ DEPLOY_PROOF_SETTLE_SECONDS="${DEPLOY_PROOF_SETTLE_SECONDS:-15}"
 DEPLOY_REQUIRE_DECISION_DRY_RUN="${DEPLOY_REQUIRE_DECISION_DRY_RUN:-true}"
 DEPLOY_READINESS_REFRESH_RETRIES="${DEPLOY_READINESS_REFRESH_RETRIES:-10}"
 DEPLOY_READINESS_REFRESH_RETRY_SECONDS="${DEPLOY_READINESS_REFRESH_RETRY_SECONDS:-20}"
+DEPLOY_PREFLIGHT_EXPOSURE_RETRIES="${DEPLOY_PREFLIGHT_EXPOSURE_RETRIES:-1}"
+DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS="${DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS:-30}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file: $ENV_FILE" >&2
@@ -311,6 +313,53 @@ deploy_paper_proof_status_ready() {
   deploy_accepts_protected_paper_exposure "$proof_status_output" "$proof_summary"
 }
 
+paper_proof_exposure_line() {
+  local proof_status_output="$1"
+
+  printf '%s\n' "$proof_status_output" \
+    | grep -E '^paper proof exposure protection: ' \
+    | tail -n 1 \
+    || true
+}
+
+deploy_paper_exposure_safe() {
+  local proof_status_output="$1"
+  local exposure_line
+
+  exposure_line="$(paper_proof_exposure_line "$proof_status_output")"
+  [[ "$exposure_line" == *" status=flat issues=none "* \
+    || "$exposure_line" == *" status=protected issues=none "* ]]
+}
+
+verify_deploy_preflight_paper_exposure() {
+  local attempt
+  local exposure_line
+  local proof_status_output
+
+  attempt=1
+  while true; do
+    proof_status_output="$("$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE")"
+    if deploy_paper_exposure_safe "$proof_status_output"; then
+      return 0
+    fi
+
+    exposure_line="$(paper_proof_exposure_line "$proof_status_output")"
+    if [[ "$attempt" -ge "$DEPLOY_PREFLIGHT_EXPOSURE_RETRIES" ]]; then
+      echo \
+        "deploy preflight failed: paper exposure is not flat or protected; ${exposure_line:-missing exposure line}" \
+        >&2
+      printf '%s\n' "$proof_status_output" >&2
+      exit 1
+    fi
+
+    echo \
+      "deploy preflight waiting for paper exposure to become flat/protected: ${exposure_line:-missing exposure line}" \
+      >&2
+    sleep "$DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS"
+    attempt=$((attempt + 1))
+  done
+}
+
 remove_supervisor_container() {
   local project_name
   local fallback_project_name
@@ -444,6 +493,14 @@ if [[ ! "$DEPLOY_READINESS_REFRESH_RETRY_SECONDS" =~ ^[0-9]+$ ]]; then
   echo "DEPLOY_READINESS_REFRESH_RETRY_SECONDS must be a non-negative integer" >&2
   exit 1
 fi
+if [[ ! "$DEPLOY_PREFLIGHT_EXPOSURE_RETRIES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "DEPLOY_PREFLIGHT_EXPOSURE_RETRIES must be a positive integer" >&2
+  exit 1
+fi
+if [[ ! "$DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS" =~ ^[0-9]+$ ]]; then
+  echo "DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS must be a non-negative integer" >&2
+  exit 1
+fi
 
 "${compose[@]}" build supervisor web migrate admin
 "${compose[@]}" up -d postgres
@@ -451,6 +508,9 @@ fi
 "${compose[@]}" up -d --force-recreate web
 
 if credentials_ready; then
+  if paper_proof_enabled; then
+    verify_deploy_preflight_paper_exposure
+  fi
   remove_supervisor_container
   "${compose[@]}" up -d --force-recreate supervisor
   run_deploy_ops_check

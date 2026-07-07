@@ -222,9 +222,19 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
         'DEPLOY_READINESS_REFRESH_RETRY_SECONDS="${DEPLOY_READINESS_REFRESH_RETRY_SECONDS:-20}"'
         in deploy_text
     )
+    assert 'DEPLOY_PREFLIGHT_EXPOSURE_RETRIES="${DEPLOY_PREFLIGHT_EXPOSURE_RETRIES:-1}"' in deploy_text
+    assert (
+        'DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS="${DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS:-30}"'
+        in deploy_text
+    )
     assert "DEPLOY_READINESS_REFRESH_RETRIES must be a positive integer" in deploy_text
     assert (
         "DEPLOY_READINESS_REFRESH_RETRY_SECONDS must be a non-negative integer"
+        in deploy_text
+    )
+    assert "DEPLOY_PREFLIGHT_EXPOSURE_RETRIES must be a positive integer" in deploy_text
+    assert (
+        "DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS must be a non-negative integer"
         in deploy_text
     )
     assert 'DEPLOY_DECISION_DRY_RUN_STRATEGY="${DEPLOY_DECISION_DRY_RUN_STRATEGY:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}}"' in deploy_text
@@ -289,6 +299,10 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "verify_paper_proof_ready()" in deploy_text
     assert "deploy_paper_proof_status_ready()" in deploy_text
     assert "deploy_accepts_protected_paper_exposure()" in deploy_text
+    assert "deploy_paper_exposure_safe()" in deploy_text
+    assert "verify_deploy_preflight_paper_exposure()" in deploy_text
+    assert "deploy preflight failed: paper exposure is not flat or protected" in deploy_text
+    assert "deploy preflight waiting for paper exposure to become flat/protected" in deploy_text
     assert "deploy accepting protected paper exposure after deploy" in deploy_text
     assert '"${paper_proof_freeze,,}" == "true"' in deploy_text
     assert '"$ROOT_DIR/scripts/run_locked_check_with_audit.sh"' in deploy_text
@@ -298,6 +312,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert '"$ROOT_DIR/scripts/paper_readiness_if_needed.sh"' in deploy_text
     assert '"$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE"' in deploy_text
     assert "paper proof summary:" in deploy_text
+    assert "paper proof exposure protection:" in deploy_text
     assert "|| true" in deploy_text
     assert '"readiness_audit_stale"' in deploy_text
     assert "paper proof readiness stale after deploy; refreshing once" in deploy_text
@@ -305,6 +320,12 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert '"blockers=none"' in deploy_text
     assert 'sleep "$DEPLOY_PROOF_SETTLE_SECONDS"' in deploy_text
     assert deploy_text.count("verify_paper_proof_ready") >= 3
+    assert (
+        "if paper_proof_enabled; then\n"
+        "    verify_deploy_preflight_paper_exposure\n"
+        "  fi\n"
+        "  remove_supervisor_container"
+    ) in deploy_text
     assert deploy_text.index("verify_paper_decision_dry_run") < deploy_text.rindex("verify_paper_proof_ready")
     assert "${proof_summary:-missing summary}" in deploy_text
     assert "deploy failed: paper proof status not ready after deploy" in deploy_text
@@ -334,6 +355,30 @@ def _run_deploy_proof_status_ready(tmp_path: Path, proof_output: str) -> str:
     return result.stdout
 
 
+def _run_deploy_exposure_safe(tmp_path: Path, proof_output: str) -> str:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("")
+    env = os.environ.copy()
+    env.update({"ENV_FILE": str(env_file), "PROOF_OUTPUT": proof_output})
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                'DEPLOY_SH_SOURCE_ONLY=true source scripts/deploy.sh "$ENV_FILE"; '
+                'if deploy_paper_exposure_safe "$PROOF_OUTPUT"; '
+                "then printf safe; else printf blocked; fi"
+            ),
+        ],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
 def test_deploy_accepts_protected_paper_exposure_after_restart(tmp_path: Path) -> None:
     proof_output = "\n".join(
         [
@@ -346,6 +391,7 @@ def test_deploy_accepts_protected_paper_exposure_after_restart(tmp_path: Path) -
     )
 
     assert _run_deploy_proof_status_ready(tmp_path, proof_output) == "ready"
+    assert _run_deploy_exposure_safe(tmp_path, proof_output) == "safe"
 
 
 def test_deploy_rejects_unprotected_paper_exposure_after_restart(tmp_path: Path) -> None:
@@ -360,6 +406,21 @@ def test_deploy_rejects_unprotected_paper_exposure_after_restart(tmp_path: Path)
     )
 
     assert _run_deploy_proof_status_ready(tmp_path, proof_output) == "blocked"
+    assert _run_deploy_exposure_safe(tmp_path, proof_output) == "blocked"
+
+
+def test_deploy_preflight_rejects_active_entry_orders(tmp_path: Path) -> None:
+    proof_output = "\n".join(
+        [
+            "paper proof summary: readiness=blocked proof=pending reason=awaiting_completed_proof_session blockers=local_active_orders,broker_open_orders evidence_blockers=sample_trades sealed_evidence_blockers=sample_trades overall_blockers=sample_trades clean_window_blockers=sample_trades sealed_clean_window_blockers=sample_trades warnings=none",
+            "paper proof runtime: ops_status=ok ops_detail=status=ok image_status=blocked image_detail=runtime image health failed",
+            "paper proof stream: status=ok latest_start=2026-07-07T16:09:19+00:00 latest_event=trade_update_stream_started:2026-07-07T16:09:19+00:00",
+            "paper proof readiness audit: status=ok target_session=2026-07-07 check_status=passed created_at=2026-07-07T16:18:18+00:00",
+            "paper proof exposure protection: status=needs_attention issues=active_entry_orders,active_orders_without_local_positions local_positions=0 local_stop_orders=0 local_entry_orders=1 broker_positions=0 broker_orders=1 symbols=none",
+        ]
+    )
+
+    assert _run_deploy_exposure_safe(tmp_path, proof_output) == "blocked"
 
 
 def test_deploy_rejects_mixed_proof_blockers_with_protected_exposure(
