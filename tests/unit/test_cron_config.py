@@ -2073,6 +2073,10 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"problems": "proof_scenario_problems"' in script
     assert '"status": "proof_current_execution_status"' in script
     assert '"evaluated": "proof_current_execution_evaluated"' in script
+    assert (
+        '"maintenance_drained": "proof_current_execution_maintenance_drained"'
+        in script
+    )
     assert '"settled_entry_fill_rate": "proof_current_execution_settled_entry_fill_rate"' in script
     assert '"min_entry_fill_rate": "proof_current_execution_min_entry_fill_rate"' in script
     assert '"filled_symbols": "proof_current_execution_filled_symbols"' in script
@@ -5769,6 +5773,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "accepted_to_fill_rate = (" in script
     assert "capacity_reject_rate = (" in script
     assert "decision_capacity_rejected / decision_signal_fired" in script
+    assert "COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'" in script
+    assert "COUNT(*) FILTER (WHERE maintenance_drained)::int" in script
     assert "effective_entry_fill_rate_source" in script
     assert "capacity_reject_rate > execution_max_capacity_reject_rate" in script
     assert "execution_quality_warnings.append(\"entry_fill_rate\")" in script
@@ -6171,6 +6177,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "capacity_reject_rate={capacity_reject_rate_text}" in script
     assert "max_capacity_reject_rate={execution_max_capacity_reject_rate:.2f}" in script
     assert "entry_quality_rejected={decision_entry_quality_rejected}" in script
+    assert "maintenance_drained={entry_order_maintenance_drained_count}" in script
     assert "entry_fill_rate={entry_order_fill_rate_text}" in script
     assert "current_posture_entry_fill_rate={posture_entry_fill_rate_text}" in script
     assert "current_posture_would_reject={posture_entry_quality_would_reject_count}" in script
@@ -6184,6 +6191,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "warnings={','.join(current_session_execution_warnings) if current_session_execution_warnings else 'none'}" in script
     assert "settled={current_session_entry_order_settled_count}" in script
     assert "settled_filled={current_session_entry_order_settled_filled_count}" in script
+    assert (
+        "maintenance_drained={current_session_entry_order_maintenance_drained_count}"
+        in script
+    )
     assert "settled_entry_fill_rate={current_session_settled_entry_fill_rate_text}" in script
     assert "accepted_to_fill_rate={current_session_accepted_to_fill_rate_text}" in script
     assert "settled_entry_fill_rate" in script

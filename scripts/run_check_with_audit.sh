@@ -181,6 +181,7 @@ PROOF_CURRENT_EXECUTION_FIELDS = {
     "expired": "proof_current_execution_expired",
     "rejected": "proof_current_execution_rejected",
     "active": "proof_current_execution_active",
+    "maintenance_drained": "proof_current_execution_maintenance_drained",
     "settled_entry_fill_rate": "proof_current_execution_settled_entry_fill_rate",
     "entry_fill_rate": "proof_current_execution_entry_fill_rate",
     "min_entry_fill_rate": "proof_current_execution_min_entry_fill_rate",
