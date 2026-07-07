@@ -54,13 +54,23 @@ OUTPUT_DIR="${SECOND_STRATEGY_OUTPUT_DIR:-/tmp/alpaca-second-strategy-scan-$(dat
 mkdir -p "$OUTPUT_DIR"
 
 proof_output="$OUTPUT_DIR/proof_status.txt"
+proof_status_loaded=false
+load_proof_status() {
+  local reason="$1"
+  if [[ "$proof_status_loaded" == "true" ]]; then
+    return 0
+  fi
+  echo "second strategy basket scan: $reason from proof status"
+  if ! ./scripts/paper_proof_status.sh "$ENV_FILE" > "$proof_output"; then
+    fail "could not load proof status; see $proof_output"
+  fi
+  proof_status_loaded=true
+}
+
 if [[ -n "${SECOND_STRATEGY_CANDIDATES:-}" ]]; then
   mapfile -t candidates < <(read_name_list "$SECOND_STRATEGY_CANDIDATES")
 else
-  echo "second strategy basket scan: discovering disabled stock candidates from proof status"
-  if ! ./scripts/paper_proof_status.sh "$ENV_FILE" > "$proof_output"; then
-    fail "could not discover candidates from paper proof status; see $proof_output"
-  fi
+  load_proof_status "discovering disabled stock candidates"
   diversification_line="$(grep -E '^paper proof strategy diversification: ' "$proof_output" | tail -n 1 || true)"
   [[ -n "$diversification_line" ]] || fail "proof status did not print strategy diversification details"
   candidate_csv="$(extract_field "$diversification_line" "stock_disabled_candidate_names" || true)"
@@ -70,7 +80,8 @@ fi
 [[ "${#candidates[@]}" -gt 0 ]] || fail "no candidate strategies to scan"
 
 starting_equity="${SECOND_STRATEGY_STARTING_EQUITY:-}"
-if [[ -z "$starting_equity" && -s "$proof_output" ]]; then
+if [[ -z "$starting_equity" ]]; then
+  load_proof_status "loading live broker equity"
   broker_line="$(grep -E '^paper proof broker account: ' "$proof_output" | tail -n 1 || true)"
   starting_equity="$(extract_field "$broker_line" "equity" || true)"
 fi

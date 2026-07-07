@@ -1200,3 +1200,64 @@ Conclusion: no candidate earned a `positive-edge` prefilter row. `orb`,
 `momentum`, and `vwap_reversion` are the strongest rejected rows by confidence
 lower bound, but all still cross zero. Keep `PAPER_APPROVED_STRATEGIES` at
 `bull_flag`.
+
+### 2026-07-07 focused near-miss refresh
+
+After the dashboard proof visibility deploy, the live proof state still showed
+`strategy_diversification` as the only structural scale blocker. A focused
+read-only refresh retested the closest rejected stock companions under the
+current K=1/giveback paper posture:
+
+```bash
+SECOND_STRATEGY_CANDIDATES=orb,momentum,vwap_reversion,ema_pullback \
+SECOND_STRATEGY_SAMPLE_SIZE=80 \
+SECOND_STRATEGY_SAMPLE_SEED=second-strategy-refresh-20260707T2005 \
+SECOND_STRATEGY_OUTPUT_DIR=/tmp/alpaca-second-strategy-scan-20260707T2005Z \
+scripts/second_strategy_basket_scan.sh /etc/alpaca_bot/alpaca-bot.env
+```
+
+The explicit-candidate wrapper path was still using scenario-default equity
+unless `SECOND_STRATEGY_STARTING_EQUITY` was provided. That made the 80-scenario
+pass a useful prefilter only, not a promotion-grade live-equity result.
+
+Prefilter result:
+
+| candidate | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict |
+|---|---:|---:|---:|---:|---|---:|---:|---|
+| `orb` | 450 | 1.36 | 232.47 | 0.5166 | [0.0474, 1.0454] | 0.0150 | 98.09 | `positive-edge` |
+| `momentum` | 345 | 1.16 | 80.95 | 0.2346 | [-0.2799, 0.7505] | 0.1940 | 41.69 | `no-evidence` |
+| `ema_pullback` | 286 | 0.98 | -7.11 | -0.0249 | [-0.5385, 0.5351] | 0.5140 | 68.40 | `no-evidence` |
+| `vwap_reversion` | 56 | 0.51 | -101.68 | -1.8158 | [-3.7821, 0.1574] | 0.9660 | 8.40 | `no-evidence` |
+
+`orb` was the lone prefilter survivor, so it received an independent validation
+with live paper equity, the same K=1 cap, 2 bps/side slippage, and
+`orb=0.25` confidence-floor sizing:
+
+```bash
+set -a; source /etc/alpaca_bot/alpaca-bot.env; set +a
+python3 -m alpaca_bot.replay.cli portfolio-basket-audit \
+  --scenario-dir /var/lib/alpaca-bot/nightly/scenarios \
+  --strategy bull_flag \
+  --strategy orb \
+  --sample-size 160 \
+  --sample-seed second-strategy-refresh-orb-validation-20260707T2005 \
+  --slippage-bps 2 \
+  --max-open-positions 1 \
+  --starting-equity 68991.94 \
+  --confidence-scale orb=0.25 \
+  --output /tmp/second_strategy_orb_validation_20260707T2005_160.md \
+  --jsonl /tmp/second_strategy_orb_validation_20260707T2005_160.jsonl
+```
+
+Validation result:
+
+| basket | scenarios | trades | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(mean<=0) | frictionless P&L | cost drag | verdict |
+|---|---:|---:|---:|---:|---:|---:|---|---:|---:|---:|---|
+| `bull_flag+orb` | 160 | 557 | 0.87 | -128.88 | -0.2314 | -1.10 | [-0.6532, 0.1793] | 0.8635 | 4.33 | 133.21 | `no-evidence` |
+
+Conclusion: do not promote `orb`. The new prefilter survivor failed the
+independent live-equity validation after costs, so
+`PAPER_APPROVED_STRATEGIES` remains `bull_flag`. The scan wrapper now lazily
+loads proof status for explicit-candidate runs when
+`SECOND_STRATEGY_STARTING_EQUITY` is not set, so future focused scans default
+to current broker equity instead of scenario defaults.

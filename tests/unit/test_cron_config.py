@@ -266,6 +266,8 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     syntax_check = subprocess.run(["bash", "-n", str(script_path)], check=False)
     assert syntax_check.returncode == 0
     assert './scripts/paper_proof_status.sh "$ENV_FILE"' in script
+    assert "load_proof_status \"loading live broker equity\"" in script
+    assert 'starting_equity="${SECOND_STRATEGY_STARTING_EQUITY:-}"' in script
     assert "stock_disabled_candidate_names" in script
     assert "python3 -m alpaca_bot.replay.cli portfolio-basket-audit" in script
     assert '--confidence-scale "$candidate=$CANDIDATE_SCALE"' in script
