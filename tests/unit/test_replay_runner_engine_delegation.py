@@ -836,3 +836,50 @@ def test_eod_exit_event_can_record_viability_reason() -> None:
     )
 
     assert events[0].details["reason"] == "viability_trend_filter_failed"
+
+
+def test_stop_update_tightens_short_position_stop_downward() -> None:
+    from alpaca_bot.replay.runner import ReplayRunner, ReplayState
+    from alpaca_bot.domain.models import ReplayEvent
+
+    runner = ReplayRunner(make_settings())
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
+        entry_price=100.0,
+        quantity=-30.0,
+        entry_level=100.0,
+        initial_stop_price=106.0,
+        stop_price=104.0,
+        lowest_price=99.0,
+    )
+    state = ReplayState(equity=100_000.0, position=position)
+    events: list[ReplayEvent] = []
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 15, 0, tzinfo=timezone.utc),
+        open=99.0,
+        high=100.0,
+        low=98.5,
+        close=99.0,
+        volume=3000,
+    )
+
+    runner._handle_stop_update(
+        intent_stop=102.0,
+        bar=bar,
+        state=state,
+        events=events,
+    )
+    runner._handle_stop_update(
+        intent_stop=105.0,
+        bar=bar,
+        state=state,
+        events=events,
+    )
+
+    assert state.position is position
+    assert position.stop_price == 102.0
+    assert position.trailing_active is True
+    assert [event.event_type for event in events] == [IntentType.STOP_UPDATED]
+    assert events[0].details["stop_price"] == 102.0

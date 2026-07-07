@@ -19,6 +19,7 @@ from alpaca_bot.domain.models import (
 )
 from alpaca_bot.replay.mechanics import (
     apply_slippage,
+    should_update_stop,
     simulate_buy_stop_limit_fill,
 )
 from alpaca_bot.replay.report import build_backtest_report
@@ -561,7 +562,7 @@ class ReplayRunner:
         position = state.position
         if position is None or intent_stop is None:
             return
-        if intent_stop > position.stop_price:
+        if should_update_stop(position=position, candidate_stop=intent_stop):
             position.stop_price = intent_stop
             position.trailing_active = True
             events.append(

@@ -1263,3 +1263,14 @@ loads proof status for explicit-candidate runs when
 to current broker equity instead of scenario defaults. The wrapper summary also
 records the scenario directory, sample seed, K cap, slippage, confidence scale,
 and starting equity, so a copied result table carries its assumptions with it.
+
+### Short-side replay foundation
+
+The disabled bear-side candidates are still option factories and remain
+replay-unsupported until option-chain scenarios and option replay pricing are
+available. While inspecting that blocker, one safe replay correctness gap was
+fixed: stop updates are now direction-aware in both single-symbol and portfolio
+replay. Long positions still tighten stops upward, while future short-equity
+replays tighten buy-stops downward. This does not approve or enable any
+bear/option strategy, but it removes a known stop-tracking trap before short-side
+diversification evidence can be trusted.

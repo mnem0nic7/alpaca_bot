@@ -45,6 +45,13 @@ def stop_exit_price(*, bar: Bar, position: OpenPosition, bps: float) -> float:
     return apply_slippage(min(position.stop_price, bar.open), side="sell", bps=bps)
 
 
+def should_update_stop(*, position: OpenPosition, candidate_stop: float) -> bool:
+    """Return whether candidate_stop tightens risk for the position direction."""
+    if position.quantity < 0:
+        return candidate_stop < position.stop_price
+    return candidate_stop > position.stop_price
+
+
 def profit_target_price(*, position: OpenPosition, settings: Settings) -> float:
     return round(
         position.entry_price + settings.profit_target_r * position.risk_per_share, 2

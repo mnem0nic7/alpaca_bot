@@ -35,6 +35,7 @@ from alpaca_bot.replay.mechanics import (
     entry_fill_price,
     eod_exit_price,
     profit_target_price,
+    should_update_stop,
     simulate_buy_stop_limit_fill,
     stop_exit_price,
 )
@@ -451,7 +452,10 @@ class PortfolioReplayRunner:
                         if intent.symbol not in fresh_set:
                             continue
                         if lane.position is not None and intent.stop_price is not None:
-                            if intent.stop_price > lane.position.stop_price:
+                            if should_update_stop(
+                                position=lane.position,
+                                candidate_stop=intent.stop_price,
+                            ):
                                 lane.position.stop_price = intent.stop_price
                                 lane.position.trailing_active = True
                     elif intent.intent_type == CycleIntentType.ENTRY:
