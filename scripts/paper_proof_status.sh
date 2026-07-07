@@ -2460,9 +2460,14 @@ current_session_accepted_for_fill_count = max(
     - current_session_entry_order_maintenance_drained_count,
     0,
 )
+current_session_settled_accepted_for_fill_count = max(
+    current_session_accepted_for_fill_count - current_session_entry_order_active_count,
+    0,
+)
 current_session_accepted_to_fill_rate = (
-    current_session_entry_order_filled_count / current_session_accepted_for_fill_count
-    if current_session_accepted_for_fill_count
+    current_session_entry_order_filled_count
+    / current_session_settled_accepted_for_fill_count
+    if current_session_settled_accepted_for_fill_count
     else None
 )
 current_session_capacity_reject_rate = (
@@ -3970,6 +3975,7 @@ print(
     f"signals={current_session_decision_signal_fired} "
     f"accepted={current_session_decision_accepted} "
     f"accepted_for_fill={current_session_accepted_for_fill_count} "
+    f"settled_accepted_for_fill={current_session_settled_accepted_for_fill_count} "
     f"capacity_rejected={current_session_decision_capacity_rejected} "
     f"capacity_reject_rate={current_session_capacity_reject_rate_text} "
     f"max_capacity_reject_rate={execution_max_capacity_reject_rate:.2f} "

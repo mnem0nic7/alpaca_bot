@@ -2075,6 +2075,10 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"evaluated": "proof_current_execution_evaluated"' in script
     assert '"accepted_for_fill": "proof_current_execution_accepted_for_fill"' in script
     assert (
+        '"settled_accepted_for_fill": '
+        '"proof_current_execution_settled_accepted_for_fill"'
+    ) in script
+    assert (
         '"maintenance_drained": "proof_current_execution_maintenance_drained"'
         in script
     )
@@ -5776,6 +5780,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "current_session_decision_accepted\n"
         "    - current_session_entry_order_maintenance_drained_count"
     ) in script
+    assert "current_session_settled_accepted_for_fill_count = max(" in script
+    assert (
+        "current_session_accepted_for_fill_count "
+        "- current_session_entry_order_active_count"
+    ) in script
     assert "o.created_at = d.cycle_at" in script
     assert "close_to_entry_pct >= %s" in script
     assert "accepted_to_fill_rate = (" in script
@@ -6203,6 +6212,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "status={current_session_execution_status}" in script
     assert "warnings={','.join(current_session_execution_warnings) if current_session_execution_warnings else 'none'}" in script
     assert "accepted_for_fill={current_session_accepted_for_fill_count}" in script
+    assert (
+        "settled_accepted_for_fill="
+        "{current_session_settled_accepted_for_fill_count}"
+    ) in script
     assert "settled={current_session_entry_order_settled_count}" in script
     assert "settled_filled={current_session_entry_order_settled_filled_count}" in script
     assert (
