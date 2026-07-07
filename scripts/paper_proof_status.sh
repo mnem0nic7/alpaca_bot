@@ -2424,11 +2424,9 @@ if (
 ):
     execution_quality_status = "needs_work"
     execution_quality_warnings.append("entry_fill_rate")
+    # Low entry throughput constrains proof velocity and scale, but the
+    # profitability proof itself is settled by realized P&L/risk evidence.
     scale_blockers.append("entry_fill_rate")
-    proof_blockers.append("entry_fill_rate")
-    sealed_proof_blockers.append("entry_fill_rate")
-    clean_window_blockers.append("entry_fill_rate")
-    clean_window_sealed_blockers.append("entry_fill_rate")
 elif (
     entry_order_fill_rate is not None
     and entry_order_fill_rate < execution_min_entry_fill_rate
@@ -2441,11 +2439,10 @@ if (
 ):
     execution_quality_status = "needs_work"
     execution_quality_warnings.append("capacity_rejections")
+    # K=1 deliberately rejects many concurrent candidates; keep that visible
+    # as a scale blocker without turning expected capacity pressure into a
+    # profitability-evidence failure.
     scale_blockers.append("capacity_rejections")
-    proof_blockers.append("capacity_rejections")
-    sealed_proof_blockers.append("capacity_rejections")
-    clean_window_blockers.append("capacity_rejections")
-    clean_window_sealed_blockers.append("capacity_rejections")
 current_session_execution_status = (
     "not_started" if current_market_date < proof_start else "observing"
 )

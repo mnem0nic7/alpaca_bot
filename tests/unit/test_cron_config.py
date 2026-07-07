@@ -5787,11 +5787,31 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         script.index("if (\n    capacity_reject_rate is not None")
     ]
     assert 'execution_quality_status = "needs_work"' not in raw_fill_warning_branch
+    low_fill_branch = script[
+        script.index("if (\n    effective_entry_fill_rate is not None") :
+        script.index("elif (\n    entry_order_fill_rate is not None")
+    ]
+    assert 'scale_blockers.append("entry_fill_rate")' in low_fill_branch
+    assert 'proof_blockers.append("entry_fill_rate")' not in low_fill_branch
+    assert 'sealed_proof_blockers.append("entry_fill_rate")' not in low_fill_branch
+    assert 'clean_window_blockers.append("entry_fill_rate")' not in low_fill_branch
+    assert 'clean_window_sealed_blockers.append("entry_fill_rate")' not in low_fill_branch
     capacity_warning_branch = script[
         script.index("if (\n    capacity_reject_rate is not None") :
         script.index("scale_status = \"ready\"")
     ]
     assert 'execution_quality_status = "needs_work"' in capacity_warning_branch
+    assert 'scale_blockers.append("capacity_rejections")' in capacity_warning_branch
+    assert 'proof_blockers.append("capacity_rejections")' not in capacity_warning_branch
+    assert (
+        'sealed_proof_blockers.append("capacity_rejections")'
+        not in capacity_warning_branch
+    )
+    assert 'clean_window_blockers.append("capacity_rejections")' not in capacity_warning_branch
+    assert (
+        'clean_window_sealed_blockers.append("capacity_rejections")'
+        not in capacity_warning_branch
+    )
     assert "partial_pnl_negative" in script
     assert "partial_pnl_below_minimum" in script
     assert "cumulative_pnl_negative" in script
