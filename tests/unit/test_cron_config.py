@@ -259,6 +259,20 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "cron health ok" in cron_health
 
 
+def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
+    script_path = Path("scripts/second_strategy_basket_scan.sh")
+    script = script_path.read_text()
+
+    syntax_check = subprocess.run(["bash", "-n", str(script_path)], check=False)
+    assert syntax_check.returncode == 0
+    assert './scripts/paper_proof_status.sh "$ENV_FILE"' in script
+    assert "stock_disabled_candidate_names" in script
+    assert "python3 -m alpaca_bot.replay.cli portfolio-basket-audit" in script
+    assert '--confidence-scale "$candidate=$CANDIDATE_SCALE"' in script
+    assert "PAPER_APPROVED_STRATEGIES" in script
+    assert "is not approval to change" in script
+
+
 def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     env_file.write_text(

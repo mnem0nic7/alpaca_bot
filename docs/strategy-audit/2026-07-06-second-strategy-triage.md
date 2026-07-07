@@ -1152,3 +1152,23 @@ The diversification blocker remains real, but it is a scale blocker rather
 than a paper-profit evidence blocker. A future second strategy needs a fresh
 replay thesis plus live execution-quality validation before it can enter
 `PAPER_APPROVED_STRATEGIES`.
+
+## Repeatable basket-refresh tooling
+
+The second-strategy search now has a read-only refresh wrapper:
+
+```bash
+scripts/second_strategy_basket_scan.sh /etc/alpaca_bot/alpaca-bot.env
+```
+
+By default it discovers the current disabled stock candidates from
+`paper_proof_status.sh`, scores each `bull_flag + candidate` basket through
+`portfolio-basket-audit`, uses the current K=1/giveback paper posture, and
+writes per-candidate reports plus a ranked `summary.md` under `/tmp`.
+
+The wrapper is intentionally a prefilter only. A `positive-edge` row from this
+scan is a survivor for a separate independent validation, not approval to
+change `PAPER_APPROVED_STRATEGIES`. A smoke run on 2026-07-07 with
+`SECOND_STRATEGY_CANDIDATES=ema_pullback` and `SECOND_STRATEGY_SAMPLE_SIZE=4`
+completed successfully and produced `no-evidence`, which verifies the tool
+wiring without weakening the promotion standard.
