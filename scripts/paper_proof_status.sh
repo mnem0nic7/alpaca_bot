@@ -3844,7 +3844,6 @@ posture_status = (
         and not bool(settings.enable_news_filter)
         and not bool(settings.enable_spread_filter)
         and not bool(settings.enable_options_trading)
-        and not bool(settings.option_chain_symbols)
         and not bool(settings.extended_hours_enabled)
         and not bool(settings.enable_trend_filter_exit)
         and not bool(settings.enable_vwap_breakdown_exit)

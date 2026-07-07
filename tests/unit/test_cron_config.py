@@ -2532,8 +2532,8 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "require_env_false_or_unset ENABLE_NEWS_FILTER" in script
     assert "require_env_false_or_unset ENABLE_SPREAD_FILTER" in script
     assert "require_env_false_or_unset ENABLE_OPTIONS_TRADING" in script
-    assert "require_env_empty_or_unset OPTION_CHAIN_SYMBOLS" in script
-    assert 'check("option_chain_symbols", settings.option_chain_symbols, ())' in script
+    assert "require_env_empty_or_unset OPTION_CHAIN_SYMBOLS" not in script
+    assert 'check("option_chain_symbols", settings.option_chain_symbols, ())' not in script
 
 
 def test_paper_readiness_auto_ignores_bounded_stale_scenario_symbols(
@@ -6134,7 +6134,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "not bool(settings.enable_news_filter)" in script
     assert "not bool(settings.enable_spread_filter)" in script
     assert "not bool(settings.enable_options_trading)" in script
-    assert "not bool(settings.option_chain_symbols)" in script
+    assert "not bool(settings.option_chain_symbols)" not in script
     assert "not bool(settings.extended_hours_enabled)" in script
     assert "not bool(settings.enable_trend_filter_exit)" in script
     assert "not bool(settings.enable_vwap_breakdown_exit)" in script
