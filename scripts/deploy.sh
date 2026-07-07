@@ -233,6 +233,84 @@ refresh_paper_readiness() {
   done
 }
 
+paper_proof_summary_field() {
+  local summary="$1"
+  local key="$2"
+  local part
+
+  for part in $summary; do
+    if [[ "$part" == "$key="* ]]; then
+      printf '%s\n' "${part#*=}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+deploy_allows_proof_blockers() {
+  local blockers="$1"
+  local blocker
+  local -a blocker_names
+
+  if [[ -z "$blockers" || "$blockers" == "none" ]]; then
+    return 1
+  fi
+
+  IFS=',' read -r -a blocker_names <<< "$blockers"
+  for blocker in "${blocker_names[@]}"; do
+    case "$blocker" in
+      local_open_positions|local_active_orders|broker_open_orders|broker_open_positions) ;;
+      *) return 1 ;;
+    esac
+  done
+}
+
+deploy_accepts_protected_paper_exposure() {
+  local proof_status_output="$1"
+  local proof_summary="$2"
+  local blockers
+
+  blockers="$(paper_proof_summary_field "$proof_summary" blockers || true)"
+  if [[ "$proof_summary" != *"readiness=blocked"* ]]; then
+    return 1
+  fi
+  if ! deploy_allows_proof_blockers "$blockers"; then
+    return 1
+  fi
+  if [[ "$proof_status_output" != *"paper proof readiness audit: status=ok "* ]]; then
+    return 1
+  fi
+  if [[ "$proof_status_output" != *"paper proof runtime: ops_status=ok "* \
+    || "$proof_status_output" != *" image_status=ok "* ]]; then
+    return 1
+  fi
+  if [[ "$proof_status_output" != *"paper proof stream: status=ok "* ]]; then
+    return 1
+  fi
+  if [[ "$proof_status_output" != *"paper proof exposure protection: status=protected issues=none "* ]]; then
+    return 1
+  fi
+}
+
+deploy_paper_proof_status_ready() {
+  local proof_status_output="$1"
+  local proof_summary
+
+  proof_summary="$(
+    printf '%s\n' "$proof_status_output" \
+      | grep -E '^paper proof summary: ' \
+      | tail -n 1 \
+      || true
+  )"
+
+  if [[ "$proof_summary" == *"readiness=ready"* \
+    && "$proof_summary" == *"blockers=none"* ]]; then
+    return 0
+  fi
+  deploy_accepts_protected_paper_exposure "$proof_status_output" "$proof_summary"
+}
+
 remove_supervisor_container() {
   local project_name
   local fallback_project_name
@@ -277,11 +355,15 @@ verify_paper_proof_ready() {
     )"
   fi
 
-  if [[ "$proof_summary" != *"readiness=ready"* \
-    || "$proof_summary" != *"blockers=none"* ]]; then
-    echo "deploy failed: paper proof status not ready after deploy: ${proof_summary:-missing summary}" >&2
-    exit 1
+  if deploy_paper_proof_status_ready "$proof_status_output"; then
+    if deploy_accepts_protected_paper_exposure "$proof_status_output" "$proof_summary"; then
+      echo "deploy accepting protected paper exposure after deploy: $proof_summary" >&2
+    fi
+    return 0
   fi
+
+  echo "deploy failed: paper proof status not ready after deploy: ${proof_summary:-missing summary}" >&2
+  exit 1
 }
 
 verify_paper_decision_dry_run() {
@@ -300,6 +382,10 @@ verify_paper_decision_dry_run() {
       "$ROOT_DIR/scripts/paper_decision_dry_run.sh" "$ENV_FILE"
   done
 }
+
+if [[ "${DEPLOY_SH_SOURCE_ONLY:-false}" == "true" ]]; then
+  return 0 2>/dev/null || exit 0
+fi
 
 require_var POSTGRES_DB
 require_var POSTGRES_USER
