@@ -70,6 +70,7 @@ from alpaca_bot.strategy.market_context import compute_market_context
 from alpaca_bot.strategy.session import SessionType, detect_session_type
 from alpaca_bot.execution.option_chain import AlpacaOptionChainAdapter
 from alpaca_bot.domain.models import MarketContext
+from alpaca_bot.replay.option_snapshots import append_option_chain_snapshot
 from alpaca_bot.runtime.option_dispatch import dispatch_pending_option_orders
 from alpaca_bot.storage.models import OptionOrderRecord
 
@@ -1012,6 +1013,37 @@ class RuntimeSupervisor:
                 sym: len(option_chains_by_symbol.get(sym, []))
                 for sym in self.settings.option_chain_symbols
             }
+            if self.settings.option_chain_snapshot_dir:
+                chains_for_snapshot = {
+                    sym: option_chains_by_symbol.get(sym, ())
+                    for sym in self.settings.option_chain_symbols
+                }
+                try:
+                    snapshot_path = append_option_chain_snapshot(
+                        snapshot_dir=self.settings.option_chain_snapshot_dir,
+                        cycle_at=timestamp,
+                        chains_by_symbol=chains_for_snapshot,
+                    )
+                    self._append_audit(
+                        AuditEvent(
+                            event_type="option_chain_snapshot_recorded",
+                            payload={
+                                "path": str(snapshot_path),
+                                "symbols": len(chains_for_snapshot),
+                                "contracts": sum(option_chain_counts.values()),
+                            },
+                            created_at=timestamp,
+                        )
+                    )
+                except Exception as exc:
+                    logger.exception("failed to record option chain snapshot")
+                    self._append_audit(
+                        AuditEvent(
+                            event_type="option_chain_snapshot_failed",
+                            payload={"error": str(exc)},
+                            created_at=timestamp,
+                        )
+                    )
             self._append_audit(
                 AuditEvent(
                     event_type="option_chains_fetched",

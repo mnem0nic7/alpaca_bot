@@ -199,6 +199,7 @@ class Settings:
     enable_options_trading: bool = False
     option_chain_min_total_volume: int = 0
     option_chain_symbols: tuple[str, ...] = ()
+    option_chain_snapshot_dir: str | None = None
     option_stop_buffer_pct: float = 0.10
     option_max_spread_pct: float = 0.50
     option_min_open_interest: int = 0
@@ -488,6 +489,9 @@ class Settings:
                 s.strip()
                 for s in values.get("OPTION_CHAIN_SYMBOLS", "").split(",")
                 if s.strip()
+            ),
+            option_chain_snapshot_dir=(
+                values.get("OPTION_CHAIN_SNAPSHOT_DIR", "").strip() or None
             ),
             option_stop_buffer_pct=float(values.get("OPTION_STOP_BUFFER_PCT", "0.10")),
             option_max_spread_pct=float(values.get("OPTION_MAX_SPREAD_PCT", "0.50")),

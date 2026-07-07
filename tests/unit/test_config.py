@@ -220,6 +220,15 @@ def test_option_chain_symbols_strips_whitespace():
     assert s.option_chain_symbols == ("ALHC", "AMLX")
 
 
+def test_option_chain_snapshot_dir_default_and_override():
+    assert Settings.from_env(_base_env()).option_chain_snapshot_dir is None
+
+    settings = Settings.from_env(
+        _base_env(OPTION_CHAIN_SNAPSHOT_DIR=" /tmp/alpaca-options ")
+    )
+    assert settings.option_chain_snapshot_dir == "/tmp/alpaca-options"
+
+
 def test_floor_auto_raise_max_age_days_default_and_validation():
     settings = Settings.from_env(_base_env())
     assert settings.floor_auto_raise_max_age_days == 7

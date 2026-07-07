@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import json
+from datetime import date, datetime, timezone
 from importlib import import_module
 from types import SimpleNamespace
 
 from tests.unit.helpers import _base_env
 from alpaca_bot.config import Settings
 from alpaca_bot.domain import Bar
+from alpaca_bot.domain.models import OptionContract
 
 _NOW = datetime(2026, 5, 1, 14, 30, tzinfo=timezone.utc)
 # Symbols on the watchlist but NOT in settings.symbols ("AAPL,MSFT" from _base_env)
@@ -16,15 +18,21 @@ _WATCHLIST_SYMBOLS = ["ACHR", "METC", "SLS"]
 class RecordingOptionChainAdapter:
     """Records which symbols were attempted; optionally raises for specific ones."""
 
-    def __init__(self, *, raise_for: set[str] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        raise_for: set[str] | None = None,
+        chains_by_symbol: dict[str, list[OptionContract]] | None = None,
+    ) -> None:
         self.fetched: list[str] = []
         self._raise_for = raise_for or set()
+        self._chains_by_symbol = chains_by_symbol or {}
 
     def get_option_chain(self, symbol: str, settings) -> list:
         self.fetched.append(symbol)
         if symbol in self._raise_for:
             raise RuntimeError(f"simulated API error for {symbol}")
-        return []
+        return self._chains_by_symbol.get(symbol, [])
 
 
 class RecordingAuditStore:
@@ -217,3 +225,81 @@ def test_option_chains_fetched_audit_payload_only_contains_option_chain_symbols(
         f"Audit payload keys {set(chain_events[0].payload)!r} must equal OPTION_CHAIN_SYMBOLS"
     )
     assert "SLS" not in chain_events[0].payload, "SLS is not in OPTION_CHAIN_SYMBOLS — must not appear in payload"
+
+
+def test_option_chain_snapshot_records_configured_symbol_chains(tmp_path):
+    """When configured, option-chain snapshots are written for later replay support."""
+    audit_store = RecordingAuditStore()
+    contract = OptionContract(
+        occ_symbol="ACHR260717C00010000",
+        underlying="ACHR",
+        option_type="call",
+        strike=10.0,
+        expiry=date(2026, 7, 17),
+        bid=1.2,
+        ask=1.35,
+        delta=0.52,
+        open_interest=240,
+    )
+    adapter = RecordingOptionChainAdapter(
+        chains_by_symbol={"ACHR": [contract]},
+    )
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        audit_store=audit_store,
+        extra_env={
+            "OPTION_CHAIN_SYMBOLS": "ACHR,METC",
+            "OPTION_CHAIN_SNAPSHOT_DIR": str(tmp_path),
+        },
+    )
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    snapshot_files = sorted(tmp_path.glob("option-chain-snapshots-*.jsonl"))
+    assert len(snapshot_files) == 1
+    rows = [
+        json.loads(line)
+        for line in snapshot_files[0].read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows == [
+        {
+            "cycle_at": "2026-05-01T14:30:00+00:00",
+            "chains_by_symbol": {
+                "ACHR": [
+                    {
+                        "ask": 1.35,
+                        "bid": 1.2,
+                        "delta": 0.52,
+                        "expiry": "2026-07-17",
+                        "occ_symbol": "ACHR260717C00010000",
+                        "open_interest": 240,
+                        "option_type": "call",
+                        "strike": 10.0,
+                        "underlying": "ACHR",
+                    }
+                ],
+                "METC": [],
+            },
+        }
+    ]
+    snapshot_events = [
+        e for e in audit_store.events
+        if e.event_type == "option_chain_snapshot_recorded"
+    ]
+    assert len(snapshot_events) == 1
+    assert snapshot_events[0].payload["symbols"] == 2
+    assert snapshot_events[0].payload["contracts"] == 1
+
+
+def test_option_chain_snapshot_skipped_when_unconfigured(tmp_path):
+    audit_store = RecordingAuditStore()
+    adapter = RecordingOptionChainAdapter()
+    supervisor = _make_supervisor(adapter=adapter, audit_store=audit_store)
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert list(tmp_path.glob("*")) == []
+    assert not [
+        e for e in audit_store.events
+        if e.event_type.startswith("option_chain_snapshot")
+    ]

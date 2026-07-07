@@ -28,6 +28,7 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "ATR_STOP_MULTIPLIER",
         "TRAILING_STOP_ATR_MULTIPLIER",
         "OPTION_CHAIN_MIN_TOTAL_VOLUME",
+        "OPTION_CHAIN_SNAPSHOT_DIR",
         "OPTION_STRATEGY_MAX_ROLLING_LOSS_USD",
         "OPTION_STRATEGY_ROLLING_LOSS_DAYS",
         "PAPER_PROOF_FREEZE",
@@ -149,6 +150,11 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "${BULL_FLAG_CONSOLIDATION_RANGE_PCT:-0.5}"
     ) in compose_text
     assert "CONFIDENCE_FLOOR: ${CONFIDENCE_FLOOR:-0.25}" in compose_text
+    assert "OPTION_CHAIN_SNAPSHOT_DIR: ${OPTION_CHAIN_SNAPSHOT_DIR:-}" in compose_text
+    assert (
+        "/var/lib/alpaca-bot/option-chain-snapshots:/data/option-chain-snapshots"
+        in compose_text
+    )
     assert "ENABLE_REGIME_FILTER: ${ENABLE_REGIME_FILTER:-false}" in compose_text
     assert "ENABLE_NEWS_FILTER: ${ENABLE_NEWS_FILTER:-false}" in compose_text
     assert "ENABLE_SPREAD_FILTER: ${ENABLE_SPREAD_FILTER:-false}" in compose_text
