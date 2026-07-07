@@ -170,6 +170,7 @@ PROOF_CURRENT_EXECUTION_FIELDS = {
     "evaluated": "proof_current_execution_evaluated",
     "signals": "proof_current_execution_signals",
     "accepted": "proof_current_execution_accepted",
+    "accepted_for_fill": "proof_current_execution_accepted_for_fill",
     "capacity_rejected": "proof_current_execution_capacity_rejected",
     "capacity_reject_rate": "proof_current_execution_capacity_reject_rate",
     "max_capacity_reject_rate": "proof_current_execution_max_capacity_reject_rate",

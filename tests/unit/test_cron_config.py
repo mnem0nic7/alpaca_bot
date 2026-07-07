@@ -2073,6 +2073,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"problems": "proof_scenario_problems"' in script
     assert '"status": "proof_current_execution_status"' in script
     assert '"evaluated": "proof_current_execution_evaluated"' in script
+    assert '"accepted_for_fill": "proof_current_execution_accepted_for_fill"' in script
     assert (
         '"maintenance_drained": "proof_current_execution_maintenance_drained"'
         in script
@@ -5768,6 +5769,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "entry_order_filled_count / entry_order_count" in script
     assert "posture_entry_fill_rate = (" in script
     assert "posture_entry_order_filled_count / posture_entry_order_count" in script
+    assert "accepted_for_fill_count = max(" in script
+    assert "decision_accepted - entry_order_maintenance_drained_count" in script
+    assert "current_session_accepted_for_fill_count = max(" in script
+    assert (
+        "current_session_decision_accepted\n"
+        "    - current_session_entry_order_maintenance_drained_count"
+    ) in script
     assert "o.created_at = d.cycle_at" in script
     assert "close_to_entry_pct >= %s" in script
     assert "accepted_to_fill_rate = (" in script
@@ -6177,6 +6185,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "paper proof execution quality:" in script
     assert "status={execution_quality_status}" in script
     assert "warnings={','.join(execution_quality_warnings) if execution_quality_warnings else 'none'}" in script
+    assert "accepted_for_fill={accepted_for_fill_count}" in script
     assert "capacity_rejected={decision_capacity_rejected}" in script
     assert "capacity_reject_rate={capacity_reject_rate_text}" in script
     assert "max_capacity_reject_rate={execution_max_capacity_reject_rate:.2f}" in script
@@ -6193,6 +6202,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "paper proof current-session execution:" in script
     assert "status={current_session_execution_status}" in script
     assert "warnings={','.join(current_session_execution_warnings) if current_session_execution_warnings else 'none'}" in script
+    assert "accepted_for_fill={current_session_accepted_for_fill_count}" in script
     assert "settled={current_session_entry_order_settled_count}" in script
     assert "settled_filled={current_session_entry_order_settled_filled_count}" in script
     assert (

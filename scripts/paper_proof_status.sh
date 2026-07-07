@@ -2430,8 +2430,14 @@ posture_entry_fill_rate = (
     if posture_entry_order_count
     else None
 )
+accepted_for_fill_count = max(
+    decision_accepted - entry_order_maintenance_drained_count,
+    0,
+)
 accepted_to_fill_rate = (
-    entry_order_filled_count / decision_accepted if decision_accepted else None
+    entry_order_filled_count / accepted_for_fill_count
+    if accepted_for_fill_count
+    else None
 )
 capacity_reject_rate = (
     decision_capacity_rejected / decision_signal_fired
@@ -2449,9 +2455,14 @@ current_session_settled_entry_fill_rate = (
     if current_session_entry_order_settled_count
     else None
 )
+current_session_accepted_for_fill_count = max(
+    current_session_decision_accepted
+    - current_session_entry_order_maintenance_drained_count,
+    0,
+)
 current_session_accepted_to_fill_rate = (
-    current_session_entry_order_filled_count / current_session_decision_accepted
-    if current_session_decision_accepted
+    current_session_entry_order_filled_count / current_session_accepted_for_fill_count
+    if current_session_accepted_for_fill_count
     else None
 )
 current_session_capacity_reject_rate = (
@@ -3924,6 +3935,7 @@ print(
     f"evaluated={decision_evaluated} "
     f"signals={decision_signal_fired} "
     f"accepted={decision_accepted} "
+    f"accepted_for_fill={accepted_for_fill_count} "
     f"capacity_rejected={decision_capacity_rejected} "
     f"capacity_reject_rate={capacity_reject_rate_text} "
     f"max_capacity_reject_rate={execution_max_capacity_reject_rate:.2f} "
@@ -3957,6 +3969,7 @@ print(
     f"evaluated={current_session_decision_evaluated} "
     f"signals={current_session_decision_signal_fired} "
     f"accepted={current_session_decision_accepted} "
+    f"accepted_for_fill={current_session_accepted_for_fill_count} "
     f"capacity_rejected={current_session_decision_capacity_rejected} "
     f"capacity_reject_rate={current_session_capacity_reject_rate_text} "
     f"max_capacity_reject_rate={execution_max_capacity_reject_rate:.2f} "
