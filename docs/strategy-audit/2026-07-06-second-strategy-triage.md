@@ -1123,3 +1123,32 @@ the only remaining evidence blockers at `sample_trades,active_days`.
 The live env now states the same scale and execution-quality gates explicitly,
 and the code default for `PROFIT_PROBE_START_DATE` was aligned to `2026-07-07`
 so direct admin paths cannot fall back to the retired June proof window.
+
+## Final paper alignment after live vwap drift
+
+The two-strategy approval above was superseded by the later live-paper
+execution evidence on 2026-07-07 and by commits `4478b27`, `512994a`,
+`167cb01`, and `370757a`.
+
+Current live state on 2026-07-07:
+
+| item | value |
+|---|---|
+| approved paper strategies | `bull_flag` |
+| enabled paper strategies | `bull_flag` |
+| disabled paper strategy | `vwap_cross` |
+| relative-volume lookback | `10` |
+| local/broker exposure | flat |
+| proof readiness | ready |
+
+`vwap_cross` should not be re-enabled from the older approval section alone.
+The live paper entries were already running with the promoted
+`RELATIVE_VOLUME_LOOKBACK_BARS=10`, but `vwap_cross` still produced `0/4`
+filled entries on 2026-07-07 while occupying scarce K=1 opportunity and adding
+capacity pressure. The active paper-profit posture therefore remains
+`bull_flag` only.
+
+The diversification blocker remains real, but it is a scale blocker rather
+than a paper-profit evidence blocker. A future second strategy needs a fresh
+replay thesis plus live execution-quality validation before it can enter
+`PAPER_APPROVED_STRATEGIES`.
