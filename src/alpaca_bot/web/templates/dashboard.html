@@ -317,6 +317,10 @@
       {% set proof_blockers = proof_payload.get("proof_blockers", "unknown") %}
       {% set proof_evidence_blockers = proof_payload.get("proof_evidence_blockers", "unknown") %}
       {% set proof_sealed_evidence_blockers = proof_payload.get("proof_sealed_evidence_blockers", "unknown") %}
+      {% set proof_current_execution_status = proof_payload.get("proof_current_execution_status", "unknown") %}
+      {% set proof_current_execution_warnings = proof_payload.get("proof_current_execution_warnings", "unknown") %}
+      {% set proof_post_supervisor_execution_status = proof_payload.get("proof_post_supervisor_execution_status", "unknown") %}
+      {% set proof_post_supervisor_execution_warnings = proof_payload.get("proof_post_supervisor_execution_warnings", "unknown") %}
       <div class="panel" style="margin-bottom: 1rem;">
         <h2>Paper Proof</h2>
         <div class="status-grid">
@@ -364,10 +368,31 @@
             <p class="eyebrow">Scenario Problems</p>
             <p class="value mono {{ 'warn' if proof_payload.get('proof_scenario_problems', 'none') != 'none' else '' }}">{{ proof_payload.get('proof_scenario_problems', 'none') }}</p>
           </div>
+          <div>
+            <p class="eyebrow">Current Execution</p>
+            <p class="value mono {{ 'warn' if proof_current_execution_status not in ['ok', 'unknown'] else '' }}">
+              {{ proof_current_execution_status }}
+              warnings={{ proof_current_execution_warnings }}
+              fill={{ proof_payload.get('proof_current_execution_entry_fill_rate', 'unknown') }}
+              caprej={{ proof_payload.get('proof_current_execution_capacity_rejected', 'unknown') }}
+              short={{ proof_payload.get('proof_current_execution_short_window', 'unknown') }}
+            </p>
+          </div>
+          <div>
+            <p class="eyebrow">Post-Supervisor Execution</p>
+            <p class="value mono {{ 'warn' if proof_post_supervisor_execution_status not in ['ok', 'unknown'] else '' }}">
+              {{ proof_post_supervisor_execution_status }}
+              warnings={{ proof_post_supervisor_execution_warnings }}
+              entries={{ proof_payload.get('proof_post_supervisor_execution_entry_orders', 'unknown') }}
+              caprej={{ proof_payload.get('proof_post_supervisor_execution_capacity_rejected', 'unknown') }}
+              short={{ proof_payload.get('proof_post_supervisor_execution_short_window', 'unknown') }}
+            </p>
+          </div>
         </div>
         <p class="muted mono" style="margin-top: 0.75rem;">
           proof={{ proof_payload.get("proof_start", "unknown") }}
           strategy={{ proof_payload.get("strategy", "unknown") }}
+          post_supervisor_since={{ proof_payload.get("proof_post_supervisor_execution_since", "unknown") }}
           updated={{ format_timestamp(snapshot.latest_paper_proof_check.created_at) }}
         </p>
       </div>
@@ -406,6 +431,8 @@
                     {% if event.payload.get("proof_pnl") %} proof_pnl={{ event.payload.get("proof_pnl") }}{% endif %}
                     {% if event.payload.get("proof_scenario_status") %} scenarios={{ event.payload.get("proof_scenario_status") }}:{{ event.payload.get("proof_scenario_active", "?") }}@{{ event.payload.get("proof_scenario_expected_session", "?") }}{% endif %}
                     {% if event.payload.get("proof_scenario_problems") and event.payload.get("proof_scenario_problems") != "none" %} scenario_problems={{ event.payload.get("proof_scenario_problems") }}{% endif %}
+                    {% if event.payload.get("proof_current_execution_status") %} current_exec={{ event.payload.get("proof_current_execution_status") }} warnings={{ event.payload.get("proof_current_execution_warnings", "?") }} fill={{ event.payload.get("proof_current_execution_entry_fill_rate", "?") }} caprej={{ event.payload.get("proof_current_execution_capacity_rejected", "?") }} short={{ event.payload.get("proof_current_execution_short_window", "?") }}{% endif %}
+                    {% if event.payload.get("proof_post_supervisor_execution_status") %} post_supervisor_exec={{ event.payload.get("proof_post_supervisor_execution_status") }} warnings={{ event.payload.get("proof_post_supervisor_execution_warnings", "?") }} since={{ event.payload.get("proof_post_supervisor_execution_since", "?") }} entries={{ event.payload.get("proof_post_supervisor_execution_entry_orders", "?") }} caprej={{ event.payload.get("proof_post_supervisor_execution_capacity_rejected", "?") }} short={{ event.payload.get("proof_post_supervisor_execution_short_window", "?") }}{% endif %}
                   </td>
                   <td class="{{ 'warn' if check_status == 'failed' else 'muted' }}">
                     {{ check_status }}
