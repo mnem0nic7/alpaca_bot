@@ -327,7 +327,7 @@ deploy_accepts_post_resume_entry_exposure() {
   if [[ "$proof_status_output" != *"paper proof stream: status=ok "* ]]; then
     return 1
   fi
-  if [[ "$proof_status_output" != *"paper proof exposure protection: status=needs_attention issues=active_entry_orders,active_orders_without_local_positions local_positions=0 local_stop_orders=0 local_entry_orders=1 broker_positions=0 broker_orders=1 "* ]]; then
+  if [[ "$proof_status_output" != *"paper proof exposure protection: status=entry_pending issues=none local_positions=0 local_stop_orders=0 local_entry_orders=1 broker_positions=0 broker_orders=1 "* ]]; then
     return 1
   fi
 }

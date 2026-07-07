@@ -471,7 +471,7 @@ def test_deploy_accepts_fresh_entry_exposure_after_restart(tmp_path: Path) -> No
             "paper proof runtime: ops_status=ok ops_detail=status=ok image_status=ok image_detail=runtime image health ok",
             "paper proof stream: status=ok latest_start=2026-07-07T18:00:43+00:00 latest_event=trade_update_stream_started:2026-07-07T18:00:43+00:00",
             "paper proof readiness audit: status=ok target_session=2026-07-07 check_status=passed created_at=2026-07-07T18:03:26+00:00",
-            "paper proof exposure protection: status=needs_attention issues=active_entry_orders,active_orders_without_local_positions local_positions=0 local_stop_orders=0 local_entry_orders=1 broker_positions=0 broker_orders=1 symbols=none",
+            "paper proof exposure protection: status=entry_pending issues=none local_positions=0 local_stop_orders=0 local_entry_orders=1 broker_positions=0 broker_orders=1 symbols=none",
         ]
     )
 
@@ -510,7 +510,7 @@ def test_deploy_preflight_rejects_active_entry_orders(tmp_path: Path) -> None:
             "paper proof runtime: ops_status=ok ops_detail=status=ok image_status=blocked image_detail=runtime image health failed",
             "paper proof stream: status=ok latest_start=2026-07-07T16:09:19+00:00 latest_event=trade_update_stream_started:2026-07-07T16:09:19+00:00",
             "paper proof readiness audit: status=ok target_session=2026-07-07 check_status=passed created_at=2026-07-07T16:18:18+00:00",
-            "paper proof exposure protection: status=needs_attention issues=active_entry_orders,active_orders_without_local_positions local_positions=0 local_stop_orders=0 local_entry_orders=1 broker_positions=0 broker_orders=1 symbols=none",
+            "paper proof exposure protection: status=entry_pending issues=none local_positions=0 local_stop_orders=0 local_entry_orders=1 broker_positions=0 broker_orders=1 symbols=none",
         ]
     )
 

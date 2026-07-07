@@ -3393,10 +3393,21 @@ local_position_symbol_set = parse_symbol_set(local_open_position_symbols)
 local_active_order_symbol_set = parse_symbol_set(local_active_order_symbols)
 broker_position_symbol_set = parse_symbol_set(broker_open_position_symbols)
 broker_order_symbol_set = parse_symbol_set(broker_open_order_symbols)
+entry_pending_exposure = (
+    local_open_positions == 0
+    and local_active_entry_orders > 0
+    and local_active_orders == local_active_entry_orders
+    and local_open_option_positions == 0
+    and local_active_option_orders == 0
+    and not broker_exposure_warning
+    and (broker_open_positions or 0) == 0
+    and (broker_open_orders or 0) == local_active_entry_orders
+    and broker_account_status == "ok"
+)
 exposure_protection_issues = []
 if broker_exposure_warning:
     exposure_protection_issues.append("broker_exposure_unknown")
-if local_active_entry_orders > 0:
+if local_active_entry_orders > 0 and not entry_pending_exposure:
     exposure_protection_issues.append("active_entry_orders")
 if local_open_option_positions > 0:
     exposure_protection_issues.append("local_option_positions")
@@ -3420,7 +3431,10 @@ if local_open_positions > 0:
             exposure_protection_issues.append("broker_order_symbol_mismatch")
         if broker_account_status != "ok":
             exposure_protection_issues.append("broker_account_blocked")
-elif local_active_orders > 0 or (broker_open_orders or 0) > 0:
+elif (
+    not entry_pending_exposure
+    and (local_active_orders > 0 or (broker_open_orders or 0) > 0)
+):
     exposure_protection_issues.append("active_orders_without_local_positions")
 elif not broker_exposure_warning and (broker_open_positions or 0) > 0:
     exposure_protection_issues.append("broker_positions_without_local_positions")
@@ -3435,7 +3449,13 @@ exposure_protection_status = (
         and (broker_open_positions or 0) == 0
         and (broker_open_orders or 0) == 0
     )
-    else "protected" if not exposure_protection_issues else "needs_attention"
+    else (
+        "entry_pending"
+        if entry_pending_exposure and not exposure_protection_issues
+        else "protected"
+        if not exposure_protection_issues
+        else "needs_attention"
+    )
 )
 exposure_protection_issue_text = (
     ",".join(exposure_protection_issues) if exposure_protection_issues else "none"

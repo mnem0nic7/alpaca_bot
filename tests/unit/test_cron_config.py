@@ -5809,6 +5809,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "local_position_symbol_set != local_active_order_symbol_set" in script
     assert "broker_position_count_mismatch" in script
     assert "broker_order_symbol_mismatch" in script
+    assert "entry_pending_exposure = (" in script
+    assert "local_active_orders == local_active_entry_orders" in script
+    assert "(broker_open_orders or 0) == local_active_entry_orders" in script
+    assert '"entry_pending"' in script
     raw_fill_warning_branch = script[
         script.index("elif (\n    entry_order_fill_rate is not None") :
         script.index("if (\n    capacity_reject_rate is not None")
