@@ -411,7 +411,9 @@ therefore keep reporting stale fill-rate, capacity, and short-window warnings.
 `paper_proof_status.sh` now prints a separate
 `paper proof post-supervisor execution` line, bounded by the latest
 `supervisor_started` audit event, and `run_check_with_audit.sh` persists those
-fields on scheduled proof checks.
+fields on scheduled proof checks. Lock-busy proof-status skips also replay the
+stored post-supervisor line from the latest recent proof audit, so cron
+contention does not drop the current-runtime execution evidence.
 
 Live verification after the 2026-07-07 19:08:57 UTC supervisor restart:
 

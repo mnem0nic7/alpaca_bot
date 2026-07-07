@@ -227,6 +227,7 @@ load_latest_readiness_status() {
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import os
 
 from alpaca_bot.config import Settings
@@ -777,7 +778,8 @@ try:
               COALESCE(payload->>'proof_unpaired_filled_exits', '') AS proof_unpaired_filled_exits,
               COALESCE(payload->>'proof_unpaired_symbols', '') AS proof_unpaired_symbols,
               created_at,
-              to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')
+              to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
+              payload
             FROM audit_events
             WHERE event_type = 'scheduled_check_completed'
               AND payload->>'check_name' = 'paper_proof_status'
@@ -791,6 +793,23 @@ try:
               AND payload->>'trading_mode' = %s
               AND payload->>'strategy_version' = %s
               AND payload ? 'proof_status'
+              AND (
+                (
+                  payload->>'status' = 'pending'
+                  AND payload->>'exit_code' = '43'
+                  AND payload->>'proof_status' = 'pending'
+                )
+                OR (
+                  payload->>'status' = 'passed'
+                  AND payload->>'exit_code' = '0'
+                  AND payload->>'proof_status' = 'passed'
+                )
+                OR (
+                  payload->>'status' = 'skipped'
+                  AND payload->>'exit_code' = '0'
+                  AND payload->>'proof_status' IN ('pending', 'passed')
+                )
+              )
             ORDER BY (payload ? 'proof_scenario_status') DESC, created_at DESC, event_id DESC
             LIMIT 1
             """,
@@ -823,6 +842,66 @@ else:
     created_utc = created_utc.astimezone(timezone.utc)
 age_seconds = (datetime.now(timezone.utc) - created_utc).total_seconds()
 age_minutes = str(max(0, int(age_seconds // 60)))
+payload = row[28] or {}
+if isinstance(payload, str):
+    payload = json.loads(payload)
+post_supervisor_fields = [
+    ("session", "proof_post_supervisor_execution_session"),
+    ("since", "proof_post_supervisor_execution_since"),
+    ("status", "proof_post_supervisor_execution_status"),
+    ("warnings", "proof_post_supervisor_execution_warnings"),
+    ("evaluated", "proof_post_supervisor_execution_evaluated"),
+    ("signals", "proof_post_supervisor_execution_signals"),
+    ("accepted", "proof_post_supervisor_execution_accepted"),
+    ("accepted_for_fill", "proof_post_supervisor_execution_accepted_for_fill"),
+    (
+        "settled_accepted_for_fill",
+        "proof_post_supervisor_execution_settled_accepted_for_fill",
+    ),
+    ("capacity_rejected", "proof_post_supervisor_execution_capacity_rejected"),
+    ("capacity_reject_rate", "proof_post_supervisor_execution_capacity_reject_rate"),
+    (
+        "max_capacity_reject_rate",
+        "proof_post_supervisor_execution_max_capacity_reject_rate",
+    ),
+    ("entry_orders", "proof_post_supervisor_execution_entry_orders"),
+    ("settled", "proof_post_supervisor_execution_settled_entries"),
+    ("settled_filled", "proof_post_supervisor_execution_settled_filled"),
+    ("filled", "proof_post_supervisor_execution_filled"),
+    ("expired", "proof_post_supervisor_execution_expired"),
+    ("active", "proof_post_supervisor_execution_active"),
+    ("maintenance_drained", "proof_post_supervisor_execution_maintenance_drained"),
+    ("short_window_drained", "proof_post_supervisor_execution_short_window_drained"),
+    (
+        "settled_entry_fill_rate",
+        "proof_post_supervisor_execution_settled_entry_fill_rate",
+    ),
+    ("entry_fill_rate", "proof_post_supervisor_execution_entry_fill_rate"),
+    ("min_entry_fill_rate", "proof_post_supervisor_execution_min_entry_fill_rate"),
+    (
+        "accepted_to_fill_rate",
+        "proof_post_supervisor_execution_accepted_to_fill_rate",
+    ),
+    ("filled_symbols", "proof_post_supervisor_execution_filled_symbols"),
+    ("expired_symbols", "proof_post_supervisor_execution_expired_symbols"),
+    ("active_symbols", "proof_post_supervisor_execution_active_symbols"),
+    ("short_window", "proof_post_supervisor_execution_short_window"),
+    (
+        "min_remaining_active_minutes",
+        "proof_post_supervisor_execution_min_remaining_active_minutes",
+    ),
+    ("short_window_symbols", "proof_post_supervisor_execution_short_window_symbols"),
+]
+post_supervisor_parts = [
+    f"{name}={payload[key]}"
+    for name, key in post_supervisor_fields
+    if payload.get(key) not in {None, ""}
+]
+post_supervisor_line = (
+    "paper proof post-supervisor execution: " + " ".join(post_supervisor_parts)
+    if post_supervisor_parts
+    else ""
+)
 print(
 	    "paper_proof_status_latest="
 	    f"{row[0]}|{row[1]}|{row[2]}|{row[3]}|{row[4]}|{row[5]}|"
@@ -830,7 +909,7 @@ print(
 	    f"{row[12]}|{row[13]}|{row[14]}|{row[15]}|{row[16]}|{row[17]}|"
 	    f"{row[18]}|{row[19]}|{row[20]}|{row[21]}|{row[22]}|"
 	    f"{row[23]}|{row[24]}|{row[25]}|{row[27]}|"
-	    f"{age_minutes}"
+	    f"{age_minutes}|{post_supervisor_line}"
 	)
 PY
 )"
@@ -1221,7 +1300,8 @@ case "$CHECK_NAME" in
     latest_unpaired_symbols=""
     latest_created_at=""
     latest_age_minutes=""
-    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes <<< "$latest_proof_status"
+    latest_post_supervisor_execution_line=""
+    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line <<< "$latest_proof_status"
     proof_lock_is_recent=false
     if [[ "$latest_age_minutes" =~ ^[0-9]+$ ]] \
       && (( 10#$latest_age_minutes <= 10#$PROOF_STATUS_LOCK_MAX_AGE_MINUTES )); then
@@ -1246,6 +1326,9 @@ case "$CHECK_NAME" in
       fi
       if [[ -n "$latest_scenario_status" ]]; then
         echo "paper proof scenarios: status=$latest_scenario_status active=${latest_scenario_active:-unknown} expected_session=${latest_scenario_expected_session:-unknown} problems=${latest_scenario_problems:-unknown}"
+      fi
+      if [[ -n "$latest_post_supervisor_execution_line" ]]; then
+        echo "$latest_post_supervisor_execution_line"
       fi
       echo "paper proof status check skipped: lock busy after recent proof status $latest_proof created_at=${latest_created_at:-unknown} age_minutes=$latest_age_minutes"
       exit 0

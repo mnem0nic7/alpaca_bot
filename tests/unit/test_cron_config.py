@@ -1366,6 +1366,13 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "payload->>'min_pnl' = %s" in lock_skip
     assert "payload->>'session_guard_min_trades' = %s" in lock_skip
     assert "payload->>'session_guard_min_pnl' = %s" in lock_skip
+    assert "payload->>'status' = 'pending'" in lock_skip
+    assert "payload->>'exit_code' = '43'" in lock_skip
+    assert "payload->>'proof_status' = 'pending'" in lock_skip
+    assert "payload->>'status' = 'passed'" in lock_skip
+    assert "payload->>'proof_status' = 'passed'" in lock_skip
+    assert "payload->>'status' = 'skipped'" in lock_skip
+    assert "payload->>'proof_status' IN ('pending', 'passed')" in lock_skip
     assert "PROOF_STATUS_LOCK_MAX_AGE_MINUTES" in lock_skip
     assert "reason=lock_busy_already_reported" in lock_skip
     assert "paper proof summary:" in lock_skip
@@ -1386,6 +1393,10 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "proof_scenario_expected_session" in lock_skip
     assert "proof_scenario_problems" in lock_skip
     assert "paper proof scenarios: status=$latest_scenario_status" in lock_skip
+    assert "proof_post_supervisor_execution_status" in lock_skip
+    assert "post_supervisor_line" in lock_skip
+    assert "paper proof post-supervisor execution:" in lock_skip
+    assert 'echo "$latest_post_supervisor_execution_line"' in lock_skip
     assert '"$latest_status" == "pending" && "$latest_exit_code" == "43" && "$latest_proof" == "pending"' in lock_skip
     assert '"$latest_status" == "passed" && "$latest_exit_code" == "0" && "$latest_proof" == "passed"' in lock_skip
     assert "PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}" in lock_skip
@@ -1422,7 +1433,7 @@ def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -
     docker.write_text(
         "#!/usr/bin/env bash\n"
         "cat >/dev/null\n"
-        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|sample_trades|sample_trades,eod_loss_share|sample_trades,profit_factor|sample_trades|sample_trades,eod_loss_share|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0'\n"
+        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|sample_trades|sample_trades,eod_loss_share|sample_trades,profit_factor|sample_trades|sample_trades,eod_loss_share|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0|paper proof post-supervisor execution: session=2026-07-07 since=2026-07-07T19:08:57.059707+00:00 status=ok warnings=none evaluated=3710 signals=941 accepted=0 accepted_for_fill=0 settled_accepted_for_fill=0 capacity_rejected=0 capacity_reject_rate=0.00 max_capacity_reject_rate=0.05 entry_orders=0 settled=0 settled_filled=0 filled=0 expired=0 active=0 maintenance_drained=0 short_window_drained=0 settled_entry_fill_rate=none entry_fill_rate=none min_entry_fill_rate=0.25 accepted_to_fill_rate=none filled_symbols=none expired_symbols=none active_symbols=none short_window=0 min_remaining_active_minutes=none short_window_symbols=none'\n"
     )
     docker.chmod(0o755)
 
@@ -1467,6 +1478,13 @@ def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -
         "paper proof scenarios: status=ok active=980 "
         "expected_session=2026-06-26 problems=none"
     ) in result.stdout
+    assert (
+        "paper proof post-supervisor execution: session=2026-07-07 "
+        "since=2026-07-07T19:08:57.059707+00:00 status=ok "
+        "warnings=none evaluated=3710 signals=941"
+    ) in result.stdout
+    assert "capacity_rejected=0" in result.stdout
+    assert "short_window=0" in result.stdout
     assert "paper proof status check skipped:" in result.stdout
 
 
