@@ -832,7 +832,7 @@ def evaluate_cycle(
                 if equity > 0
                 else 0.0
             )
-            entry_candidates: list[tuple[float, float, CycleIntent]] = []
+            entry_candidates: list[tuple[int, float, float, CycleIntent]] = []
             _candidate_signals: dict[str, tuple] = {}
             _candidate_vwap: dict[str, tuple[float | None, bool | None]] = {}
             for symbol in (symbols or settings.symbols):
@@ -1202,6 +1202,7 @@ def evaluate_cycle(
                     )
                     entry_candidates.append(
                         (
+                            1,
                             round((signal.signal_bar.close / signal.entry_level) - 1, 6),
                             round(signal.relative_volume, 6),
                             CycleIntent(
@@ -1289,8 +1290,13 @@ def evaluate_cycle(
                         signal.signal_bar.close,
                         signal.relative_volume,
                     )
+                    # Live orders are submitted after the signal bar closes; when
+                    # capacity is scarce, prefer candidates whose stop-limit is
+                    # still reachable from that close.
+                    is_immediately_fillable = signal.signal_bar.close <= signal.limit_price
                     entry_candidates.append(
                         (
+                            1 if is_immediately_fillable else 0,
                             round((signal.signal_bar.close / signal.entry_level) - 1, 6),
                             round(signal.relative_volume, 6),
                             CycleIntent(
@@ -1314,7 +1320,7 @@ def evaluate_cycle(
                     )
 
             entry_candidates.sort(
-                key=lambda item: (-item[0], -item[1], item[2].symbol),
+                key=lambda item: (-item[0], -item[1], -item[2], item[3].symbol),
             )
             selected: list[CycleIntent] = []
             for *_rank, candidate in entry_candidates:
@@ -1330,7 +1336,12 @@ def evaluate_cycle(
                 selected.append(candidate)
                 current_exposure += candidate_exposure
             _selected_symbols = {c.symbol for c in selected}
-            for close_to_entry_pct, _relative_volume_rank, candidate in entry_candidates:
+            for (
+                _fillable_rank,
+                close_to_entry_pct,
+                _relative_volume_rank,
+                candidate,
+            ) in entry_candidates:
                 _sig = _candidate_signals.get(candidate.symbol, (None, None, None))
                 _accepted = candidate.symbol in _selected_symbols
                 _rps = (
