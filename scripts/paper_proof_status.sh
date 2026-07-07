@@ -1735,102 +1735,109 @@ try:
                 )
                 entry_order_filled_symbols = execution_quality_row[8] or "none"
 
-            if (
-                settings.entry_min_close_to_entry_pct > -1.0
-                or settings.entry_max_close_to_entry_pct < 1.0
-            ):
-                cur.execute(
-                    """
-                    WITH paired AS (
-                      SELECT
-                        o.symbol,
-                        o.status,
-                        o.filled_quantity,
-                        EXISTS (
-                          SELECT 1
-                          FROM audit_events a
-                          WHERE a.event_type = 'entry_order_expired_next_bar'
-                            AND a.payload->>'client_order_id' = o.client_order_id
-                            AND COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'
-                        ) AS maintenance_drained,
-                        (d.signal_bar_close / NULLIF(d.entry_level, 0) - 1)
-                          AS close_to_entry_pct
-                      FROM decision_log d
-                      JOIN orders o
-                        ON o.symbol = d.symbol
-                       AND o.trading_mode = d.trading_mode
-                       AND o.strategy_version = d.strategy_version
-                       AND o.strategy_name IS NOT DISTINCT FROM d.strategy_name
-                       AND o.intent_type = 'entry'
-                       AND o.created_at = d.cycle_at
-                      WHERE d.trading_mode = %s
-                        AND d.strategy_version = %s
-                        AND d.strategy_name = ANY(%s)
-                        AND d.decision = 'accepted'
-                        AND d.entry_level IS NOT NULL
-                        AND d.entry_level > 0
-                        AND d.signal_bar_close IS NOT NULL
-                        AND DATE(d.cycle_at AT TIME ZONE %s) >= %s
-                        AND DATE(d.cycle_at AT TIME ZONE %s) <= %s
-                    )
-                    SELECT
-                      COUNT(*) FILTER (
-                        WHERE NOT maintenance_drained
-                          AND close_to_entry_pct >= %s
-                          AND close_to_entry_pct <= %s
-                      )::int AS eligible_orders,
-                      COUNT(*) FILTER (
-                        WHERE NOT maintenance_drained
-                          AND close_to_entry_pct >= %s
-                          AND close_to_entry_pct <= %s
-                          AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
-                      )::int AS eligible_filled,
-                      COUNT(*) FILTER (
-                        WHERE NOT maintenance_drained
-                          AND (
-                            close_to_entry_pct < %s
-                            OR close_to_entry_pct > %s
-                          )
-                      )::int AS would_reject_now,
-                      COALESCE(
-                        string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
-                          WHERE NOT maintenance_drained
-                            AND close_to_entry_pct >= %s
-                            AND close_to_entry_pct <= %s
-                            AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
-                        ),
-                        'none'
-                      ) AS eligible_filled_symbols
-                    FROM paired
-                    """,
+            cur.execute(
+                """
+                WITH paired AS (
+                  SELECT
+                    o.symbol,
+                    o.status,
+                    o.filled_quantity,
+                    EXISTS (
+                      SELECT 1
+                      FROM audit_events a
+                      WHERE a.event_type = 'entry_order_expired_next_bar'
+                        AND a.payload->>'client_order_id' = o.client_order_id
+                        AND COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'
+                    ) AS maintenance_drained,
+                    (d.signal_bar_close / NULLIF(d.entry_level, 0) - 1)
+                      AS close_to_entry_pct,
                     (
-                        trading_mode.value,
-                        strategy_version,
-                        proof_strategy_names,
-                        market_timezone,
-                        proof_start,
-                        market_timezone,
-                        proof_end,
-                        settings.entry_min_close_to_entry_pct,
-                        settings.entry_max_close_to_entry_pct,
-                        settings.entry_min_close_to_entry_pct,
-                        settings.entry_max_close_to_entry_pct,
-                        settings.entry_min_close_to_entry_pct,
-                        settings.entry_max_close_to_entry_pct,
-                        settings.entry_min_close_to_entry_pct,
-                        settings.entry_max_close_to_entry_pct,
-                    ),
+                      d.stop_price IS NOT NULL
+                      AND d.initial_stop_price IS NOT NULL
+                      AND d.limit_price IS NOT NULL
+                      AND d.limit_price > 0
+                      AND d.signal_bar_close > d.limit_price
+                    ) AS close_above_limit_price
+                  FROM decision_log d
+                  JOIN orders o
+                    ON o.symbol = d.symbol
+                   AND o.trading_mode = d.trading_mode
+                   AND o.strategy_version = d.strategy_version
+                   AND o.strategy_name IS NOT DISTINCT FROM d.strategy_name
+                   AND o.intent_type = 'entry'
+                   AND o.created_at = d.cycle_at
+                  WHERE d.trading_mode = %s
+                    AND d.strategy_version = %s
+                    AND d.strategy_name = ANY(%s)
+                    AND d.decision = 'accepted'
+                    AND d.entry_level IS NOT NULL
+                    AND d.entry_level > 0
+                    AND d.signal_bar_close IS NOT NULL
+                    AND DATE(d.cycle_at AT TIME ZONE %s) >= %s
+                    AND DATE(d.cycle_at AT TIME ZONE %s) <= %s
                 )
-                posture_execution_row = cur.fetchone()
-                if posture_execution_row:
-                    posture_entry_order_count = int(posture_execution_row[0] or 0)
-                    posture_entry_order_filled_count = int(posture_execution_row[1] or 0)
-                    posture_entry_quality_would_reject_count = int(
-                        posture_execution_row[2] or 0
-                    )
-                    posture_entry_order_filled_symbols = (
-                        posture_execution_row[3] or "none"
-                    )
+                SELECT
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND close_to_entry_pct >= %s
+                      AND close_to_entry_pct <= %s
+                      AND NOT close_above_limit_price
+                  )::int AS eligible_orders,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND close_to_entry_pct >= %s
+                      AND close_to_entry_pct <= %s
+                      AND NOT close_above_limit_price
+                      AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
+                  )::int AS eligible_filled,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND (
+                        close_to_entry_pct < %s
+                        OR close_to_entry_pct > %s
+                        OR close_above_limit_price
+                      )
+                  )::int AS would_reject_now,
+                  COALESCE(
+                    string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                      WHERE NOT maintenance_drained
+                        AND close_to_entry_pct >= %s
+                        AND close_to_entry_pct <= %s
+                        AND NOT close_above_limit_price
+                        AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
+                    ),
+                    'none'
+                  ) AS eligible_filled_symbols
+                FROM paired
+                """,
+                (
+                    trading_mode.value,
+                    strategy_version,
+                    proof_strategy_names,
+                    market_timezone,
+                    proof_start,
+                    market_timezone,
+                    proof_end,
+                    settings.entry_min_close_to_entry_pct,
+                    settings.entry_max_close_to_entry_pct,
+                    settings.entry_min_close_to_entry_pct,
+                    settings.entry_max_close_to_entry_pct,
+                    settings.entry_min_close_to_entry_pct,
+                    settings.entry_max_close_to_entry_pct,
+                    settings.entry_min_close_to_entry_pct,
+                    settings.entry_max_close_to_entry_pct,
+                ),
+            )
+            posture_execution_row = cur.fetchone()
+            if posture_execution_row:
+                posture_entry_order_count = int(posture_execution_row[0] or 0)
+                posture_entry_order_filled_count = int(posture_execution_row[1] or 0)
+                posture_entry_quality_would_reject_count = int(
+                    posture_execution_row[2] or 0
+                )
+                posture_entry_order_filled_symbols = (
+                    posture_execution_row[3] or "none"
+                )
 
         if current_market_date >= proof_start:
             cur.execute(

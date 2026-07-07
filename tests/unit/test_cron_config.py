@@ -5889,6 +5889,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     ) in script
     assert "o.created_at = d.cycle_at" in script
     assert "close_to_entry_pct >= %s" in script
+    assert "close_above_limit_price" in script
+    assert "d.stop_price IS NOT NULL" in script
+    assert "d.initial_stop_price IS NOT NULL" in script
+    assert "d.signal_bar_close > d.limit_price" in script
+    assert "AND NOT close_above_limit_price" in script
+    assert "OR close_above_limit_price" in script
     assert "accepted_to_fill_rate = (" in script
     assert "capacity_reject_rate = (" in script
     assert "decision_capacity_rejected / decision_signal_fired" in script
