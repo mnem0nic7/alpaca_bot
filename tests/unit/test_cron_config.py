@@ -5774,6 +5774,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "capacity_reject_rate = (" in script
     assert "decision_capacity_rejected / decision_signal_fired" in script
     assert "COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'" in script
+    assert "COALESCE(a.payload->>'reason', '') NOT LIKE 'deploy maintenance%%'" in script
+    assert ") AS strategy_expired" in script
+    assert "AND NOT strategy_expired" in script
+    assert "AND (strategy_expired OR status = 'expired')" in script
     assert "COUNT(*) FILTER (WHERE maintenance_drained)::int" in script
     assert "effective_entry_fill_rate_source" in script
     assert "capacity_reject_rate > execution_max_capacity_reject_rate" in script

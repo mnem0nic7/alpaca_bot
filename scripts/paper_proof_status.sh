@@ -1590,7 +1590,14 @@ try:
                       WHERE a.event_type = 'entry_order_expired_next_bar'
                         AND a.payload->>'client_order_id' = o.client_order_id
                         AND COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'
-                    ) AS maintenance_drained
+                    ) AS maintenance_drained,
+                    EXISTS (
+                      SELECT 1
+                      FROM audit_events a
+                      WHERE a.event_type = 'entry_order_expired_next_bar'
+                        AND a.payload->>'client_order_id' = o.client_order_id
+                        AND COALESCE(a.payload->>'reason', '') NOT LIKE 'deploy maintenance%%'
+                    ) AS strategy_expired
                   FROM orders o
                   WHERE o.trading_mode = %s
                     AND o.strategy_version = %s
@@ -1606,10 +1613,13 @@ try:
                       AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
                   )::int AS filled_entries,
                   COUNT(*) FILTER (
-                    WHERE NOT maintenance_drained AND status = 'canceled'
+                    WHERE NOT maintenance_drained
+                      AND NOT strategy_expired
+                      AND status = 'canceled'
                   )::int AS canceled_entries,
                   COUNT(*) FILTER (
-                    WHERE NOT maintenance_drained AND status = 'expired'
+                    WHERE NOT maintenance_drained
+                      AND (strategy_expired OR status = 'expired')
                   )::int AS expired_entries,
                   COUNT(*) FILTER (
                     WHERE NOT maintenance_drained AND status IN ('rejected', 'error')
@@ -1826,7 +1836,14 @@ try:
                       WHERE a.event_type = 'entry_order_expired_next_bar'
                         AND a.payload->>'client_order_id' = o.client_order_id
                         AND COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'
-                    ) AS maintenance_drained
+                    ) AS maintenance_drained,
+                    EXISTS (
+                      SELECT 1
+                      FROM audit_events a
+                      WHERE a.event_type = 'entry_order_expired_next_bar'
+                        AND a.payload->>'client_order_id' = o.client_order_id
+                        AND COALESCE(a.payload->>'reason', '') NOT LIKE 'deploy maintenance%%'
+                    ) AS strategy_expired
                   FROM orders o
                   WHERE o.trading_mode = %s
                     AND o.strategy_version = %s
@@ -1841,10 +1858,13 @@ try:
                       AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
                   )::int AS filled_entries,
                   COUNT(*) FILTER (
-                    WHERE NOT maintenance_drained AND status = 'canceled'
+                    WHERE NOT maintenance_drained
+                      AND NOT strategy_expired
+                      AND status = 'canceled'
                   )::int AS canceled_entries,
                   COUNT(*) FILTER (
-                    WHERE NOT maintenance_drained AND status = 'expired'
+                    WHERE NOT maintenance_drained
+                      AND (strategy_expired OR status = 'expired')
                   )::int AS expired_entries,
                   COUNT(*) FILTER (
                     WHERE NOT maintenance_drained AND status IN ('rejected', 'error')
