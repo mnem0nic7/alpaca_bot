@@ -2396,7 +2396,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "PAPER_READINESS_EXPECT_ENABLED_STRATEGIES" in script
     assert (
         "${PAPER_READINESS_EXPECT_ENABLED_STRATEGIES:-"
-        "${PAPER_APPROVED_STRATEGIES:-bull_flag,vwap_cross}}"
+        "${PAPER_APPROVED_STRATEGIES:-bull_flag}}"
     ) in script
     assert 'readiness_enabled_strategy_args+=(--expect-only-enabled-strategy "$name")' in script
     assert '"${readiness_enabled_strategy_args[@]}"' in script

@@ -110,7 +110,7 @@ class Settings:
     notify_slippage_threshold_pct: float = 0.005
     confidence_floor: float = 0.25
     paper_proof_freeze: bool = False
-    paper_approved_strategies: tuple[str, ...] = ("bull_flag", "vwap_cross")
+    paper_approved_strategies: tuple[str, ...] = ("bull_flag",)
     paper_readiness_max_pass_age_minutes: int = 180
     paper_readiness_min_watchlist_symbols: int = 900
     paper_readiness_decision_dry_run_strategy: str = "bull_flag"
@@ -280,7 +280,7 @@ class Settings:
             ),
             paper_approved_strategies=_parse_csv_names(
                 "PAPER_APPROVED_STRATEGIES",
-                values.get("PAPER_APPROVED_STRATEGIES", "bull_flag,vwap_cross"),
+                values.get("PAPER_APPROVED_STRATEGIES", "bull_flag"),
             ),
             paper_readiness_max_pass_age_minutes=int(
                 values.get("PAPER_READINESS_MAX_PASS_AGE_MINUTES", "180")

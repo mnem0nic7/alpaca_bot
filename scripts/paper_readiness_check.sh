@@ -495,7 +495,7 @@ build_readiness_decision_dry_run_strategies() {
 }
 
 build_readiness_enabled_strategy_args \
-  "${PAPER_READINESS_EXPECT_ENABLED_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-bull_flag,vwap_cross}}"
+  "${PAPER_READINESS_EXPECT_ENABLED_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-bull_flag}}"
 build_readiness_decision_dry_run_strategies "$PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES"
 
 require_env_value STRATEGY_VERSION v1-breakout

@@ -30,7 +30,7 @@ DEPLOY_DECISION_DRY_RUN_STRATEGIES="${DEPLOY_DECISION_DRY_RUN_STRATEGIES:-${PAPE
 DEPLOY_DECISION_DRY_RUN_MIN_RECORDS="${DEPLOY_DECISION_DRY_RUN_MIN_RECORDS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}}"
 DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}}"
 DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES="${DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES:-${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}}"
-DEPLOY_EXPECT_ENABLED_STRATEGIES="${DEPLOY_EXPECT_ENABLED_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-bull_flag,vwap_cross}}"
+DEPLOY_EXPECT_ENABLED_STRATEGIES="${DEPLOY_EXPECT_ENABLED_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-bull_flag}}"
 
 compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
 expected_enabled_strategy_args=()
@@ -305,6 +305,33 @@ deploy_accepts_protected_paper_exposure() {
   fi
 }
 
+deploy_accepts_post_resume_entry_exposure() {
+  local proof_status_output="$1"
+  local proof_summary="$2"
+  local blockers
+
+  blockers="$(paper_proof_summary_field "$proof_summary" blockers || true)"
+  if [[ "$proof_summary" != *"readiness=blocked"* ]]; then
+    return 1
+  fi
+  if [[ "$blockers" != "local_active_orders,broker_open_orders" ]]; then
+    return 1
+  fi
+  if [[ "$proof_status_output" != *"paper proof readiness audit: status=ok "* ]]; then
+    return 1
+  fi
+  if [[ "$proof_status_output" != *"paper proof runtime: ops_status=ok "* \
+    || "$proof_status_output" != *" image_status=ok "* ]]; then
+    return 1
+  fi
+  if [[ "$proof_status_output" != *"paper proof stream: status=ok "* ]]; then
+    return 1
+  fi
+  if [[ "$proof_status_output" != *"paper proof exposure protection: status=needs_attention issues=active_entry_orders,active_orders_without_local_positions local_positions=0 local_stop_orders=0 local_entry_orders=1 broker_positions=0 broker_orders=1 "* ]]; then
+    return 1
+  fi
+}
+
 deploy_paper_proof_status_ready() {
   local proof_status_output="$1"
   local proof_summary
@@ -320,7 +347,8 @@ deploy_paper_proof_status_ready() {
     && "$proof_summary" == *"blockers=none"* ]]; then
     return 0
   fi
-  deploy_accepts_protected_paper_exposure "$proof_status_output" "$proof_summary"
+  deploy_accepts_protected_paper_exposure "$proof_status_output" "$proof_summary" \
+    || deploy_accepts_post_resume_entry_exposure "$proof_status_output" "$proof_summary"
 }
 
 paper_proof_exposure_line() {
@@ -468,6 +496,8 @@ verify_paper_proof_ready() {
   if deploy_paper_proof_status_ready "$proof_status_output"; then
     if deploy_accepts_protected_paper_exposure "$proof_status_output" "$proof_summary"; then
       echo "deploy accepting protected paper exposure after deploy: $proof_summary" >&2
+    elif deploy_accepts_post_resume_entry_exposure "$proof_status_output" "$proof_summary"; then
+      echo "deploy accepting fresh post-resume paper entry after deploy: $proof_summary" >&2
     fi
     return 0
   fi

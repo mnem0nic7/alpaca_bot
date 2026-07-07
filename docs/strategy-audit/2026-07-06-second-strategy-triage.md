@@ -946,6 +946,19 @@ Conclusion: the promoted giveback exit does not rescue any second stock
 strategy. Keep `PAPER_APPROVED_STRATEGIES=bull_flag`; the diversification
 blocker remains a real scale blocker, not a paper-proof profitability blocker.
 
+## Paper Deployment Alignment
+
+Live paper state on 2026-07-07 still had `vwap_cross` approved and enabled from
+the earlier two-strategy promotion. The current-session execution snapshot made
+the drift visible: `vwap_cross` contributed `0/4` filled entries while the
+approved basket showed `2/13` settled filled entries and most weighted capacity
+rejections came from `vwap_cross` being blocked while K=1 was occupied.
+
+Action: align defaults, templates, deploy checks, and live paper env back to
+`PAPER_APPROVED_STRATEGIES=bull_flag`; disable `vwap_cross` in paper. Keep the
+multi-strategy proof/readiness machinery, but do not include an unproven
+companion in the active paper-profit posture.
+
 ## EMA-pullback period follow-up
 
 The giveback-posture retest left `ema_pullback` as the closest rejected

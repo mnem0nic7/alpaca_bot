@@ -93,7 +93,7 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
     )
     assert (
         "PAPER_APPROVED_STRATEGIES: "
-        "${PAPER_APPROVED_STRATEGIES:-bull_flag,vwap_cross}"
+        "${PAPER_APPROVED_STRATEGIES:-bull_flag}"
     ) in compose_text
     assert "PAPER_SCALE_MIN_TRADES: ${PAPER_SCALE_MIN_TRADES:-30}" in compose_text
     assert "PAPER_SCALE_MIN_STRATEGIES: ${PAPER_SCALE_MIN_STRATEGIES:-2}" in compose_text
@@ -121,19 +121,19 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
     ) in compose_text
     assert (
         "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES: "
-        "${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-bull_flag,vwap_cross}"
+        "${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-bull_flag}"
     ) in compose_text
     assert (
         "PAPER_ACTIVITY_STRATEGIES: "
-        "${PAPER_ACTIVITY_STRATEGIES:-bull_flag,vwap_cross}"
+        "${PAPER_ACTIVITY_STRATEGIES:-bull_flag}"
     ) in compose_text
     assert (
         "PROFIT_PROBE_STRATEGIES: "
-        "${PROFIT_PROBE_STRATEGIES:-bull_flag,vwap_cross}"
+        "${PROFIT_PROBE_STRATEGIES:-bull_flag}"
     ) in compose_text
     assert (
         "SESSION_GUARD_STRATEGIES: "
-        "${SESSION_GUARD_STRATEGIES:-bull_flag,vwap_cross}"
+        "${SESSION_GUARD_STRATEGIES:-bull_flag}"
     ) in compose_text
     assert "SESSION_GUARD_MIN_TRADES: ${SESSION_GUARD_MIN_TRADES:-10}" in compose_text
     assert "SESSION_GUARD_FAIL_BELOW_PNL: ${SESSION_GUARD_FAIL_BELOW_PNL:-0}" in compose_text
@@ -285,7 +285,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "DEPLOY_EXPECT_ENABLED_STRATEGIES" in deploy_text
     assert (
         'DEPLOY_EXPECT_ENABLED_STRATEGIES="${DEPLOY_EXPECT_ENABLED_STRATEGIES:-'
-        '${PAPER_APPROVED_STRATEGIES:-bull_flag,vwap_cross}}"'
+        '${PAPER_APPROVED_STRATEGIES:-bull_flag}}"'
     ) in deploy_text
     assert 'expected_enabled_strategy_args+=(--expect-only-enabled-strategy "$name")' in deploy_text
     assert '"${expected_enabled_strategy_args[@]}"' in deploy_text
@@ -305,6 +305,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "verify_paper_proof_ready()" in deploy_text
     assert "deploy_paper_proof_status_ready()" in deploy_text
     assert "deploy_accepts_protected_paper_exposure()" in deploy_text
+    assert "deploy_accepts_post_resume_entry_exposure()" in deploy_text
     assert "deploy_paper_exposure_safe()" in deploy_text
     assert "start_deploy_paper_drain()" in deploy_text
     assert "finish_deploy_paper_drain()" in deploy_text
@@ -317,6 +318,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "deploy preflight failed: paper exposure is not flat or protected" in deploy_text
     assert "deploy preflight waiting for paper exposure to become flat/protected" in deploy_text
     assert "deploy accepting protected paper exposure after deploy" in deploy_text
+    assert "deploy accepting fresh post-resume paper entry after deploy" in deploy_text
     assert '"${paper_proof_freeze,,}" == "true"' in deploy_text
     assert '"$ROOT_DIR/scripts/run_locked_check_with_audit.sh"' in deploy_text
     assert "PAPER_READINESS_FORCE_REFRESH=true" in deploy_text
@@ -462,6 +464,21 @@ def test_deploy_accepts_protected_paper_exposure_after_restart(tmp_path: Path) -
     assert _run_deploy_exposure_safe(tmp_path, proof_output) == "safe"
 
 
+def test_deploy_accepts_fresh_entry_exposure_after_restart(tmp_path: Path) -> None:
+    proof_output = "\n".join(
+        [
+            "paper proof summary: readiness=blocked proof=pending reason=awaiting_completed_proof_session blockers=local_active_orders,broker_open_orders evidence_blockers=sample_trades sealed_evidence_blockers=sample_trades overall_blockers=sample_trades clean_window_blockers=sample_trades sealed_clean_window_blockers=sample_trades warnings=none",
+            "paper proof runtime: ops_status=ok ops_detail=status=ok image_status=ok image_detail=runtime image health ok",
+            "paper proof stream: status=ok latest_start=2026-07-07T18:00:43+00:00 latest_event=trade_update_stream_started:2026-07-07T18:00:43+00:00",
+            "paper proof readiness audit: status=ok target_session=2026-07-07 check_status=passed created_at=2026-07-07T18:03:26+00:00",
+            "paper proof exposure protection: status=needs_attention issues=active_entry_orders,active_orders_without_local_positions local_positions=0 local_stop_orders=0 local_entry_orders=1 broker_positions=0 broker_orders=1 symbols=none",
+        ]
+    )
+
+    assert _run_deploy_proof_status_ready(tmp_path, proof_output) == "ready"
+    assert _run_deploy_exposure_safe(tmp_path, proof_output) == "blocked"
+
+
 def test_deploy_rejects_unprotected_paper_exposure_after_restart(tmp_path: Path) -> None:
     proof_output = "\n".join(
         [
@@ -531,14 +548,14 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180" in env_text
     assert "PROFIT_PROBE_START_DATE=2026-07-07" in env_text
     assert "PROFIT_PROBE_STRATEGY=bull_flag" in env_text
-    assert "PROFIT_PROBE_STRATEGIES=bull_flag,vwap_cross" in env_text
+    assert "PROFIT_PROBE_STRATEGIES=bull_flag" in env_text
     assert "PROFIT_PROBE_MIN_TRADES=30" in env_text
     assert "PAPER_SCALE_MIN_TRADES=30" in env_text
     assert "PAPER_SCALE_MIN_STRATEGIES=2" in env_text
-    assert "PAPER_APPROVED_STRATEGIES=bull_flag,vwap_cross" in env_text
-    assert "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES=bull_flag,vwap_cross" in env_text
-    assert "PAPER_ACTIVITY_STRATEGIES=bull_flag,vwap_cross" in env_text
-    assert "SESSION_GUARD_STRATEGIES=bull_flag,vwap_cross" in env_text
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag" in env_text
+    assert "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES=bull_flag" in env_text
+    assert "PAPER_ACTIVITY_STRATEGIES=bull_flag" in env_text
+    assert "SESSION_GUARD_STRATEGIES=bull_flag" in env_text
     assert "SESSION_GUARD_MIN_TRADES=10" in env_text
     assert "SESSION_GUARD_FAIL_BELOW_PNL=0" in env_text
     assert "PAPER_EXECUTION_MIN_ENTRY_FILL_RATE=0.25" in env_text
@@ -602,14 +619,14 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180" in script
     assert "PROFIT_PROBE_START_DATE=2026-07-07" in script
     assert "PROFIT_PROBE_STRATEGY=bull_flag" in script
-    assert "PROFIT_PROBE_STRATEGIES=bull_flag,vwap_cross" in script
+    assert "PROFIT_PROBE_STRATEGIES=bull_flag" in script
     assert "PROFIT_PROBE_MIN_TRADES=30" in script
     assert "PAPER_SCALE_MIN_TRADES=30" in script
     assert "PAPER_SCALE_MIN_STRATEGIES=2" in script
-    assert "PAPER_APPROVED_STRATEGIES=bull_flag,vwap_cross" in script
-    assert "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES=bull_flag,vwap_cross" in script
-    assert "PAPER_ACTIVITY_STRATEGIES=bull_flag,vwap_cross" in script
-    assert "SESSION_GUARD_STRATEGIES=bull_flag,vwap_cross" in script
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag" in script
+    assert "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES=bull_flag" in script
+    assert "PAPER_ACTIVITY_STRATEGIES=bull_flag" in script
+    assert "SESSION_GUARD_STRATEGIES=bull_flag" in script
     assert "SESSION_GUARD_MIN_TRADES=10" in script
     assert "SESSION_GUARD_FAIL_BELOW_PNL=0" in script
     assert "PAPER_EXECUTION_MIN_ENTRY_FILL_RATE=0.25" in script

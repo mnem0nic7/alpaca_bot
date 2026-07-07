@@ -243,7 +243,7 @@ def test_paper_proof_freeze_defaults_false_and_parses_env():
 
 def test_paper_approved_strategies_defaults_to_current_proof_basket_and_parses_env():
     settings = Settings.from_env(_base_env())
-    assert settings.paper_approved_strategies == ("bull_flag", "vwap_cross")
+    assert settings.paper_approved_strategies == ("bull_flag",)
 
     settings = Settings.from_env(
         _base_env(PAPER_APPROVED_STRATEGIES="bull_flag,failed_breakdown")
