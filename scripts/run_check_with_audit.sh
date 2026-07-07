@@ -192,6 +192,9 @@ PROOF_CURRENT_EXECUTION_FIELDS = {
     "expired_symbols": "proof_current_execution_expired_symbols",
     "active_symbols": "proof_current_execution_active_symbols",
     "maintenance_drained_symbols": "proof_current_execution_maintenance_drained_symbols",
+    "short_window": "proof_current_execution_short_window",
+    "min_remaining_active_minutes": "proof_current_execution_min_remaining_active_minutes",
+    "short_window_symbols": "proof_current_execution_short_window_symbols",
 }
 DECISION_DRY_RUN_FIELDS = {
     "strategy": "decision_dry_run_strategy",

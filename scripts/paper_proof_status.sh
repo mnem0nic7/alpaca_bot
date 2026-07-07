@@ -1530,6 +1530,9 @@ try:
         current_session_entry_order_expired_symbols = "none"
         current_session_entry_order_active_symbols = "none"
         current_session_entry_order_maintenance_drained_symbols = "none"
+        current_session_entry_order_short_window_count = 0
+        current_session_entry_order_min_remaining_active_minutes = None
+        current_session_entry_order_short_window_symbols = "none"
         if proof_end >= proof_start:
             cur.execute(
                 """
@@ -1853,6 +1856,17 @@ try:
                     AND o.strategy_name = ANY(%s)
                     AND o.intent_type = 'entry'
                     AND DATE(COALESCE(o.signal_timestamp, o.created_at) AT TIME ZONE %s) = %s
+                ),
+                entry_order_windows AS (
+                  SELECT
+                    entry_orders.*,
+                    CASE
+                      WHEN signal_timestamp IS NULL THEN NULL
+                      ELSE EXTRACT(EPOCH FROM (
+                        (signal_timestamp + (%s * interval '1 minute')) - created_at
+                      )) / 60.0
+                    END AS remaining_active_minutes
+                  FROM entry_orders
                 )
                 SELECT
                   COUNT(*) FILTER (WHERE NOT maintenance_drained)::int AS entry_orders,
@@ -1913,8 +1927,26 @@ try:
                       WHERE maintenance_drained
                     ),
                     'none'
-                  ) AS maintenance_drained_symbols
-                FROM entry_orders
+                  ) AS maintenance_drained_symbols,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND remaining_active_minutes IS NOT NULL
+                      AND remaining_active_minutes < %s
+                  )::int AS short_window_entries,
+                  ROUND((MIN(remaining_active_minutes) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND remaining_active_minutes IS NOT NULL
+                      AND remaining_active_minutes < %s
+                  ))::numeric, 1) AS min_remaining_active_minutes,
+                  COALESCE(
+                    string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                      WHERE NOT maintenance_drained
+                        AND remaining_active_minutes IS NOT NULL
+                        AND remaining_active_minutes < %s
+                    ),
+                    'none'
+                  ) AS short_window_symbols
+                FROM entry_order_windows
                 """,
                 (
                     trading_mode.value,
@@ -1922,10 +1954,21 @@ try:
                     proof_strategy_names,
                     market_timezone,
                     current_market_date,
+                    settings.entry_timeframe_minutes
+                    * (settings.entry_order_active_bars + 1),
                     list(ACTIVE_ORDER_STATUSES),
                     list(ACTIVE_ORDER_STATUSES),
                     list(ACTIVE_ORDER_STATUSES),
                     list(ACTIVE_ORDER_STATUSES),
+                    settings.entry_timeframe_minutes
+                    * settings.entry_order_active_bars
+                    * 0.5,
+                    settings.entry_timeframe_minutes
+                    * settings.entry_order_active_bars
+                    * 0.5,
+                    settings.entry_timeframe_minutes
+                    * settings.entry_order_active_bars
+                    * 0.5,
                 ),
             )
             current_session_execution_row = cur.fetchone()
@@ -1968,6 +2011,16 @@ try:
                 )
                 current_session_entry_order_maintenance_drained_symbols = (
                     current_session_execution_row[12] or "none"
+                )
+                current_session_entry_order_short_window_count = int(
+                    current_session_execution_row[13] or 0
+                )
+                if current_session_execution_row[14] is not None:
+                    current_session_entry_order_min_remaining_active_minutes = float(
+                        current_session_execution_row[14]
+                    )
+                current_session_entry_order_short_window_symbols = (
+                    current_session_execution_row[15] or "none"
                 )
 
         unpaired_filled_exit_count = 0
@@ -2540,6 +2593,11 @@ current_session_capacity_reject_rate_text = (
     if current_session_capacity_reject_rate is not None
     else "none"
 )
+current_session_entry_order_min_remaining_active_minutes_text = (
+    f"{current_session_entry_order_min_remaining_active_minutes:.1f}"
+    if current_session_entry_order_min_remaining_active_minutes is not None
+    else "none"
+)
 effective_entry_fill_rate = (
     posture_entry_fill_rate
     if posture_entry_fill_rate is not None
@@ -2609,6 +2667,9 @@ if (
 ):
     current_session_execution_status = "needs_work"
     current_session_execution_warnings.append("capacity_rejections")
+if current_session_entry_order_short_window_count > 0:
+    current_session_execution_status = "needs_work"
+    current_session_execution_warnings.append("short_entry_windows")
 strategy_diversification_status = (
     "ok"
     if (
@@ -4047,7 +4108,10 @@ print(
     f"filled_symbols={current_session_entry_order_filled_symbols} "
     f"expired_symbols={current_session_entry_order_expired_symbols} "
     f"active_symbols={current_session_entry_order_active_symbols} "
-    f"maintenance_drained_symbols={current_session_entry_order_maintenance_drained_symbols}"
+    f"maintenance_drained_symbols={current_session_entry_order_maintenance_drained_symbols} "
+    f"short_window={current_session_entry_order_short_window_count} "
+    f"min_remaining_active_minutes={current_session_entry_order_min_remaining_active_minutes_text} "
+    f"short_window_symbols={current_session_entry_order_short_window_symbols}"
 )
 print(
     "paper proof sealed current-session progress: "

@@ -2091,6 +2091,15 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
         '"maintenance_drained_symbols": '
         '"proof_current_execution_maintenance_drained_symbols"'
     ) in script
+    assert '"short_window": "proof_current_execution_short_window"' in script
+    assert (
+        '"min_remaining_active_minutes": '
+        '"proof_current_execution_min_remaining_active_minutes"'
+    ) in script
+    assert (
+        '"short_window_symbols": '
+        '"proof_current_execution_short_window_symbols"'
+    ) in script
     assert "DECISION_DRY_RUN_FIELDS" in script
     assert "DECISION_DRY_RUN_STRATEGIES_FIELDS" in script
     assert '"decision_records": "decision_dry_run_records"' in script
@@ -5804,6 +5813,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert ") AS expired_symbols" in script
     assert ") AS active_symbols" in script
     assert ") AS maintenance_drained_symbols" in script
+    assert "entry_order_windows AS" in script
+    assert "remaining_active_minutes" in script
+    assert "AS short_window_entries" in script
+    assert "AS min_remaining_active_minutes" in script
+    assert "AS short_window_symbols" in script
     assert "COUNT(*) FILTER (WHERE maintenance_drained)::int" in script
     assert "effective_entry_fill_rate_source" in script
     assert "capacity_reject_rate > execution_max_capacity_reject_rate" in script
@@ -5811,6 +5825,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "scale_blockers.append(\"entry_fill_rate\")" in script
     assert "execution_quality_warnings.append(\"raw_entry_fill_rate\")" in script
     assert "execution_quality_warnings.append(\"capacity_rejections\")" in script
+    assert "current_session_execution_warnings.append(\"short_entry_windows\")" in script
     assert "scale_blockers.append(\"capacity_rejections\")" in script
     assert "exposure_protection_issues = []" in script
     assert "exposure_protection_status" in script
@@ -6244,6 +6259,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "maintenance_drained_symbols="
         "{current_session_entry_order_maintenance_drained_symbols}"
     ) in script
+    assert "short_window={current_session_entry_order_short_window_count}" in script
+    assert (
+        "min_remaining_active_minutes="
+        "{current_session_entry_order_min_remaining_active_minutes_text}"
+    ) in script
+    assert "short_window_symbols={current_session_entry_order_short_window_symbols}" in script
     assert "settled_entry_fill_rate" in script
     assert "paper proof scoring:" in script
     assert "scoreable_closed_trades={trade_count}" in script
