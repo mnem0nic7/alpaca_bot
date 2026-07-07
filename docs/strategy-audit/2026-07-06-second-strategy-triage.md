@@ -1260,4 +1260,6 @@ independent live-equity validation after costs, so
 `PAPER_APPROVED_STRATEGIES` remains `bull_flag`. The scan wrapper now lazily
 loads proof status for explicit-candidate runs when
 `SECOND_STRATEGY_STARTING_EQUITY` is not set, so future focused scans default
-to current broker equity instead of scenario defaults.
+to current broker equity instead of scenario defaults. The wrapper summary also
+records the scenario directory, sample seed, K cap, slippage, confidence scale,
+and starting equity, so a copied result table carries its assumptions with it.

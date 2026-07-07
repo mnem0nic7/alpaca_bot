@@ -268,6 +268,9 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert './scripts/paper_proof_status.sh "$ENV_FILE"' in script
     assert "load_proof_status \"loading live broker equity\"" in script
     assert 'starting_equity="${SECOND_STRATEGY_STARTING_EQUITY:-}"' in script
+    assert "Run metadata:" in script
+    assert 'f"- sample_seed: `{sample_seed}`"' in script
+    assert 'f"- starting_equity: `{starting_equity}`"' in script
     assert "stock_disabled_candidate_names" in script
     assert "python3 -m alpaca_bot.replay.cli portfolio-basket-audit" in script
     assert '--confidence-scale "$candidate=$CANDIDATE_SCALE"' in script

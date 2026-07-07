@@ -128,7 +128,10 @@ for candidate in "${candidates[@]}"; do
   fi
 done
 
-python3 - "$status_file" "$summary_file" <<'PY'
+python3 - "$status_file" "$summary_file" \
+  "$SCENARIO_DIR" "$BASE_STRATEGY" "$SAMPLE_SIZE" "$SAMPLE_SEED" \
+  "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "$CANDIDATE_SCALE" \
+  "${starting_equity:-scenario_default}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -137,6 +140,14 @@ import sys
 
 status_path = Path(sys.argv[1])
 summary_path = Path(sys.argv[2])
+scenario_dir = sys.argv[3]
+base_strategy = sys.argv[4]
+sample_size = sys.argv[5]
+sample_seed = sys.argv[6]
+slippage_bps = sys.argv[7]
+max_open_positions = sys.argv[8]
+candidate_scale = sys.argv[9]
+starting_equity = sys.argv[10]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -179,6 +190,17 @@ def sort_key(item):
 
 lines = [
     "# Second strategy basket scan",
+    "",
+    "Run metadata:",
+    "",
+    f"- scenario_dir: `{scenario_dir}`",
+    f"- base_strategy: `{base_strategy}`",
+    f"- sample_size: `{sample_size}`",
+    f"- sample_seed: `{sample_seed}`",
+    f"- slippage_bps: `{slippage_bps}`",
+    f"- max_open_positions: `{max_open_positions}`",
+    f"- candidate_scale: `{candidate_scale}`",
+    f"- starting_equity: `{starting_equity}`",
     "",
     "| candidate | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
     "|---|---|---:|---:|---:|---:|---|---:|---:|---|---|",
