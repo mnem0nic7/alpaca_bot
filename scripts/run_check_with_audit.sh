@@ -66,6 +66,7 @@ proof_summary_line="$(grep -E '^paper proof summary: ' "$output_file" | tail -n 
 proof_progress_line="$(grep -E '^paper proof progress: ' "$output_file" | tail -n 1 || true)"
 proof_scoring_line="$(grep -E '^paper proof scoring: ' "$output_file" | tail -n 1 || true)"
 proof_scenarios_line="$(grep -E '^paper proof scenarios: ' "$output_file" | tail -n 1 || true)"
+proof_current_execution_line="$(grep -E '^paper proof current-session execution: ' "$output_file" | tail -n 1 || true)"
 decision_dry_run_line="$(grep -E '^paper decision dry run ok: ' "$output_file" | tail -n 1 || true)"
 decision_dry_run_strategies_line="$(grep -E '^paper readiness decision dry run strategies ok: ' "$output_file" | tail -n 1 || true)"
 
@@ -78,6 +79,7 @@ export AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"
 export AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"
 export AUDIT_PROOF_SCORING_LINE="$proof_scoring_line"
 export AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"
+export AUDIT_PROOF_CURRENT_EXECUTION_LINE="$proof_current_execution_line"
 export AUDIT_DECISION_DRY_RUN_LINE="$decision_dry_run_line"
 export AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE="$decision_dry_run_strategies_line"
 
@@ -92,6 +94,7 @@ if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_PROOF_PROGRESS_LINE \
     -e AUDIT_PROOF_SCORING_LINE \
     -e AUDIT_PROOF_SCENARIOS_LINE \
+    -e AUDIT_PROOF_CURRENT_EXECUTION_LINE \
     -e AUDIT_DECISION_DRY_RUN_LINE \
     -e AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE \
     --entrypoint python admin <<'PY'
@@ -125,6 +128,7 @@ PROOF_SUMMARY_PREFIX = "paper proof summary: "
 PROOF_PROGRESS_PREFIX = "paper proof progress: "
 PROOF_SCORING_PREFIX = "paper proof scoring: "
 PROOF_SCENARIOS_PREFIX = "paper proof scenarios: "
+PROOF_CURRENT_EXECUTION_PREFIX = "paper proof current-session execution: "
 DECISION_DRY_RUN_PREFIX = "paper decision dry run ok: "
 DECISION_DRY_RUN_STRATEGIES_PREFIX = "paper readiness decision dry run strategies ok: "
 PROOF_SUMMARY_FIELDS = {
@@ -158,6 +162,30 @@ PROOF_SCENARIOS_FIELDS = {
     "active": "proof_scenario_active",
     "expected_session": "proof_scenario_expected_session",
     "problems": "proof_scenario_problems",
+}
+PROOF_CURRENT_EXECUTION_FIELDS = {
+    "session": "proof_current_execution_session",
+    "status": "proof_current_execution_status",
+    "warnings": "proof_current_execution_warnings",
+    "evaluated": "proof_current_execution_evaluated",
+    "signals": "proof_current_execution_signals",
+    "accepted": "proof_current_execution_accepted",
+    "capacity_rejected": "proof_current_execution_capacity_rejected",
+    "capacity_reject_rate": "proof_current_execution_capacity_reject_rate",
+    "max_capacity_reject_rate": "proof_current_execution_max_capacity_reject_rate",
+    "entry_orders": "proof_current_execution_entry_orders",
+    "settled": "proof_current_execution_settled_entries",
+    "settled_filled": "proof_current_execution_settled_filled",
+    "filled": "proof_current_execution_filled",
+    "canceled": "proof_current_execution_canceled",
+    "expired": "proof_current_execution_expired",
+    "rejected": "proof_current_execution_rejected",
+    "active": "proof_current_execution_active",
+    "settled_entry_fill_rate": "proof_current_execution_settled_entry_fill_rate",
+    "entry_fill_rate": "proof_current_execution_entry_fill_rate",
+    "min_entry_fill_rate": "proof_current_execution_min_entry_fill_rate",
+    "accepted_to_fill_rate": "proof_current_execution_accepted_to_fill_rate",
+    "filled_symbols": "proof_current_execution_filled_symbols",
 }
 DECISION_DRY_RUN_FIELDS = {
     "strategy": "decision_dry_run_strategy",
@@ -267,6 +295,13 @@ try:
             os.environ.get("AUDIT_PROOF_SCENARIOS_LINE", ""),
             prefix=PROOF_SCENARIOS_PREFIX,
             field_map=PROOF_SCENARIOS_FIELDS,
+        )
+    )
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_PROOF_CURRENT_EXECUTION_LINE", ""),
+            prefix=PROOF_CURRENT_EXECUTION_PREFIX,
+            field_map=PROOF_CURRENT_EXECUTION_FIELDS,
         )
     )
     payload.update(

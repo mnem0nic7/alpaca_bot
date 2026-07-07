@@ -2020,6 +2020,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"' in script
     assert 'AUDIT_PROOF_SCORING_LINE="$proof_scoring_line"' in script
     assert 'AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"' in script
+    assert 'AUDIT_PROOF_CURRENT_EXECUTION_LINE="$proof_current_execution_line"' in script
     assert 'AUDIT_DECISION_DRY_RUN_LINE="$decision_dry_run_line"' in script
     assert 'AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE="$decision_dry_run_strategies_line"' in script
     assert "-e AUDIT_CHECK_NAME" in script
@@ -2031,6 +2032,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "-e AUDIT_PROOF_PROGRESS_LINE" in script
     assert "-e AUDIT_PROOF_SCORING_LINE" in script
     assert "-e AUDIT_PROOF_SCENARIOS_LINE" in script
+    assert "-e AUDIT_PROOF_CURRENT_EXECUTION_LINE" in script
     assert "-e AUDIT_DECISION_DRY_RUN_LINE" in script
     assert "-e AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE" in script
     assert 'output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"' in script
@@ -2039,6 +2041,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'proof_progress_line="$(grep -E' in script
     assert 'proof_scoring_line="$(grep -E' in script
     assert 'proof_scenarios_line="$(grep -E' in script
+    assert 'proof_current_execution_line="$(grep -E' in script
     assert 'decision_dry_run_line="$(grep -E' in script
     assert 'decision_dry_run_strategies_line="$(grep -E' in script
     assert "scheduled check context: " in script
@@ -2050,6 +2053,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "PROOF_SUMMARY_FIELDS" in script
     assert "PROOF_SCORING_FIELDS" in script
     assert "PROOF_SCENARIOS_FIELDS" in script
+    assert "PROOF_CURRENT_EXECUTION_FIELDS" in script
     assert 'PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")' in script
     assert '"readiness": "proof_readiness"' in script
     assert '"proof": "proof_status"' in script
@@ -2067,6 +2071,11 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"active": "proof_scenario_active"' in script
     assert '"expected_session": "proof_scenario_expected_session"' in script
     assert '"problems": "proof_scenario_problems"' in script
+    assert '"status": "proof_current_execution_status"' in script
+    assert '"evaluated": "proof_current_execution_evaluated"' in script
+    assert '"settled_entry_fill_rate": "proof_current_execution_settled_entry_fill_rate"' in script
+    assert '"min_entry_fill_rate": "proof_current_execution_min_entry_fill_rate"' in script
+    assert '"filled_symbols": "proof_current_execution_filled_symbols"' in script
     assert "DECISION_DRY_RUN_FIELDS" in script
     assert "DECISION_DRY_RUN_STRATEGIES_FIELDS" in script
     assert '"decision_records": "decision_dry_run_records"' in script
@@ -2092,6 +2101,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'os.environ.get("AUDIT_PROOF_PROGRESS_LINE", "")' in script
     assert 'os.environ.get("AUDIT_PROOF_SCORING_LINE", "")' in script
     assert 'os.environ.get("AUDIT_PROOF_SCENARIOS_LINE", "")' in script
+    assert 'os.environ.get("AUDIT_PROOF_CURRENT_EXECUTION_LINE", "")' in script
     assert 'os.environ.get("AUDIT_DECISION_DRY_RUN_LINE", "")' in script
     assert 'os.environ.get("AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE", "")' in script
     assert 'paper readiness check skipped' in script
@@ -6149,6 +6159,14 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "accepted_to_fill_rate={accepted_to_fill_rate_text}" in script
     assert "filled_symbols={entry_order_filled_symbols}" in script
     assert "current_posture_filled_symbols={posture_entry_order_filled_symbols}" in script
+    assert "paper proof current-session execution:" in script
+    assert "status={current_session_execution_status}" in script
+    assert "warnings={','.join(current_session_execution_warnings) if current_session_execution_warnings else 'none'}" in script
+    assert "settled={current_session_entry_order_settled_count}" in script
+    assert "settled_filled={current_session_entry_order_settled_filled_count}" in script
+    assert "settled_entry_fill_rate={current_session_settled_entry_fill_rate_text}" in script
+    assert "accepted_to_fill_rate={current_session_accepted_to_fill_rate_text}" in script
+    assert "settled_entry_fill_rate" in script
     assert "paper proof scoring:" in script
     assert "scoreable_closed_trades={trade_count}" in script
     assert "unpaired_filled_exits={unpaired_filled_exit_count}" in script

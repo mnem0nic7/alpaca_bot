@@ -362,6 +362,24 @@ from alpaca_bot.storage.repositories import OrderStore
 from alpaca_bot.strategy import OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY
 
 
+ACTIVE_ORDER_STATUSES = (
+    "pending_submit",
+    "submitting",
+    "pending_new",
+    "new",
+    "accepted",
+    "accepted_for_bidding",
+    "submitted",
+    "partially_filled",
+    "held",
+    "pending_replace",
+    "pending_cancel",
+    "stopped",
+    "suspended",
+    "done_for_day",
+)
+
+
 def parse_date(value: str, *, name: str) -> date:
     try:
         return date.fromisoformat(value)
@@ -1494,6 +1512,19 @@ try:
         posture_entry_order_filled_count = 0
         posture_entry_quality_would_reject_count = 0
         posture_entry_order_filled_symbols = "none"
+        current_session_decision_evaluated = 0
+        current_session_decision_signal_fired = 0
+        current_session_decision_accepted = 0
+        current_session_decision_capacity_rejected = 0
+        current_session_entry_order_count = 0
+        current_session_entry_order_filled_count = 0
+        current_session_entry_order_canceled_count = 0
+        current_session_entry_order_expired_count = 0
+        current_session_entry_order_rejected_count = 0
+        current_session_entry_order_active_count = 0
+        current_session_entry_order_settled_count = 0
+        current_session_entry_order_settled_filled_count = 0
+        current_session_entry_order_filled_symbols = "none"
         if proof_end >= proof_start:
             cur.execute(
                 """
@@ -1691,6 +1722,130 @@ try:
                     posture_entry_order_filled_symbols = (
                         posture_execution_row[3] or "none"
                     )
+
+        if current_market_date >= proof_start:
+            cur.execute(
+                """
+                SELECT
+                  COALESCE(SUM(w), 0)::int AS evaluated,
+                  COALESCE(SUM(w) FILTER (
+                    WHERE decision NOT IN (
+                      'skipped_existing_position',
+                      'skipped_already_traded',
+                      'skipped_no_signal'
+                    )
+                      AND reject_stage IS DISTINCT FROM 'pre_filter'
+                      AND reject_stage IS DISTINCT FROM 'stale_data'
+                  ), 0)::int AS signal_fired,
+                  COALESCE(SUM(w) FILTER (WHERE decision = 'accepted'), 0)::int AS accepted,
+                  COALESCE(SUM(w) FILTER (WHERE reject_stage = 'capacity'), 0)::int AS capacity_rejected
+                FROM (
+                  SELECT
+                    decision,
+                    reject_stage,
+                    COALESCE((filter_results->>'blocked_symbol_count')::int, 1) AS w
+                  FROM decision_log
+                  WHERE trading_mode = %s
+                    AND strategy_version = %s
+                    AND strategy_name = ANY(%s)
+                    AND DATE(cycle_at AT TIME ZONE %s) = %s
+                ) weighted
+                """,
+                (
+                    trading_mode.value,
+                    strategy_version,
+                    proof_strategy_names,
+                    market_timezone,
+                    current_market_date,
+                ),
+            )
+            current_session_decision_row = cur.fetchone()
+            if current_session_decision_row:
+                current_session_decision_evaluated = int(
+                    current_session_decision_row[0] or 0
+                )
+                current_session_decision_signal_fired = int(
+                    current_session_decision_row[1] or 0
+                )
+                current_session_decision_accepted = int(
+                    current_session_decision_row[2] or 0
+                )
+                current_session_decision_capacity_rejected = int(
+                    current_session_decision_row[3] or 0
+                )
+
+            cur.execute(
+                """
+                SELECT
+                  COUNT(*)::int AS entry_orders,
+                  COUNT(*) FILTER (
+                    WHERE status = 'filled' OR COALESCE(filled_quantity, 0) > 0
+                  )::int AS filled_entries,
+                  COUNT(*) FILTER (WHERE status = 'canceled')::int AS canceled_entries,
+                  COUNT(*) FILTER (WHERE status = 'expired')::int AS expired_entries,
+                  COUNT(*) FILTER (WHERE status IN ('rejected', 'error'))::int AS rejected_entries,
+                  COUNT(*) FILTER (WHERE status = ANY(%s))::int AS active_entries,
+                  COUNT(*) FILTER (WHERE status <> ALL(%s))::int AS settled_entries,
+                  COUNT(*) FILTER (
+                    WHERE status <> ALL(%s)
+                      AND (
+                        status = 'filled'
+                        OR COALESCE(filled_quantity, 0) > 0
+                      )
+                  )::int AS settled_filled_entries,
+                  COALESCE(
+                    string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                      WHERE status = 'filled' OR COALESCE(filled_quantity, 0) > 0
+                    ),
+                    'none'
+                  ) AS filled_symbols
+                FROM orders
+                WHERE trading_mode = %s
+                  AND strategy_version = %s
+                  AND strategy_name = ANY(%s)
+                  AND intent_type = 'entry'
+                  AND DATE(COALESCE(signal_timestamp, created_at) AT TIME ZONE %s) = %s
+                """,
+                (
+                    list(ACTIVE_ORDER_STATUSES),
+                    list(ACTIVE_ORDER_STATUSES),
+                    list(ACTIVE_ORDER_STATUSES),
+                    trading_mode.value,
+                    strategy_version,
+                    proof_strategy_names,
+                    market_timezone,
+                    current_market_date,
+                ),
+            )
+            current_session_execution_row = cur.fetchone()
+            if current_session_execution_row:
+                current_session_entry_order_count = int(
+                    current_session_execution_row[0] or 0
+                )
+                current_session_entry_order_filled_count = int(
+                    current_session_execution_row[1] or 0
+                )
+                current_session_entry_order_canceled_count = int(
+                    current_session_execution_row[2] or 0
+                )
+                current_session_entry_order_expired_count = int(
+                    current_session_execution_row[3] or 0
+                )
+                current_session_entry_order_rejected_count = int(
+                    current_session_execution_row[4] or 0
+                )
+                current_session_entry_order_active_count = int(
+                    current_session_execution_row[5] or 0
+                )
+                current_session_entry_order_settled_count = int(
+                    current_session_execution_row[6] or 0
+                )
+                current_session_entry_order_settled_filled_count = int(
+                    current_session_execution_row[7] or 0
+                )
+                current_session_entry_order_filled_symbols = (
+                    current_session_execution_row[8] or "none"
+                )
 
         unpaired_filled_exit_count = 0
         unpaired_filled_exit_symbols = "none"
@@ -2192,6 +2347,28 @@ capacity_reject_rate = (
     if decision_signal_fired
     else None
 )
+current_session_entry_order_fill_rate = (
+    current_session_entry_order_filled_count / current_session_entry_order_count
+    if current_session_entry_order_count
+    else None
+)
+current_session_settled_entry_fill_rate = (
+    current_session_entry_order_settled_filled_count
+    / current_session_entry_order_settled_count
+    if current_session_entry_order_settled_count
+    else None
+)
+current_session_accepted_to_fill_rate = (
+    current_session_entry_order_filled_count / current_session_decision_accepted
+    if current_session_decision_accepted
+    else None
+)
+current_session_capacity_reject_rate = (
+    current_session_decision_capacity_rejected
+    / current_session_decision_signal_fired
+    if current_session_decision_signal_fired
+    else None
+)
 entry_order_fill_rate_text = (
     f"{entry_order_fill_rate:.2f}" if entry_order_fill_rate is not None else "none"
 )
@@ -2203,6 +2380,26 @@ accepted_to_fill_rate_text = (
 )
 capacity_reject_rate_text = (
     f"{capacity_reject_rate:.2f}" if capacity_reject_rate is not None else "none"
+)
+current_session_entry_order_fill_rate_text = (
+    f"{current_session_entry_order_fill_rate:.2f}"
+    if current_session_entry_order_fill_rate is not None
+    else "none"
+)
+current_session_settled_entry_fill_rate_text = (
+    f"{current_session_settled_entry_fill_rate:.2f}"
+    if current_session_settled_entry_fill_rate is not None
+    else "none"
+)
+current_session_accepted_to_fill_rate_text = (
+    f"{current_session_accepted_to_fill_rate:.2f}"
+    if current_session_accepted_to_fill_rate is not None
+    else "none"
+)
+current_session_capacity_reject_rate_text = (
+    f"{current_session_capacity_reject_rate:.2f}"
+    if current_session_capacity_reject_rate is not None
+    else "none"
 )
 effective_entry_fill_rate = (
     posture_entry_fill_rate
@@ -2249,6 +2446,33 @@ if (
     sealed_proof_blockers.append("capacity_rejections")
     clean_window_blockers.append("capacity_rejections")
     clean_window_sealed_blockers.append("capacity_rejections")
+current_session_execution_status = (
+    "not_started" if current_market_date < proof_start else "observing"
+)
+current_session_execution_warnings = []
+if current_market_date >= proof_start and (
+    current_session_decision_signal_fired > 0
+    or current_session_entry_order_count > 0
+):
+    current_session_execution_status = "ok"
+if (
+    current_session_settled_entry_fill_rate is not None
+    and current_session_settled_entry_fill_rate < execution_min_entry_fill_rate
+):
+    current_session_execution_status = "needs_work"
+    current_session_execution_warnings.append("settled_entry_fill_rate")
+elif (
+    current_session_entry_order_fill_rate is not None
+    and current_session_entry_order_fill_rate < execution_min_entry_fill_rate
+    and current_session_settled_entry_fill_rate is not None
+):
+    current_session_execution_warnings.append("raw_entry_fill_rate")
+if (
+    current_session_capacity_reject_rate is not None
+    and current_session_capacity_reject_rate > execution_max_capacity_reject_rate
+):
+    current_session_execution_status = "needs_work"
+    current_session_execution_warnings.append("capacity_rejections")
 strategy_diversification_status = (
     "ok"
     if (
@@ -3635,6 +3859,31 @@ print(
     f"accepted_to_fill_rate={accepted_to_fill_rate_text} "
     f"filled_symbols={entry_order_filled_symbols} "
     f"current_posture_filled_symbols={posture_entry_order_filled_symbols}"
+)
+print(
+    "paper proof current-session execution: "
+    f"session={current_market_date.isoformat()} "
+    f"status={current_session_execution_status} "
+    f"warnings={','.join(current_session_execution_warnings) if current_session_execution_warnings else 'none'} "
+    f"evaluated={current_session_decision_evaluated} "
+    f"signals={current_session_decision_signal_fired} "
+    f"accepted={current_session_decision_accepted} "
+    f"capacity_rejected={current_session_decision_capacity_rejected} "
+    f"capacity_reject_rate={current_session_capacity_reject_rate_text} "
+    f"max_capacity_reject_rate={execution_max_capacity_reject_rate:.2f} "
+    f"entry_orders={current_session_entry_order_count} "
+    f"settled={current_session_entry_order_settled_count} "
+    f"settled_filled={current_session_entry_order_settled_filled_count} "
+    f"filled={current_session_entry_order_filled_count} "
+    f"canceled={current_session_entry_order_canceled_count} "
+    f"expired={current_session_entry_order_expired_count} "
+    f"rejected={current_session_entry_order_rejected_count} "
+    f"active={current_session_entry_order_active_count} "
+    f"settled_entry_fill_rate={current_session_settled_entry_fill_rate_text} "
+    f"entry_fill_rate={current_session_entry_order_fill_rate_text} "
+    f"min_entry_fill_rate={execution_min_entry_fill_rate:.2f} "
+    f"accepted_to_fill_rate={current_session_accepted_to_fill_rate_text} "
+    f"filled_symbols={current_session_entry_order_filled_symbols}"
 )
 print(
     "paper proof sealed current-session progress: "
