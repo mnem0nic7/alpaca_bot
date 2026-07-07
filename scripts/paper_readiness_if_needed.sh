@@ -36,6 +36,7 @@ capture_env_overrides \
   PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS \
   PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED \
   PAPER_READINESS_DECISION_DRY_RUN_STRATEGY \
+  PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES \
   PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES \
   PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS \
   PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX \
@@ -104,6 +105,7 @@ if [[ -z "$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY" ]]; then
   echo "PAPER_READINESS_DECISION_DRY_RUN_STRATEGY must not be empty" >&2
   exit 1
 fi
+PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY}}"
 PAPER_READINESS_FORCE_REFRESH="${PAPER_READINESS_FORCE_REFRESH:-false}"
 case "${PAPER_READINESS_FORCE_REFRESH,,}" in
   true|false) ;;
@@ -129,6 +131,81 @@ decision_dry_run_field() {
   done
 
   return 1
+}
+
+normalize_strategy_csv() {
+  local csv="$1"
+  local raw
+  local name
+  local existing
+  local -a raw_names
+  local -a names
+
+  IFS=',' read -r -a raw_names <<< "$csv"
+  for raw in "${raw_names[@]}"; do
+    name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+    if [[ -z "$name" ]]; then
+      continue
+    fi
+    if [[ ! "$name" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+      return 1
+    fi
+    for existing in "${names[@]}"; do
+      if [[ "$existing" == "$name" ]]; then
+        continue 2
+      fi
+    done
+    names+=("$name")
+  done
+  if [[ "${#names[@]}" -eq 0 ]]; then
+    return 1
+  fi
+  (
+    IFS=,
+    printf '%s\n' "${names[*]}"
+  )
+}
+
+validate_readiness_decision_dry_run_strategies_line() {
+  local line="$1"
+  local expected_csv="$2"
+  local expected
+  local strategies
+  local count
+  local expected_count
+
+  if [[ -z "$line" ]]; then
+    echo "missing"
+    return 1
+  fi
+  if [[ "$line" != "paper readiness decision dry run strategies ok: "* ]]; then
+    echo "invalid"
+    return 1
+  fi
+
+  expected="$(normalize_strategy_csv "$expected_csv" || true)"
+  strategies="$(decision_dry_run_field "$line" strategies || true)"
+  count="$(decision_dry_run_field "$line" count || true)"
+  if [[ -z "$expected" || -z "$strategies" || -z "$count" ]]; then
+    echo "missing"
+    return 1
+  fi
+  strategies="$(normalize_strategy_csv "$strategies" || true)"
+  if [[ -z "$strategies" || ! "$count" =~ ^[0-9]+$ ]]; then
+    echo "invalid"
+    return 1
+  fi
+  expected_count="$(awk -F',' '{print NF}' <<< "$expected")"
+  if [[ "$strategies" != "$expected" ]]; then
+    echo "strategy_set_mismatch"
+    return 1
+  fi
+  if (( 10#$count != 10#$expected_count )); then
+    echo "strategy_count_mismatch"
+    return 1
+  fi
+
+  echo "ok"
 }
 
 validate_readiness_decision_dry_run_line() {
@@ -345,7 +422,9 @@ try:
               COALESCE(payload->>'decision_dry_run_max_accepted', ''),
               COALESCE(payload->>'decision_dry_run_max_entry_intents', ''),
               COALESCE(payload->>'decision_dry_run_reject_stages', ''),
-              COALESCE(payload->>'decision_dry_run_reject_reasons', '')
+              COALESCE(payload->>'decision_dry_run_reject_reasons', ''),
+              COALESCE(payload->>'decision_dry_run_strategies', ''),
+              COALESCE(payload->>'decision_dry_run_strategy_count', '')
             FROM audit_events
             WHERE event_type = 'scheduled_check_completed'
               AND payload->>'check_name' = 'paper_readiness'
@@ -441,6 +520,12 @@ if dry_run_row and dry_run_row[0]:
         "paper decision dry run ok: "
         + " ".join(fields)
     )
+if dry_run_row and len(dry_run_row) >= 25 and dry_run_row[23]:
+    print(
+        "paper_readiness_latest_decision_dry_run_strategies="
+        "paper readiness decision dry run strategies ok: "
+        f"strategies={dry_run_row[23]} count={dry_run_row[24]}"
+    )
 PY
 )"
 latest_readiness_output="$latest_readiness"
@@ -457,6 +542,11 @@ expected_decision_dry_run_session="$(
 latest_decision_dry_run_line="$(
   printf '%s\n' "$latest_readiness_output" \
     | sed -n 's/^paper_readiness_latest_decision_dry_run=//p' \
+    | tail -n 1
+)"
+latest_decision_dry_run_strategies_line="$(
+  printf '%s\n' "$latest_readiness_output" \
+    | sed -n 's/^paper_readiness_latest_decision_dry_run_strategies=//p' \
     | tail -n 1
 )"
 
@@ -482,7 +572,7 @@ if [[ -n "$readiness_age_minutes" ]]; then
 fi
 
 if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "passed" && "$readiness_is_current" == "true" && "$readiness_is_recent" == "true" ]]; then
-  proof_start="${PROFIT_PROBE_START_DATE:-2026-06-30}"
+  proof_start="${PROFIT_PROBE_START_DATE:-2026-07-07}"
   if [[ "${PAPER_READINESS_FORCE_REFRESH,,}" == "true" ]]; then
     echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=force_refresh"
     echo "paper readiness force refresh requested; rerunning final check"
@@ -497,20 +587,30 @@ if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "pa
     echo "paper readiness prior pass lacks accepted entry-intent decision dry-run proof ($latest_decision_dry_run_status); rerunning final check"
     exec "$PAPER_READINESS_CHECK_SCRIPT" "$ENV_FILE"
   fi
+  latest_decision_dry_run_strategies_status="missing"
+  if ! latest_decision_dry_run_strategies_status="$(validate_readiness_decision_dry_run_strategies_line "$latest_decision_dry_run_strategies_line" "$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY,$PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES")"; then
+    echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=decision_dry_run_strategies_$latest_decision_dry_run_strategies_status"
+    if [[ -n "$latest_decision_dry_run_strategies_line" ]]; then
+      echo "$latest_decision_dry_run_strategies_line"
+    fi
+    echo "paper readiness prior pass lacks approved-strategy decision dry-run proof ($latest_decision_dry_run_strategies_status); rerunning final check"
+    exec "$PAPER_READINESS_CHECK_SCRIPT" "$ENV_FILE"
+  fi
   echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=already_passed"
   echo "$latest_decision_dry_run_line"
+  echo "$latest_decision_dry_run_strategies_line"
   echo "paper readiness already passed for session $session_date; final retry not rerun"
   exit 0
 fi
 
 if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "passed" && "$readiness_is_current" == "false" ]]; then
-  proof_start="${PROFIT_PROBE_START_DATE:-2026-06-30}"
+  proof_start="${PROFIT_PROBE_START_DATE:-2026-07-07}"
   echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=stale_after_supervisor_start"
   echo "paper readiness prior pass is older than latest supervisor start; rerunning final check"
 fi
 
 if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "passed" && "$readiness_is_current" == "true" && "$readiness_is_recent" == "false" ]]; then
-  proof_start="${PROFIT_PROBE_START_DATE:-2026-06-30}"
+  proof_start="${PROFIT_PROBE_START_DATE:-2026-07-07}"
   echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=stale_by_age"
   echo "paper readiness prior pass is older than max age ${PAPER_READINESS_MAX_PASS_AGE_MINUTES}m; rerunning final check"
 fi

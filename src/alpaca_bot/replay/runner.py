@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 import json
 from pathlib import Path
 from typing import Callable, Sequence
@@ -25,6 +25,7 @@ from alpaca_bot.replay.report import build_backtest_report
 from alpaca_bot.risk.sizing import calculate_position_size
 from alpaca_bot.strategy import StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import session_day
+from alpaca_bot.strategy.market_context import compute_market_context
 
 
 @dataclass
@@ -68,10 +69,14 @@ class ReplayRunner:
         settings: Settings,
         signal_evaluator: StrategySignalEvaluator | None = None,
         strategy_name: str = "breakout",
+        regime_daily_bars: Sequence[Bar] | None = None,
     ):
         self.settings = settings
         self.signal_evaluator = signal_evaluator
         self.strategy_name = strategy_name
+        self.regime_daily_bars = (
+            list(regime_daily_bars) if regime_daily_bars is not None else None
+        )
 
     @staticmethod
     def load_scenario(path: str | Path) -> ReplayScenario:
@@ -88,6 +93,26 @@ class ReplayRunner:
             starting_equity=float(payload.get("starting_equity", 100000.0)),
             daily_bars=[Bar.from_dict(item) for item in payload["daily_bars"]],
             intraday_bars=[Bar.from_dict(item) for item in payload["intraday_bars"]],
+            regime_daily_bars=(
+                [Bar.from_dict(item) for item in payload["regime_daily_bars"]]
+                if payload.get("regime_daily_bars")
+                else None
+            ),
+            vix_daily_bars=(
+                [Bar.from_dict(item) for item in payload["vix_daily_bars"]]
+                if payload.get("vix_daily_bars")
+                else None
+            ),
+            sector_daily_bars_by_etf=(
+                {
+                    str(etf).upper(): [Bar.from_dict(item) for item in bars]
+                    for etf, bars in payload[
+                        "sector_daily_bars_by_etf"
+                    ].items()
+                }
+                if payload.get("sector_daily_bars_by_etf")
+                else None
+            ),
         )
 
     def _slipped(self, price: float, *, side: str) -> float:
@@ -97,9 +122,53 @@ class ReplayRunner:
         """
         return apply_slippage(price, side=side, bps=self.settings.replay_slippage_bps)
 
+    def _last_entry_order_active_timestamp(
+        self,
+        bars: Sequence[Bar],
+        first_active_index: int,
+    ) -> datetime | None:
+        last_active_index = min(
+            len(bars) - 1,
+            first_active_index + self.settings.entry_order_active_bars - 1,
+        )
+        first_active = bars[first_active_index]
+        first_active_utc = (
+            first_active.timestamp.replace(tzinfo=timezone.utc)
+            if first_active.timestamp.tzinfo is None
+            else first_active.timestamp.astimezone(timezone.utc)
+        )
+        first_active_local = first_active_utc.astimezone(self.settings.market_timezone)
+        flatten_at = datetime.combine(
+            first_active_local.date(),
+            self.settings.flatten_time,
+            tzinfo=self.settings.market_timezone,
+        )
+        for index in range(last_active_index, first_active_index - 1, -1):
+            bar_utc = (
+                bars[index].timestamp.replace(tzinfo=timezone.utc)
+                if bars[index].timestamp.tzinfo is None
+                else bars[index].timestamp.astimezone(timezone.utc)
+            )
+            if bar_utc.astimezone(self.settings.market_timezone) < flatten_at:
+                return bars[index].timestamp
+        return None
+
     def run(self, scenario: ReplayScenario) -> ReplayResult:
         bars = sorted(scenario.intraday_bars, key=lambda bar: bar.timestamp)
         sorted_daily = sorted(scenario.daily_bars, key=lambda bar: bar.timestamp)
+        regime_source = (
+            self.regime_daily_bars
+            if self.regime_daily_bars is not None
+            else scenario.regime_daily_bars
+        )
+        sorted_regime_daily = sorted(regime_source or (), key=lambda bar: bar.timestamp)
+        sorted_vix_daily = sorted(
+            scenario.vix_daily_bars or (), key=lambda bar: bar.timestamp
+        )
+        sorted_sector_daily_by_etf = {
+            etf: sorted(bars, key=lambda bar: bar.timestamp)
+            for etf, bars in (scenario.sector_daily_bars_by_etf or {}).items()
+        }
         intraday_prefix_type = (
             _KnownCleanBarPrefix if all(bar.close > 0 for bar in bars) else _BarPrefix
         )
@@ -108,10 +177,17 @@ class ReplayRunner:
             if all(bar.close > 0 for bar in sorted_daily)
             else _BarPrefix
         )
+        regime_daily_prefix_type = (
+            _KnownCleanBarPrefix
+            if all(bar.close > 0 for bar in sorted_regime_daily)
+            else _BarPrefix
+        )
         state = ReplayState(equity=scenario.starting_equity)
         events: list[ReplayEvent] = []
         current_day: date | None = None
         daily_slice: Sequence[Bar] = []
+        regime_slice: Sequence[Bar] | None = None
+        market_context = None
 
         for index, bar in enumerate(bars):
             # --- Simulation mechanics: fill or expire working entry order ---
@@ -149,6 +225,50 @@ class ReplayRunner:
                         break
                     daily_prefix_length += 1
                 daily_slice = daily_prefix_type(sorted_daily, daily_prefix_length)
+                if sorted_regime_daily:
+                    regime_prefix_length = 0
+                    for daily_bar in sorted_regime_daily:
+                        if (
+                            daily_bar.timestamp.astimezone(
+                                self.settings.market_timezone
+                            ).date()
+                            >= day
+                        ):
+                            break
+                        regime_prefix_length += 1
+                    regime_slice = regime_daily_prefix_type(
+                        sorted_regime_daily, regime_prefix_length
+                    )
+                else:
+                    regime_slice = None
+                vix_slice = [
+                    daily_bar
+                    for daily_bar in sorted_vix_daily
+                    if daily_bar.timestamp.astimezone(
+                        self.settings.market_timezone
+                    ).date()
+                    < day
+                ]
+                sector_slices = {
+                    etf: [
+                        daily_bar
+                        for daily_bar in sector_daily
+                        if daily_bar.timestamp.astimezone(
+                            self.settings.market_timezone
+                        ).date()
+                        < day
+                    ]
+                    for etf, sector_daily in sorted_sector_daily_by_etf.items()
+                }
+                if vix_slice or sector_slices:
+                    market_context = compute_market_context(
+                        as_of=bar.timestamp,
+                        vix_bars=vix_slice,
+                        sector_bars_by_etf=sector_slices,
+                        settings=self.settings,
+                    )
+                else:
+                    market_context = None
             daily_by_symbol = {bar.symbol: daily_slice}
             working_order_symbols: set[str] = (
                 {state.working_order.symbol} if state.working_order is not None else set()
@@ -167,13 +287,19 @@ class ReplayRunner:
                 entries_disabled=False,
                 signal_evaluator=self.signal_evaluator,
                 symbols=(scenario.symbol,),
+                regime_bars=(
+                    regime_slice if self.settings.enable_regime_filter else None
+                ),
+                market_context=market_context,
             )
 
             for intent in cycle_result.intents:
                 if intent.intent_type == CycleIntentType.EXIT:
-                    # EOD flatten decision from engine
                     self._handle_eod_exit(
-                        bar=bar, state=state, events=events
+                        bar=bar,
+                        state=state,
+                        events=events,
+                        reason=intent.reason or "eod_flatten",
                     )
 
                 elif intent.intent_type == CycleIntentType.UPDATE_STOP:
@@ -194,10 +320,17 @@ class ReplayRunner:
                     if state.position is not None or state.working_order is not None:
                         continue
                     active_bar = bars[next_index]
+                    expires_at = self._last_entry_order_active_timestamp(
+                        bars,
+                        next_index,
+                    )
+                    if expires_at is None:
+                        continue
                     state.working_order = WorkingEntryOrder(
                         symbol=intent.symbol,
                         signal_timestamp=intent.timestamp,
                         active_bar_timestamp=active_bar.timestamp,
+                        expires_at_timestamp=expires_at,
                         stop_price=intent.stop_price,  # type: ignore[arg-type]
                         limit_price=intent.limit_price,  # type: ignore[arg-type]
                         initial_stop_price=intent.initial_stop_price,  # type: ignore[arg-type]
@@ -239,15 +372,10 @@ class ReplayRunner:
         if order is None:
             return
 
-        if bar.timestamp != order.active_bar_timestamp:
+        if bar.timestamp < order.active_bar_timestamp:
             return
 
-        fill_price = simulate_buy_stop_limit_fill(
-            bar=bar,
-            stop_price=order.stop_price,
-            limit_price=order.limit_price,
-        )
-        if fill_price is None:
+        if bar.timestamp > order.last_active_bar_timestamp:
             events.append(
                 ReplayEvent(
                     event_type=IntentType.ENTRY_EXPIRED,
@@ -260,6 +388,28 @@ class ReplayRunner:
                 )
             )
             state.working_order = None
+            return
+
+        fill_price = simulate_buy_stop_limit_fill(
+            bar=bar,
+            stop_price=order.stop_price,
+            limit_price=order.limit_price,
+        )
+        if fill_price is None and bar.timestamp >= order.last_active_bar_timestamp:
+            events.append(
+                ReplayEvent(
+                    event_type=IntentType.ENTRY_EXPIRED,
+                    symbol=order.symbol,
+                    timestamp=bar.timestamp,
+                    details={
+                        "stop_price": order.stop_price,
+                        "limit_price": order.limit_price,
+                    },
+                )
+            )
+            state.working_order = None
+            return
+        if fill_price is None:
             return
 
         # Adverse slippage on entry, capped at the limit (a stop-limit order
@@ -380,6 +530,7 @@ class ReplayRunner:
         bar: Bar,
         state: ReplayState,
         events: list[ReplayEvent],
+        reason: str = "eod_flatten",
     ) -> None:
         position = state.position
         if position is None:
@@ -390,7 +541,7 @@ class ReplayRunner:
                 event_type=IntentType.EOD_EXIT,
                 symbol=position.symbol,
                 timestamp=bar.timestamp,
-                details={"exit_price": round(exit_price, 2)},
+                details={"exit_price": round(exit_price, 2), "reason": reason},
             )
         )
         state.equity += (exit_price - position.entry_price) * position.quantity

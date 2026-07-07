@@ -127,6 +127,184 @@ def test_evaluate_cycle_emits_entry_intent_for_valid_breakout() -> None:
     assert result.intents[0].quantity == 45
 
 
+def test_evaluate_cycle_rejects_signal_too_far_below_entry_level() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    signal_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        open=97.5,
+        high=99.0,
+        low=97.0,
+        close=98.0,
+        volume=5_000,
+    )
+
+    result = evaluate_cycle(
+        settings=make_settings(ENTRY_MIN_CLOSE_TO_ENTRY_PCT="-0.01"),
+        now=signal_bar.timestamp,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": [signal_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=lambda **kwargs: EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=100.0,
+            relative_volume=2.0,
+            stop_price=100.0,
+            limit_price=100.1,
+            initial_stop_price=98.0,
+        ),
+    )
+
+    assert all(intent.intent_type is not CycleIntentType.ENTRY for intent in result.intents)
+    rejections = [
+        record
+        for record in result.decision_records
+        if record.reject_stage == "entry_quality"
+        and record.reject_reason == "close_too_far_below_entry"
+    ]
+    assert len(rejections) == 1
+    assert rejections[0].filter_results == {
+        "close_to_entry_pct": -0.02,
+        "min_close_to_entry_pct": -0.01,
+    }
+
+
+def test_evaluate_cycle_allows_signal_at_minimum_close_to_entry_level() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    signal_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        open=98.5,
+        high=100.0,
+        low=98.0,
+        close=99.0,
+        volume=5_000,
+    )
+
+    result = evaluate_cycle(
+        settings=make_settings(ENTRY_MIN_CLOSE_TO_ENTRY_PCT="-0.01"),
+        now=signal_bar.timestamp,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": [signal_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=lambda **kwargs: EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=100.0,
+            relative_volume=2.0,
+            stop_price=100.0,
+            limit_price=100.1,
+            initial_stop_price=98.0,
+        ),
+    )
+
+    entries = [intent for intent in result.intents if intent.intent_type is CycleIntentType.ENTRY]
+    assert len(entries) == 1
+    assert not any(record.reject_stage == "entry_quality" for record in result.decision_records)
+
+
+def test_evaluate_cycle_rejects_signal_too_far_above_entry_level() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    signal_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        open=100.8,
+        high=102.0,
+        low=100.6,
+        close=101.0,
+        volume=5_000,
+    )
+
+    result = evaluate_cycle(
+        settings=make_settings(ENTRY_MAX_CLOSE_TO_ENTRY_PCT="0.005"),
+        now=signal_bar.timestamp,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": [signal_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=lambda **kwargs: EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=100.0,
+            relative_volume=2.0,
+            stop_price=100.0,
+            limit_price=100.1,
+            initial_stop_price=98.0,
+        ),
+    )
+
+    assert all(intent.intent_type is not CycleIntentType.ENTRY for intent in result.intents)
+    rejections = [
+        record
+        for record in result.decision_records
+        if record.reject_stage == "entry_quality"
+        and record.reject_reason == "close_too_far_above_entry"
+    ]
+    assert len(rejections) == 1
+    assert rejections[0].filter_results == {
+        "close_to_entry_pct": 0.01,
+        "max_close_to_entry_pct": 0.005,
+    }
+
+
+def test_evaluate_cycle_allows_signal_at_maximum_close_to_entry_level() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    signal_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        open=100.4,
+        high=101.0,
+        low=100.2,
+        close=100.5,
+        volume=5_000,
+    )
+
+    result = evaluate_cycle(
+        settings=make_settings(ENTRY_MAX_CLOSE_TO_ENTRY_PCT="0.005"),
+        now=signal_bar.timestamp,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": [signal_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=lambda **kwargs: EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=100.0,
+            relative_volume=2.0,
+            stop_price=100.0,
+            limit_price=100.1,
+            initial_stop_price=98.0,
+        ),
+    )
+
+    entries = [intent for intent in result.intents if intent.intent_type is CycleIntentType.ENTRY]
+    assert len(entries) == 1
+    accepted_records = [
+        record for record in result.decision_records if record.decision == "accepted"
+    ]
+    assert len(accepted_records) == 1
+    assert accepted_records[0].filter_results == {
+        "close_to_entry_pct": 0.005,
+        "min_close_to_entry_pct": -0.01,
+        "max_close_to_entry_pct": 0.005,
+    }
+
+
 def test_evaluate_cycle_allows_entry_when_next_bar_starts_before_flatten() -> None:
     CycleIntentType, evaluate_cycle = load_engine_api()
     signal_bar = Bar(
@@ -163,6 +341,14 @@ def test_evaluate_cycle_allows_entry_when_next_bar_starts_before_flatten() -> No
     entries = [intent for intent in result.intents if intent.intent_type is CycleIntentType.ENTRY]
     assert len(entries) == 1
     assert entries[0].signal_timestamp == signal_bar.timestamp
+    accepted_records = [
+        record for record in result.decision_records if record.decision == "accepted"
+    ]
+    assert len(accepted_records) == 1
+    assert accepted_records[0].filter_results == {
+        "close_to_entry_pct": 0.01,
+        "min_close_to_entry_pct": -0.01,
+    }
 
 
 def test_evaluate_cycle_rejects_entry_when_next_bar_starts_at_flatten() -> None:
@@ -2475,6 +2661,287 @@ def _make_bar(
         close=close,
         volume=100_000,
     )
+
+
+def _make_long_follow_through_position(
+    *,
+    entry_timestamp: datetime = datetime(2026, 5, 13, 14, 0, tzinfo=timezone.utc),
+    highest_price: float = 100.0,
+) -> OpenPosition:
+    return OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=entry_timestamp,
+        entry_price=100.0,
+        quantity=10,
+        entry_level=99.5,
+        initial_stop_price=95.0,
+        stop_price=95.0,
+        highest_price=highest_price,
+    )
+
+
+def test_no_follow_through_exit_emits_after_hold_when_trade_never_moves_favorably():
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 5, 13, 16, 0, tzinfo=timezone.utc)
+    position = _make_long_follow_through_position()
+    bars = [
+        _make_bar("AAPL", close=99.95, high=100.10, low=99.70, ts=now - timedelta(minutes=30)),
+        _make_bar("AAPL", close=99.80, high=100.05, low=99.60, ts=now),
+    ]
+
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_NO_FOLLOW_THROUGH_EXIT="true",
+            NO_FOLLOW_THROUGH_EXIT_MINUTES="90",
+            NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT="0.005",
+            ENABLE_BREAKEVEN_STOP="false",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+        ),
+        now=now,
+        equity=10_000.0,
+        intraday_bars_by_symbol={"AAPL": bars},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    exits = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert len(exits) == 1
+    assert exits[0].reason == "no_follow_through"
+
+
+def test_no_follow_through_exit_disabled_by_default():
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 5, 13, 16, 0, tzinfo=timezone.utc)
+    position = _make_long_follow_through_position()
+    bar = _make_bar("AAPL", close=99.80, high=100.05, low=99.60, ts=now)
+
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_BREAKEVEN_STOP="false",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+        ),
+        now=now,
+        equity=10_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    assert [i for i in result.intents if i.intent_type == CycleIntentType.EXIT] == []
+
+
+def test_no_follow_through_exit_waits_for_configured_minutes():
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 5, 13, 14, 59, tzinfo=timezone.utc)
+    position = _make_long_follow_through_position()
+    bar = _make_bar("AAPL", close=99.80, high=100.05, low=99.60, ts=now)
+
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_NO_FOLLOW_THROUGH_EXIT="true",
+            NO_FOLLOW_THROUGH_EXIT_MINUTES="60",
+            NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT="0.005",
+            ENABLE_BREAKEVEN_STOP="false",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+        ),
+        now=now,
+        equity=10_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    assert [i for i in result.intents if i.intent_type == CycleIntentType.EXIT] == []
+
+
+def test_no_follow_through_exit_keeps_trade_that_reached_favorable_threshold():
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 5, 13, 16, 0, tzinfo=timezone.utc)
+    position = _make_long_follow_through_position()
+    bars = [
+        _make_bar("AAPL", close=100.20, high=100.60, low=99.90, ts=now - timedelta(minutes=30)),
+        _make_bar("AAPL", close=99.80, high=100.05, low=99.60, ts=now),
+    ]
+
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_NO_FOLLOW_THROUGH_EXIT="true",
+            NO_FOLLOW_THROUGH_EXIT_MINUTES="90",
+            NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT="0.005",
+            ENABLE_BREAKEVEN_STOP="false",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+        ),
+        now=now,
+        equity=10_000.0,
+        intraday_bars_by_symbol={"AAPL": bars},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    assert [i for i in result.intents if i.intent_type == CycleIntentType.EXIT] == []
+
+
+def test_giveback_exit_emits_after_favorable_move_rolls_back_to_entry():
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 5, 13, 16, 0, tzinfo=timezone.utc)
+    position = _make_long_follow_through_position(highest_price=100.80)
+    bars = [
+        _make_bar("AAPL", close=100.60, high=100.80, low=100.10, ts=now - timedelta(minutes=30)),
+        _make_bar("AAPL", close=99.95, high=100.05, low=99.50, ts=now),
+    ]
+
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_GIVEBACK_EXIT="true",
+            GIVEBACK_EXIT_MIN_FAVORABLE_PCT="0.005",
+            GIVEBACK_EXIT_MAX_RETURN_PCT="0.0",
+            ENABLE_BREAKEVEN_STOP="false",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+        ),
+        now=now,
+        equity=10_000.0,
+        intraday_bars_by_symbol={"AAPL": bars},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    exits = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert len(exits) == 1
+    assert exits[0].reason == "giveback_exit"
+
+
+def test_giveback_exit_waits_for_favorable_move():
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 5, 13, 16, 0, tzinfo=timezone.utc)
+    position = _make_long_follow_through_position(highest_price=100.10)
+    bar = _make_bar("AAPL", close=99.95, high=100.10, low=99.50, ts=now)
+
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_GIVEBACK_EXIT="true",
+            GIVEBACK_EXIT_MIN_FAVORABLE_PCT="0.005",
+            GIVEBACK_EXIT_MAX_RETURN_PCT="0.0",
+            ENABLE_BREAKEVEN_STOP="false",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+        ),
+        now=now,
+        equity=10_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    assert [i for i in result.intents if i.intent_type == CycleIntentType.EXIT] == []
+
+
+def test_early_loss_exit_emits_after_adverse_hold_threshold():
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 5, 13, 16, 0, tzinfo=timezone.utc)
+    position = _make_long_follow_through_position()
+    bar = _make_bar("AAPL", close=99.40, high=100.10, low=99.20, ts=now)
+
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_EARLY_LOSS_EXIT="true",
+            EARLY_LOSS_EXIT_MINUTES="45",
+            EARLY_LOSS_EXIT_RETURN_PCT="0.005",
+            ENABLE_BREAKEVEN_STOP="false",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+        ),
+        now=now,
+        equity=10_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    exits = [i for i in result.intents if i.intent_type == CycleIntentType.EXIT]
+    assert len(exits) == 1
+    assert exits[0].reason == "early_loss_exit"
+
+
+def test_early_loss_exit_waits_for_configured_minutes():
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 5, 13, 14, 30, tzinfo=timezone.utc)
+    position = _make_long_follow_through_position()
+    bar = _make_bar("AAPL", close=99.00, high=100.10, low=98.90, ts=now)
+
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_EARLY_LOSS_EXIT="true",
+            EARLY_LOSS_EXIT_MINUTES="45",
+            EARLY_LOSS_EXIT_RETURN_PCT="0.005",
+            ENABLE_BREAKEVEN_STOP="false",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+        ),
+        now=now,
+        equity=10_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    assert [i for i in result.intents if i.intent_type == CycleIntentType.EXIT] == []
+
+
+def test_early_loss_exit_keeps_small_pullback():
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 5, 13, 16, 0, tzinfo=timezone.utc)
+    position = _make_long_follow_through_position()
+    bar = _make_bar("AAPL", close=99.60, high=100.10, low=99.40, ts=now)
+
+    result = evaluate_cycle(
+        settings=make_settings(
+            ENABLE_EARLY_LOSS_EXIT="true",
+            EARLY_LOSS_EXIT_MINUTES="45",
+            EARLY_LOSS_EXIT_RETURN_PCT="0.005",
+            ENABLE_BREAKEVEN_STOP="false",
+            ENABLE_PROFIT_TARGET="false",
+            ENABLE_PROFIT_TRAIL="false",
+        ),
+        now=now,
+        equity=10_000.0,
+        intraday_bars_by_symbol={"AAPL": [bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[position],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=True,
+    )
+
+    assert [i for i in result.intents if i.intent_type == CycleIntentType.EXIT] == []
 
 
 def test_short_extended_hours_stop_breach_emits_exit_when_close_above_stop():

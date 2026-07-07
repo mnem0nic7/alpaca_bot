@@ -496,8 +496,7 @@ def _select_proof_guarded_candidate(
 ) -> tuple[TuningCandidate, float] | None:
     """Return the first held candidate that does not regress proof metrics."""
 
-    min_trades = int(base_env.get("PROFIT_PROBE_MIN_TRADES", "10"))
-    min_pnl = float(base_env.get("PROFIT_PROBE_MIN_PNL", "0.01"))
+    min_trades, min_pnl = _resolve_proof_guard_thresholds(base_env)
     base_settings = _settings_with_fractionable(
         Settings.from_env(base_env),
         fractionable_symbols=fractionable_symbols,
@@ -559,6 +558,31 @@ def _select_proof_guarded_candidate(
             + f" (candidate {_format_proof_guard_metrics(metrics)})"
         )
     return None
+
+
+def _resolve_proof_guard_thresholds(base_env: dict[str, str]) -> tuple[int, float]:
+    scale_min_trades = _positive_int_env(
+        base_env, "PAPER_SCALE_MIN_TRADES", default="30"
+    )
+    min_trades = _positive_int_env(
+        base_env,
+        "PROFIT_PROBE_MIN_TRADES",
+        default=str(scale_min_trades),
+    )
+    return max(min_trades, scale_min_trades), float(
+        base_env.get("PROFIT_PROBE_MIN_PNL", "0.01")
+    )
+
+
+def _positive_int_env(base_env: dict[str, str], name: str, *, default: str) -> int:
+    raw = base_env.get(name, default)
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a positive integer") from None
+    if value < 1:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
 
 
 def _settings_with_fractionable(

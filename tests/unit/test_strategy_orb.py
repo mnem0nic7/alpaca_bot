@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
 from alpaca_bot.config import Settings
@@ -117,6 +118,24 @@ def make_orb_intraday_bars(
 # Tests
 # ---------------------------------------------------------------------------
 
+
+class _SliceGuardedBars(Sequence[Bar]):
+    def __init__(self, bars: list[Bar], *, min_slice_start: int) -> None:
+        self._bars = bars
+        self._min_slice_start = min_slice_start
+        self.slices: list[tuple[int | None, int | None]] = []
+
+    def __len__(self) -> int:
+        return len(self._bars)
+
+    def __getitem__(self, index: int | slice) -> Bar | list[Bar]:
+        if isinstance(index, slice):
+            self.slices.append((index.start, index.stop))
+            if index.start is None or index.start < self._min_slice_start:
+                raise AssertionError("unexpected historical-prefix slice")
+        return self._bars[index]
+
+
 def test_orb_returns_none_for_empty_bars():
     settings = make_settings()
     daily_bars = make_daily_bars()
@@ -155,6 +174,38 @@ def test_orb_returns_none_outside_entry_window():
         settings=settings,
     )
     assert result is None
+
+
+def test_orb_scans_only_current_session_for_opening_range():
+    settings = make_settings()
+    daily_bars = make_daily_bars()
+    prior_base = datetime(2026, 4, 23, 13, 30, tzinfo=timezone.utc)
+    prior_bars = [
+        Bar(
+            symbol="AAPL",
+            timestamp=prior_base + timedelta(minutes=15 * i),
+            open=100.0,
+            high=100.5,
+            low=99.5,
+            close=100.0,
+            volume=1000,
+        )
+        for i in range(30)
+    ]
+    current_session_start = len(prior_bars)
+    bars = prior_bars + make_orb_intraday_bars()
+    guarded = _SliceGuardedBars(bars, min_slice_start=current_session_start)
+
+    result = evaluate_orb_signal(
+        symbol="AAPL",
+        intraday_bars=guarded,
+        signal_index=len(bars) - 1,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+
+    assert result is not None
+    assert guarded.slices == [(current_session_start, len(bars))]
 
 
 def test_orb_returns_none_when_daily_trend_fails():

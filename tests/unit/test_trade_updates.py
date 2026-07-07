@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -1425,6 +1425,43 @@ def test_entry_position_opened_at_uses_effective_apply_time_not_stale_broker_tim
 
     assert runtime.position_store.saved[-1].opened_at == receive_at
     assert runtime.position_store.saved[-1].updated_at == receive_at
+
+
+def test_trade_update_without_receive_time_does_not_backdate_order_before_created_at() -> None:
+    """Broker event timestamps can predate the local order row after recovery/replay.
+
+    Even when no caller-provided receive timestamp is available, the saved order,
+    position, and audit event must not move earlier than the local order creation
+    time used by session-proof scoring.
+    """
+    broker_event_at = NOW - timedelta(hours=2)
+    entry_order = _make_entry_order()
+    runtime = _make_runtime(orders=[entry_order])
+
+    update = _make_trade_update(timestamp=broker_event_at)
+
+    from alpaca_bot.runtime.trade_updates import apply_trade_update
+
+    apply_trade_update(
+        settings=make_settings(),
+        runtime=runtime,
+        update=update,
+    )
+
+    saved_entry = next(
+        order
+        for order in runtime.order_store.saved
+        if order.client_order_id == entry_order.client_order_id
+    )
+    applied_events = [
+        event
+        for event in runtime.audit_event_store.appended
+        if event.event_type == "trade_update_applied"
+    ]
+    assert saved_entry.updated_at == entry_order.created_at
+    assert runtime.position_store.saved[-1].opened_at == entry_order.created_at
+    assert runtime.position_store.saved[-1].updated_at == entry_order.created_at
+    assert applied_events[-1].created_at == entry_order.created_at
 
 
 def test_filled_event_with_no_matching_local_order_emits_unmatched_audit_event() -> None:

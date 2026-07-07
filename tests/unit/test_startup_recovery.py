@@ -1055,6 +1055,76 @@ def test_missed_eod_exit_fill_recovery_preserves_closed_trade_fill() -> None:
     )
 
 
+def test_closed_exit_recovery_does_not_backdate_order_before_created_at() -> None:
+    settings = make_settings()
+    opened_at = datetime(2026, 6, 29, 14, 0, tzinfo=timezone.utc)
+    exit_created_at = datetime(2026, 6, 29, 19, 45, tzinfo=timezone.utc)
+    stale_broker_updated_at = datetime(2026, 6, 29, 13, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 29, 19, 55, tzinfo=timezone.utc)
+    exit_id = "bull_flag:v1-breakout:2026-06-29:AAPL:exit:2026-06-29T19:45:00+00:00"
+    local_position = PositionRecord(
+        symbol="AAPL",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        quantity=45,
+        entry_price=111.02,
+        stop_price=109.90,
+        initial_stop_price=109.90,
+        opened_at=opened_at,
+        updated_at=opened_at,
+    )
+    exit_order = OrderRecord(
+        client_order_id=exit_id,
+        symbol="AAPL",
+        side="sell",
+        intent_type="exit",
+        status="accepted",
+        quantity=45,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=exit_created_at,
+        updated_at=exit_created_at,
+        broker_order_id="broker-exit-aapl",
+        signal_timestamp=exit_created_at,
+    )
+    broker_closed_exit = BrokerOrder(
+        client_order_id=exit_id,
+        broker_order_id="broker-exit-aapl",
+        symbol="AAPL",
+        side="sell",
+        status="filled",
+        quantity=45,
+        fill_price=112.35,
+        filled_quantity=45,
+        updated_at=stale_broker_updated_at,
+    )
+    position_store = RecordingPositionStore(existing_positions=[local_position])
+    order_store = RecordingOrderStore(existing_orders=[exit_order])
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+    )
+
+    recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[],
+        broker_open_orders=[],
+        broker_closed_orders=[broker_closed_exit],
+        now=now,
+    )
+
+    recovered_exit = next(
+        order
+        for order in order_store.saved
+        if order.client_order_id == exit_id
+    )
+    assert recovered_exit.updated_at == exit_created_at
+
+
 def test_brand_new_broker_position_does_not_queue_stop_when_one_already_active() -> None:
     """If a pending_submit stop for the symbol already exists locally, no duplicate stop is queued."""
     settings = make_settings()
@@ -1802,6 +1872,7 @@ def test_startup_recovery_queues_exit_when_stop_above_market() -> None:
     assert ex.side == "sell"
     assert ex.quantity == 10
     assert ex.stop_price is None
+    assert ex.reason == "startup_recovery_stop_triggered"
     assert ":exit" in ex.client_order_id
 
     exit_audit = [
@@ -2011,6 +2082,7 @@ def test_startup_recovery_queues_exit_when_stop_equals_market() -> None:
 
     exit_saves = [o for o in order_store.saved if o.intent_type == "exit" and o.symbol == "GME"]
     assert len(exit_saves) == 1, "stop_price == current_price must route to exit (Alpaca requires strictly less)"
+    assert exit_saves[0].reason == "startup_recovery_stop_triggered"
 
 
 def test_uuid_stop_inherits_strategy_name_from_position() -> None:

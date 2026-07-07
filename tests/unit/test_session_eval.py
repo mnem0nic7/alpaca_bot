@@ -274,6 +274,82 @@ def test_session_eval_cli_no_trades_exits_zero(monkeypatch, capsys):
     assert "No operational issues" not in out
 
 
+def test_session_eval_cli_filters_multiple_strategies(monkeypatch, capsys):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    calls: list[str | None] = []
+
+    def rows(**kwargs):
+        strategy_name = kwargs["strategy_name"]
+        calls.append(strategy_name)
+        if strategy_name == "bull_flag":
+            return [_make_trade_row(strategy_name="bull_flag", symbol="AAPL")]
+        if strategy_name == "vwap_cross":
+            return [_make_trade_row(strategy_name="vwap_cross", symbol="MSFT")]
+        return []
+
+    _patch_cli_deps(monkeypatch, rows=rows)
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategies", "bull_flag,vwap_cross",
+        "--require-min-trades", "2",
+    ])
+
+    assert rc == 0
+    assert calls == ["bull_flag", "vwap_cross"]
+    out = capsys.readouterr().out
+    assert "Trades:   2" in out
+    assert "bull_flag,vwap_cross" in out
+
+
+def test_session_eval_cli_multi_strategy_diagnostics_fail_when_one_strategy_is_silent(
+    monkeypatch,
+    capsys,
+):
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    latest = datetime(2026, 5, 4, 15, 30, tzinfo=timezone.utc)
+    _patch_cli_deps(monkeypatch, rows=[])
+    monkeypatch.setattr(
+        cli_module,
+        "_load_entries_disabled_cycle_stats",
+        lambda *_args, **_kwargs: (10, 0, {}),
+    )
+
+    def fake_decision_activity(*_args, **kwargs):
+        if kwargs["strategy_name"] == "bull_flag":
+            return cli_module.DecisionActivityStats(
+                cycles=3,
+                records=2940,
+                accepted=2,
+                latest_cycle_at=latest,
+            )
+        return cli_module.DecisionActivityStats()
+
+    monkeypatch.setattr(
+        cli_module,
+        "_load_decision_activity_stats",
+        fake_decision_activity,
+    )
+
+    rc = cli_module.main([
+        "--date", "2026-05-04",
+        "--mode", "paper",
+        "--strategy-version", "v1",
+        "--strategies", "bull_flag,vwap_cross",
+        "--fail-on-diagnostics",
+    ])
+
+    assert rc == 46
+    out = capsys.readouterr().out
+    assert "bull_flag,vwap_cross decision activity: cycles=3 records=2940" in out
+    assert "Missing decision activity for strategies: vwap_cross" in out
+    assert "Guard failed: operational diagnostics contain proof-blocking issues" in out
+
+
 def test_session_eval_cli_reports_entries_disabled_cycles(monkeypatch, capsys):
     import alpaca_bot.admin.session_eval_cli as cli_module
 

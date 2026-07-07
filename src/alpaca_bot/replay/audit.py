@@ -60,14 +60,34 @@ def _replay_pooled_trades(
     scenarios: Sequence[ReplayScenario], settings: Settings, strategy_name: str
 ) -> list[ReplayTradeRecord]:
     evaluator = STRATEGY_REGISTRY[strategy_name]
+    regime_daily_bars = _resolve_regime_daily_bars(scenarios, settings)
     runner = ReplayRunner(
-        settings, signal_evaluator=evaluator, strategy_name=strategy_name
+        settings,
+        signal_evaluator=evaluator,
+        strategy_name=strategy_name,
+        regime_daily_bars=regime_daily_bars,
     )
     trades: list[ReplayTradeRecord] = []
     for scenario in scenarios:
         result = runner.run(scenario)
         trades.extend(result.backtest_report.trades)
     return trades
+
+
+def _resolve_regime_daily_bars(
+    scenarios: Sequence[ReplayScenario],
+    settings: Settings,
+) -> Sequence | None:
+    if not settings.enable_regime_filter:
+        return None
+    regime_symbol = settings.regime_symbol.upper()
+    for scenario in scenarios:
+        if scenario.symbol.upper() == regime_symbol and scenario.daily_bars:
+            return scenario.daily_bars
+    for scenario in scenarios:
+        if scenario.regime_daily_bars:
+            return scenario.regime_daily_bars
+    return None
 
 
 def run_audit(
@@ -78,6 +98,7 @@ def run_audit(
     slippage_bps: float,
     pooled_trades_fn: PooledTradesFn = _replay_pooled_trades,
     on_progress: Callable[[str], None] | None = None,
+    on_row: Callable[[StrategyAuditRow], None] | None = None,
 ) -> list[StrategyAuditRow]:
     costed = dataclasses.replace(settings, replay_slippage_bps=slippage_bps)
     frictionless = dataclasses.replace(settings, replay_slippage_bps=0.0)
@@ -88,9 +109,18 @@ def run_audit(
         if on_progress is not None:
             on_progress(f"{name}: costed replay complete ({len(cost_trades)} trades)")
         gc.collect()
-        free_trades = pooled_trades_fn(scenarios, frictionless, name)
-        if on_progress is not None:
-            on_progress(f"{name}: frictionless replay complete ({len(free_trades)} trades)")
+        if cost_trades:
+            free_trades = pooled_trades_fn(scenarios, frictionless, name)
+            if on_progress is not None:
+                on_progress(
+                    f"{name}: frictionless replay complete ({len(free_trades)} trades)"
+                )
+        else:
+            free_trades = []
+            if on_progress is not None:
+                on_progress(
+                    f"{name}: frictionless replay skipped (0 costed trades)"
+                )
 
         report = report_from_records(
             list(cost_trades), AUDIT_STARTING_EQUITY, name
@@ -101,28 +131,29 @@ def run_audit(
         total = sum(pnls)
         zero_total = sum(t.pnl for t in free_trades)
 
-        rows.append(
-            StrategyAuditRow(
-                strategy=name,
-                scenarios=len(scenarios),
-                trades=len(cost_trades),
-                win_rate=report.win_rate,
-                profit_factor=report.profit_factor,
-                total_pnl=round(total, 2),
-                mean_trade_pnl=(
-                    round(total / len(cost_trades), 4) if cost_trades else None
-                ),
-                annualized_sharpe=report.annualized_sharpe,
-                ci_low=round(ci[0], 4) if ci is not None else None,
-                ci_high=round(ci[1], 4) if ci is not None else None,
-                p_positive=p,
-                zero_cost_total_pnl=round(zero_total, 2),
-                cost_drag=round(zero_total - total, 2),
-                verdict=classify_verdict(
-                    trades=len(cost_trades), ci=ci, p_positive=p
-                ),
-            )
+        row = StrategyAuditRow(
+            strategy=name,
+            scenarios=len(scenarios),
+            trades=len(cost_trades),
+            win_rate=report.win_rate,
+            profit_factor=report.profit_factor,
+            total_pnl=round(total, 2),
+            mean_trade_pnl=(
+                round(total / len(cost_trades), 4) if cost_trades else None
+            ),
+            annualized_sharpe=report.annualized_sharpe,
+            ci_low=round(ci[0], 4) if ci is not None else None,
+            ci_high=round(ci[1], 4) if ci is not None else None,
+            p_positive=p,
+            zero_cost_total_pnl=round(zero_total, 2),
+            cost_drag=round(zero_total - total, 2),
+            verdict=classify_verdict(
+                trades=len(cost_trades), ci=ci, p_positive=p
+            ),
         )
+        rows.append(row)
+        if on_row is not None:
+            on_row(row)
         if on_progress is not None:
             on_progress(
                 f"{name}: {len(cost_trades)} trades, verdict={rows[-1].verdict}"

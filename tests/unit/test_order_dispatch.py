@@ -19,32 +19,77 @@ def load_order_dispatch_api():
     return module, module.dispatch_pending_orders
 
 
-def make_settings() -> Settings:
-    return Settings.from_env(
-        {
-            "TRADING_MODE": "paper",
-            "ENABLE_LIVE_TRADING": "false",
-            "STRATEGY_VERSION": "v1-breakout",
-            "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
-            "MARKET_DATA_FEED": "sip",
-            "SYMBOLS": "AAPL,MSFT,SPY",
-            "DAILY_SMA_PERIOD": "20",
-            "BREAKOUT_LOOKBACK_BARS": "20",
-            "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
-            "RELATIVE_VOLUME_THRESHOLD": "1.5",
-            "ENTRY_TIMEFRAME_MINUTES": "15",
-            "RISK_PER_TRADE_PCT": "0.0025",
-            "MAX_POSITION_PCT": "0.05",
-            "MAX_OPEN_POSITIONS": "3",
-            "DAILY_LOSS_LIMIT_PCT": "0.01",
-            "STOP_LIMIT_BUFFER_PCT": "0.001",
-            "BREAKOUT_STOP_BUFFER_PCT": "0.001",
-            "ENTRY_STOP_PRICE_BUFFER": "0.01",
-            "ENTRY_WINDOW_START": "10:00",
-            "ENTRY_WINDOW_END": "15:30",
-            "FLATTEN_TIME": "15:45",
-        }
+def make_settings(overrides: dict[str, str] | None = None) -> Settings:
+    env = {
+        "TRADING_MODE": "paper",
+        "ENABLE_LIVE_TRADING": "false",
+        "STRATEGY_VERSION": "v1-breakout",
+        "DATABASE_URL": "postgresql://alpaca_bot:secret@db.example.com:5432/alpaca_bot",
+        "MARKET_DATA_FEED": "sip",
+        "SYMBOLS": "AAPL,MSFT,SPY",
+        "DAILY_SMA_PERIOD": "20",
+        "BREAKOUT_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_THRESHOLD": "1.5",
+        "ENTRY_TIMEFRAME_MINUTES": "15",
+        "RISK_PER_TRADE_PCT": "0.0025",
+        "MAX_POSITION_PCT": "0.05",
+        "MAX_OPEN_POSITIONS": "3",
+        "DAILY_LOSS_LIMIT_PCT": "0.01",
+        "STOP_LIMIT_BUFFER_PCT": "0.001",
+        "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+        "ENTRY_STOP_PRICE_BUFFER": "0.01",
+        "ENTRY_WINDOW_START": "10:00",
+        "ENTRY_WINDOW_END": "15:30",
+        "FLATTEN_TIME": "15:45",
+    }
+    if overrides:
+        env.update(overrides)
+    return Settings.from_env(env)
+
+
+def test_entry_order_expiry_age_scales_with_active_bars_and_caps_at_flatten() -> None:
+    module, _ = load_order_dispatch_api()
+    settings = make_settings({"ENTRY_ORDER_ACTIVE_BARS": "2"})
+
+    assert module.entry_order_next_bar_expiry_age(settings) == timedelta(minutes=45)
+
+    signal_ts = datetime(2026, 4, 24, 18, 0, tzinfo=timezone.utc)  # 14:00 ET
+    assert module.entry_order_expiry_timestamp(settings, signal_ts) == (
+        signal_ts + timedelta(minutes=45)
     )
+
+    late_signal_ts = datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc)  # 15:15 ET
+    assert module.entry_order_expiry_timestamp(settings, late_signal_ts) == datetime(
+        2026,
+        4,
+        24,
+        19,
+        45,
+        tzinfo=timezone.utc,
+    )
+
+
+def test_entry_order_expiry_does_not_cap_after_hours_signal_at_regular_flatten() -> None:
+    module, _ = load_order_dispatch_api()
+    from alpaca_bot.strategy.session import SessionType
+
+    settings = make_settings({"ENTRY_ORDER_ACTIVE_BARS": "1"})
+
+    after_hours_signal_ts = datetime(
+        2026,
+        4,
+        24,
+        21,
+        0,
+        tzinfo=timezone.utc,
+    )  # 17:00 ET
+
+    assert module.entry_order_expiry_timestamp(
+        settings,
+        after_hours_signal_ts,
+        session_type=SessionType.AFTER_HOURS,
+    ) == after_hours_signal_ts + timedelta(minutes=30)
 
 
 class RecordingOrderStore:
@@ -758,6 +803,48 @@ def test_dispatch_expires_pending_entry_after_next_bar_window() -> None:
     assert audit_store.appended[0].event_type == "entry_order_expired_next_bar"
     assert audit_store.appended[0].symbol == "AAPL"
     assert report["submitted_count"] == 0
+
+
+def test_dispatch_keeps_pending_entry_through_configured_active_bars() -> None:
+    """A two-bar entry order remains valid at the old one-bar expiry boundary."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings({"ENTRY_ORDER_ACTIVE_BARS": "2"})
+    signal_ts = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)
+    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes * 2)
+    entry = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:two-bar-active",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=signal_ts,
+        updated_at=signal_ts,
+        stop_price=101.0,
+        limit_price=101.5,
+        initial_stop_price=99.5,
+        signal_timestamp=signal_ts,
+    )
+    order_store = RecordingOrderStore([entry])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    assert len(broker.entry_calls) == 1
+    assert not any(order.status == "expired" for order in order_store.saved)
+    assert not any(
+        event.event_type == "entry_order_expired_next_bar"
+        for event in audit_store.appended
+    )
+    assert report["submitted_count"] == 1
 
 
 def test_dispatch_pending_orders_acquires_store_lock_for_order_store_save() -> None:

@@ -13,6 +13,22 @@ from alpaca_bot.strategy.breakout import (
 from alpaca_bot.strategy.indicators import calculate_vwap
 
 
+def _session_bars_through_signal(
+    intraday_bars: Sequence[Bar],
+    *,
+    signal_index: int,
+    settings: Settings,
+) -> list[Bar]:
+    signal_date = session_day(intraday_bars[signal_index].timestamp, settings)
+    start_index = signal_index
+    while start_index > 0:
+        previous = intraday_bars[start_index - 1]
+        if session_day(previous.timestamp, settings) != signal_date:
+            break
+        start_index -= 1
+    return list(intraday_bars[start_index : signal_index + 1])
+
+
 def evaluate_vwap_cross_signal(
     *,
     symbol: str,
@@ -32,11 +48,11 @@ def evaluate_vwap_cross_signal(
     if not daily_trend_filter_passes(daily_bars, settings):
         return None
 
-    today = session_day(signal_bar.timestamp, settings)
-    today_bars = [
-        b for b in intraday_bars[: signal_index + 1]
-        if session_day(b.timestamp, settings) == today
-    ]
+    # In replay, intraday_bars can span many days. Walk back only through the
+    # current session instead of re-filtering the whole historical prefix.
+    today_bars = _session_bars_through_signal(
+        intraday_bars, signal_index=signal_index, settings=settings
+    )
 
     if len(today_bars) < 3:
         return None

@@ -61,6 +61,15 @@ class WorkingEntryOrder:
     entry_level: float
     relative_volume: float
     quantity: float | None = None
+    strategy_name: str = "breakout"
+    expires_at_timestamp: datetime | None = None
+
+    @property
+    def last_active_bar_timestamp(self) -> datetime:
+        return self.expires_at_timestamp or self.active_bar_timestamp
+
+    def is_active_on(self, timestamp: datetime) -> bool:
+        return self.active_bar_timestamp <= timestamp <= self.last_active_bar_timestamp
 
 
 @dataclass
@@ -89,6 +98,9 @@ class ReplayScenario:
     starting_equity: float
     daily_bars: list[Bar]
     intraday_bars: list[Bar]
+    regime_daily_bars: list[Bar] | None = None
+    vix_daily_bars: list[Bar] | None = None
+    sector_daily_bars_by_etf: dict[str, list[Bar]] | None = None
 
     @property
     def session_date(self) -> date:

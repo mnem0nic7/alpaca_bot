@@ -83,6 +83,63 @@ def test_split_oos_daily_includes_warmup_prefix():
     assert len(oos_s.daily_bars) == 30 + 10
 
 
+def test_split_preserves_regime_daily_warmup():
+    scenario = _make_scenario(50, intraday_per_day=4)
+    scenario.regime_daily_bars = [
+        _make_bar("SPY", bar.timestamp, 400.0 + idx)
+        for idx, bar in enumerate(scenario.daily_bars)
+    ]
+
+    is_s, oos_s = split_scenario(
+        scenario,
+        in_sample_ratio=0.8,
+        daily_warmup=30,
+    )
+
+    assert is_s.regime_daily_bars is not None
+    assert oos_s.regime_daily_bars is not None
+    is_regime_ts = {b.timestamp for b in is_s.regime_daily_bars}
+    oos_regime_ts = [b.timestamp for b in oos_s.regime_daily_bars]
+    assert all(ts in is_regime_ts for ts in oos_regime_ts[:30])
+    assert len(oos_s.regime_daily_bars) == 30 + 10
+
+
+def test_split_preserves_market_context_daily_warmup():
+    scenario = _make_scenario(50, intraday_per_day=4)
+    scenario.vix_daily_bars = [
+        _make_bar("VIXY", bar.timestamp, 20.0 + idx)
+        for idx, bar in enumerate(scenario.daily_bars)
+    ]
+    scenario.sector_daily_bars_by_etf = {
+        "XLK": [
+            _make_bar("XLK", bar.timestamp, 200.0 + idx)
+            for idx, bar in enumerate(scenario.daily_bars)
+        ]
+    }
+
+    is_s, oos_s = split_scenario(
+        scenario,
+        in_sample_ratio=0.8,
+        daily_warmup=30,
+    )
+
+    assert is_s.vix_daily_bars is not None
+    assert oos_s.vix_daily_bars is not None
+    is_vix_ts = {b.timestamp for b in is_s.vix_daily_bars}
+    oos_vix_ts = [b.timestamp for b in oos_s.vix_daily_bars]
+    assert all(ts in is_vix_ts for ts in oos_vix_ts[:30])
+    assert len(oos_s.vix_daily_bars) == 30 + 10
+
+    assert is_s.sector_daily_bars_by_etf is not None
+    assert oos_s.sector_daily_bars_by_etf is not None
+    is_sector_ts = {b.timestamp for b in is_s.sector_daily_bars_by_etf["XLK"]}
+    oos_sector_ts = [
+        b.timestamp for b in oos_s.sector_daily_bars_by_etf["XLK"]
+    ]
+    assert all(ts in is_sector_ts for ts in oos_sector_ts[:30])
+    assert len(oos_s.sector_daily_bars_by_etf["XLK"]) == 30 + 10
+
+
 def test_split_names_suffixed():
     scenario = _make_scenario(20)
     is_s, oos_s = split_scenario(scenario)

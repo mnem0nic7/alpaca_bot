@@ -9,6 +9,10 @@ from typing import Callable, Sequence, TextIO
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.notifications import Notifier
 from alpaca_bot.notifications.factory import build_notifier
+from alpaca_bot.strategy_approval import (
+    is_paper_strategy_approved,
+    strategy_enable_rejection_reason,
+)
 from alpaca_bot.storage import (
     AuditEvent,
     AuditEventStore,
@@ -69,6 +73,12 @@ def build_parser(settings: Settings | None = None) -> argparse.ArgumentParser:
             "--strategy-version",
             default=defaults.strategy_version,
         )
+        if name == "enable-strategy":
+            subparser.add_argument(
+                "--allow-unapproved",
+                action="store_true",
+                help="Intentionally enable a paper strategy outside PAPER_APPROVED_STRATEGIES.",
+            )
 
     ce_parser = subparsers.add_parser("close-excess")
     ce_parser.add_argument(
@@ -225,6 +235,15 @@ def run_admin_command(
 
     if args.command in ("enable-strategy", "disable-strategy"):
         enabled = args.command == "enable-strategy"
+        rejection = strategy_enable_rejection_reason(
+            settings=settings,
+            strategy_name=args.strategy_name,
+            trading_mode=trading_mode,
+            enabled=enabled,
+            allow_unapproved=getattr(args, "allow_unapproved", False),
+        )
+        if rejection is not None:
+            raise ValueError(rejection)
         return _write_strategy_flag(
             connection=connection,
             event_store=event_store,
@@ -233,6 +252,8 @@ def run_admin_command(
             strategy_version=strategy_version,
             enabled=enabled,
             now=timestamp,
+            paper_approved=is_paper_strategy_approved(settings, args.strategy_name),
+            allow_unapproved=getattr(args, "allow_unapproved", False),
         )
 
     raise ValueError(f"Unsupported command: {args.command}")
@@ -247,6 +268,9 @@ def _write_strategy_flag(
     strategy_version: str,
     enabled: bool,
     now: datetime,
+    flag_store: StrategyFlagStore | None = None,
+    paper_approved: bool | None = None,
+    allow_unapproved: bool = False,
 ) -> str:
     flag = StrategyFlag(
         strategy_name=strategy_name,
@@ -255,17 +279,21 @@ def _write_strategy_flag(
         enabled=enabled,
         updated_at=now,
     )
-    flag_store = StrategyFlagStore(connection)
+    flag_store = flag_store or StrategyFlagStore(connection)
     flag_store.save(flag, commit=False)
+    payload = {
+        "strategy_name": strategy_name,
+        "trading_mode": trading_mode.value,
+        "strategy_version": strategy_version,
+        "enabled": str(enabled).lower(),
+    }
+    if trading_mode is TradingMode.PAPER and enabled:
+        payload["paper_approved"] = str(bool(paper_approved)).lower()
+        payload["allow_unapproved"] = str(allow_unapproved).lower()
     event_store.append(
         AuditEvent(
             event_type="strategy_flag_changed",
-            payload={
-                "strategy_name": strategy_name,
-                "trading_mode": trading_mode.value,
-                "strategy_version": strategy_version,
-                "enabled": str(enabled).lower(),
-            },
+            payload=payload,
             created_at=now,
         ),
         commit=False,
@@ -446,14 +474,30 @@ def main(
                     f"disabled_strategies={disabled_str}"
                 )
         elif args.command in ("enable-strategy", "disable-strategy"):
+            enabled = args.command == "enable-strategy"
+            rejection = strategy_enable_rejection_reason(
+                settings=resolved_settings,
+                strategy_name=args.strategy_name,
+                trading_mode=trading_mode,
+                enabled=enabled,
+                allow_unapproved=getattr(args, "allow_unapproved", False),
+            )
+            if rejection is not None:
+                raise SystemExit(rejection)
             output = _write_strategy_flag(
                 connection=connection,
                 event_store=audit_store,
                 strategy_name=args.strategy_name,
                 trading_mode=trading_mode,
                 strategy_version=strategy_version,
-                enabled=args.command == "enable-strategy",
+                enabled=enabled,
                 now=timestamp,
+                flag_store=strategy_flag_store_factory(connection),
+                paper_approved=is_paper_strategy_approved(
+                    resolved_settings,
+                    args.strategy_name,
+                ),
+                allow_unapproved=getattr(args, "allow_unapproved", False),
             )
         elif args.command == "close-excess":
             _broker = (
@@ -675,6 +719,7 @@ def _run_close_excess(
                 trading_mode=trading_mode,
                 strategy_version=strategy_version,
                 strategy_name=position.strategy_name,
+                reason="force_exit",
                 broker_order_id=broker_order.broker_order_id,
                 created_at=now,
                 updated_at=now,
@@ -691,6 +736,7 @@ def _run_close_excess(
                     "quantity": position.quantity,
                     "entry_price": str(position.entry_price),
                     "stop_pct": str(round(pct * 100, 2)),
+                    "reason": "force_exit",
                 },
                 created_at=now,
             ),

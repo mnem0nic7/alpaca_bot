@@ -279,6 +279,7 @@ def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -
         "#!/usr/bin/env bash\n"
         "printf 'paper_readiness_latest_status=2026-06-29|passed|2026-06-27T18:07:44.000000Z|2026-06-27T18:07:43.000000Z\\n'\n"
         "printf 'paper_readiness_latest_decision_dry_run=paper decision dry run ok: strategy=bull_flag as_of=2026-06-26T11:30:00-04:00 active=980 decision_records=941 accepted=3 entry_intents=3 sample_times=10:30,11:30,12:30,13:30,14:30,15:30 evaluations=6 min_decision_records=929 max_accepted=3 max_entry_intents=3\\n'\n"
+        "printf 'paper_readiness_latest_decision_dry_run_strategies=paper readiness decision dry run strategies ok: strategies=bull_flag count=1\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -469,10 +470,12 @@ def test_paper_readiness_final_retry_honors_session_override_in_lookup(
         "  printf 'paper_readiness_latest_status=2026-07-01|passed|2026-07-01T13:20:00.000000Z|2026-07-01T13:00:00.000000Z|5\\n'\n"
         "  printf 'paper_readiness_expected_decision_dry_run_session=2026-06-30\\n'\n"
         "  printf 'paper_readiness_latest_decision_dry_run=paper decision dry run ok: strategy=bull_flag as_of=2026-06-30T14:30:00-04:00 active=980 decision_records=941 accepted=3 entry_intents=3 sample_times=10:30,11:30,12:30,13:30,14:30,15:30 evaluations=6 min_decision_records=929 max_accepted=3 max_entry_intents=3\\n'\n"
+        "  printf 'paper_readiness_latest_decision_dry_run_strategies=paper readiness decision dry run strategies ok: strategies=bull_flag count=1\\n'\n"
         "else\n"
         "  printf 'paper_readiness_latest_status=2026-06-30|passed|2026-06-30T13:20:00.000000Z|2026-06-30T13:00:00.000000Z|5\\n'\n"
         "  printf 'paper_readiness_expected_decision_dry_run_session=2026-06-29\\n'\n"
         "  printf 'paper_readiness_latest_decision_dry_run=paper decision dry run ok: strategy=bull_flag as_of=2026-06-29T14:30:00-04:00 active=980 decision_records=941 accepted=3 entry_intents=3 sample_times=10:30,11:30,12:30,13:30,14:30,15:30 evaluations=6 min_decision_records=929 max_accepted=3 max_entry_intents=3\\n'\n"
+        "  printf 'paper_readiness_latest_decision_dry_run_strategies=paper readiness decision dry run strategies ok: strategies=bull_flag count=1\\n'\n"
         "fi\n"
     )
     fake_docker.chmod(0o755)
@@ -593,6 +596,8 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
         '"${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-}" '
         '"${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-}" '
         '"${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-}"\n'
+        "printf 'decision_dry_run_strategies=%s\\n' "
+        '"${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-}"\n'
         "printf 'decision_dry_run_sample_times=%s\\n' "
         '"${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-}"\n'
     )
@@ -613,6 +618,7 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
             "PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS": "17",
             "PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED": "true",
             "PAPER_READINESS_DECISION_DRY_RUN_STRATEGY": "bull_flag",
+            "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES": "bull_flag,vwap_cross",
             "PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES": "10:30,15:30",
             "PAPER_READINESS_MAX_PASS_AGE_MINUTES": "5",
             "PAPER_READINESS_PREVIOUS_SESSION_DATE": "2026-06-25",
@@ -631,6 +637,7 @@ def test_paper_readiness_if_needed_preserves_check_overrides_after_env_source(
         "decision_dry_run=false min_records=17 "
         "require_accepted=true strategy=bull_flag"
     ) in result.stdout
+    assert "decision_dry_run_strategies=bull_flag,vwap_cross" in result.stdout
     assert "decision_dry_run_sample_times=10:30,15:30" in result.stdout
 
 
@@ -793,6 +800,7 @@ def test_paper_readiness_lock_skip_does_not_block_after_pass(tmp_path: Path) -> 
         "printf 'paper_readiness_session_date=2026-07-06\\n'\n"
         "printf 'paper_readiness_latest_status=passed|2026-06-27T18:07:44.000000Z|2026-06-27T18:07:43.000000Z\\n'\n"
         "printf 'paper_readiness_latest_decision_dry_run=paper decision dry run ok: strategy=bull_flag as_of=2026-06-26T11:30:00-04:00 active=980 decision_records=941 accepted=3 entry_intents=3 sample_times=10:30,11:30,12:30,13:30,14:30,15:30 evaluations=6 min_decision_records=929 max_accepted=3 max_entry_intents=3\\n'\n"
+        "printf 'paper_readiness_latest_decision_dry_run_strategies=paper readiness decision dry run strategies ok: strategies=bull_flag count=1\\n'\n"
     )
     fake_docker.chmod(0o755)
 
@@ -1231,17 +1239,32 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "paper_readiness_session_date=" in lock_skip
     assert "paper_readiness_latest_status=" in lock_skip
     assert "load_latest_readiness_decision_dry_run" in lock_skip
+    assert "load_latest_readiness_decision_dry_run_strategies" in lock_skip
     assert "paper_readiness_latest_decision_dry_run=" in lock_skip
+    assert "paper_readiness_latest_decision_dry_run_strategies=" in lock_skip
     assert "paper decision dry run ok:" in lock_skip
+    assert "paper readiness decision dry run strategies ok:" in lock_skip
     assert "decision_dry_run_reject_stages" in lock_skip
     assert "decision_dry_run_reject_reasons" in lock_skip
+    assert "decision_dry_run_strategies" in lock_skip
+    assert "decision_dry_run_strategy_count" in lock_skip
+    assert "validate_readiness_decision_dry_run_strategies_line" in lock_skip
     assert "decision_dry_run_reject_stages" in readiness_if_needed
     assert "decision_dry_run_reject_reasons" in readiness_if_needed
+    assert "decision_dry_run_strategies" in readiness_if_needed
+    assert "decision_dry_run_strategy_count" in readiness_if_needed
+    assert "validate_readiness_decision_dry_run_strategies_line" in readiness_if_needed
     assert "proof_start = settings.profit_probe_start_date.isoformat()" in lock_skip
     assert "payload->>'proof_start' = %s" in lock_skip
     assert "paper_readiness)" in lock_skip
     assert "paper_activity)" in lock_skip
-    assert "proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} strategy=${PAPER_ACTIVITY_STRATEGY" in lock_skip
+    assert "activity_strategy=\"${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}\"" in lock_skip
+    assert "activity_strategy_csv=\"$(normalize_strategy_csv" in lock_skip
+    assert "PAPER_ACTIVITY_LOCK_MAX_AGE_MINUTES" in lock_skip
+    assert "activity_lock_max_age" in lock_skip
+    assert "paper activity passed: lock busy after recent pass" in lock_skip
+    assert "paper activity pending: lock busy after recent pending result" in lock_skip
+    assert "paper activity skipped: lock busy after recent skipped result" in lock_skip
     assert "session_guard)" in lock_skip
     assert "POST_CLOSE_LOCK_MAX_AGE_MINUTES" in lock_skip
     assert "load_latest_post_close_check_status" in lock_skip
@@ -1252,20 +1275,32 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "reason=lock_busy_already_pending" in lock_skip
     assert "session guard pending: lock busy after recent pending result" in lock_skip
     assert "paper_profit_probe)" in lock_skip
+    assert 'probe_min_trades="${PROFIT_PROBE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}"' in lock_skip
     assert "reason=lock_busy_already_pending" in lock_skip
     assert "paper profit probe pending: lock busy after recent pending result" in lock_skip
     assert "paper_proof_status)" in lock_skip
     assert "load_latest_proof_status" in lock_skip
     assert "paper_proof_status_latest=" in lock_skip
     assert "PROOF_STATUS_LOCK_STRATEGY" in lock_skip
+    assert "PROOF_STATUS_LOCK_STRATEGIES" in lock_skip
     assert "PROOF_STATUS_LOCK_MIN_TRADES" in lock_skip
     assert "PROOF_STATUS_LOCK_MIN_PNL" in lock_skip
+    assert "PROOF_STATUS_LOCK_SESSION_GUARD_MIN_TRADES" in lock_skip
+    assert "PROOF_STATUS_LOCK_SESSION_GUARD_MIN_PNL" in lock_skip
+    assert "proof_session_guard_min_trades" in lock_skip
+    assert "proof_session_guard_min_pnl" in lock_skip
     assert "payload->>'strategy' = %s" in lock_skip
+    assert "payload->>'strategies' = %s" in lock_skip
     assert "payload->>'min_trades' = %s" in lock_skip
     assert "payload->>'min_pnl' = %s" in lock_skip
+    assert "payload->>'session_guard_min_trades' = %s" in lock_skip
+    assert "payload->>'session_guard_min_pnl' = %s" in lock_skip
     assert "PROOF_STATUS_LOCK_MAX_AGE_MINUTES" in lock_skip
     assert "reason=lock_busy_already_reported" in lock_skip
     assert "paper proof summary:" in lock_skip
+    assert "proof_overall_blockers" in lock_skip
+    assert "proof_clean_window_blockers" in lock_skip
+    assert "proof_sealed_clean_window_blockers" in lock_skip
     assert "paper proof progress:" in lock_skip
     assert "paper proof scoring:" in lock_skip
     assert "paper proof status check skipped:" in lock_skip
@@ -1282,8 +1317,9 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "paper proof scenarios: status=$latest_scenario_status" in lock_skip
     assert '"$latest_status" == "pending" && "$latest_exit_code" == "43" && "$latest_proof" == "pending"' in lock_skip
     assert '"$latest_status" == "passed" && "$latest_exit_code" == "0" && "$latest_proof" == "passed"' in lock_skip
-    assert "PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}" in lock_skip
+    assert "PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}" in lock_skip
     assert "PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}" in lock_skip
+    assert "PROFIT_PROBE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}" in lock_skip
     assert "exit 48" in lock_skip
     assert "payload ? 'trading_mode'" in lock_skip
     assert "payload ? 'strategy_version'" in lock_skip
@@ -1315,7 +1351,7 @@ def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -
     docker.write_text(
         "#!/usr/bin/env bash\n"
         "cat >/dev/null\n"
-        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0'\n"
+        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|sample_trades|sample_trades,eod_loss_share|sample_trades,profit_factor|sample_trades|sample_trades,eod_loss_share|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0'\n"
     )
     docker.chmod(0o755)
 
@@ -1340,14 +1376,20 @@ def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -
     assert "reason=lock_busy_already_reported" in result.stdout
     assert (
         "paper proof summary: readiness=ready proof=pending "
-        "reason=awaiting_completed_proof_session blockers=none warnings=none"
+        "reason=awaiting_completed_proof_session blockers=none "
+        "evidence_blockers=sample_trades "
+        "sealed_evidence_blockers=sample_trades,eod_loss_share "
+        "overall_blockers=sample_trades,profit_factor "
+        "clean_window_blockers=sample_trades "
+        "sealed_clean_window_blockers=sample_trades,eod_loss_share "
+        "warnings=none"
     ) in result.stdout
     assert (
-        "paper proof progress: status=pending closed_trades=0 required_trades=10 "
+        "paper proof progress: status=pending strategies=bull_flag closed_trades=0 required_trades=10 "
         "pnl=0.00 required_pnl=0.01"
     ) in result.stdout
     assert (
-        "paper proof scoring: scoreable_closed_trades=0 "
+        "paper proof scoring: strategies=bull_flag scoreable_closed_trades=0 "
         "unpaired_filled_exits=0 unpaired_symbols=none"
     ) in result.stdout
     assert (
@@ -1366,7 +1408,7 @@ def test_proof_status_lock_skip_accepts_recent_skipped_proof_status_audit(
     docker.write_text(
         "#!/usr/bin/env bash\n"
         "cat >/dev/null\n"
-        "echo 'paper_proof_status_latest=skipped|0|pending|ready|none|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0'\n"
+        "echo 'paper_proof_status_latest=skipped|0|pending|ready|none|sample_trades|sample_trades,eod_loss_share|sample_trades,profit_factor|sample_trades|sample_trades,eod_loss_share|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0'\n"
     )
     docker.chmod(0o755)
 
@@ -1400,7 +1442,7 @@ def test_proof_status_lock_skip_preserves_invocation_overrides(tmp_path: Path) -
     docker.write_text(
         "#!/usr/bin/env bash\n"
         "cat >/dev/null\n"
-        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|awaiting_completed_proof_session|none|pending|0|12|0.00|2.34|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0'\n"
+        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|sample_trades|sample_trades,eod_loss_share|sample_trades,profit_factor|sample_trades|sample_trades,eod_loss_share|awaiting_completed_proof_session|none|pending|0|12|0.00|2.34|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0'\n"
     )
     docker.chmod(0o755)
 
@@ -1431,6 +1473,8 @@ def test_proof_status_lock_skip_preserves_invocation_overrides(tmp_path: Path) -
             "PROOF_STATUS_STRATEGY": "custom_flag",
             "PROOF_STATUS_MIN_TRADES": "12",
             "PROOF_STATUS_MIN_PNL": "2.34",
+            "PROOF_STATUS_SESSION_GUARD_MIN_TRADES": "4",
+            "PROOF_STATUS_SESSION_GUARD_MIN_PNL": "-1.25",
         },
         text=True,
         capture_output=True,
@@ -1443,8 +1487,10 @@ def test_proof_status_lock_skip_preserves_invocation_overrides(tmp_path: Path) -
     )
     assert "proof_start=2026-07-06" in result.stdout
     assert "strategy=custom_flag" in result.stdout
-    assert "min_trades=12" in result.stdout
+    assert "min_trades=30" in result.stdout
     assert "min_pnl=2.34" in result.stdout
+    assert "session_guard_min_trades=4" in result.stdout
+    assert "session_guard_min_pnl=-1.25" in result.stdout
     assert "reason=lock_busy_already_reported" in result.stdout
 
 
@@ -1455,7 +1501,7 @@ def test_proof_status_lock_skip_fails_without_recent_evidence(tmp_path: Path) ->
     docker.write_text(
         "#!/usr/bin/env bash\n"
         "cat >/dev/null\n"
-        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|31'\n"
+        "echo 'paper_proof_status_latest=pending|43|pending|ready|none|sample_trades|sample_trades,eod_loss_share|awaiting_completed_proof_session|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|31'\n"
     )
     docker.chmod(0o755)
 
@@ -1482,6 +1528,156 @@ def test_proof_status_lock_skip_fails_without_recent_evidence(tmp_path: Path) ->
     assert result.returncode == 48
     assert "reason=lock_busy" in result.stdout
     assert "scheduled check lock busy: check=paper_proof_status" in result.stderr
+
+
+def test_activity_lock_skip_uses_recent_activity_pass(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "echo 'post_close_check_latest=passed|0|2026-07-07T14:45:00.000000Z|0'\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "PROFIT_PROBE_START_DATE=2026-07-07",
+                "PAPER_ACTIVITY_STRATEGY=bull_flag",
+                "PAPER_ACTIVITY_STRATEGIES=bull_flag,vwap_cross",
+            ]
+        )
+    )
+    lock_file = tmp_path / "activity.lock"
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_activity",
+            str(lock_file),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_STRATEGY": "custom_flag",
+            "PAPER_ACTIVITY_LOCK_MAX_AGE_MINUTES": "30",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "proof_start=2026-07-07" in result.stdout
+    assert "strategy=custom_flag" in result.stdout
+    assert "strategies=custom_flag,bull_flag,vwap_cross" in result.stdout
+    assert "reason=lock_busy_already_passed" in result.stdout
+    assert "paper activity passed: lock busy after recent pass" in result.stdout
+
+
+def test_activity_lock_skip_uses_recent_activity_pending(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "echo 'post_close_check_latest=pending|43|2026-07-07T14:45:00.000000Z|0'\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "PROFIT_PROBE_START_DATE=2026-07-07",
+                "PAPER_ACTIVITY_STRATEGY=bull_flag",
+                "PAPER_ACTIVITY_STRATEGIES=bull_flag,vwap_cross",
+            ]
+        )
+    )
+    lock_file = tmp_path / "activity.lock"
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_activity",
+            str(lock_file),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_STRATEGY": "custom_flag",
+            "PAPER_ACTIVITY_LOCK_MAX_AGE_MINUTES": "30",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 43
+    assert "proof_start=2026-07-07" in result.stdout
+    assert "strategy=custom_flag" in result.stdout
+    assert "strategies=custom_flag,bull_flag,vwap_cross" in result.stdout
+    assert "reason=lock_busy_already_pending" in result.stdout
+    assert "paper activity pending: lock busy after recent pending result" in result.stdout
+
+
+def test_activity_lock_skip_uses_recent_activity_skipped(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "echo 'post_close_check_latest=skipped|0|2026-07-07T14:45:00.000000Z|0'\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "PROFIT_PROBE_START_DATE=2026-07-07",
+                "PAPER_ACTIVITY_STRATEGY=bull_flag",
+                "PAPER_ACTIVITY_STRATEGIES=bull_flag,vwap_cross",
+            ]
+        )
+    )
+    lock_file = tmp_path / "activity.lock"
+
+    result = subprocess.run(
+        [
+            "scripts/scheduled_check_lock_skipped.sh",
+            "paper_activity",
+            str(lock_file),
+            str(env_file),
+        ],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_STRATEGY": "custom_flag",
+            "PAPER_ACTIVITY_LOCK_MAX_AGE_MINUTES": "30",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert "proof_start=2026-07-07" in result.stdout
+    assert "strategy=custom_flag" in result.stdout
+    assert "strategies=custom_flag,bull_flag,vwap_cross" in result.stdout
+    assert "reason=lock_busy_already_skipped" in result.stdout
+    assert "paper activity skipped: lock busy after recent skipped result" in result.stdout
 
 
 def test_session_guard_lock_skip_uses_recent_post_close_pass(
@@ -1636,7 +1832,7 @@ def test_profit_probe_lock_skip_uses_recent_post_close_pending(
     assert result.returncode == 43
     assert "proof_start=2026-07-06" in result.stdout
     assert "strategy=custom_flag" in result.stdout
-    assert "min_trades=12" in result.stdout
+    assert "min_trades=30" in result.stdout
     assert "min_pnl=2.34" in result.stdout
     assert "reason=lock_busy_already_pending" in result.stdout
     assert "paper profit probe pending: lock busy after recent pending result" in result.stdout
@@ -1771,6 +1967,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'AUDIT_PROOF_SCORING_LINE="$proof_scoring_line"' in script
     assert 'AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"' in script
     assert 'AUDIT_DECISION_DRY_RUN_LINE="$decision_dry_run_line"' in script
+    assert 'AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE="$decision_dry_run_strategies_line"' in script
     assert "-e AUDIT_CHECK_NAME" in script
     assert "-e AUDIT_STATUS" in script
     assert "-e AUDIT_EXIT_CODE" in script
@@ -1781,6 +1978,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "-e AUDIT_PROOF_SCORING_LINE" in script
     assert "-e AUDIT_PROOF_SCENARIOS_LINE" in script
     assert "-e AUDIT_DECISION_DRY_RUN_LINE" in script
+    assert "-e AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE" in script
     assert 'output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"' in script
     assert 'context_line="$(grep -E' in script
     assert 'proof_summary_line="$(grep -E' in script
@@ -1788,14 +1986,24 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'proof_scoring_line="$(grep -E' in script
     assert 'proof_scenarios_line="$(grep -E' in script
     assert 'decision_dry_run_line="$(grep -E' in script
+    assert 'decision_dry_run_strategies_line="$(grep -E' in script
     assert "scheduled check context: " in script
     assert "CONTEXT_KEYS" in script
+    assert '"strategies"' in script
+    assert '"session_guard_min_trades"' in script
+    assert '"session_guard_min_pnl"' in script
+    assert 'CONTEXT_VALUE = re.compile(r"^[A-Za-z0-9_.:,+-]+$")' in script
     assert "PROOF_SUMMARY_FIELDS" in script
     assert "PROOF_SCORING_FIELDS" in script
     assert "PROOF_SCENARIOS_FIELDS" in script
     assert 'PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")' in script
     assert '"readiness": "proof_readiness"' in script
     assert '"proof": "proof_status"' in script
+    assert '"evidence_blockers": "proof_evidence_blockers"' in script
+    assert '"sealed_evidence_blockers": "proof_sealed_evidence_blockers"' in script
+    assert '"overall_blockers": "proof_overall_blockers"' in script
+    assert '"clean_window_blockers": "proof_clean_window_blockers"' in script
+    assert '"sealed_clean_window_blockers": "proof_sealed_clean_window_blockers"' in script
     assert '"closed_trades": "proof_closed_trades"' in script
     assert '"pnl": "proof_pnl"' in script
     assert '"scoreable_closed_trades": "proof_scoreable_closed_trades"' in script
@@ -1806,6 +2014,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"expected_session": "proof_scenario_expected_session"' in script
     assert '"problems": "proof_scenario_problems"' in script
     assert "DECISION_DRY_RUN_FIELDS" in script
+    assert "DECISION_DRY_RUN_STRATEGIES_FIELDS" in script
     assert '"decision_records": "decision_dry_run_records"' in script
     assert '"accepted": "decision_dry_run_accepted"' in script
     assert '"entry_intents": "decision_dry_run_entry_intents"' in script
@@ -1817,6 +2026,8 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"max_entry_intents": "decision_dry_run_max_entry_intents"' in script
     assert '"reject_stages": "decision_dry_run_reject_stages"' in script
     assert '"reject_reasons": "decision_dry_run_reject_reasons"' in script
+    assert '"strategies": "decision_dry_run_strategies"' in script
+    assert '"count": "decision_dry_run_strategy_count"' in script
     assert "parse_prefixed_fields" in script
     assert '"session_date"' in script
     assert '"previous_session_date"' in script
@@ -1828,6 +2039,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'os.environ.get("AUDIT_PROOF_SCORING_LINE", "")' in script
     assert 'os.environ.get("AUDIT_PROOF_SCENARIOS_LINE", "")' in script
     assert 'os.environ.get("AUDIT_DECISION_DRY_RUN_LINE", "")' in script
+    assert 'os.environ.get("AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE", "")' in script
     assert 'paper readiness check skipped' in script
     assert 'paper activity check skipped' in script
     assert 'paper activity skipped:' in script
@@ -1870,7 +2082,7 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_CLOSE_ONLY_ON_FAILURE="${PAPER_READINESS_CLOSE_ONLY_ON_FAILURE:-true}"' in script
     assert "PAPER_READINESS_PRIOR_PROOF_START_DATE \\" in script
     assert 'PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-}"' in script
-    assert 'PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"' in script
+    assert 'PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}}"' in script
     assert "PAPER_READINESS_LOSING_STREAK_N \\" in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"' in script
     assert 'PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-${LOSING_STREAK_N:-3}}"' in script
@@ -1882,11 +2094,14 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}"' in script
     assert 'PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}"' in script
     assert 'PAPER_READINESS_DECISION_DRY_RUN_STRATEGY="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
+    assert 'PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY}}"' in script
     assert 'PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES="${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}"' in script
     assert 'PAPER_READINESS_SCENARIO_DIR="${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}"' in script
     assert "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE must be true or false" in script
     assert "PAPER_READINESS_REQUIRE_DECISION_DRY_RUN must be true or false" in script
     assert "PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED must be true or false" in script
+    assert "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES contains unsupported strategy" in script
+    assert "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES must contain at least one strategy" in script
     assert "PAPER_READINESS_ACTIVE_DATA_MAX_MISSING_SYMBOLS must be a non-negative integer" in script
     assert "PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS must be a positive integer" in script
     assert "PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in script
@@ -1951,11 +2166,15 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "thin_intraday_lt20" in script
     assert "run_decision_dry_run_check" in script
     assert "./scripts/paper_decision_dry_run.sh" in script
-    assert 'PAPER_DECISION_DRY_RUN_STRATEGY="$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY"' in script
+    assert 'for strategy in "${readiness_decision_dry_run_strategies[@]}"' in script
+    assert 'PAPER_DECISION_DRY_RUN_STRATEGY="$strategy"' in script
     assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="$PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS"' in script
     assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED"' in script
     assert 'PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="$PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES"' in script
     assert 'PAPER_DECISION_DRY_RUN_SESSION_DATE="$PAPER_READINESS_PREVIOUS_SESSION_DATE"' in script
+    assert "paper readiness additional decision dry run ok:" in script
+    assert "paper readiness decision dry run strategies ok:" in script
+    assert 'strategies=$strategy_csv count=${#readiness_decision_dry_run_strategies[@]}' in script
     assert "paper readiness decision dry run check skipped" in script
     assert "PAPER_READINESS_REQUIRE_WATCHLIST_ASSETS" in script
     assert "run_watchlist_asset_check" in script
@@ -2021,6 +2240,14 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'check("bull_flag_min_run_pct", settings.bull_flag_min_run_pct, 0.02)' in script
     assert 'check("stop_limit_buffer_pct", settings.stop_limit_buffer_pct, 0.0005)' in script
     assert 'check("entry_stop_price_buffer", settings.entry_stop_price_buffer, 0.02)' in script
+    assert (
+        'check("entry_min_close_to_entry_pct", '
+        'settings.entry_min_close_to_entry_pct, -0.01)'
+    ) in script
+    assert (
+        'check("entry_max_close_to_entry_pct", '
+        'settings.entry_max_close_to_entry_pct, 1.0)'
+    ) in script
     assert (
         'check("bull_flag_consolidation_volume_ratio", '
         'settings.bull_flag_consolidation_volume_ratio, 0.6)'
@@ -2102,18 +2329,27 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert "losing_streak >= (:'losing_streak_n')::int" in script
     assert "pre-open paper readiness auto-resume" in script
     assert '--expect-trading-status "$ops_expected_trading_status"' in script
-    assert "--expect-only-enabled-strategy bull_flag" in script
+    assert "PAPER_READINESS_EXPECT_ENABLED_STRATEGIES" in script
+    assert (
+        "${PAPER_READINESS_EXPECT_ENABLED_STRATEGIES:-"
+        "${PAPER_APPROVED_STRATEGIES:-bull_flag,vwap_cross}}"
+    ) in script
+    assert 'readiness_enabled_strategy_args+=(--expect-only-enabled-strategy "$name")' in script
+    assert '"${readiness_enabled_strategy_args[@]}"' in script
     assert "require_env_value MARKET_DATA_FEED iex" in script
     assert "require_env_value DAILY_SMA_PERIOD 20" in script
     assert "require_env_value BREAKOUT_LOOKBACK_BARS 20" in script
-    assert "require_env_value RELATIVE_VOLUME_LOOKBACK_BARS 20" in script
+    assert "require_env_value RELATIVE_VOLUME_LOOKBACK_BARS 10" in script
     assert "require_env_value RELATIVE_VOLUME_THRESHOLD 2.0" in script
     assert "require_env_value ENTRY_TIMEFRAME_MINUTES 15" in script
-    assert "require_env_value MAX_OPEN_POSITIONS 4" in script
+    assert "require_env_value_or_unset ENTRY_ORDER_ACTIVE_BARS 1" in script
+    assert "require_env_value MAX_OPEN_POSITIONS 1" in script
     assert "require_env_value REPLAY_SLIPPAGE_BPS 2.0" in script
     assert "require_env_value RISK_PER_TRADE_PCT 0.01" in script
     assert "require_env_value STOP_LIMIT_BUFFER_PCT 0.0005" in script
     assert "require_env_value ENTRY_STOP_PRICE_BUFFER 0.02" in script
+    assert "require_env_value_or_unset ENTRY_MIN_CLOSE_TO_ENTRY_PCT -0.01" in script
+    assert "require_env_value_or_unset ENTRY_MAX_CLOSE_TO_ENTRY_PCT 1.0" in script
     assert "require_env_value_or_unset ATR_PERIOD 20" in script
     assert "require_env_value_or_unset ATR_STOP_MULTIPLIER 1.0" in script
     assert "require_env_value TRAILING_STOP_ATR_MULTIPLIER 1.0" in script
@@ -2154,10 +2390,10 @@ def test_paper_readiness_auto_ignores_bounded_stale_scenario_symbols(
                 "MARKET_DATA_FEED=iex",
                 "DAILY_SMA_PERIOD=20",
                 "BREAKOUT_LOOKBACK_BARS=20",
-                "RELATIVE_VOLUME_LOOKBACK_BARS=20",
+                "RELATIVE_VOLUME_LOOKBACK_BARS=10",
                 "RELATIVE_VOLUME_THRESHOLD=2.0",
                 "ENTRY_TIMEFRAME_MINUTES=15",
-                "MAX_OPEN_POSITIONS=4",
+                "MAX_OPEN_POSITIONS=1",
                 "REPLAY_SLIPPAGE_BPS=2.0",
                 "RISK_PER_TRADE_PCT=0.01",
                 "MAX_POSITION_PCT=0.05",
@@ -2166,6 +2402,8 @@ def test_paper_readiness_auto_ignores_bounded_stale_scenario_symbols(
                 "DAILY_LOSS_LIMIT_PCT=0.01",
                 "STOP_LIMIT_BUFFER_PCT=0.0005",
                 "ENTRY_STOP_PRICE_BUFFER=0.02",
+                "ENTRY_MIN_CLOSE_TO_ENTRY_PCT=-0.01",
+                "ENTRY_MAX_CLOSE_TO_ENTRY_PCT=1.0",
                 "TRAILING_STOP_ATR_MULTIPLIER=1.0",
                 "INTRADAY_CONSECUTIVE_LOSS_GATE=0",
                 "ENTRY_WINDOW_START=10:00",
@@ -2299,10 +2537,10 @@ def test_paper_readiness_auto_unignores_repaired_scenario_symbols(
                 "MARKET_DATA_FEED=iex",
                 "DAILY_SMA_PERIOD=20",
                 "BREAKOUT_LOOKBACK_BARS=20",
-                "RELATIVE_VOLUME_LOOKBACK_BARS=20",
+                "RELATIVE_VOLUME_LOOKBACK_BARS=10",
                 "RELATIVE_VOLUME_THRESHOLD=2.0",
                 "ENTRY_TIMEFRAME_MINUTES=15",
-                "MAX_OPEN_POSITIONS=4",
+                "MAX_OPEN_POSITIONS=1",
                 "REPLAY_SLIPPAGE_BPS=2.0",
                 "RISK_PER_TRADE_PCT=0.01",
                 "MAX_POSITION_PCT=0.05",
@@ -2311,6 +2549,8 @@ def test_paper_readiness_auto_unignores_repaired_scenario_symbols(
                 "DAILY_LOSS_LIMIT_PCT=0.01",
                 "STOP_LIMIT_BUFFER_PCT=0.0005",
                 "ENTRY_STOP_PRICE_BUFFER=0.02",
+                "ENTRY_MIN_CLOSE_TO_ENTRY_PCT=-0.01",
+                "ENTRY_MAX_CLOSE_TO_ENTRY_PCT=1.0",
                 "TRAILING_STOP_ATR_MULTIPLIER=1.0",
                 "INTRADAY_CONSECUTIVE_LOSS_GATE=0",
                 "ENTRY_WINDOW_START=10:00",
@@ -2438,10 +2678,10 @@ def test_paper_readiness_auto_resumes_stale_profit_lock(tmp_path: Path) -> None:
                 "MARKET_DATA_FEED=iex",
                 "DAILY_SMA_PERIOD=20",
                 "BREAKOUT_LOOKBACK_BARS=20",
-                "RELATIVE_VOLUME_LOOKBACK_BARS=20",
+                "RELATIVE_VOLUME_LOOKBACK_BARS=10",
                 "RELATIVE_VOLUME_THRESHOLD=2.0",
                 "ENTRY_TIMEFRAME_MINUTES=15",
-                "MAX_OPEN_POSITIONS=4",
+                "MAX_OPEN_POSITIONS=1",
                 "REPLAY_SLIPPAGE_BPS=2.0",
                 "RISK_PER_TRADE_PCT=0.01",
                 "MAX_POSITION_PCT=0.05",
@@ -2450,6 +2690,8 @@ def test_paper_readiness_auto_resumes_stale_profit_lock(tmp_path: Path) -> None:
                 "DAILY_LOSS_LIMIT_PCT=0.01",
                 "STOP_LIMIT_BUFFER_PCT=0.0005",
                 "ENTRY_STOP_PRICE_BUFFER=0.02",
+                "ENTRY_MIN_CLOSE_TO_ENTRY_PCT=-0.01",
+                "ENTRY_MAX_CLOSE_TO_ENTRY_PCT=1.0",
                 "TRAILING_STOP_ATR_MULTIPLIER=1.0",
                 "INTRADAY_CONSECUTIVE_LOSS_GATE=0",
                 "ENTRY_WINDOW_START=10:00",
@@ -2584,10 +2826,10 @@ def test_paper_readiness_preserves_profit_lock_on_current_wall_date(
                 "MARKET_DATA_FEED=iex",
                 "DAILY_SMA_PERIOD=20",
                 "BREAKOUT_LOOKBACK_BARS=20",
-                "RELATIVE_VOLUME_LOOKBACK_BARS=20",
+                "RELATIVE_VOLUME_LOOKBACK_BARS=10",
                 "RELATIVE_VOLUME_THRESHOLD=2.0",
                 "ENTRY_TIMEFRAME_MINUTES=15",
-                "MAX_OPEN_POSITIONS=4",
+                "MAX_OPEN_POSITIONS=1",
                 "REPLAY_SLIPPAGE_BPS=2.0",
                 "RISK_PER_TRADE_PCT=0.01",
                 "MAX_POSITION_PCT=0.05",
@@ -2596,6 +2838,8 @@ def test_paper_readiness_preserves_profit_lock_on_current_wall_date(
                 "DAILY_LOSS_LIMIT_PCT=0.01",
                 "STOP_LIMIT_BUFFER_PCT=0.0005",
                 "ENTRY_STOP_PRICE_BUFFER=0.02",
+                "ENTRY_MIN_CLOSE_TO_ENTRY_PCT=-0.01",
+                "ENTRY_MAX_CLOSE_TO_ENTRY_PCT=1.0",
                 "TRAILING_STOP_ATR_MULTIPLIER=1.0",
                 "INTRADAY_CONSECUTIVE_LOSS_GATE=0",
                 "ENTRY_WINDOW_START=10:00",
@@ -2731,10 +2975,10 @@ def test_paper_readiness_preserves_profit_lock_when_auto_resume_disabled(
                 "MARKET_DATA_FEED=iex",
                 "DAILY_SMA_PERIOD=20",
                 "BREAKOUT_LOOKBACK_BARS=20",
-                "RELATIVE_VOLUME_LOOKBACK_BARS=20",
+                "RELATIVE_VOLUME_LOOKBACK_BARS=10",
                 "RELATIVE_VOLUME_THRESHOLD=2.0",
                 "ENTRY_TIMEFRAME_MINUTES=15",
-                "MAX_OPEN_POSITIONS=4",
+                "MAX_OPEN_POSITIONS=1",
                 "REPLAY_SLIPPAGE_BPS=2.0",
                 "RISK_PER_TRADE_PCT=0.01",
                 "MAX_POSITION_PCT=0.05",
@@ -2743,6 +2987,8 @@ def test_paper_readiness_preserves_profit_lock_when_auto_resume_disabled(
                 "DAILY_LOSS_LIMIT_PCT=0.01",
                 "STOP_LIMIT_BUFFER_PCT=0.0005",
                 "ENTRY_STOP_PRICE_BUFFER=0.02",
+                "ENTRY_MIN_CLOSE_TO_ENTRY_PCT=-0.01",
+                "ENTRY_MAX_CLOSE_TO_ENTRY_PCT=1.0",
                 "TRAILING_STOP_ATR_MULTIPLIER=1.0",
                 "INTRADAY_CONSECUTIVE_LOSS_GATE=0",
                 "ENTRY_WINDOW_START=10:00",
@@ -2941,6 +3187,7 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "restore_env_overrides" in script
     assert script.index('source "$ENV_FILE"') < script.index("\nrestore_env_overrides\n")
     assert "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE \\" in script
+    assert "PAPER_ACTIVITY_STRATEGIES" in script
     assert "PAPER_ACTIVITY_WINDOW_MINUTES" in script
     assert 'PAPER_ACTIVITY_MIN_DECISION_RECORDS="${PAPER_ACTIVITY_MIN_DECISION_RECORDS:-900}"' in script
     assert 'PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES="${PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES:-5}"' in script
@@ -2954,10 +3201,14 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT must be true or false" in script
     assert "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE must be true or false" in script
     assert 'PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
+    assert 'PAPER_ACTIVITY_STRATEGIES="${PAPER_ACTIVITY_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PAPER_ACTIVITY_STRATEGY}}"' in script
+    assert "PAPER_ACTIVITY_STRATEGIES contains unsupported strategy" in script
+    assert "PAPER_ACTIVITY_STRATEGIES must contain at least one strategy" in script
+    assert "build_paper_activity_strategies" in script
     assert "close_only_on_activity_failure" in script
     assert "trap close_only_on_activity_failure EXIT" in script
     assert "paper activity failed for session" in script
-    assert "post-open checks failed for strategy" in script
+    assert "post-open checks failed for strategies" in script
     assert "paper activity warning: failed to apply close-only after activity failure" in script
     assert "PAPER_READINESS_AUTO_RESUME=false" in script
     assert "PAPER_READINESS_AUTO_RESET_WEIGHTS=false" in script
@@ -2972,7 +3223,8 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert 'if [[ "$rc" -eq 43 ]]' in script
     assert (
         "scheduled check context: session_date=$(TZ=America/New_York date +%F) "
-        "proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} strategy=$PAPER_ACTIVITY_STRATEGY"
+        "proof_start=${PROFIT_PROBE_START_DATE:-2026-07-07} strategy=$PAPER_ACTIVITY_STRATEGY "
+        "strategies=$paper_activity_strategy_csv"
     ) in script
     assert "decision_record_count" in script
     assert "decision_log" in script
@@ -2987,6 +3239,15 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "strategy_decision_log_cycles" in script
     assert "strategy_decision_log_records" in script
     assert "strategy_decision_log_summary" in script
+    assert "strategy_activity_summary" in script
+    assert "paper activity strategies ok:" in script
+    assert "approved strategies missing decision evidence cycles" in script
+    assert "approved strategies missing decision_log cycles" in script
+    assert "approved strategies decision_log records below" in script
+    assert "approved strategies decision evidence records below" in script
+    assert "approved strategies have unmaterialized accepted decisions" in script
+    assert "approved strategies have stale pending entries" in script
+    assert "approved strategy entries blocked" in script
     assert "decision_log_summary" in script
     assert "reject_stage" in script
     assert "reject_reason" in script
@@ -3015,6 +3276,17 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "order_dispatch_stop_price_rejected" in script
     assert "dispatch_failures" in script
     assert "paper activity failed: order dispatch failure events" in script
+    assert '-v paper_activity_strategies="$paper_activity_strategy_csv"' in script
+    assert "requested_activity_strategies AS" in script
+    assert "FROM unnest(string_to_array(:'paper_activity_strategies', ','))" in script
+    assert (
+        "dispatch_failure.payload->>'strategy_name' IN (\n"
+        "          SELECT strategy_name FROM requested_activity_strategies"
+    ) in script
+    assert (
+        "stop_recovery.payload->>'strategy_name' IN (\n"
+        "                SELECT strategy_name FROM requested_activity_strategies"
+    ) in script
     assert "stream_heartbeat_stale" not in script
     assert "stream_issue.event_type = 'stream_heartbeat_stale'" not in script
     assert "stream_restart_failed" in script
@@ -3023,13 +3295,17 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "protective_stop_quantity_replace_failed" in script
     assert "stream_issues" in script
     assert "paper activity failed: trade update stream issues" in script
+    assert (
+        "stream_issue.payload->>'strategy_name' IN (\n"
+        "          SELECT strategy_name FROM requested_activity_strategies"
+    ) in script
     assert "stock_open_positions" in script
     assert "active_stock_orders" in script
     assert script.count("strategy_name IS NOT DISTINCT FROM :'paper_activity_strategy'") >= 2
     assert "has_stock_exposure" in script
     assert "decision_evidence_records" in script
     assert "payload->>'strategy_name' = :'paper_activity_strategy'" in script
-    assert "dispatch_failure.payload->>'strategy_name' = :'paper_activity_strategy'" in script
+    assert "dispatch_failure.payload->>'strategy_name' = :'paper_activity_strategy'" not in script
     assert "recovery_exit_queued_stop_above_market" in script
     assert "stop_recovery.created_at >= dispatch_failure.created_at" in script
     assert "strategy_decision_cycles" in script
@@ -3059,7 +3335,8 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "emit_scheduled_context()" in script
     assert (
         'echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) '
-        'proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} strategy=$PAPER_ACTIVITY_STRATEGY"'
+        'proof_start=${PROFIT_PROBE_START_DATE:-2026-07-07} strategy=$PAPER_ACTIVITY_STRATEGY '
+        'strategies=$paper_activity_strategy_csv"'
     ) in script
     assert "emit_scheduled_context\n\n  if [[ \"${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE,,}\"" in script
     assert "emit_scheduled_context\n\nload_market_clock_status" in script
@@ -3160,6 +3437,73 @@ def test_paper_activity_allows_low_record_count_when_stock_exposure_exists(tmp_p
     assert "dispatch_failures=0" in result.stdout
     assert "stream_issues=0" in result.stdout
     assert not docker_marker.exists()
+
+
+def test_paper_activity_checks_all_approved_strategies(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+                "PAPER_ACTIVITY_STRATEGIES=bull_flag,vwap_cross",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    psql_count = tmp_path / "psql_count"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if printf '%s\\n' \"$*\" | grep -q -- '--entrypoint python admin'; then\n"
+        "  printf 'ok|100000.00|200000.00|5000.00|false|0|0|none|none\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        f"count=$(cat {psql_count} 2>/dev/null || printf '0')\n"
+        "count=$((count + 1))\n"
+        f"printf '%s' \"$count\" > {psql_count}\n"
+        "if [[ \"$count\" -eq 1 ]]; then\n"
+        "  printf '10|0|10|900|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|900|0|10|900|2026-06-29 16:00:00+00|skipped_no_signal/none/none:900|0||0||0||0||0||0||bull_flag,vwap_cross|||0|0|0|0\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "printf '2|bull_flag,vwap_cross||||||||bull_flag:cycles=10,records=900,log_cycles=10,log_records=900,accepted=0,exposure=false;vwap_cross:cycles=10,records=930,log_cycles=10,log_records=930,accepted=0,exposure=false\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_MIN_DECISION_RECORDS": "900",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "paper activity strategies ok: strategies=bull_flag,vwap_cross count=2"
+        in result.stdout
+    )
+    assert "vwap_cross:cycles=10,records=930" in result.stdout
+    assert "paper activity ok:" in result.stdout
 
 
 def test_paper_activity_fails_when_accepted_decisions_do_not_materialize_orders(
@@ -4423,7 +4767,8 @@ def test_session_guard_reuses_recent_pass_after_broker_flat(
     assert result.returncode == 0
     assert (
         "scheduled check context: session_date=2026-06-29 "
-        "proof_start=2026-06-29 strategy=bull_flag min_trades=10 min_pnl=0 "
+        "proof_start=2026-06-29 strategy=bull_flag strategies=bull_flag "
+        "min_trades=10 min_pnl=0 "
         "reason=already_passed"
     ) in result.stdout
     assert "session guard already passed for session 2026-06-29" in result.stdout
@@ -4491,7 +4836,8 @@ def test_session_guard_below_pnl_after_min_trades_stays_pending(
     assert result.returncode == 43
     assert (
         "scheduled check context: session_date=2026-06-29 "
-        "proof_start=2026-06-29 strategy=bull_flag min_trades=10 min_pnl=0"
+        "proof_start=2026-06-29 strategy=bull_flag strategies=bull_flag "
+        "min_trades=10 min_pnl=0"
     ) in result.stdout
     assert "Guard failed: pnl=$-12.34 below $0.00 after 10 trades." in result.stdout
     assert (
@@ -4556,7 +4902,8 @@ def test_paper_profit_probe_pending_before_proof_start_does_not_close_only(tmp_p
     assert result.returncode == 43
     assert (
         "scheduled check context: session_date=2026-06-26 "
-        "proof_start=2026-06-29 strategy=bull_flag min_trades=10 min_pnl=0.01"
+        "proof_start=2026-06-29 strategy=bull_flag strategies=bull_flag "
+        "min_trades=30 min_pnl=0.01"
     ) in result.stdout
     assert (
         "paper profit probe pending: latest completed session 2026-06-26 "
@@ -4621,7 +4968,8 @@ def test_paper_profit_probe_preserves_invocation_overrides_after_env_source(
     assert result.returncode == 43
     assert (
         "scheduled check context: session_date=2026-07-06 "
-        "proof_start=2026-07-07 strategy=custom_flag min_trades=12 min_pnl=2.34"
+        "proof_start=2026-07-07 strategy=custom_flag strategies=custom_flag "
+        "min_trades=30 min_pnl=2.34"
     ) in result.stdout
     assert (
         "paper profit probe pending: latest completed session 2026-07-06 "
@@ -4689,7 +5037,8 @@ def test_paper_profit_probe_insufficient_trades_after_start_stays_pending(
     assert result.returncode == 43
     assert (
         "scheduled check context: session_date=2026-06-29 "
-        "proof_start=2026-06-29 strategy=bull_flag min_trades=10 min_pnl=0.01"
+        "proof_start=2026-06-29 strategy=bull_flag strategies=bull_flag "
+        "min_trades=30 min_pnl=0.01"
     ) in result.stdout
     assert "Proof incomplete: 3 closed trades below required 10." in result.stdout
     assert "broker exposure ok: open_orders=0 open_positions=0" in result.stdout
@@ -4757,11 +5106,12 @@ def test_paper_profit_probe_below_pnl_after_min_trades_stays_pending(
     assert result.returncode == 43
     assert (
         "scheduled check context: session_date=2026-06-29 "
-        "proof_start=2026-06-29 strategy=bull_flag min_trades=10 min_pnl=0.01"
+        "proof_start=2026-06-29 strategy=bull_flag strategies=bull_flag "
+        "min_trades=30 min_pnl=0.01"
     ) in result.stdout
     assert "Guard failed: pnl=$-12.34 below $0.01 after 10 trades." in result.stdout
     assert (
-        "paper profit probe pending: cumulative pnl below 0.01 after 10+ trades; "
+        "paper profit probe pending: cumulative pnl below 0.01 after 30+ trades; "
         "continuing proof window"
     ) in result.stdout
     assert "broker exposure ok: open_orders=0 open_positions=0" in result.stdout
@@ -4790,7 +5140,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     fake_runtime_health = tmp_path / "runtime_image_health_check.sh"
     fake_runtime_health.write_text(
         "#!/usr/bin/env bash\n"
-        "printf 'runtime image health ok: services=web,supervisor files=15\\n'\n"
+        "printf 'runtime image health ok: services=web,supervisor files=26\\n'\n"
     )
     fake_runtime_health.chmod(0o755)
     fake_docker = fake_bin / "docker"
@@ -4817,7 +5167,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "  printf 'paper proof active strategies: bull_flag\\n'\n"
         "  printf 'paper proof watchlist: status=ok active=980 enabled=986 ignored=6 required_active=900\\n'\n"
         "  printf 'paper proof sizing: status=ok confidence_floor=0.25 manual_baseline=0.25 set_by=operator required_floor=0.25 weight_status=ok active_weights=[bull_flag] stored_weights=[bull_flag] weight_sum=1 target_weight=1.0 target_sharpe=0.0\\n'\n"
-        "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh image_status=ok image_detail=runtime image health ok: services=web,supervisor files=15\\n'\n"
+        "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh image_status=ok image_detail=runtime image health ok: services=web,supervisor files=26\\n'\n"
         "  printf 'paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00 latest_event=trade_update_stream_started:2026-06-29T12:59:59+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00 grace_seconds=120\\n'\n"
         "  printf 'paper proof readiness audit: status=ok target_session=2026-06-29 check_status=passed created_at=2026-06-29T13:20:00+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00\\n'\n"
         "  printf 'paper proof readiness decision dry run: status=ok strategy=bull_flag as_of=2026-06-26T15:30:00-04:00 active=980 decision_records=965 accepted=1 entry_intents=1 sample=TPB:39.62732912119471@87.05\\n'\n"
@@ -4849,7 +5199,9 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert (
         "paper proof status context: proof_start=2026-06-29 mode=paper "
-        "strategy_version=v1-breakout strategy=bull_flag min_trades=10 min_pnl=0.01"
+        "strategy_version=v1-breakout strategy=bull_flag strategies=bull_flag "
+        "min_trades=30 min_pnl=0.01 session_guard_min_trades=10 "
+        "session_guard_min_pnl=0"
     ) in result.stdout
     assert "  status=enabled kill_switch=false reason=proof running" in result.stdout
     assert "paper proof active strategies: bull_flag" in result.stdout
@@ -4889,11 +5241,15 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "restore_env_overrides" in script
     assert script.index('source "$ENV_FILE"') < script.index("\nrestore_env_overrides\n")
     assert "PROOF_STATUS_FAIL_ON_ISSUES \\" in script
+    assert "PROFIT_PROBE_MIN_TRADES \\" in script
+    assert "PAPER_SCALE_MIN_TRADES \\" in script
+    assert "PAPER_APPROVED_STRATEGIES \\" in script
+    assert "PROOF_STATUS_APPROVED_STRATEGIES \\" in script
     assert script.index('source "$ENV_FILE"') < script.index(
         'PROOF_STATUS_STRATEGY="${PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"'
     )
     assert script.index('source "$ENV_FILE"') < script.index(
-        'PROOF_STATUS_START_DATE="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"'
+        'PROOF_STATUS_START_DATE="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}}"'
     )
     assert "load_latest_completed_session_date" in script
     assert "load_next_market_session_date" in script
@@ -4910,6 +5266,29 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "proof={proof_status}" in script
     assert "reason={proof_reason}" in script
     assert "blockers={','.join(blockers) if blockers else 'none'}" in script
+    assert (
+        "evidence_blockers={','.join(evidence_blockers) if evidence_blockers else 'none'}"
+        in script
+    )
+    assert (
+        "sealed_evidence_blockers="
+        "{','.join(sealed_evidence_blockers) if sealed_evidence_blockers else 'none'}"
+        in script
+    )
+    assert (
+        "overall_blockers={','.join(scale_blockers) if scale_blockers else 'none'}"
+        in script
+    )
+    assert (
+        "clean_window_blockers="
+        "{','.join(clean_window_blockers) if clean_window_blockers else 'none'}"
+        in script
+    )
+    assert (
+        "sealed_clean_window_blockers="
+        "{','.join(clean_window_sealed_blockers) if clean_window_sealed_blockers else 'none'}"
+        in script
+    )
     assert "warnings={','.join(warnings) if warnings else 'none'}" in script
     assert "partial_pnl_negative" in script
     assert "partial_pnl_below_minimum" in script
@@ -4945,12 +5324,43 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in script
     assert "-e PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS=\"$PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS\"" in script
     assert "-e PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS=\"$PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS\"" in script
+    assert "PROOF_STATUS_SCALE_MIN_TRADES" in script
+    assert "PAPER_SCALE_MIN_TRADES:-30" in script
+    assert "PROOF_STATUS_SCALE_MIN_STRATEGIES" in script
+    assert "PAPER_SCALE_MIN_STRATEGIES:-2" in script
+    assert "PROOF_STATUS_APPROVED_STRATEGIES" in script
+    assert "PAPER_APPROVED_STRATEGIES:-$PROOF_STATUS_STRATEGY" in script
+    assert (
+        "PROOF_STATUS_APPROVED_STRATEGIES must be a comma-separated list "
+        "of strategy names"
+    ) in script
+    assert "-e PROOF_STATUS_APPROVED_STRATEGIES=\"$PROOF_STATUS_APPROVED_STRATEGIES\"" in script
+    assert "PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS" in script
+    assert "PAPER_SCALE_MIN_ACTIVE_DAYS:-5" in script
+    assert "PROOF_STATUS_SCALE_MAX_SINGLE_WIN_PNL_SHARE" in script
+    assert "PAPER_SCALE_MAX_SINGLE_WIN_PNL_SHARE:-0.50" in script
+    assert "PROOF_STATUS_SCALE_MIN_PROFIT_FACTOR" in script
+    assert "PAPER_SCALE_MIN_PROFIT_FACTOR:-1.20" in script
+    assert "PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE" in script
+    assert "PAPER_SCALE_MAX_EOD_LOSS_SHARE:-0.50" in script
+    assert "PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE" in script
+    assert "PAPER_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE:-0.00" in script
+    assert "PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE" in script
+    assert "PAPER_EXECUTION_MIN_ENTRY_FILL_RATE:-0.25" in script
+    assert "PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE" in script
+    assert "PAPER_EXECUTION_MAX_CAPACITY_REJECT_RATE:-0.05" in script
+    assert "PROOF_STATUS_SCALE_MIN_TRADES must be a positive integer" in script
+    assert "PROOF_STATUS_SCALE_MIN_STRATEGIES must be a positive integer" in script
+    assert "PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE must be a non-negative number" in script
+    assert "PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE must be a non-negative number" in script
+    assert "PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE must be a non-negative number" in script
     assert "./scripts/ops_check.sh \"$ENV_FILE\"" in script
     assert "--expect-trading-mode \"$trading_mode\"" in script
     assert "--expect-strategy-version \"$STRATEGY_VERSION\"" in script
     assert "--expect-trading-status enabled" in script
     assert "--expect-kill-switch false" in script
-    assert "--expect-only-enabled-strategy \"$PROOF_STATUS_STRATEGY\"" in script
+    assert 'proof_status_enabled_strategy_args+=(--expect-only-enabled-strategy "$name")' in script
+    assert '"${proof_status_enabled_strategy_args[@]}"' in script
     assert "PROOF_STATUS_OPS_HEALTH_STATUS" in script
     assert "PROOF_STATUS_OPS_HEALTH_DETAIL" in script
     assert "PROOF_STATUS_OPS_CLOSE_ONLY_HEALTH_STATUS" in script
@@ -5025,6 +5435,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "payload->>'decision_dry_run_max_entry_intents'" in script
     assert "payload->>'decision_dry_run_reject_stages'" in script
     assert "payload->>'decision_dry_run_reject_reasons'" in script
+    assert "payload->>'decision_dry_run_strategies'" in script
+    assert "payload->>'decision_dry_run_strategy_count'" in script
     assert "readiness_audit_rows = cur.fetchall()" in script
     assert "LIMIT 32" in script
     assert "parse_int_or_none" in script
@@ -5035,11 +5447,17 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "latest_readiness_reason.startswith(\"lock_busy\")" in script
     assert "(row for row in readiness_audit_rows if row[0] == \"passed\")" in script
     assert "def readiness_row_has_decision_dry_run" in script
+    assert "def readiness_row_has_expected_decision_dry_run_strategies" in script
     assert "def readiness_row_is_current" in script
+    assert "readiness_decision_dry_run_row = next(" in script
+    assert "and readiness_row_has_expected_decision_dry_run_strategies(row)" in script
+    assert "if readiness_decision_dry_run_row is None:" in script
     assert "readiness_decision_dry_run_row = readiness_audit_row" in script
+    assert "readiness_decision_dry_run_strategies_row = readiness_decision_dry_run_row" in script
     assert "and readiness_row_has_decision_dry_run(row)" in script
     assert "and readiness_row_is_current(row)" in script
     assert "readiness_decision_dry_run_row[3]" in script
+    assert "readiness_decision_dry_run_strategies_row[17]" in script
     assert "readiness_audit_status" in script
     assert "readiness_due_time = time(9, 25)" in script
     assert "readiness_required_since_text = readiness_required_since.isoformat()" in script
@@ -5062,6 +5480,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "readiness_decision_dry_run_status = \"entry_intents_under_minimum\"" in script
     assert "readiness_decision_dry_run_accepted_value = parse_int_or_none" in script
     assert "readiness_decision_dry_run_entry_intents_value = parse_int_or_none" in script
+    assert "readiness_decision_dry_run_strategies_status" in script
+    assert "readiness_decision_dry_run_strategies_" in script
+    assert "strategy_set_mismatch" in script
+    assert "strategy_count_mismatch" in script
     assert "paper proof readiness audit:" in script
     assert "status={readiness_audit_status}" in script
     assert "target_session={readiness_target_session.isoformat()}" in script
@@ -5073,6 +5495,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "age_minutes={readiness_audit_age_text}" in script
     assert "max_age_minutes={readiness_max_pass_age_minutes}" in script
     assert "paper proof readiness decision dry run:" in script
+    assert "paper proof readiness decision dry run strategies:" in script
     assert "required_as_of_session=" in script
     assert "required_active={min_watchlist_symbols}" in script
     assert "decision_records={readiness_decision_dry_run_records or 'none'}" in script
@@ -5087,6 +5510,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "reject_stages={readiness_decision_dry_run_reject_stages or 'none'}" in script
     assert "reject_reasons={readiness_decision_dry_run_reject_reasons or 'none'}" in script
     assert "sample={readiness_decision_dry_run_sample or 'none'}" in script
+    assert "strategies={readiness_decision_dry_run_strategies or 'none'}" in script
+    assert "expected={format_name_list(expected_readiness_decision_dry_run_strategy_names)}" in script
+    assert "expected_count={len(expected_readiness_decision_dry_run_strategy_names)}" in script
     assert "activity_target_session = None" in script
     assert "activity_first_check_time = time(10, 35)" in script
     assert "activity_first_due_time = time(10, 45)" in script
@@ -5096,6 +5522,20 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "activity_required_since = datetime.combine" in script
     assert "activity_required_since_text = activity_required_since.isoformat()" in script
     assert "payload->>'check_name' = 'paper_activity'" in script
+    assert "AND (NOT (payload ? 'strategy') OR payload->>'strategy' = %s)" in script
+    assert "OR payload->>'strategies' = %s" in script
+    assert "min_trades_text = os.environ[\"PROOF_STATUS_MIN_TRADES\"]" in script
+    assert "min_pnl_text = os.environ[\"PROOF_STATUS_MIN_PNL\"]" in script
+    assert "PROOF_STATUS_SESSION_GUARD_MIN_TRADES" in script
+    assert "PROOF_STATUS_SESSION_GUARD_MIN_PNL" in script
+    assert (
+        "session_guard_min_trades_text = "
+        "os.environ[\"PROOF_STATUS_SESSION_GUARD_MIN_TRADES\"]"
+    ) in script
+    assert (
+        "session_guard_min_pnl_text = "
+        "os.environ[\"PROOF_STATUS_SESSION_GUARD_MIN_PNL\"]"
+    ) in script
     assert "activity_audit_status = \"not_due\"" in script
     assert "activity_audit_status = \"missing\"" in script
     assert "activity_audit_status = \"failed\"" in script
@@ -5121,6 +5561,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "'session_guard'" in script
     assert "'paper_profit_probe'" in script
     assert "payload->>'proof_start' = %s" in script
+    assert "payload->>'check_name' <> 'paper_profit_probe'" in script
+    assert "payload->>'check_name' <> 'session_guard'" in script
+    assert "OR payload->>'min_trades' = %s" in script
+    assert "OR payload->>'min_pnl' = %s" in script
     assert "due_time = time(17, 25)" in script
     assert "post_close_due_after" in script
     assert "post_close_required_since = None" in script
@@ -5146,7 +5590,22 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "elif stale_checks:" in script
     assert "session_guard_acceptable and profit_probe_status == \"passed\"" in script
     assert "session_guard_status == \"passed\" and profit_probe_status == \"passed\"" not in script
-    assert "profitable_enough = trade_count >= min_trades and pnl >= min_pnl" in script
+    assert "base_profitable_enough = trade_count >= min_trades and pnl >= min_pnl" in script
+    assert "proof_quality_ready = proof_robustness_status == \"ready\"" in script
+    assert "clean_window_base_profitable_enough" in script
+    assert "clean_window_base_sealed_profitable_enough" in script
+    assert "clean_window_quality_ready = clean_window_robustness_status == \"ready\"" in script
+    assert (
+        "clean_window_sealed_quality_ready = "
+        "clean_window_sealed_robustness_status == \"ready\""
+    ) in script
+    assert "base_proof_eligible = base_profitable_enough and proof_quality_ready" in script
+    assert "clean_window_proof_eligible = (" in script
+    assert "clean_window_sealed_proof_eligible = (" in script
+    assert "profitable_enough = base_proof_eligible or clean_window_proof_eligible" in script
+    assert "sealed_profitable_enough = (" in script
+    assert "proof_basis = (" in script
+    assert "sealed_proof_basis = (" in script
     assert "trade_pnl_rows = [" in script
     assert "unpaired_filled_exit_count = 0" in script
     assert "unpaired_filled_exit_symbols = \"none\"" in script
@@ -5162,16 +5621,129 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "avg_trade_pnl_text = f\"{avg_trade_pnl:.2f}\" "
         "if avg_trade_pnl is not None else \"none\""
     ) in script
+    assert "active_trade_day_count = len(set(exit_sessions))" in script
+    assert "gross_profit = sum(trade_pnl for _, trade_pnl in trade_pnl_rows if trade_pnl > 0)" in script
+    assert "profit_factor_text = f\"{profit_factor:.2f}\" if profit_factor is not None else \"none\"" in script
+    assert "single_win_pnl_share" in script
+    assert "STRATEGY_EXIT_REASONS" in script
+    assert '"no_follow_through"' in script
+    assert '"giveback_exit"' in script
+    assert '"early_loss_exit"' in script
+    assert "if trade_pnl < 0 and exit_reason(trade) == \"eod_flatten\"" in script
+    assert "operational_exit_loss_rows = [" in script
+    assert "operational_exit_loss_count = len(operational_exit_loss_rows)" in script
+    assert "operational_exit_loss_symbols" in script
+    assert "operational_exit_loss_reasons" in script
+    assert "load_next_market_session_after" in script
+    assert "latest_operational_exit_loss_text" in script
+    assert "operational_exit_clean_start_text" in script
+    assert "clean_window_status" in script
+    assert "clean_window_progress_start" in script
+    assert "clean_window_trade_pnl_rows" in script
+    assert "clean_window_unscored_current_session_trade_pnl_rows" in script
+    assert "clean_window_sealed_trade_count" in script
+    assert "summarize_trade_pnl_rows" in script
+    assert "clean_window_summary" in script
+    assert "clean_window_sealed_summary" in script
+    assert "base_summary = summarize_trade_pnl_rows(trade_pnl_rows)" in script
+    assert "base_sealed_summary = summarize_trade_pnl_rows(" in script
+    assert "robustness_blockers_for_summary" in script
+    assert "require_strategy_diversification: bool" in script
+    assert "proof_blockers = robustness_blockers_for_summary(" in script
+    assert "sealed_proof_blockers = robustness_blockers_for_summary(" in script
+    assert "require_strategy_diversification=False" in script
+    assert "proof_robustness_status = \"ready\" if not proof_blockers else \"blocked\"" in script
+    assert "sealed_proof_robustness_status = (" in script
+    assert (
+        "evidence_blockers = clean_window_blockers "
+        "if clean_window_status == \"dirty\" else proof_blockers"
+    ) in script
+    assert (
+        "clean_window_sealed_blockers if clean_window_status == \"dirty\" "
+        "else sealed_proof_blockers"
+    ) in script
+    assert "clean_window_robustness_status" in script
+    assert "clean_window_sealed_robustness_status" in script
+    assert "scale_blockers.append(\"sample_trades\")" in script
+    assert "scale_blockers.append(\"strategy_diversification\")" in script
+    assert "scale_blockers.append(\"unapproved_strategy\")" in script
+    assert "approved_active_strategy_names" in script
+    assert "unapproved_active_strategy_names" in script
+    assert "disabled_strategy_names" in script
+    assert "stock_strategy_name_set = set(STRATEGY_REGISTRY)" in script
+    assert "option_strategy_name_set = set(OPTION_STRATEGY_NAMES)" in script
+    assert "replay_supported_option_strategy_name_set: set[str] = set()" in script
+    assert "replay_supported_strategy_name_set" in script
+    assert "option_replay_status" in script
+    assert "active_replay_supported_strategy_names" in script
+    assert "disabled_replay_supported_strategy_names" in script
+    assert "active_replay_unsupported_strategy_names" in script
+    assert "disabled_replay_unsupported_strategy_names" in script
+    assert "disabled_stock_strategy_names" in script
+    assert "disabled_option_strategy_names" in script
+    assert "option_gated_disabled_strategy_names" in script
+    assert "approved_disabled_stock_candidate_names" in script
+    assert "approved_disabled_option_candidate_names" in script
+    assert "approved_replay_active_strategy_names" in script
+    assert "strategy_diversification_status" in script
+    assert "strategy_diversification_gap" in script
+    assert "strategy_diversification_candidate_status" in script
+    assert "replay_unsupported_strategy" in script
+    assert "approved_stock_candidate_disabled" in script
+    assert "approved_option_candidate_replay_unavailable" in script
+    assert "replay_unsupported_active_strategy" in script
+    assert "no_approved_stock_strategy" in script
+    assert "scale_blockers.append(\"profit_concentration\")" in script
+    assert "scale_blockers.append(\"eod_loss_share\")" in script
+    assert "scale_blockers.append(\"operational_exit_loss_share\")" in script
+    assert "entry_order_fill_rate = (" in script
+    assert "entry_order_filled_count / entry_order_count" in script
+    assert "posture_entry_fill_rate = (" in script
+    assert "posture_entry_order_filled_count / posture_entry_order_count" in script
+    assert "o.created_at = d.cycle_at" in script
+    assert "close_to_entry_pct >= %s" in script
+    assert "accepted_to_fill_rate = (" in script
+    assert "capacity_reject_rate = (" in script
+    assert "decision_capacity_rejected / decision_signal_fired" in script
+    assert "effective_entry_fill_rate_source" in script
+    assert "capacity_reject_rate > execution_max_capacity_reject_rate" in script
+    assert "execution_quality_warnings.append(\"entry_fill_rate\")" in script
+    assert "scale_blockers.append(\"entry_fill_rate\")" in script
+    assert "execution_quality_warnings.append(\"raw_entry_fill_rate\")" in script
+    assert "execution_quality_warnings.append(\"capacity_rejections\")" in script
+    assert "scale_blockers.append(\"capacity_rejections\")" in script
+    assert "exposure_protection_issues = []" in script
+    assert "exposure_protection_status" in script
+    assert "local_active_stop_orders < local_open_positions" in script
+    assert "local_position_symbol_set != local_active_order_symbol_set" in script
+    assert "broker_position_count_mismatch" in script
+    assert "broker_order_symbol_mismatch" in script
+    raw_fill_warning_branch = script[
+        script.index("elif (\n    entry_order_fill_rate is not None") :
+        script.index("if (\n    capacity_reject_rate is not None")
+    ]
+    assert 'execution_quality_status = "needs_work"' not in raw_fill_warning_branch
+    capacity_warning_branch = script[
+        script.index("if (\n    capacity_reject_rate is not None") :
+        script.index("scale_status = \"ready\"")
+    ]
+    assert 'execution_quality_status = "needs_work"' in capacity_warning_branch
     assert "partial_pnl_negative" in script
     assert "partial_pnl_below_minimum" in script
     assert "cumulative_pnl_negative" in script
     assert "cumulative_pnl_below_minimum" in script
     assert "format_trade_pnl_atom" in script
     assert "elif profitable_enough and post_close_pass_evidence_ready" in script
-    assert "elif profitable_enough:\n    proof_status = \"pending\"" in script
+    assert (
+        "elif base_profitable_enough or clean_window_base_profitable_enough:\n"
+        "    proof_status = \"pending\""
+    ) in script
     assert "elif trade_count >= min_trades:\n    proof_status = \"pending\"" in script
     assert 'proof_status = "failing"' not in script
     assert "elif profitable_enough and not post_close_pass_evidence_ready" in script
+    assert "awaiting_robustness_evidence" in script
+    assert "awaiting_clean_window_robustness" in script
+    assert "awaiting_clean_window_evidence" in script
     assert "profit_probe_status == \"pending\" and profit_probe_exit_code == \"43\"" in script
     assert "post_close_audit_status in {\"missing\", \"failed\", \"stale\"}" in script
     assert "blockers.append(f\"post_close_audit_{post_close_audit_status}\")" in script
@@ -5233,7 +5805,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "awaiting_min_trades" in script
     assert "profit_proven" in script
     assert "paper proof strategy status:" in script
-    assert "status={strategy_status} target={strategy_name}" in script
+    assert "status={strategy_status}" in script
+    assert "target={strategy_name}" in script
+    assert "approved={str(strategy_name in approved_strategy_name_set).lower()}" in script
     assert "paper proof posture:" in script
     assert "status={posture_status}" in script
     assert "market_data_feed={settings.market_data_feed.value}" in script
@@ -5245,6 +5819,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     ) in script
     assert "relative_volume_threshold={settings.relative_volume_threshold:g}" in script
     assert "entry_timeframe_minutes={settings.entry_timeframe_minutes}" in script
+    assert "entry_order_active_bars={settings.entry_order_active_bars}" in script
     assert "risk_per_trade_pct={settings.risk_per_trade_pct:g}" in script
     assert "max_position_pct={settings.max_position_pct:g}" in script
     assert "max_open_positions={settings.max_open_positions}" in script
@@ -5255,6 +5830,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "daily_loss_limit_pct={settings.daily_loss_limit_pct:g}" in script
     assert "stop_limit_buffer_pct={settings.stop_limit_buffer_pct:g}" in script
     assert "entry_stop_price_buffer={settings.entry_stop_price_buffer:g}" in script
+    assert "entry_min_close_to_entry_pct={settings.entry_min_close_to_entry_pct:g}" in script
+    assert "entry_max_close_to_entry_pct={settings.entry_max_close_to_entry_pct:g}" in script
     assert "atr_period={settings.atr_period}" in script
     assert "atr_stop_multiplier={settings.atr_stop_multiplier:g}" in script
     assert (
@@ -5271,14 +5848,17 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "abs(float(settings.relative_volume_threshold) - 2.0)" in script
     assert "abs(float(settings.stop_limit_buffer_pct) - 0.0005)" in script
     assert "abs(float(settings.entry_stop_price_buffer) - 0.02)" in script
+    assert "abs(float(settings.entry_min_close_to_entry_pct) - (-0.01))" in script
+    assert "abs(float(settings.entry_max_close_to_entry_pct) - 1.0)" in script
     assert 'settings.market_data_feed.value == "iex"' in script
     assert "int(settings.daily_sma_period) == 20" in script
     assert "int(settings.breakout_lookback_bars) == 20" in script
-    assert "int(settings.relative_volume_lookback_bars) == 20" in script
+    assert "int(settings.relative_volume_lookback_bars) == 10" in script
     assert "int(settings.entry_timeframe_minutes) == 15" in script
+    assert "int(settings.entry_order_active_bars) == 1" in script
     assert "abs(float(settings.risk_per_trade_pct) - 0.01)" in script
     assert "abs(float(settings.max_position_pct) - 0.05)" in script
-    assert "int(settings.max_open_positions) == 4" in script
+    assert "int(settings.max_open_positions) == 1" in script
     assert "abs(float(settings.max_portfolio_exposure_pct) - 0.30)" in script
     assert "abs(float(settings.daily_loss_limit_pct) - 0.01)" in script
     assert "int(settings.atr_period) == 20" in script
@@ -5292,6 +5872,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert 'as_hhmm(settings.entry_window_end) == "15:30"' in script
     assert 'as_hhmm(settings.flatten_time) == "15:45"' in script
     assert "bull_flag_min_run_pct={settings.bull_flag_min_run_pct:g}" in script
+    assert "entry_order_active_bars={settings.entry_order_active_bars}" in script
     assert (
         "bull_flag_consolidation_volume_ratio="
         "{settings.bull_flag_consolidation_volume_ratio:g}"
@@ -5318,6 +5899,24 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "not bool(settings.extended_hours_enabled)" in script
     assert "not bool(settings.enable_trend_filter_exit)" in script
     assert "not bool(settings.enable_vwap_breakdown_exit)" in script
+    assert "not bool(settings.enable_no_follow_through_exit)" in script
+    assert "int(settings.no_follow_through_exit_minutes) == 0" in script
+    assert (
+        "abs(float(settings.no_follow_through_min_favorable_pct) - 0.0025)"
+        in script
+    )
+    assert "bool(settings.enable_giveback_exit)" in script
+    assert (
+        "abs(float(settings.giveback_exit_min_favorable_pct) - 0.0025)"
+        in script
+    )
+    assert (
+        "abs(float(settings.giveback_exit_max_return_pct) - 0.0)"
+        in script
+    )
+    assert "not bool(settings.enable_early_loss_exit)" in script
+    assert "int(settings.early_loss_exit_minutes) == 0" in script
+    assert "abs(float(settings.early_loss_exit_return_pct) - 0.01)" in script
     assert "abs(float(settings.per_symbol_loss_limit_pct) - 0.0)" in script
     assert "abs(float(settings.min_position_notional) - 0.0)" in script
     assert "abs(float(settings.max_stop_pct) - 0.05)" in script
@@ -5342,6 +5941,42 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "profit_target_r={settings.profit_target_r:g}" in script
     assert "trend_filter_exit={str(settings.enable_trend_filter_exit).lower()}" in script
     assert "vwap_breakdown_exit={str(settings.enable_vwap_breakdown_exit).lower()}" in script
+    assert (
+        "no_follow_through_exit="
+        "{str(settings.enable_no_follow_through_exit).lower()}"
+    ) in script
+    assert (
+        "no_follow_through_exit_minutes="
+        "{settings.no_follow_through_exit_minutes}"
+    ) in script
+    assert (
+        "no_follow_through_min_favorable_pct="
+        "{settings.no_follow_through_min_favorable_pct:g}"
+    ) in script
+    assert (
+        "giveback_exit="
+        "{str(settings.enable_giveback_exit).lower()}"
+    ) in script
+    assert (
+        "giveback_exit_min_favorable_pct="
+        "{settings.giveback_exit_min_favorable_pct:g}"
+    ) in script
+    assert (
+        "giveback_exit_max_return_pct="
+        "{settings.giveback_exit_max_return_pct:g}"
+    ) in script
+    assert (
+        "early_loss_exit="
+        "{str(settings.enable_early_loss_exit).lower()}"
+    ) in script
+    assert (
+        "early_loss_exit_minutes="
+        "{settings.early_loss_exit_minutes}"
+    ) in script
+    assert (
+        "early_loss_exit_return_pct="
+        "{settings.early_loss_exit_return_pct:g}"
+    ) in script
     assert "per_symbol_loss_limit_pct={settings.per_symbol_loss_limit_pct:g}" in script
     assert "min_position_notional={settings.min_position_notional:g}" in script
     assert "max_stop_pct={settings.max_stop_pct:g}" in script
@@ -5352,6 +5987,114 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "viability_min_hold_minutes={settings.viability_min_hold_minutes}" in script
     assert "max_loss_per_trade_dollars=" in script
     assert "replay_slippage_bps={settings.replay_slippage_bps:g}" in script
+    assert "paper proof progress:" in script
+    assert "basis={proof_basis}" in script
+    assert "sealed_basis={sealed_proof_basis}" in script
+    assert "paper proof robustness:" in script
+    assert "scale_status={scale_status}" in script
+    assert "blockers={','.join(scale_blockers) if scale_blockers else 'none'}" in script
+    assert "enabled_strategies={len(active_strategy_names)}" in script
+    assert "approved_enabled_strategies={len(approved_active_strategy_names)}" in script
+    assert (
+        "approved_replay_enabled_strategies="
+        "{len(approved_replay_active_strategy_names)}"
+    ) in script
+    assert "required_strategies={scale_min_strategies}" in script
+    assert "paper proof strategy diversification:" in script
+    assert "active={len(active_strategy_names)}" in script
+    assert "required={scale_min_strategies}" in script
+    assert "approved_active={len(approved_active_strategy_names)}" in script
+    assert "approved_replay_active={len(approved_replay_active_strategy_names)}" in script
+    assert "approved_required={scale_min_strategies}" in script
+    assert "gap={strategy_diversification_gap}" in script
+    assert "candidate_status={strategy_diversification_candidate_status}" in script
+    assert "approved_names={approved_active_strategies or 'none'}" in script
+    assert "approved_replay_names={approved_replay_active_strategies or 'none'}" in script
+    assert "unapproved_active={unapproved_active_strategies or 'none'}" in script
+    assert (
+        "replay_unsupported_active="
+        "{active_replay_unsupported_strategies or 'none'}"
+    ) in script
+    assert "approved_allowlist={approved_strategy_allowlist or 'none'}" in script
+    assert "disabled_candidates={len(disabled_strategy_names)}" in script
+    assert "replay_supported_active={len(active_replay_supported_strategy_names)}" in script
+    assert (
+        "replay_supported_disabled_candidates="
+        "{len(disabled_replay_supported_strategy_names)}"
+    ) in script
+    assert (
+        "replay_supported_disabled_candidate_names="
+        "{format_name_list(disabled_replay_supported_strategy_names)}"
+    ) in script
+    assert (
+        "replay_unsupported_disabled_candidates="
+        "{len(disabled_replay_unsupported_strategy_names)}"
+    ) in script
+    assert (
+        "replay_unsupported_disabled_candidate_names="
+        "{format_name_list(disabled_replay_unsupported_strategy_names)}"
+    ) in script
+    assert "stock_active={len(active_stock_strategy_names)}" in script
+    assert "option_active={len(active_option_strategy_names)}" in script
+    assert "option_replay_status={option_replay_status}" in script
+    assert "stock_disabled_candidates={len(disabled_stock_strategy_names)}" in script
+    assert "stock_disabled_candidate_names={format_name_list(disabled_stock_strategy_names)}" in script
+    assert "option_gated_disabled_candidates={len(option_gated_disabled_strategy_names)}" in script
+    assert "option_gated_disabled_candidate_names={format_name_list(option_gated_disabled_strategy_names)}" in script
+    assert "approved_disabled_stock_candidates={format_name_list(approved_disabled_stock_candidate_names)}" in script
+    assert "approved_disabled_option_candidates={format_name_list(approved_disabled_option_candidate_names)}" in script
+    assert "required_active_days={scale_min_active_days}" in script
+    assert "profit_factor={profit_factor_text}" in script
+    assert "single_win_pnl_share={single_win_pnl_share_text}" in script
+    assert "eod_loss_share={eod_loss_share_text}" in script
+    assert "operational_exit_losses={operational_exit_loss_count}" in script
+    assert "operational_exit_loss_share={operational_exit_loss_share_text}" in script
+    assert "max_operational_exit_loss_share={scale_max_operational_exit_loss_share:.2f}" in script
+    assert "paper proof clean window:" in script
+    assert "latest_operational_exit_loss={latest_operational_exit_loss_text}" in script
+    assert "clean_start_candidate={operational_exit_clean_start_text}" in script
+    assert "progress_start={clean_window_progress_start_text}" in script
+    assert "proof_eligible={str(clean_window_proof_eligible).lower()}" in script
+    assert (
+        "sealed_proof_eligible="
+        "{str(clean_window_sealed_proof_eligible).lower()}"
+    ) in script
+    assert "scoreable_trades={clean_window_trade_count}" in script
+    assert "unscored_current_session_trades={clean_window_unscored_current_session_trade_count}" in script
+    assert "sealed_trades={clean_window_sealed_trade_count}" in script
+    assert "paper proof clean window robustness:" in script
+    assert "status={clean_window_robustness_status}" in script
+    assert "blockers={','.join(clean_window_blockers) if clean_window_blockers else 'none'}" in script
+    assert "eod_losses={clean_window_summary['eod_loss_count']}" in script
+    assert "eod_loss_share={clean_window_summary['eod_loss_share_text']}" in script
+    assert "eod_loss_symbols={clean_window_summary['eod_loss_symbols']}" in script
+    assert "max_eod_loss_share={scale_max_eod_loss_share:.2f}" in script
+    assert "sealed_status={clean_window_sealed_robustness_status}" in script
+    assert "sealed_blockers={','.join(clean_window_sealed_blockers) if clean_window_sealed_blockers else 'none'}" in script
+    assert "sealed_eod_losses={clean_window_sealed_summary['eod_loss_count']}" in script
+    assert (
+        "sealed_eod_loss_share="
+        "{clean_window_sealed_summary['eod_loss_share_text']}"
+    ) in script
+    assert (
+        "sealed_eod_loss_symbols="
+        "{clean_window_sealed_summary['eod_loss_symbols']}"
+    ) in script
+    assert "paper proof execution quality:" in script
+    assert "status={execution_quality_status}" in script
+    assert "warnings={','.join(execution_quality_warnings) if execution_quality_warnings else 'none'}" in script
+    assert "capacity_rejected={decision_capacity_rejected}" in script
+    assert "capacity_reject_rate={capacity_reject_rate_text}" in script
+    assert "max_capacity_reject_rate={execution_max_capacity_reject_rate:.2f}" in script
+    assert "entry_quality_rejected={decision_entry_quality_rejected}" in script
+    assert "entry_fill_rate={entry_order_fill_rate_text}" in script
+    assert "current_posture_entry_fill_rate={posture_entry_fill_rate_text}" in script
+    assert "current_posture_would_reject={posture_entry_quality_would_reject_count}" in script
+    assert "effective_entry_fill_rate={effective_entry_fill_rate_text}" in script
+    assert "effective_entry_fill_rate_source={effective_entry_fill_rate_source}" in script
+    assert "accepted_to_fill_rate={accepted_to_fill_rate_text}" in script
+    assert "filled_symbols={entry_order_filled_symbols}" in script
+    assert "current_posture_filled_symbols={posture_entry_order_filled_symbols}" in script
     assert "paper proof scoring:" in script
     assert "scoreable_closed_trades={trade_count}" in script
     assert "unpaired_filled_exits={unpaired_filled_exit_count}" in script
@@ -5370,6 +6113,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "active_orders={local_active_orders}" in script
     assert "position_symbols={local_open_position_symbols or 'none'}" in script
     assert "active_order_symbols={local_active_order_symbols or 'none'}" in script
+    assert "paper proof exposure protection:" in script
+    assert "status={exposure_protection_status}" in script
+    assert "issues={exposure_protection_issue_text}" in script
+    assert "local_stop_orders={local_active_stop_orders}" in script
+    assert "local_entry_orders={local_active_entry_orders}" in script
     assert "paper proof option exposure:" in script
     assert "net_open={local_open_option_positions}" in script
     assert "active_orders={local_active_option_orders}" in script
@@ -5486,7 +6234,14 @@ def test_runtime_image_health_check_compares_deployed_package_to_workspace() -> 
     assert "supervisor" in script
     assert "RUNTIME_IMAGE_HEALTH_FILES" in script
     assert "runtime/supervisor.py" in script
+    assert "backfill/fetcher.py" in script
     assert "nightly/cli.py" in script
+    assert "replay/audit.py" in script
+    assert "replay/cli.py" in script
+    assert "replay/lever_sweep.py" in script
+    assert "replay/portfolio.py" in script
+    assert "replay/runner.py" in script
+    assert "replay/splitter.py" in script
     assert "core/engine.py" in script
     assert "storage/models.py" in script
     assert "strategy/bull_flag.py" in script
@@ -5494,6 +6249,9 @@ def test_runtime_image_health_check_compares_deployed_package_to_workspace() -> 
     assert "strategy/breakout.py" in script
     assert "strategy/session.py" in script
     assert "storage/repositories.py" in script
+    assert "admin/cli.py" in script
+    assert "strategy_approval.py" in script
+    assert "web/app.py" in script
     assert "web/templates/dashboard.html" in script
     assert 'local_path="src/alpaca_bot/$rel"' in script
     assert "import alpaca_bot" in script
@@ -5519,15 +6277,17 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "SESSION_GUARD_DATE" in session_guard
     assert "SESSION_GUARD_FAIL_ON_DIAGNOSTICS \\" in session_guard
     assert 'SESSION_GUARD_FAIL_ON_DIAGNOSTICS="${SESSION_GUARD_FAIL_ON_DIAGNOSTICS:-true}"' in session_guard
-    assert 'SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"' in session_guard
+    assert 'SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}}"' in session_guard
     assert session_guard.index('source "$ENV_FILE"') < session_guard.index(
-        'SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"'
+        'SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}}"'
     )
     assert session_guard.index('source "$ENV_FILE"') < session_guard.index(
         'SESSION_GUARD_STRATEGY="${SESSION_GUARD_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"'
     )
+    assert 'SESSION_GUARD_STRATEGIES="${SESSION_GUARD_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$SESSION_GUARD_STRATEGY}}"' in session_guard
     assert "SESSION_GUARD_FAIL_ON_DIAGNOSTICS must be true or false" in session_guard
     assert "SESSION_GUARD_STRATEGY contains unsupported characters" in session_guard
+    assert "SESSION_GUARD_STRATEGIES contains unsupported strategy" in session_guard
     assert "load_latest_completed_session_date" in session_guard
     assert "AlpacaExecutionAdapter.from_settings" in session_guard
     assert "get_market_calendar" in session_guard
@@ -5547,6 +6307,7 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert '7) TZ=America/New_York date -d "2 days ago" +%F ;;' in session_guard
     assert '*) TZ=America/New_York date -d "1 day ago" +%F ;;' in session_guard
     assert "session_eval_args+=(--fail-on-diagnostics)" in session_guard
+    assert '--strategies "$session_guard_strategy_csv"' in session_guard
     assert "./scripts/broker_flat_check.sh" in session_guard
     assert "./scripts/broker_flat_check.sh" in profit_probe
     assert "broker exposure remains after close" in session_guard
@@ -5558,16 +6319,20 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert profit_probe.index('source "$ENV_FILE"') < profit_probe.index("\nrestore_env_overrides\n")
     assert "PROFIT_PROBE_DATE" in profit_probe
     assert "PROFIT_PROBE_FAIL_ON_DIAGNOSTICS \\" in profit_probe
-    assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-30}"' in profit_probe
+    assert "PAPER_SCALE_MIN_TRADES" in profit_probe
+    assert 'PROFIT_PROBE_MIN_TRADES="${PROFIT_PROBE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}"' in profit_probe
+    assert 'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-07-07}"' in profit_probe
     assert profit_probe.index('source "$ENV_FILE"') < profit_probe.index(
-        'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-30}"'
+        'PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-07-07}"'
     )
     assert profit_probe.index('source "$ENV_FILE"') < profit_probe.index(
         'PROFIT_PROBE_STRATEGY="${PROFIT_PROBE_STRATEGY:-bull_flag}"'
     )
+    assert 'PROFIT_PROBE_STRATEGIES="${PROFIT_PROBE_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PROFIT_PROBE_STRATEGY}}"' in profit_probe
     assert 'PROFIT_PROBE_FAIL_ON_DIAGNOSTICS="${PROFIT_PROBE_FAIL_ON_DIAGNOSTICS:-true}"' in profit_probe
     assert "PROFIT_PROBE_FAIL_ON_DIAGNOSTICS must be true or false" in profit_probe
     assert "PROFIT_PROBE_STRATEGY contains unsupported characters" in profit_probe
+    assert "PROFIT_PROBE_STRATEGIES contains unsupported strategy" in profit_probe
     assert "PROFIT_PROBE_START_DATE must use YYYY-MM-DD" in profit_probe
     assert "PROFIT_PROBE_MIN_TRADES must be a positive integer" in profit_probe
     assert "PROFIT_PROBE_MIN_PNL must be a number" in profit_probe
@@ -5588,6 +6353,7 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert "market calendar lookup failed; using weekday fallback" in profit_probe
     assert "--start-date" in profit_probe
     assert "--end-date" in profit_probe
+    assert '--strategies "$profit_probe_strategy_csv"' in profit_probe
     assert 'hhmm="$(TZ=America/New_York date +%H%M)"' in profit_probe
     assert '"$hhmm" -ge 1630' in profit_probe
     assert '1) TZ=America/New_York date -d "3 days ago" +%F ;;' in profit_probe

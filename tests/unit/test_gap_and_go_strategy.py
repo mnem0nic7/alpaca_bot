@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -7,6 +8,23 @@ import pytest
 
 from alpaca_bot.domain.models import Bar, EntrySignal
 from alpaca_bot.strategy.gap_and_go import evaluate_gap_and_go_signal
+
+
+class _SliceGuardedBars(Sequence[Bar]):
+    def __init__(self, bars: list[Bar], *, min_slice_start: int) -> None:
+        self._bars = bars
+        self._min_slice_start = min_slice_start
+        self.slices: list[tuple[int | None, int | None]] = []
+
+    def __len__(self) -> int:
+        return len(self._bars)
+
+    def __getitem__(self, index: int | slice) -> Bar | list[Bar]:
+        if isinstance(index, slice):
+            self.slices.append((index.start, index.stop))
+            if index.start is None or index.start < self._min_slice_start:
+                raise AssertionError("unexpected historical-prefix slice")
+        return self._bars[index]
 
 
 def _make_settings(**overrides):
@@ -293,6 +311,39 @@ def test_gap_and_go_returns_none_when_not_first_bar_of_session():
         settings=settings,
     )
     assert result is None
+
+
+def test_gap_and_go_checks_first_session_bar_without_historical_prefix_slice():
+    settings = _make_settings()
+    daily_bars = _make_daily_bars()
+    older_base = datetime(2025, 12, 31, 10, 0, tzinfo=ZoneInfo("America/New_York"))
+    older_bars = [
+        _make_bar(
+            ts=older_base + timedelta(minutes=15 * i),
+            open_=99.0,
+            high=100.0,
+            low=98.0,
+            close=99.5,
+            volume=10_000.0,
+        )
+        for i in range(30)
+    ]
+    scenario_bars, scenario_signal_index = _make_scenario()
+    bars = older_bars + scenario_bars
+    signal_index = len(older_bars) + scenario_signal_index
+    lookback_start = signal_index - settings.relative_volume_lookback_bars
+    guarded = _SliceGuardedBars(bars, min_slice_start=lookback_start)
+
+    result = evaluate_gap_and_go_signal(
+        symbol="AAPL",
+        intraday_bars=guarded,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+
+    assert result is not None
+    assert guarded.slices == [(lookback_start, signal_index)]
 
 
 def test_gap_and_go_returns_none_when_atr_insufficient():

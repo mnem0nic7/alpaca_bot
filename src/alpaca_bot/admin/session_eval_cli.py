@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Iterator, Sequence
+from typing import Iterable, Iterator, Sequence
 from zoneinfo import ZoneInfo
 
 from alpaca_bot.config import Settings, TradingMode
@@ -73,6 +75,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                         help="Strategy version (default: STRATEGY_VERSION env var)")
     parser.add_argument("--strategy", metavar="NAME", help="Filter to a single strategy name")
     parser.add_argument(
+        "--strategies",
+        metavar="CSV",
+        help="Filter to a comma-separated list of strategy names.",
+    )
+    parser.add_argument(
         "--fail-below-pnl",
         type=float,
         metavar="DOLLARS",
@@ -110,9 +117,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         eval_start_date, eval_end_date = _resolve_eval_window(args)
+        strategy_names = _resolve_strategy_filter(args)
     except ValueError as exc:
         parser.error(str(exc))
     eval_label = _date_label(eval_start_date, eval_end_date)
+    strategy_label = _strategy_filter_label(strategy_names)
 
     settings = Settings.from_env()
     strategy_version = args.strategy_version or settings.strategy_version
@@ -139,11 +148,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         raw_trades = []
         for session_date in _date_range(eval_start_date, eval_end_date):
             raw_trades.extend(
-                order_store.list_closed_trades(
+                _list_closed_trades_for_strategies(
+                    order_store,
                     trading_mode=trading_mode,
                     strategy_version=strategy_version,
                     session_date=session_date,
-                    strategy_name=args.strategy,
+                    market_timezone=market_timezone,
+                    strategy_names=strategy_names,
                 )
             )
         diagnostics = _build_session_diagnostics(
@@ -153,7 +164,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             eval_start_date=eval_start_date,
             eval_end_date=eval_end_date,
             market_timezone=market_timezone,
-            strategy_name=args.strategy,
+            strategy_names=strategy_names,
         )
     finally:
         close = getattr(conn, "close", None)
@@ -161,8 +172,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             close()
 
     if not raw_trades:
-        strategy_label = f" (strategy={args.strategy})" if args.strategy else ""
-        print(f"No closed trades for {eval_label}{strategy_label}.")
+        label_suffix = (
+            f" ({strategy_label})" if strategy_label != "all" else ""
+        )
+        print(f"No closed trades for {eval_label}{label_suffix}.")
         _print_session_diagnostics(diagnostics)
         if args.fail_on_open_positions and diagnostics.open_positions:
             _print_open_position_guard_failure(diagnostics)
@@ -182,7 +195,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     report = report_from_records(
         trade_records,
         starting_equity=starting_equity,
-        strategy_name=args.strategy or "all",
+        strategy_name=_strategy_report_label(strategy_names),
     )
     _print_session_report(report, eval_label=eval_label, trading_mode=args.mode,
                           strategy_version=strategy_version)
@@ -234,6 +247,89 @@ def _parse_iso_date(value: str, option_name: str) -> date:
         return date.fromisoformat(value)
     except ValueError as exc:
         raise ValueError(f"{option_name} must use YYYY-MM-DD") from exc
+
+
+def _resolve_strategy_filter(args: argparse.Namespace) -> tuple[str, ...]:
+    if args.strategy and args.strategies:
+        raise ValueError("--strategy and --strategies cannot be used together")
+    if args.strategy:
+        _validate_strategy_name(args.strategy, "--strategy")
+        return (args.strategy,)
+    if not args.strategies:
+        return ()
+
+    names: list[str] = []
+    for raw in str(args.strategies).split(","):
+        name = raw.strip()
+        if not name:
+            continue
+        _validate_strategy_name(name, "--strategies")
+        if name not in names:
+            names.append(name)
+    if not names:
+        raise ValueError("--strategies must contain at least one strategy name")
+    return tuple(names)
+
+
+def _validate_strategy_name(name: str, option_name: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9_:-]+", name):
+        raise ValueError(f"{option_name} contains unsupported strategy name: {name}")
+
+
+def _strategy_filter_label(strategy_names: Sequence[str]) -> str:
+    if not strategy_names:
+        return "all"
+    if len(strategy_names) == 1:
+        return f"strategy={strategy_names[0]}"
+    return f"strategies={','.join(strategy_names)}"
+
+
+def _strategy_report_label(strategy_names: Sequence[str]) -> str:
+    if not strategy_names:
+        return "all"
+    if len(strategy_names) == 1:
+        return strategy_names[0]
+    return ",".join(strategy_names)
+
+
+def _single_strategy_name(strategy_names: Sequence[str]) -> str | None:
+    return strategy_names[0] if len(strategy_names) == 1 else None
+
+
+def _list_closed_trades_for_strategies(
+    order_store: OrderStore,
+    *,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    session_date: date,
+    market_timezone: str,
+    strategy_names: Sequence[str],
+) -> list[dict]:
+    if len(strategy_names) <= 1:
+        return order_store.list_closed_trades(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            session_date=session_date,
+            market_timezone=market_timezone,
+            strategy_name=_single_strategy_name(strategy_names),
+        )
+
+    trades: list[dict] = []
+    for strategy_name in strategy_names:
+        trades.extend(
+            order_store.list_closed_trades(
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                session_date=session_date,
+                market_timezone=market_timezone,
+                strategy_name=strategy_name,
+            )
+        )
+    return sorted(
+        trades,
+        key=lambda trade: trade.get("exit_time")
+        or datetime.min.replace(tzinfo=timezone.utc),
+    )
 
 
 def _date_range(start_date: date, end_date: date) -> Iterator[date]:
@@ -318,6 +414,7 @@ class SessionDiagnostics:
     latest_strategy_disabled: bool = False
     latest_strategy_disabled_reasons: tuple[str, ...] = ()
     decision_activity: DecisionActivityStats = field(default_factory=DecisionActivityStats)
+    missing_decision_activity_strategy_names: tuple[str, ...] = ()
     trading_mode_value: str = ""
     trading_status_value: str | None = None
     trading_status_kill_switch_enabled: bool = False
@@ -337,6 +434,7 @@ class SessionDiagnostics:
             self.strategy_disabled_cycles,
             self.total_supervisor_cycles == 0,
             self.total_supervisor_cycles > 0 and self.decision_activity.records == 0,
+            self.missing_decision_activity_strategy_names,
         ])
 
     @property
@@ -364,6 +462,7 @@ class SessionDiagnostics:
             self.proof_blocking_strategy_disabled_cycles,
             self.total_supervisor_cycles == 0,
             self.total_supervisor_cycles > 0 and self.decision_activity.records == 0,
+            self.missing_decision_activity_strategy_names,
         ])
 
     @property
@@ -517,6 +616,143 @@ def _audit_event_symbol(event: AuditEvent) -> str | None:
     return str(symbol)
 
 
+def _list_audit_events_for_strategies(
+    audit_store: AuditEventStore,
+    *,
+    event_types: list[str],
+    since: datetime,
+    until: datetime,
+    limit: int,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    strategy_names: Sequence[str],
+) -> list[AuditEvent]:
+    if len(strategy_names) <= 1:
+        return audit_store.list_by_event_types(
+            event_types=event_types,
+            since=since,
+            until=until,
+            limit=limit,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            strategy_name=_single_strategy_name(strategy_names),
+        )
+
+    events: list[AuditEvent] = []
+    for strategy_name in strategy_names:
+        events.extend(
+            audit_store.list_by_event_types(
+                event_types=event_types,
+                since=since,
+                until=until,
+                limit=limit,
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                strategy_name=strategy_name,
+            )
+        )
+    return _dedupe_audit_events(events)[:limit]
+
+
+def _dedupe_audit_events(events: Iterable[AuditEvent]) -> list[AuditEvent]:
+    seen: set[tuple[str, str, datetime, str]] = set()
+    unique: list[AuditEvent] = []
+    for event in sorted(events, key=lambda item: item.created_at, reverse=True):
+        payload_key = json.dumps(event.payload, sort_keys=True, default=str)
+        key = (event.event_type, event.symbol or "", event.created_at, payload_key)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(event)
+    return unique
+
+
+def _list_failed_entries_for_strategies(
+    order_store: OrderStore,
+    *,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    session_date: date,
+    market_timezone: str,
+    strategy_names: Sequence[str],
+) -> list[OrderRecord]:
+    if len(strategy_names) <= 1:
+        return order_store.list_failed_entries(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            session_date=session_date,
+            market_timezone=market_timezone,
+            strategy_name=_single_strategy_name(strategy_names),
+        )
+
+    entries: list[OrderRecord] = []
+    for strategy_name in strategy_names:
+        entries.extend(
+            order_store.list_failed_entries(
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                session_date=session_date,
+                market_timezone=market_timezone,
+                strategy_name=strategy_name,
+            )
+        )
+    return entries
+
+
+def _list_open_positions_for_strategies(
+    position_store: PositionStore,
+    *,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    strategy_names: Sequence[str],
+) -> list[PositionRecord]:
+    if len(strategy_names) <= 1:
+        return position_store.list_all(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            strategy_name=_single_strategy_name(strategy_names),
+        )
+
+    positions: list[PositionRecord] = []
+    for strategy_name in strategy_names:
+        positions.extend(
+            position_store.list_all(
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                strategy_name=strategy_name,
+            )
+        )
+    return positions
+
+
+def _list_active_orders_for_strategies(
+    order_store: OrderStore,
+    *,
+    trading_mode: TradingMode,
+    strategy_version: str,
+    strategy_names: Sequence[str],
+) -> list[OrderRecord]:
+    if len(strategy_names) <= 1:
+        return order_store.list_by_status(
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            statuses=list(ACTIVE_ORDER_STATUSES),
+            strategy_name=_single_strategy_name(strategy_names),
+        )
+
+    orders: list[OrderRecord] = []
+    for strategy_name in strategy_names:
+        orders.extend(
+            order_store.list_by_status(
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                statuses=list(ACTIVE_ORDER_STATUSES),
+                strategy_name=strategy_name,
+            )
+        )
+    return orders
+
+
 def _build_session_diagnostics(
     conn: ConnectionProtocol,
     *,
@@ -525,11 +761,15 @@ def _build_session_diagnostics(
     eval_start_date: date,
     eval_end_date: date,
     market_timezone: str,
+    strategy_names: Sequence[str] = (),
     strategy_name: str | None = None,
 ) -> SessionDiagnostics:
     tz = ZoneInfo(market_timezone)
     session_start = datetime.combine(eval_start_date, time(0, 0), tzinfo=tz).astimezone(timezone.utc)
     session_end = datetime.combine(eval_end_date + timedelta(days=1), time(0, 0), tzinfo=tz).astimezone(timezone.utc)
+    if strategy_name is not None and not strategy_names:
+        strategy_names = (strategy_name,)
+    strategy_label = _strategy_report_label(strategy_names) if strategy_names else None
 
     audit_store = AuditEventStore(conn)
     order_store = OrderStore(conn)
@@ -537,12 +777,13 @@ def _build_session_diagnostics(
     failed_entries: list[OrderRecord] = []
     for session_date in _date_range(eval_start_date, eval_end_date):
         failed_entries.extend(
-            order_store.list_failed_entries(
+            _list_failed_entries_for_strategies(
+                order_store,
                 trading_mode=trading_mode,
                 strategy_version=strategy_version,
                 session_date=session_date,
                 market_timezone=market_timezone,
-                strategy_name=strategy_name,
+                strategy_names=strategy_names,
             )
         )
     total_cycles, disabled_cycles, disabled_reasons = _load_entries_disabled_cycle_stats(
@@ -552,7 +793,7 @@ def _build_session_diagnostics(
         trading_mode=trading_mode,
         strategy_version=strategy_version,
     )
-    strategy_disabled_cycles, strategy_disabled_reasons = _load_strategy_disabled_cycle_stats(
+    strategy_disabled_cycles, strategy_disabled_reasons = _load_strategy_disabled_cycle_stats_for_filter(
         conn,
         session_start=session_start,
         session_end=session_end,
@@ -561,15 +802,17 @@ def _build_session_diagnostics(
         market_timezone=market_timezone,
         trading_mode=trading_mode,
         strategy_version=strategy_version,
-        strategy_name=strategy_name,
+        strategy_names=strategy_names,
     )
-    decision_activity = _load_decision_activity_stats(
-        conn,
-        session_start=session_start,
-        session_end=session_end,
-        trading_mode=trading_mode,
-        strategy_version=strategy_version,
-        strategy_name=strategy_name,
+    decision_activity, missing_decision_activity_strategy_names = (
+        _load_decision_activity_stats_for_filter(
+            conn,
+            session_start=session_start,
+            session_end=session_end,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            strategy_names=strategy_names,
+        )
     )
     latest_entries_disabled, latest_entries_disabled_reasons = _load_latest_entries_disabled_state(
         conn,
@@ -578,13 +821,13 @@ def _build_session_diagnostics(
         trading_mode=trading_mode,
         strategy_version=strategy_version,
     )
-    latest_strategy_disabled, latest_strategy_disabled_reasons = _load_latest_strategy_disabled_state(
+    latest_strategy_disabled, latest_strategy_disabled_reasons = _load_latest_strategy_disabled_state_for_filter(
         conn,
         session_start=session_start,
         session_end=session_end,
         trading_mode=trading_mode,
         strategy_version=strategy_version,
-        strategy_name=strategy_name,
+        strategy_names=strategy_names,
     )
     trading_status_value, trading_status_kill_switch_enabled, trading_status_reason = (
         _load_trading_status_context(
@@ -595,16 +838,18 @@ def _build_session_diagnostics(
     )
 
     return SessionDiagnostics(
-        cycle_errors=audit_store.list_by_event_types(
+        cycle_errors=_list_audit_events_for_strategies(
+            audit_store,
             event_types=["supervisor_cycle_error", "strategy_cycle_error"],
             since=session_start,
             until=session_end,
             limit=100,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
-            strategy_name=strategy_name,
+            strategy_names=strategy_names,
         ),
-        dispatch_failures=audit_store.list_by_event_types(
+        dispatch_failures=_list_audit_events_for_strategies(
+            audit_store,
             event_types=[
                 "order_dispatch_failed",
                 "order_dispatch_stop_price_rejected",
@@ -614,19 +859,21 @@ def _build_session_diagnostics(
             limit=100,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
-            strategy_name=strategy_name,
+            strategy_names=strategy_names,
         ),
-        stop_rejection_recoveries=audit_store.list_by_event_types(
+        stop_rejection_recoveries=_list_audit_events_for_strategies(
+            audit_store,
             event_types=["recovery_exit_queued_stop_above_market"],
             since=session_start,
             until=session_end,
             limit=100,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
-            strategy_name=strategy_name,
+            strategy_names=strategy_names,
         ),
         failed_entries=failed_entries,
-        stream_issues=audit_store.list_by_event_types(
+        stream_issues=_list_audit_events_for_strategies(
+            audit_store,
             event_types=[
                 "stream_heartbeat_stale",
                 "stream_restart_failed",
@@ -639,39 +886,42 @@ def _build_session_diagnostics(
             limit=100,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
-            strategy_name=strategy_name,
+            strategy_names=strategy_names,
         ),
-        open_positions=position_store.list_all(
+        open_positions=_list_open_positions_for_strategies(
+            position_store,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
-            strategy_name=strategy_name,
+            strategy_names=strategy_names,
         ),
-        active_orders=order_store.list_by_status(
+        active_orders=_list_active_orders_for_strategies(
+            order_store,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
-            statuses=list(ACTIVE_ORDER_STATUSES),
-            strategy_name=strategy_name,
+            strategy_names=strategy_names,
         ),
-        reconciliation_issues=audit_store.list_by_event_types(
+        reconciliation_issues=_list_audit_events_for_strategies(
+            audit_store,
             event_types=["reconciliation_miss_count_incremented", "runtime_reconciliation_detected"],
             since=session_start,
             until=session_end,
             limit=100,
             trading_mode=trading_mode,
             strategy_version=strategy_version,
-            strategy_name=strategy_name,
+            strategy_names=strategy_names,
         ),
         total_supervisor_cycles=total_cycles,
         entries_disabled_cycles=disabled_cycles,
         entries_disabled_reasons=disabled_reasons,
         latest_entries_disabled=latest_entries_disabled,
         latest_entries_disabled_reasons=latest_entries_disabled_reasons,
-        strategy_name=strategy_name,
+        strategy_name=strategy_label,
         strategy_disabled_cycles=strategy_disabled_cycles,
         strategy_disabled_reasons=strategy_disabled_reasons,
         latest_strategy_disabled=latest_strategy_disabled,
         latest_strategy_disabled_reasons=latest_strategy_disabled_reasons,
         decision_activity=decision_activity,
+        missing_decision_activity_strategy_names=missing_decision_activity_strategy_names,
         trading_mode_value=trading_mode.value,
         trading_status_value=trading_status_value,
         trading_status_kill_switch_enabled=trading_status_kill_switch_enabled,
@@ -975,6 +1225,88 @@ def _load_latest_strategy_disabled_state(
     return (bool(row[0]), _coerce_reason_tuple(row[1]))
 
 
+def _load_strategy_disabled_cycle_stats_for_filter(
+    conn: ConnectionProtocol,
+    *,
+    session_start: datetime,
+    session_end: datetime,
+    eval_start_date: date,
+    eval_end_date: date,
+    market_timezone: str,
+    trading_mode: TradingMode | str,
+    strategy_version: str,
+    strategy_names: Sequence[str],
+) -> tuple[int, dict[str, int]]:
+    if len(strategy_names) <= 1:
+        return _load_strategy_disabled_cycle_stats(
+            conn,
+            session_start=session_start,
+            session_end=session_end,
+            eval_start_date=eval_start_date,
+            eval_end_date=eval_end_date,
+            market_timezone=market_timezone,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            strategy_name=_single_strategy_name(strategy_names),
+        )
+
+    total_cycles = 0
+    merged_reasons: dict[str, int] = {}
+    for strategy_name in strategy_names:
+        cycles, reasons = _load_strategy_disabled_cycle_stats(
+            conn,
+            session_start=session_start,
+            session_end=session_end,
+            eval_start_date=eval_start_date,
+            eval_end_date=eval_end_date,
+            market_timezone=market_timezone,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            strategy_name=strategy_name,
+        )
+        total_cycles += cycles
+        for reason, count in reasons.items():
+            merged_reasons[reason] = merged_reasons.get(reason, 0) + count
+    return (total_cycles, merged_reasons)
+
+
+def _load_latest_strategy_disabled_state_for_filter(
+    conn: ConnectionProtocol,
+    *,
+    session_start: datetime,
+    session_end: datetime,
+    trading_mode: TradingMode | str,
+    strategy_version: str,
+    strategy_names: Sequence[str],
+) -> tuple[bool, tuple[str, ...]]:
+    if len(strategy_names) <= 1:
+        return _load_latest_strategy_disabled_state(
+            conn,
+            session_start=session_start,
+            session_end=session_end,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            strategy_name=_single_strategy_name(strategy_names),
+        )
+
+    latest_disabled = False
+    merged_reasons: list[str] = []
+    for strategy_name in strategy_names:
+        disabled, reasons = _load_latest_strategy_disabled_state(
+            conn,
+            session_start=session_start,
+            session_end=session_end,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            strategy_name=strategy_name,
+        )
+        latest_disabled = latest_disabled or disabled
+        for reason in reasons:
+            if reason not in merged_reasons:
+                merged_reasons.append(reason)
+    return (latest_disabled, tuple(merged_reasons))
+
+
 def _coerce_reason_tuple(value: object) -> tuple[str, ...]:
     if value is None:
         return ()
@@ -984,6 +1316,62 @@ def _coerce_reason_tuple(value: object) -> tuple[str, ...]:
             return ()
         return tuple(part for part in stripped.split(",") if part)
     return tuple(str(reason) for reason in value)
+
+
+def _load_decision_activity_stats_for_filter(
+    conn: ConnectionProtocol,
+    *,
+    session_start: datetime,
+    session_end: datetime,
+    trading_mode: TradingMode | str,
+    strategy_version: str,
+    strategy_names: Sequence[str],
+) -> tuple[DecisionActivityStats, tuple[str, ...]]:
+    if len(strategy_names) <= 1:
+        return (
+            _load_decision_activity_stats(
+                conn,
+                session_start=session_start,
+                session_end=session_end,
+                trading_mode=trading_mode,
+                strategy_version=strategy_version,
+                strategy_name=_single_strategy_name(strategy_names),
+            ),
+            (),
+        )
+
+    cycles = 0
+    records = 0
+    accepted = 0
+    latest_cycle_at: datetime | None = None
+    missing: list[str] = []
+    for strategy_name in strategy_names:
+        stats = _load_decision_activity_stats(
+            conn,
+            session_start=session_start,
+            session_end=session_end,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            strategy_name=strategy_name,
+        )
+        cycles += stats.cycles
+        records += stats.records
+        accepted += stats.accepted
+        if stats.latest_cycle_at is not None and (
+            latest_cycle_at is None or stats.latest_cycle_at > latest_cycle_at
+        ):
+            latest_cycle_at = stats.latest_cycle_at
+        if stats.records == 0:
+            missing.append(strategy_name)
+    return (
+        DecisionActivityStats(
+            cycles=cycles,
+            records=records,
+            accepted=accepted,
+            latest_cycle_at=latest_cycle_at,
+        ),
+        tuple(missing),
+    )
 
 
 def _load_decision_activity_stats(
@@ -1130,8 +1518,14 @@ def _print_decision_activity(diagnostics: SessionDiagnostics) -> None:
             f" - {strategy_label}: cycles={activity.cycles} "
             f"records={activity.records} accepted={activity.accepted} latest={latest}"
         )
+        if diagnostics.missing_decision_activity_strategy_names:
+            missing = ", ".join(diagnostics.missing_decision_activity_strategy_names)
+            print(f" ⚠ Missing decision activity for strategies: {missing}")
     elif diagnostics.total_supervisor_cycles > 0:
         print(f" ⚠ {strategy_label}: no decision_log rows")
+        if diagnostics.missing_decision_activity_strategy_names:
+            missing = ", ".join(diagnostics.missing_decision_activity_strategy_names)
+            print(f" ⚠ Missing decision activity for strategies: {missing}")
 
 
 def _print_session_report(

@@ -44,7 +44,7 @@ from alpaca_bot.runtime.cycle import run_cycle
 from alpaca_bot.runtime.cycle_intent_execution import ACTIVE_STOP_STATUSES, execute_cycle_intents
 from alpaca_bot.runtime.order_dispatch import (
     dispatch_pending_orders,
-    entry_order_next_bar_expiry_age,
+    entry_order_expiry_timestamp,
 )
 from alpaca_bot.runtime.startup_recovery import (
     compose_startup_mismatch_detector,
@@ -1693,10 +1693,37 @@ class RuntimeSupervisor:
         open_positions: list[OpenPosition],
         timestamp: datetime,
     ) -> None:
-        stale = [
-            p for p in open_positions
-            if p.entry_timestamp.astimezone(self.settings.market_timezone).date() < session_date
-        ]
+        same_session_entry_symbols = self._same_session_entry_symbols(session_date)
+        stale = []
+        skipped_same_session_entry = []
+        for position in open_positions:
+            if position.entry_timestamp.astimezone(self.settings.market_timezone).date() >= session_date:
+                continue
+            if (
+                position.symbol,
+                position.strategy_name,
+            ) in same_session_entry_symbols:
+                skipped_same_session_entry.append(position)
+                continue
+            stale.append(position)
+        if skipped_same_session_entry:
+            self._append_audit(
+                AuditEvent(
+                    event_type="stale_position_cleanup_skipped_same_session_entry",
+                    payload={
+                        "symbols": [p.symbol for p in skipped_same_session_entry],
+                        "session_date": session_date.isoformat(),
+                        "opened_at_dates": {
+                            p.symbol: p.entry_timestamp.astimezone(
+                                self.settings.market_timezone
+                            ).date().isoformat()
+                            for p in skipped_same_session_entry
+                        },
+                        "timestamp": timestamp.isoformat(),
+                    },
+                    created_at=timestamp,
+                )
+            )
         if not stale:
             return
 
@@ -1762,6 +1789,38 @@ class RuntimeSupervisor:
             except Exception:
                 logger.exception("Notifier failed to send stale carryover positions alert")
 
+    def _same_session_entry_symbols(self, session_date: date) -> set[tuple[str, str]]:
+        if not hasattr(self.runtime.order_store, "list_by_status"):
+            return set()
+        store_lock = getattr(self.runtime, "store_lock", None)
+        try:
+            with store_lock if store_lock is not None else contextlib.nullcontext():
+                entry_orders = self.runtime.order_store.list_by_status(
+                    trading_mode=self.settings.trading_mode,
+                    strategy_version=self.settings.strategy_version,
+                    statuses=["filled", "partially_filled"],
+                )
+        except Exception:
+            logger.warning(
+                "Failed to load same-session entry fills for stale cleanup guard",
+                exc_info=True,
+            )
+            return set()
+        symbols: set[tuple[str, str]] = set()
+        for order in entry_orders:
+            if getattr(order, "intent_type", None) != "entry":
+                continue
+            timestamp = (
+                getattr(order, "signal_timestamp", None)
+                or getattr(order, "created_at", None)
+                or getattr(order, "updated_at", None)
+            )
+            if timestamp is None:
+                continue
+            if _session_date(timestamp, self.settings) == session_date:
+                symbols.add((order.symbol, order.strategy_name))
+        return symbols
+
     def _load_open_positions(self) -> list[OpenPosition]:
         return [
             OpenPosition(
@@ -1811,7 +1870,6 @@ class RuntimeSupervisor:
                 statuses=list(ACTIVE_ENTRY_STATUSES),
             )
 
-        max_age = entry_order_next_bar_expiry_age(self.settings)
         timestamp_utc = (
             timestamp.replace(tzinfo=timezone.utc)
             if timestamp.tzinfo is None
@@ -1835,7 +1893,9 @@ class RuntimeSupervisor:
             if signal_ts.tzinfo is None:
                 signal_ts = signal_ts.replace(tzinfo=timezone.utc)
             age = timestamp_utc - signal_ts.astimezone(timezone.utc)
-            if age < max_age:
+            expiry_at = entry_order_expiry_timestamp(self.settings, signal_ts)
+            max_age = expiry_at - signal_ts.astimezone(timezone.utc)
+            if timestamp_utc < expiry_at:
                 continue
 
             broker_order_id = getattr(broker_order, "broker_order_id", None) or order.broker_order_id

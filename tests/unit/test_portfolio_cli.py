@@ -53,7 +53,13 @@ def _set_env(monkeypatch):
         monkeypatch.setenv(k, v)
 
 
-def _trade(symbol: str, exit_timestamp: str, pnl: float) -> ReplayTradeRecord:
+def _trade(
+    symbol: str,
+    exit_timestamp: str,
+    pnl: float,
+    *,
+    exit_reason: str = "eod",
+) -> ReplayTradeRecord:
     exit_time = datetime.fromisoformat(exit_timestamp)
     if exit_time.tzinfo is None:
         exit_time = exit_time.replace(tzinfo=timezone.utc)
@@ -64,7 +70,7 @@ def _trade(symbol: str, exit_timestamp: str, pnl: float) -> ReplayTradeRecord:
         quantity=1,
         entry_time=exit_time,
         exit_time=exit_time,
-        exit_reason="eod",
+        exit_reason=exit_reason,
         pnl=pnl,
         return_pct=pnl / 100.0,
     )
@@ -223,10 +229,12 @@ def test_proof_horizon_cli_measures_cumulative_gate(tmp_path, monkeypatch):
     assert rc == 0
     text = out.read_text()
     assert "# Proof horizon audit - bull_flag" in text
+    assert "`2` closed trades and `$0.01` cumulative P&L across `1` active" in text
     assert "| historical starts checked | 3 |" in text
     assert "| starts that eventually reached proof gate | 2 |" in text
     assert "| starts not proven by data end | 1 |" in text
     assert "| eventual pass rate | 66.67% |" in text
+    assert "| starts reaching active-day threshold | 2 |" in text
     assert "| first-threshold pass rate | 50.00% |" in text
     assert "| first-threshold failures that later recovered | 1 |" in text
     assert "| median sessions to proof pass | 1 |" in text
@@ -237,10 +245,258 @@ def test_proof_horizon_cli_measures_cumulative_gate(tmp_path, monkeypatch):
     assert payload["scenarios"] == 2
     assert payload["trades"] == 4
     assert payload["total_pnl"] == 2.0
+    assert payload["min_active_days"] == 1
     assert payload["historical_starts_checked"] == 3
     assert payload["starts_eventually_passed"] == 2
     assert payload["starts_not_proven_by_data_end"] == 1
+    assert payload["starts_reaching_min_active_days"] == 2
     assert payload["first_threshold_failures_later_recovered"] == 1
+
+
+def test_proof_horizon_cli_applies_active_day_gate(tmp_path, monkeypatch):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+    sessions = ["2026-01-02", "2026-01-05", "2026-01-06"]
+    _write_multi_session_scenario(scen / "AAA.json", "AAA", sessions)
+    _write_multi_session_scenario(scen / "BBB.json", "BBB", sessions)
+
+    def fake_portfolio_pooled_trades(*args, **kwargs):
+        return [
+            _trade("AAA", "2026-01-02T20:00:00+00:00", -2.00),
+            _trade("BBB", "2026-01-02T20:00:00+00:00", 1.00),
+            _trade("AAA", "2026-01-05T20:00:00+00:00", 2.00),
+            _trade("BBB", "2026-01-05T20:00:00+00:00", 1.00),
+        ]
+
+    monkeypatch.setattr(
+        replay_cli, "portfolio_pooled_trades", fake_portfolio_pooled_trades
+    )
+    out = tmp_path / "proof.md"
+    json_out = tmp_path / "proof.json"
+
+    rc = main([
+        "proof-horizon",
+        "--scenario-dir", str(scen),
+        "--strategy", "bull_flag",
+        "--min-trades", "2",
+        "--min-pnl", "0.01",
+        "--min-active-days", "2",
+        "--output", str(out),
+        "--json", str(json_out),
+    ])
+
+    assert rc == 0
+    text = out.read_text()
+    assert "`2` closed trades and `$0.01` cumulative P&L across `2` active" in text
+    assert "| starts that eventually reached proof gate | 1 |" in text
+    assert "| starts not proven by data end | 2 |" in text
+    assert "| eventual pass rate | 33.33% |" in text
+    assert "| starts reaching trade threshold | 2 |" in text
+    assert "| starts reaching active-day threshold | 1 |" in text
+    assert "| first-threshold pass rate | 0.00% |" in text
+    assert "| first-threshold failures that later recovered | 1 |" in text
+    assert "| median sessions to proof pass | 2 |" in text
+
+    payload = json.loads(json_out.read_text())
+    assert payload["min_active_days"] == 2
+    assert payload["starts_eventually_passed"] == 1
+    assert payload["starts_not_proven_by_data_end"] == 2
+    assert payload["starts_reaching_min_trades"] == 2
+    assert payload["starts_reaching_min_active_days"] == 1
+    assert payload["first_threshold_pass_rate"] == 0.0
+
+
+def test_proof_horizon_cli_applies_robustness_gates(tmp_path, monkeypatch):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+    sessions = ["2026-01-02", "2026-01-05", "2026-01-06"]
+    _write_multi_session_scenario(scen / "AAA.json", "AAA", sessions)
+    _write_multi_session_scenario(scen / "BBB.json", "BBB", sessions)
+
+    def fake_portfolio_pooled_trades(*args, **kwargs):
+        return [
+            _trade(
+                "AAA",
+                "2026-01-02T20:00:00+00:00",
+                2.00,
+                exit_reason="profit_target",
+            ),
+            _trade("BBB", "2026-01-02T20:00:00+00:00", -1.00),
+            _trade(
+                "AAA",
+                "2026-01-05T20:00:00+00:00",
+                2.00,
+                exit_reason="profit_target",
+            ),
+            _trade(
+                "BBB",
+                "2026-01-05T20:00:00+00:00",
+                -1.00,
+                exit_reason="stop",
+            ),
+            _trade(
+                "AAA",
+                "2026-01-06T20:00:00+00:00",
+                2.00,
+                exit_reason="profit_target",
+            ),
+            _trade(
+                "BBB",
+                "2026-01-06T20:00:00+00:00",
+                2.00,
+                exit_reason="profit_target",
+            ),
+        ]
+
+    monkeypatch.setattr(
+        replay_cli, "portfolio_pooled_trades", fake_portfolio_pooled_trades
+    )
+    out = tmp_path / "proof.md"
+    json_out = tmp_path / "proof.json"
+
+    rc = main([
+        "proof-horizon",
+        "--scenario-dir", str(scen),
+        "--strategy", "bull_flag",
+        "--min-trades", "2",
+        "--min-pnl", "0.01",
+        "--min-active-days", "1",
+        "--min-profit-factor", "1.20",
+        "--max-single-win-pnl-share", "0.50",
+        "--max-eod-loss-share", "0.50",
+        "--output", str(out),
+        "--json", str(json_out),
+    ])
+
+    assert rc == 0
+    text = out.read_text()
+    assert "profit factor >= `1.20`" in text
+    assert "single-win P&L share <= `0.50`" in text
+    assert "EOD loss share <= `0.50`" in text
+    assert "| starts that eventually reached proof gate | 3 |" in text
+    assert "| first-threshold pass rate | 33.33% |" in text
+    assert "| first-threshold failures that later recovered | 2 |" in text
+    assert "| first-threshold blocker counts | " in text
+    assert "eod_loss_share:1" in text
+    assert "profit_concentration:2" in text
+    assert "| terminal blocker counts | none |" in text
+    assert "| median sessions to proof pass | 2 |" in text
+
+    payload = json.loads(json_out.read_text())
+    assert payload["min_profit_factor"] == 1.2
+    assert payload["max_single_win_pnl_share"] == 0.5
+    assert payload["max_eod_loss_share"] == 0.5
+    assert payload["first_threshold_passes"] == 1
+    assert payload["first_threshold_failures_later_recovered"] == 2
+    assert payload["first_threshold_blockers"] == {
+        "eod_loss_share": 1,
+        "profit_concentration": 2,
+    }
+    assert payload["terminal_blockers"] == {}
+
+
+def test_proof_horizon_sweep_cli_scores_levers_against_robust_gate(
+    tmp_path, monkeypatch
+):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+    sessions = ["2026-01-02", "2026-01-05", "2026-01-06"]
+    _write_multi_session_scenario(scen / "AAA.json", "AAA", sessions)
+    _write_multi_session_scenario(scen / "BBB.json", "BBB", sessions)
+
+    def fake_portfolio_pooled_trades(_scenarios, settings, _strategy_name, **_kwargs):
+        loss_reason = "stop" if settings.enable_giveback_exit else "eod"
+        return [
+            _trade(
+                "AAA",
+                "2026-01-02T20:00:00+00:00",
+                2.00,
+                exit_reason="profit_target",
+            ),
+            _trade(
+                "BBB",
+                "2026-01-02T20:00:00+00:00",
+                -1.00,
+                exit_reason=loss_reason,
+            ),
+        ]
+
+    monkeypatch.setattr(
+        replay_cli, "portfolio_pooled_trades", fake_portfolio_pooled_trades
+    )
+    out = tmp_path / "proof-sweep.md"
+    json_out = tmp_path / "proof-sweep.json"
+
+    rc = main([
+        "proof-horizon-sweep",
+        "--scenario-dir", str(scen),
+        "--strategy", "bull_flag",
+        "--min-trades", "2",
+        "--min-pnl", "0.01",
+        "--min-active-days", "1",
+        "--max-eod-loss-share", "0.50",
+        "--lever-label", "V_giveback_exit:on@0.0025,max_return=0",
+        "--output", str(out),
+        "--json", str(json_out),
+    ])
+
+    assert rc == 0
+    text = out.read_text()
+    assert "# Proof horizon sweep - bull_flag" in text
+    assert "`V_giveback_exit:on@0.0025,max_return=0` | 1 | +1" in text
+    assert "`baseline` | 0 | +0" in text
+    assert "## Candidates Improving Proof Horizon" in text
+    assert "enable_giveback_exit=True" in text
+
+    payload = json.loads(json_out.read_text())
+    labels = [row["label"] for row in payload["rows"]]
+    assert labels == ["V_giveback_exit:on@0.0025,max_return=0", "baseline"]
+    assert payload["rows"][0]["summary"]["starts_eventually_passed"] == 1
+    assert payload["rows"][1]["summary"]["terminal_blockers"] == {
+        "active_days": 2,
+        "eod_loss_share": 1,
+        "positive_pnl": 2,
+        "sample_trades": 2,
+    }
+
+
+def test_proof_horizon_cli_rejects_non_positive_active_days(
+    tmp_path, monkeypatch, capsys
+):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+
+    rc = main([
+        "proof-horizon",
+        "--scenario-dir", str(scen),
+        "--strategy", "bull_flag",
+        "--min-active-days", "0",
+    ])
+
+    assert rc == 1
+    assert "--min-active-days must be greater than 0" in capsys.readouterr().err
+
+
+def test_proof_horizon_cli_rejects_negative_robustness_thresholds(
+    tmp_path, monkeypatch, capsys
+):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+
+    rc = main([
+        "proof-horizon",
+        "--scenario-dir", str(scen),
+        "--strategy", "bull_flag",
+        "--min-profit-factor", "-1",
+    ])
+
+    assert rc == 1
+    assert "--min-profit-factor must be non-negative" in capsys.readouterr().err
 
 
 def test_proof_horizon_cli_rejects_duplicate_symbols(tmp_path, monkeypatch, capsys):

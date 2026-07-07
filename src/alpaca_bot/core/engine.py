@@ -280,6 +280,113 @@ def evaluate_cycle(
         ).total_seconds()
         is_too_young = position_age_s < settings.viability_min_hold_minutes * 60
 
+        if (
+            settings.enable_no_follow_through_exit
+            and settings.no_follow_through_exit_minutes > 0
+            and not is_too_young
+            and not is_short_option
+            and position_age_s >= settings.no_follow_through_exit_minutes * 60
+        ):
+            entry_ts = position.entry_timestamp.astimezone(timezone.utc)
+            bars_since_entry = [
+                bar
+                for bar in bars
+                if bar.timestamp.astimezone(timezone.utc) >= entry_ts
+            ]
+            if is_short:
+                best_price = (
+                    min(bar.low for bar in bars_since_entry)
+                    if bars_since_entry
+                    else latest_bar.low
+                )
+                if position.lowest_price > 0:
+                    best_price = min(best_price, position.lowest_price)
+                favorable_price = position.entry_price * (
+                    1 - settings.no_follow_through_min_favorable_pct
+                )
+                followed_through = best_price <= favorable_price
+                failed_now = latest_bar.close >= position.entry_price
+            else:
+                best_price = (
+                    max(bar.high for bar in bars_since_entry)
+                    if bars_since_entry
+                    else latest_bar.high
+                )
+                best_price = max(best_price, position.highest_price)
+                favorable_price = position.entry_price * (
+                    1 + settings.no_follow_through_min_favorable_pct
+                )
+                followed_through = best_price >= favorable_price
+                failed_now = latest_bar.close <= position.entry_price
+            if not followed_through and failed_now:
+                intents.append(
+                    CycleIntent(
+                        intent_type=CycleIntentType.EXIT,
+                        symbol=position.symbol,
+                        timestamp=now,
+                        reason="no_follow_through",
+                        strategy_name=strategy_name,
+                    )
+                )
+                continue
+
+        if (
+            settings.enable_giveback_exit
+            and not is_too_young
+            and not is_short
+            and not is_short_option
+            and position.entry_price > 0
+        ):
+            entry_ts = position.entry_timestamp.astimezone(timezone.utc)
+            bars_since_entry = [
+                bar
+                for bar in bars
+                if bar.timestamp.astimezone(timezone.utc) >= entry_ts
+            ]
+            best_price = (
+                max(bar.high for bar in bars_since_entry)
+                if bars_since_entry
+                else latest_bar.high
+            )
+            best_price = max(best_price, position.highest_price)
+            reached_favorable = best_price >= position.entry_price * (
+                1 + settings.giveback_exit_min_favorable_pct
+            )
+            current_return = (latest_bar.close - position.entry_price) / position.entry_price
+            if reached_favorable and current_return <= settings.giveback_exit_max_return_pct:
+                intents.append(
+                    CycleIntent(
+                        intent_type=CycleIntentType.EXIT,
+                        symbol=position.symbol,
+                        timestamp=now,
+                        reason="giveback_exit",
+                        strategy_name=strategy_name,
+                    )
+                )
+                continue
+
+        if (
+            settings.enable_early_loss_exit
+            and settings.early_loss_exit_minutes > 0
+            and not is_too_young
+            and not is_short
+            and not is_short_option
+            and position.entry_price > 0
+            and position_age_s >= settings.early_loss_exit_minutes * 60
+        ):
+            current_return = (latest_bar.close - position.entry_price) / position.entry_price
+            if current_return <= -settings.early_loss_exit_return_pct:
+                intents.append(
+                    CycleIntent(
+                        intent_type=CycleIntentType.EXIT,
+                        symbol=position.symbol,
+                        timestamp=now,
+                        reason="early_loss_exit",
+                        strategy_name=strategy_name,
+                    )
+                )
+                continue
+
         if settings.enable_trend_filter_exit and not is_too_young and not is_short_option:
             daily_bars_pos = daily_bars_by_symbol.get(position.symbol, ())
             if len(daily_bars_pos) >= settings.daily_sma_period + settings.trend_filter_exit_lookback_days:
@@ -964,6 +1071,80 @@ def evaluate_cycle(
                     ))
                     continue
 
+                if (
+                    signal.entry_level > 0
+                    and (
+                        settings.entry_min_close_to_entry_pct > -1.0
+                        or settings.entry_max_close_to_entry_pct < 1.0
+                    )
+                ):
+                    close_to_entry_pct = round(
+                        (signal.signal_bar.close / signal.entry_level) - 1,
+                        6,
+                    )
+                    if close_to_entry_pct < settings.entry_min_close_to_entry_pct:
+                        _decision_records.append(DecisionRecord(
+                            cycle_at=now,
+                            symbol=symbol,
+                            strategy_name=strategy_name,
+                            trading_mode=_tm,
+                            strategy_version=_sv,
+                            decision="rejected",
+                            reject_stage="entry_quality",
+                            reject_reason="close_too_far_below_entry",
+                            entry_level=signal.entry_level,
+                            signal_bar_close=signal.signal_bar.close,
+                            relative_volume=signal.relative_volume,
+                            atr=None,
+                            stop_price=signal.stop_price,
+                            limit_price=signal.limit_price,
+                            initial_stop_price=signal.initial_stop_price,
+                            quantity=None,
+                            risk_per_share=None,
+                            equity=equity,
+                            filter_results={
+                                "close_to_entry_pct": close_to_entry_pct,
+                                "min_close_to_entry_pct": (
+                                    settings.entry_min_close_to_entry_pct
+                                ),
+                            },
+                            vix_close=_ctx_vix_close,
+                            vix_above_sma=_ctx_vix_above_sma,
+                            sector_passing_pct=_ctx_sector_passing_pct,
+                        ))
+                        continue
+                    if close_to_entry_pct > settings.entry_max_close_to_entry_pct:
+                        _decision_records.append(DecisionRecord(
+                            cycle_at=now,
+                            symbol=symbol,
+                            strategy_name=strategy_name,
+                            trading_mode=_tm,
+                            strategy_version=_sv,
+                            decision="rejected",
+                            reject_stage="entry_quality",
+                            reject_reason="close_too_far_above_entry",
+                            entry_level=signal.entry_level,
+                            signal_bar_close=signal.signal_bar.close,
+                            relative_volume=signal.relative_volume,
+                            atr=None,
+                            stop_price=signal.stop_price,
+                            limit_price=signal.limit_price,
+                            initial_stop_price=signal.initial_stop_price,
+                            quantity=None,
+                            risk_per_share=None,
+                            equity=equity,
+                            filter_results={
+                                "close_to_entry_pct": close_to_entry_pct,
+                                "max_close_to_entry_pct": (
+                                    settings.entry_max_close_to_entry_pct
+                                ),
+                            },
+                            vix_close=_ctx_vix_close,
+                            vix_above_sma=_ctx_vix_above_sma,
+                            sector_passing_pct=_ctx_sector_passing_pct,
+                        ))
+                        continue
+
                 # VWAP entry filter: reject when signal bar close < session VWAP.
                 # Fail-open: None VWAP (empty bars) never blocks.
                 if settings.enable_vwap_entry_filter:
@@ -1149,7 +1330,7 @@ def evaluate_cycle(
                 selected.append(candidate)
                 current_exposure += candidate_exposure
             _selected_symbols = {c.symbol for c in selected}
-            for *_rank, candidate in entry_candidates:
+            for close_to_entry_pct, _relative_volume_rank, candidate in entry_candidates:
                 _sig = _candidate_signals.get(candidate.symbol, (None, None, None))
                 _accepted = candidate.symbol in _selected_symbols
                 _rps = (
@@ -1158,6 +1339,15 @@ def evaluate_cycle(
                     else None
                 )
                 _vwap_info = _candidate_vwap.get(candidate.symbol, (None, None))
+                _filter_results = {"close_to_entry_pct": close_to_entry_pct}
+                if settings.entry_min_close_to_entry_pct > -1.0:
+                    _filter_results["min_close_to_entry_pct"] = (
+                        settings.entry_min_close_to_entry_pct
+                    )
+                if settings.entry_max_close_to_entry_pct < 1.0:
+                    _filter_results["max_close_to_entry_pct"] = (
+                        settings.entry_max_close_to_entry_pct
+                    )
                 _decision_records.append(DecisionRecord(
                     cycle_at=now,
                     symbol=candidate.symbol,
@@ -1177,7 +1367,7 @@ def evaluate_cycle(
                     quantity=candidate.quantity,
                     risk_per_share=_rps,
                     equity=equity,
-                    filter_results={},
+                    filter_results=_filter_results,
                     vix_close=_ctx_vix_close,
                     vix_above_sma=_ctx_vix_above_sma,
                     sector_passing_pct=_ctx_sector_passing_pct,

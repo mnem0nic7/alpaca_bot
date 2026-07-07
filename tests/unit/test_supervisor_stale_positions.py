@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntent, CycleIntentType, CycleResult
 from alpaca_bot.domain import OpenPosition
-from alpaca_bot.storage.models import AuditEvent
+from alpaca_bot.storage.models import AuditEvent, OrderRecord
 
 
 def _make_settings() -> Settings:
@@ -199,6 +199,61 @@ def test_no_stale_positions_no_executor_call():
         if getattr(e, "event_type", None) == "stale_positions_detected"
     ]
     assert stale_events == []
+
+
+def test_stale_cleanup_skips_position_with_same_session_entry_fill():
+    """A bad position opened_at timestamp must not force-close a same-session fill."""
+    supervisor, executor, settings = _make_supervisor()
+    now = datetime(2026, 7, 1, 15, 32, tzinfo=timezone.utc)
+    session_date = now.astimezone(settings.market_timezone).date()
+    filled_entry = OrderRecord(
+        client_order_id="bull_flag:v1:2026-07-01:KRMN:entry",
+        symbol="KRMN",
+        side="buy",
+        intent_type="entry",
+        status="filled",
+        quantity=7.2727,
+        filled_quantity=7.2727,
+        trading_mode=settings.trading_mode,
+        strategy_version=settings.strategy_version,
+        strategy_name="bull_flag",
+        signal_timestamp=datetime(2026, 7, 1, 15, 15, tzinfo=timezone.utc),
+        created_at=now,
+        updated_at=now,
+    )
+    supervisor.runtime.order_store = SimpleNamespace(
+        list_by_status=lambda **kw: [filled_entry],
+        list_pending_submit=lambda **kw: [],
+        daily_realized_pnl=lambda **kw: 0.0,
+        daily_realized_pnl_by_symbol=lambda **kw: {},
+    )
+    bad_position_timestamp = datetime(2026, 7, 1, 3, 39, tzinfo=timezone.utc)
+    positions = [
+        _make_open_position(
+            "KRMN",
+            bad_position_timestamp,
+            strategy_name="bull_flag",
+        )
+    ]
+
+    supervisor._close_stale_carryover_positions(
+        session_date=session_date,
+        open_positions=positions,
+        timestamp=now,
+    )
+
+    assert executor.calls == []
+    stale_events = [
+        e for e in supervisor._test_audit_store.appended
+        if e.event_type == "stale_positions_detected"
+    ]
+    assert stale_events == []
+    skipped_events = [
+        e for e in supervisor._test_audit_store.appended
+        if e.event_type == "stale_position_cleanup_skipped_same_session_entry"
+    ]
+    assert len(skipped_events) == 1
+    assert skipped_events[0].payload["symbols"] == ["KRMN"]
 
 
 def test_stale_positions_detected_audit_event_written():

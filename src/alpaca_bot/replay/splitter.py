@@ -44,6 +44,35 @@ def split_scenario(
     warmup = is_daily[-daily_warmup:] if len(is_daily) >= daily_warmup else is_daily[:]
     oos_daily_tail = [b for b in scenario.daily_bars if b.timestamp.date() > last_is_date]
     oos_daily = warmup + oos_daily_tail
+    is_regime_daily = None
+    oos_regime_daily = None
+    if scenario.regime_daily_bars:
+        is_regime_daily, oos_regime_daily = _split_daily_context(
+            scenario.regime_daily_bars,
+            last_is_date=last_is_date,
+            daily_warmup=daily_warmup,
+        )
+    is_vix_daily = None
+    oos_vix_daily = None
+    if scenario.vix_daily_bars:
+        is_vix_daily, oos_vix_daily = _split_daily_context(
+            scenario.vix_daily_bars,
+            last_is_date=last_is_date,
+            daily_warmup=daily_warmup,
+        )
+    is_sector_daily_by_etf = None
+    oos_sector_daily_by_etf = None
+    if scenario.sector_daily_bars_by_etf:
+        is_sector_daily_by_etf = {}
+        oos_sector_daily_by_etf = {}
+        for etf, bars in scenario.sector_daily_bars_by_etf.items():
+            is_context, oos_context = _split_daily_context(
+                bars,
+                last_is_date=last_is_date,
+                daily_warmup=daily_warmup,
+            )
+            is_sector_daily_by_etf[etf] = is_context
+            oos_sector_daily_by_etf[etf] = oos_context
 
     return (
         ReplayScenario(
@@ -52,6 +81,9 @@ def split_scenario(
             starting_equity=scenario.starting_equity,
             daily_bars=is_daily,
             intraday_bars=is_intraday,
+            regime_daily_bars=is_regime_daily,
+            vix_daily_bars=is_vix_daily,
+            sector_daily_bars_by_etf=is_sector_daily_by_etf,
         ),
         ReplayScenario(
             name=f"{scenario.name}_oos",
@@ -59,5 +91,20 @@ def split_scenario(
             starting_equity=scenario.starting_equity,
             daily_bars=oos_daily,
             intraday_bars=oos_intraday,
+            regime_daily_bars=oos_regime_daily,
+            vix_daily_bars=oos_vix_daily,
+            sector_daily_bars_by_etf=oos_sector_daily_by_etf,
         ),
     )
+
+
+def _split_daily_context(
+    bars: list[Bar],
+    *,
+    last_is_date: date,
+    daily_warmup: int,
+) -> tuple[list[Bar], list[Bar]]:
+    is_bars = [b for b in bars if b.timestamp.date() <= last_is_date]
+    warmup = is_bars[-daily_warmup:] if len(is_bars) >= daily_warmup else is_bars[:]
+    oos_tail = [b for b in bars if b.timestamp.date() > last_is_date]
+    return is_bars, warmup + oos_tail

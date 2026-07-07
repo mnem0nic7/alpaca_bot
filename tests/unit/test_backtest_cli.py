@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import dataclasses
 import io
 import json
 import os
@@ -56,6 +57,68 @@ _EMPTY_REPORT = BacktestReport(
 
 def _strip_comments(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.startswith("#"))
+
+
+def test_regime_benchmark_attaches_from_unsampled_scenario_file(tmp_path: Path) -> None:
+    from datetime import datetime, timezone
+
+    from alpaca_bot.domain.models import Bar, ReplayScenario
+    from alpaca_bot.replay.cli import _with_regime_daily_bars_from_dir
+
+    ts = datetime(2026, 1, 2, 20, 0, tzinfo=timezone.utc)
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=ts,
+        open=100.0,
+        high=101.0,
+        low=99.0,
+        close=100.5,
+        volume=1000,
+    )
+    spy_payload = {
+        "name": "SPY_252d",
+        "symbol": "SPY",
+        "starting_equity": 100_000.0,
+        "daily_bars": [
+            {
+                "symbol": "SPY",
+                "timestamp": ts.isoformat(),
+                "open": 500.0,
+                "high": 501.0,
+                "low": 499.0,
+                "close": 500.5,
+                "volume": 1000,
+            }
+        ],
+        "intraday_bars": [
+            {
+                "symbol": "SPY",
+                "timestamp": ts.isoformat(),
+                "open": 500.0,
+                "high": 501.0,
+                "low": 499.0,
+                "close": 500.5,
+                "volume": 1000,
+            }
+        ],
+    }
+    (tmp_path / "SPY_252d.json").write_text(json.dumps(spy_payload))
+    scenario = ReplayScenario(
+        name="AAPL_252d",
+        symbol="AAPL",
+        starting_equity=100_000.0,
+        daily_bars=[bar],
+        intraday_bars=[bar],
+    )
+
+    [enriched] = _with_regime_daily_bars_from_dir(
+        [scenario],
+        scenario_dir=tmp_path,
+        settings=_FAKE_SETTINGS,
+    )
+
+    assert enriched.regime_daily_bars is not None
+    assert enriched.regime_daily_bars[0].symbol == "SPY"
 
 
 # ---------------------------------------------------------------------------
@@ -742,6 +805,7 @@ def test_audit_subcommand_writes_markdown_and_json(tmp_path, monkeypatch):
 
     out_md = tmp_path / "audit.md"
     out_json = tmp_path / "audit.json"
+    out_jsonl = tmp_path / "audit.jsonl"
     rc = main([
         "audit",
         "--scenario-dir", str(scenario_dir),
@@ -749,6 +813,7 @@ def test_audit_subcommand_writes_markdown_and_json(tmp_path, monkeypatch):
         "--slippage-bps", "5",
         "--output", str(out_md),
         "--json", str(out_json),
+        "--jsonl", str(out_jsonl),
     ])
     assert rc == 0
 
@@ -766,6 +831,243 @@ def test_audit_subcommand_writes_markdown_and_json(tmp_path, monkeypatch):
         "negative-edge", "no-evidence", "positive-edge", "insufficient-data"
     )
     assert row["cost_drag"] >= 0
+
+    jsonl_rows = [
+        json.loads(line) for line in out_jsonl.read_text().splitlines() if line
+    ]
+    assert len(jsonl_rows) == 1
+    assert jsonl_rows[0]["strategy"] == "breakout"
+    assert jsonl_rows[0]["scenarios"] == 2
+    assert jsonl_rows[0]["slippage_bps"] == 5.0
+
+
+def test_portfolio_basket_audit_subcommand_scores_combined_basket(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from alpaca_bot.replay import cli as replay_cli
+    from alpaca_bot.replay.audit import StrategyAuditRow
+    from alpaca_bot.replay.cli import main
+
+    _set_audit_env(monkeypatch)
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+    payload = json.loads(_GOLDEN_SCENARIO.read_text())
+    for symbol in ("AAA", "BBB"):
+        scenario = dict(payload)
+        scenario["name"] = symbol
+        scenario["symbol"] = symbol
+        for key in ("daily_bars", "intraday_bars"):
+            scenario[key] = [dict(bar, symbol=symbol) for bar in payload[key]]
+        (scenario_dir / f"{symbol}.json").write_text(json.dumps(scenario))
+
+    captured: dict[str, object] = {}
+
+    def fake_basket_pooled_trades(
+        scenarios,
+        settings,
+        strategy_names,
+        *,
+        strategy_equity_scales=None,
+        on_progress=None,
+    ):
+        captured["basket"] = tuple(strategy_names)
+        captured["strategy_equity_scales"] = dict(strategy_equity_scales or {})
+        captured["max_open_positions"] = settings.max_open_positions
+        captured["starting_equity"] = [scenario.starting_equity for scenario in scenarios]
+        if on_progress is not None:
+            on_progress("basket replay complete")
+        return []
+
+    def fake_run_audit(*, scenarios, settings, strategies, pooled_trades_fn, **kwargs):
+        captured["audit_strategies"] = list(strategies)
+        pooled_trades_fn(scenarios, settings, strategies[0])
+        return [
+            StrategyAuditRow(
+                strategy=strategies[0],
+                scenarios=len(scenarios),
+                trades=42,
+                win_rate=0.5,
+                profit_factor=1.2,
+                total_pnl=10.0,
+                mean_trade_pnl=0.2381,
+                annualized_sharpe=1.0,
+                ci_low=0.01,
+                ci_high=0.5,
+                p_positive=0.04,
+                zero_cost_total_pnl=12.0,
+                cost_drag=2.0,
+                verdict="positive-edge",
+            )
+        ]
+
+    monkeypatch.setattr(
+        replay_cli,
+        "portfolio_basket_pooled_trades",
+        fake_basket_pooled_trades,
+    )
+    monkeypatch.setattr(replay_cli, "run_audit", fake_run_audit)
+    out_md = tmp_path / "basket.md"
+    out_jsonl = tmp_path / "basket.jsonl"
+
+    rc = main([
+        "portfolio-basket-audit",
+        "--scenario-dir", str(scenario_dir),
+        "--strategy", "bull_flag",
+        "--strategy", "orb",
+        "--slippage-bps", "2",
+        "--max-open-positions", "4",
+        "--starting-equity", "12345",
+        "--confidence-scale", "orb=0.25",
+        "--output", str(out_md),
+        "--jsonl", str(out_jsonl),
+    ])
+
+    assert rc == 0
+    assert captured["basket"] == ("bull_flag", "orb")
+    assert captured["strategy_equity_scales"] == {"orb": 0.25}
+    assert captured["audit_strategies"] == ["bull_flag+orb"]
+    assert captured["max_open_positions"] == 4
+    assert captured["starting_equity"] == [12345.0, 12345.0]
+    text = out_md.read_text()
+    assert "Basket: `bull_flag+orb`." in text
+    assert "Confidence sizing scales: `orb=0.25`." in text
+    assert "## K=4" in text
+    assert "positive-edge" in text
+    [payload] = [json.loads(line) for line in out_jsonl.read_text().splitlines()]
+    assert payload["max_open_positions"] == 4
+    assert payload["rows"][0]["strategy"] == "bull_flag+orb"
+
+
+def test_portfolio_basket_audit_rejects_single_strategy(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from alpaca_bot.replay.cli import main
+
+    _set_audit_env(monkeypatch)
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+
+    rc = main([
+        "portfolio-basket-audit",
+        "--scenario-dir", str(scenario_dir),
+        "--strategy", "bull_flag",
+    ])
+
+    assert rc == 1
+    assert "at least two --strategy" in capsys.readouterr().err
+
+
+def test_portfolio_basket_audit_rejects_unknown_confidence_scale_strategy(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from alpaca_bot.replay.cli import main
+
+    _set_audit_env(monkeypatch)
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+
+    rc = main([
+        "portfolio-basket-audit",
+        "--scenario-dir", str(scenario_dir),
+        "--strategy", "bull_flag",
+        "--strategy", "orb",
+        "--confidence-scale", "momentum=0.25",
+    ])
+
+    assert rc == 1
+    assert "not in the basket" in capsys.readouterr().err
+
+
+def test_audit_subcommand_resume_jsonl_skips_completed_strategy(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    import shutil
+
+    from alpaca_bot.replay import cli as replay_cli
+    from alpaca_bot.replay.audit import StrategyAuditRow
+    from alpaca_bot.replay.cli import main
+
+    _set_audit_env(monkeypatch)
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+    shutil.copy(_GOLDEN_SCENARIO, scenario_dir / "a.json")
+    shutil.copy(_GOLDEN_SCENARIO, scenario_dir / "b.json")
+
+    completed = StrategyAuditRow(
+        strategy="breakout",
+        scenarios=2,
+        trades=10,
+        win_rate=0.5,
+        profit_factor=1.0,
+        total_pnl=1.0,
+        mean_trade_pnl=0.1,
+        annualized_sharpe=1.0,
+        ci_low=-0.1,
+        ci_high=0.3,
+        p_positive=0.2,
+        zero_cost_total_pnl=2.0,
+        cost_drag=1.0,
+        verdict="no-evidence",
+    )
+    jsonl_path = tmp_path / "audit.jsonl"
+    checkpoint_payload = dataclasses.asdict(completed)
+    checkpoint_payload["slippage_bps"] = 5.0
+    jsonl_path.write_text(json.dumps(checkpoint_payload) + "\n")
+
+    captured_strategies: list[list[str]] = []
+
+    def fake_run_audit(*, strategies, on_row, **kwargs):
+        captured_strategies.append(list(strategies))
+        row = StrategyAuditRow(
+            strategy="momentum",
+            scenarios=2,
+            trades=12,
+            win_rate=0.6,
+            profit_factor=1.2,
+            total_pnl=3.0,
+            mean_trade_pnl=0.25,
+            annualized_sharpe=1.5,
+            ci_low=0.01,
+            ci_high=0.5,
+            p_positive=0.04,
+            zero_cost_total_pnl=4.0,
+            cost_drag=1.0,
+            verdict="positive-edge",
+        )
+        on_row(row)
+        return [row]
+
+    monkeypatch.setattr(replay_cli, "run_audit", fake_run_audit)
+    out_json = tmp_path / "audit.json"
+    out_md = tmp_path / "audit.md"
+
+    rc = main([
+        "audit",
+        "--scenario-dir", str(scenario_dir),
+        "--strategies", "breakout,momentum",
+        "--slippage-bps", "5",
+        "--jsonl", str(jsonl_path),
+        "--resume-jsonl",
+        "--json", str(out_json),
+        "--output", str(out_md),
+    ])
+
+    assert rc == 0
+    assert captured_strategies == [["momentum"]]
+    assert "skipping breakout" in capsys.readouterr().err
+    rows = json.loads(out_json.read_text())
+    assert [row["strategy"] for row in rows] == ["breakout", "momentum"]
+    jsonl_rows = [
+        json.loads(line) for line in jsonl_path.read_text().splitlines() if line
+    ]
+    assert [row["strategy"] for row in jsonl_rows] == ["breakout", "momentum"]
 
 
 def test_audit_subcommand_samples_scenarios_deterministically(

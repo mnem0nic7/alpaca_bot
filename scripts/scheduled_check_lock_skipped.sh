@@ -27,27 +27,37 @@ restore_env_overrides() {
 }
 
 capture_env_overrides \
+  PAPER_APPROVED_STRATEGIES \
   PAPER_ACTIVITY_STRATEGY \
+  PAPER_ACTIVITY_STRATEGIES \
+  PAPER_ACTIVITY_LOCK_MAX_AGE_MINUTES \
   PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS \
   PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS \
   PAPER_READINESS_DECISION_DRY_RUN_STRATEGY \
+  PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES \
   PAPER_READINESS_MAX_PASS_AGE_MINUTES \
   PAPER_READINESS_MIN_WATCHLIST_SYMBOLS \
   PAPER_READINESS_SESSION_DATE \
+  PAPER_SCALE_MIN_TRADES \
   POST_CLOSE_LOCK_MAX_AGE_MINUTES \
   PROFIT_PROBE_MIN_PNL \
   PROFIT_PROBE_MIN_TRADES \
   PROFIT_PROBE_START_DATE \
   PROFIT_PROBE_STRATEGY \
+  PROFIT_PROBE_STRATEGIES \
   PROOF_STATUS_LOCK_MAX_AGE_MINUTES \
   PROOF_STATUS_MIN_PNL \
   PROOF_STATUS_MIN_TRADES \
+  PROOF_STATUS_SESSION_GUARD_MIN_PNL \
+  PROOF_STATUS_SESSION_GUARD_MIN_TRADES \
   PROOF_STATUS_START_DATE \
+  PROOF_STATUS_APPROVED_STRATEGIES \
   PROOF_STATUS_STRATEGY \
   SESSION_GUARD_FAIL_BELOW_PNL \
   SESSION_GUARD_MIN_TRADES \
   SESSION_GUARD_START_DATE \
-  SESSION_GUARD_STRATEGY
+  SESSION_GUARD_STRATEGY \
+  SESSION_GUARD_STRATEGIES
 
 if [[ -z "$CHECK_NAME" || -z "$LOCK_FILE" ]]; then
   echo "usage: scheduled_check_lock_skipped.sh CHECK_NAME LOCK_FILE [ENV_FILE]" >&2
@@ -63,6 +73,47 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 session_date="$(TZ=America/New_York date +%F)"
+
+normalize_strategy_csv() {
+  local primary="$1"
+  local csv="$2"
+  local label="$3"
+  local raw
+  local name
+  local existing
+  local old_ifs
+  local -a names=()
+  local -a raw_names=()
+  local -a combined=()
+
+  combined+=("$primary")
+  IFS=',' read -r -a raw_names <<< "$csv"
+  combined+=("${raw_names[@]}")
+  for raw in "${combined[@]}"; do
+    name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+    if [[ -z "$name" ]]; then
+      continue
+    fi
+    if [[ ! "$name" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+      echo "$label contains unsupported strategy: $name" >&2
+      exit 1
+    fi
+    for existing in "${names[@]}"; do
+      if [[ "$existing" == "$name" ]]; then
+        continue 2
+      fi
+    done
+    names+=("$name")
+  done
+  if [[ "${#names[@]}" -eq 0 ]]; then
+    echo "$label must contain at least one strategy" >&2
+    exit 1
+  fi
+  old_ifs="$IFS"
+  IFS=,
+  printf '%s' "${names[*]}"
+  IFS="$old_ifs"
+}
 
 fallback_readiness_session_date() {
   local dow
@@ -368,6 +419,68 @@ PY
     | tail -n 1
 }
 
+load_latest_readiness_decision_dry_run_strategies() {
+  local readiness_session_date="$1"
+  local lookup
+
+  lookup="$(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
+    -e READINESS_SESSION_DATE="$readiness_session_date" \
+    --entrypoint python admin <<'PY' || true
+from __future__ import annotations
+
+import os
+
+from alpaca_bot.config import Settings
+from alpaca_bot.storage.db import connect_postgres
+
+settings = Settings.from_env()
+session_date = os.environ["READINESS_SESSION_DATE"]
+proof_start = settings.profit_probe_start_date.isoformat()
+
+conn = connect_postgres(settings.database_url)
+try:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+              COALESCE(payload->>'decision_dry_run_strategies', ''),
+              COALESCE(payload->>'decision_dry_run_strategy_count', '')
+            FROM audit_events
+            WHERE event_type = 'scheduled_check_completed'
+              AND payload->>'check_name' = 'paper_readiness'
+              AND payload->>'status' = 'passed'
+              AND payload->>'session_date' = %s
+              AND payload->>'proof_start' = %s
+              AND payload->>'trading_mode' = %s
+              AND payload->>'strategy_version' = %s
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (
+                session_date,
+                proof_start,
+                settings.trading_mode.value,
+                settings.strategy_version,
+            ),
+        )
+        row = cur.fetchone()
+finally:
+    conn.close()
+
+if row and row[0]:
+    print(
+        "paper_readiness_latest_decision_dry_run_strategies="
+        "paper readiness decision dry run strategies ok: "
+        f"strategies={row[0]} count={row[1]}"
+    )
+PY
+)"
+
+  printf '%s\n' "$lookup" \
+    | sed -n 's/^paper_readiness_latest_decision_dry_run_strategies=//p' \
+    | tail -n 1
+}
+
 decision_dry_run_field() {
   local line="$1"
   local key="$2"
@@ -382,6 +495,98 @@ decision_dry_run_field() {
   done
 
   return 1
+}
+
+normalize_strategy_csv() {
+  local primary="$1"
+  local csv="${2:-}"
+  local label="${3:-strategy list}"
+  local raw
+  local name
+  local existing
+  local -a raw_names
+  local -a names
+  local -a combined
+
+  if [[ "$#" -gt 1 ]]; then
+    combined+=("$primary")
+    IFS=',' read -r -a raw_names <<< "$csv"
+    combined+=("${raw_names[@]}")
+  else
+    IFS=',' read -r -a combined <<< "$primary"
+  fi
+  for raw in "${combined[@]}"; do
+    name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+    if [[ -z "$name" ]]; then
+      continue
+    fi
+    if [[ ! "$name" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+      if [[ "$#" -gt 1 ]]; then
+        echo "$label contains unsupported strategy: $name" >&2
+        exit 1
+      fi
+      return 1
+    fi
+    for existing in "${names[@]}"; do
+      if [[ "$existing" == "$name" ]]; then
+        continue 2
+      fi
+    done
+    names+=("$name")
+  done
+  if [[ "${#names[@]}" -eq 0 ]]; then
+    if [[ "$#" -gt 1 ]]; then
+      echo "$label must contain at least one strategy" >&2
+      exit 1
+    fi
+    return 1
+  fi
+  (
+    IFS=,
+    printf '%s\n' "${names[*]}"
+  )
+}
+
+validate_readiness_decision_dry_run_strategies_line() {
+  local line="$1"
+  local expected_csv="$2"
+  local expected
+  local strategies
+  local count
+  local expected_count
+
+  if [[ -z "$line" ]]; then
+    echo "missing"
+    return 1
+  fi
+  if [[ "$line" != "paper readiness decision dry run strategies ok: "* ]]; then
+    echo "invalid"
+    return 1
+  fi
+
+  expected="$(normalize_strategy_csv "$expected_csv" || true)"
+  strategies="$(decision_dry_run_field "$line" strategies || true)"
+  count="$(decision_dry_run_field "$line" count || true)"
+  if [[ -z "$expected" || -z "$strategies" || -z "$count" ]]; then
+    echo "missing"
+    return 1
+  fi
+  strategies="$(normalize_strategy_csv "$strategies" || true)"
+  if [[ -z "$strategies" || ! "$count" =~ ^[0-9]+$ ]]; then
+    echo "invalid"
+    return 1
+  fi
+  expected_count="$(awk -F',' '{print NF}' <<< "$expected")"
+  if [[ "$strategies" != "$expected" ]]; then
+    echo "strategy_set_mismatch"
+    return 1
+  fi
+  if (( 10#$count != 10#$expected_count )); then
+    echo "strategy_count_mismatch"
+    return 1
+  fi
+
+  echo "ok"
 }
 
 validate_readiness_decision_dry_run_line() {
@@ -504,15 +709,21 @@ validate_readiness_decision_dry_run_line() {
 load_latest_proof_status() {
   local proof_start="$1"
   local proof_strategy="$2"
-  local proof_min_trades="$3"
-  local proof_min_pnl="$4"
+  local proof_strategies="$3"
+  local proof_min_trades="$4"
+  local proof_min_pnl="$5"
+  local proof_session_guard_min_trades="$6"
+  local proof_session_guard_min_pnl="$7"
   local lookup
 
   lookup="$(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e PROOF_STATUS_LOCK_PROOF_START="$proof_start" \
     -e PROOF_STATUS_LOCK_STRATEGY="$proof_strategy" \
+    -e PROOF_STATUS_LOCK_STRATEGIES="$proof_strategies" \
     -e PROOF_STATUS_LOCK_MIN_TRADES="$proof_min_trades" \
     -e PROOF_STATUS_LOCK_MIN_PNL="$proof_min_pnl" \
+    -e PROOF_STATUS_LOCK_SESSION_GUARD_MIN_TRADES="$proof_session_guard_min_trades" \
+    -e PROOF_STATUS_LOCK_SESSION_GUARD_MIN_PNL="$proof_session_guard_min_pnl" \
     --entrypoint python admin <<'PY' || true
 from __future__ import annotations
 
@@ -525,8 +736,13 @@ from alpaca_bot.storage.db import connect_postgres
 settings = Settings.from_env()
 proof_start = os.environ["PROOF_STATUS_LOCK_PROOF_START"]
 proof_strategy = os.environ["PROOF_STATUS_LOCK_STRATEGY"]
+proof_strategies = os.environ["PROOF_STATUS_LOCK_STRATEGIES"]
 proof_min_trades = os.environ["PROOF_STATUS_LOCK_MIN_TRADES"]
 proof_min_pnl = os.environ["PROOF_STATUS_LOCK_MIN_PNL"]
+proof_session_guard_min_trades = os.environ[
+    "PROOF_STATUS_LOCK_SESSION_GUARD_MIN_TRADES"
+]
+proof_session_guard_min_pnl = os.environ["PROOF_STATUS_LOCK_SESSION_GUARD_MIN_PNL"]
 
 conn = connect_postgres(settings.database_url)
 try:
@@ -539,6 +755,11 @@ try:
               COALESCE(payload->>'proof_status', '') AS proof_status,
               COALESCE(payload->>'proof_readiness', '') AS proof_readiness,
               COALESCE(payload->>'proof_blockers', '') AS proof_blockers,
+              COALESCE(payload->>'proof_evidence_blockers', '') AS proof_evidence_blockers,
+              COALESCE(payload->>'proof_sealed_evidence_blockers', '') AS proof_sealed_evidence_blockers,
+              COALESCE(payload->>'proof_overall_blockers', '') AS proof_overall_blockers,
+              COALESCE(payload->>'proof_clean_window_blockers', '') AS proof_clean_window_blockers,
+              COALESCE(payload->>'proof_sealed_clean_window_blockers', '') AS proof_sealed_clean_window_blockers,
               COALESCE(payload->>'proof_reason', '') AS proof_reason,
               COALESCE(payload->>'proof_warnings', '') AS proof_warnings,
               COALESCE(payload->>'proof_progress_status', '') AS proof_progress_status,
@@ -562,8 +783,11 @@ try:
               AND payload->>'check_name' = 'paper_proof_status'
               AND payload->>'proof_start' = %s
               AND payload->>'strategy' = %s
+              AND (%s = %s OR payload->>'strategies' = %s)
               AND payload->>'min_trades' = %s
               AND payload->>'min_pnl' = %s
+              AND payload->>'session_guard_min_trades' = %s
+              AND payload->>'session_guard_min_pnl' = %s
               AND payload->>'trading_mode' = %s
               AND payload->>'strategy_version' = %s
               AND payload ? 'proof_status'
@@ -573,8 +797,13 @@ try:
             (
                 proof_start,
                 proof_strategy,
+                proof_strategies,
+                proof_strategy,
+                proof_strategies,
                 proof_min_trades,
                 proof_min_pnl,
+                proof_session_guard_min_trades,
+                proof_session_guard_min_pnl,
                 settings.trading_mode.value,
                 settings.strategy_version,
             ),
@@ -586,7 +815,7 @@ finally:
 if not row:
     raise SystemExit(0)
 
-created_raw = row[21]
+created_raw = row[26]
 created_utc = created_raw
 if created_utc.tzinfo is None:
     created_utc = created_utc.replace(tzinfo=timezone.utc)
@@ -595,14 +824,14 @@ else:
 age_seconds = (datetime.now(timezone.utc) - created_utc).total_seconds()
 age_minutes = str(max(0, int(age_seconds // 60)))
 print(
-    "paper_proof_status_latest="
-    f"{row[0]}|{row[1]}|{row[2]}|{row[3]}|{row[4]}|{row[5]}|"
-    f"{row[6]}|{row[7]}|{row[8]}|{row[9]}|{row[10]}|{row[11]}|"
-    f"{row[12]}|{row[13]}|{row[14]}|{row[15]}|{row[16]}|{row[17]}|"
-    f"{row[18]}|{row[19]}|{row[20]}|"
-    f"{row[22]}|"
-    f"{age_minutes}"
-)
+	    "paper_proof_status_latest="
+	    f"{row[0]}|{row[1]}|{row[2]}|{row[3]}|{row[4]}|{row[5]}|"
+	    f"{row[6]}|{row[7]}|{row[8]}|{row[9]}|{row[10]}|{row[11]}|"
+	    f"{row[12]}|{row[13]}|{row[14]}|{row[15]}|{row[16]}|{row[17]}|"
+	    f"{row[18]}|{row[19]}|{row[20]}|{row[21]}|{row[22]}|"
+	    f"{row[23]}|{row[24]}|{row[25]}|{row[27]}|"
+	    f"{age_minutes}"
+	)
 PY
 )"
 
@@ -616,8 +845,9 @@ load_latest_post_close_check_status() {
   local target_session="$2"
   local proof_start="$3"
   local strategy="$4"
-  local min_trades="${5:-}"
-  local min_pnl="${6:-}"
+  local strategies="$5"
+  local min_trades="${6:-}"
+  local min_pnl="${7:-}"
   local lookup
 
   lookup="$(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
@@ -625,6 +855,7 @@ load_latest_post_close_check_status() {
     -e POST_CLOSE_LOCK_SESSION_DATE="$target_session" \
     -e POST_CLOSE_LOCK_PROOF_START="$proof_start" \
     -e POST_CLOSE_LOCK_STRATEGY="$strategy" \
+    -e POST_CLOSE_LOCK_STRATEGIES="$strategies" \
     -e POST_CLOSE_LOCK_MIN_TRADES="$min_trades" \
     -e POST_CLOSE_LOCK_MIN_PNL="$min_pnl" \
     --entrypoint python admin <<'PY' || true
@@ -640,6 +871,7 @@ check_name = os.environ["POST_CLOSE_LOCK_CHECK_NAME"]
 target_session = os.environ["POST_CLOSE_LOCK_SESSION_DATE"]
 proof_start = os.environ["POST_CLOSE_LOCK_PROOF_START"]
 strategy = os.environ["POST_CLOSE_LOCK_STRATEGY"]
+strategies = os.environ["POST_CLOSE_LOCK_STRATEGIES"]
 min_trades = os.environ.get("POST_CLOSE_LOCK_MIN_TRADES") or ""
 min_pnl = os.environ.get("POST_CLOSE_LOCK_MIN_PNL") or ""
 settings = Settings.from_env()
@@ -662,6 +894,7 @@ try:
               AND payload->>'trading_mode' = %s
               AND payload->>'strategy_version' = %s
               AND (NOT (payload ? 'strategy') OR payload->>'strategy' = %s)
+              AND (%s = %s OR payload->>'strategies' = %s)
               AND (%s = '' OR payload->>'min_trades' = %s)
               AND (%s = '' OR payload->>'min_pnl' = %s)
             ORDER BY created_at DESC, event_id DESC
@@ -674,6 +907,9 @@ try:
                 settings.trading_mode.value,
                 settings.strategy_version,
                 strategy,
+                strategies,
+                strategy,
+                strategies,
                 min_trades,
                 min_trades,
                 min_pnl,
@@ -737,6 +973,7 @@ case "$CHECK_NAME" in
       echo "PAPER_READINESS_DECISION_DRY_RUN_STRATEGY must not be empty" >&2
       exit 1
     fi
+    PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY}}"
     readiness_session_date="$(load_readiness_session_date)"
     expected_decision_dry_run_session="$(load_previous_readiness_session_date "$readiness_session_date")"
     latest_readiness="$(load_latest_readiness_status "$readiness_session_date")"
@@ -761,32 +998,83 @@ case "$CHECK_NAME" in
       latest_decision_dry_run_line="$(load_latest_readiness_decision_dry_run "$readiness_session_date")"
       latest_decision_dry_run_status="missing"
       if ! latest_decision_dry_run_status="$(validate_readiness_decision_dry_run_line "$latest_decision_dry_run_line" "$expected_decision_dry_run_session")"; then
-        echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} reason=lock_busy_decision_dry_run_$latest_decision_dry_run_status"
+        echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-07-07} reason=lock_busy_decision_dry_run_$latest_decision_dry_run_status"
         if [[ -n "$latest_decision_dry_run_line" ]]; then
           echo "$latest_decision_dry_run_line"
         fi
         echo "paper readiness prior pass lacks accepted entry-intent decision dry-run proof ($latest_decision_dry_run_status); lock busy remains blocking" >&2
         exit 48
       fi
-      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} reason=lock_busy_already_passed"
+      latest_decision_dry_run_strategies_line="$(load_latest_readiness_decision_dry_run_strategies "$readiness_session_date")"
+      latest_decision_dry_run_strategies_status="missing"
+      if ! latest_decision_dry_run_strategies_status="$(validate_readiness_decision_dry_run_strategies_line "$latest_decision_dry_run_strategies_line" "$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY,$PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES")"; then
+        echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-07-07} reason=lock_busy_decision_dry_run_strategies_$latest_decision_dry_run_strategies_status"
+        if [[ -n "$latest_decision_dry_run_strategies_line" ]]; then
+          echo "$latest_decision_dry_run_strategies_line"
+        fi
+        echo "paper readiness prior pass lacks approved-strategy decision dry-run proof ($latest_decision_dry_run_strategies_status); lock busy remains blocking" >&2
+        exit 48
+      fi
+      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-07-07} reason=lock_busy_already_passed"
       echo "$latest_decision_dry_run_line"
+      echo "$latest_decision_dry_run_strategies_line"
       echo "paper readiness lock busy after prior pass for session $readiness_session_date; not blocking entries"
       exit 0
     fi
     if [[ "$latest_readiness_status" == "passed" && "$readiness_is_current" == "false" ]]; then
-      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} reason=lock_busy_stale_pass"
+      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-07-07} reason=lock_busy_stale_pass"
       echo "paper readiness prior pass is older than latest supervisor start; lock busy remains blocking" >&2
       exit 48
     fi
     if [[ "$latest_readiness_status" == "passed" && "$readiness_is_current" == "true" && "$readiness_is_recent" == "false" ]]; then
-      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} reason=lock_busy_stale_pass"
+      echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-07-07} reason=lock_busy_stale_pass"
       echo "paper readiness prior pass is older than max age ${PAPER_READINESS_MAX_PASS_AGE_MINUTES}m; lock busy remains blocking" >&2
       exit 48
     fi
-    echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} reason=lock_busy"
+    echo "scheduled check context: session_date=$readiness_session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-07-07} reason=lock_busy"
     ;;
   paper_activity)
-    echo "scheduled check context: session_date=$session_date proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} strategy=${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}} reason=lock_busy"
+    activity_strategy="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
+    activity_strategies="${PAPER_ACTIVITY_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$activity_strategy}}"
+    activity_strategy_csv="$(normalize_strategy_csv "$activity_strategy" "$activity_strategies" "PAPER_ACTIVITY_STRATEGIES")"
+    activity_lock_max_age="${PAPER_ACTIVITY_LOCK_MAX_AGE_MINUTES:-30}"
+    if [[ ! "$activity_lock_max_age" =~ ^[0-9]+$ || "$activity_lock_max_age" -le 0 ]]; then
+      echo "PAPER_ACTIVITY_LOCK_MAX_AGE_MINUTES must be a positive integer" >&2
+      exit 1
+    fi
+    activity_proof_start="${PROFIT_PROBE_START_DATE:-2026-07-07}"
+    latest_activity="$(
+      load_latest_post_close_check_status \
+        paper_activity \
+        "$session_date" \
+        "$activity_proof_start" \
+        "$activity_strategy" \
+        "$activity_strategy_csv"
+    )"
+    latest_activity_status=""
+    latest_activity_exit_code=""
+    latest_activity_created_at=""
+    latest_activity_age_minutes=""
+    IFS='|' read -r latest_activity_status latest_activity_exit_code latest_activity_created_at latest_activity_age_minutes <<< "$latest_activity"
+    if [[ "$latest_activity_age_minutes" =~ ^[0-9]+$ ]] \
+      && (( 10#$latest_activity_age_minutes <= 10#$activity_lock_max_age )); then
+      if [[ "$latest_activity_status" == "passed" && "$latest_activity_exit_code" == "0" ]]; then
+        echo "scheduled check context: session_date=$session_date proof_start=$activity_proof_start strategy=$activity_strategy strategies=$activity_strategy_csv reason=lock_busy_already_passed"
+        echo "paper activity passed: lock busy after recent pass for session $session_date created_at=${latest_activity_created_at:-unknown} age_minutes=$latest_activity_age_minutes"
+        exit 0
+      fi
+      if [[ "$latest_activity_status" == "pending" && "$latest_activity_exit_code" == "43" ]]; then
+        echo "scheduled check context: session_date=$session_date proof_start=$activity_proof_start strategy=$activity_strategy strategies=$activity_strategy_csv reason=lock_busy_already_pending"
+        echo "paper activity pending: lock busy after recent pending result for session $session_date created_at=${latest_activity_created_at:-unknown} age_minutes=$latest_activity_age_minutes"
+        exit 43
+      fi
+      if [[ "$latest_activity_status" == "skipped" && "$latest_activity_exit_code" == "0" ]]; then
+        echo "scheduled check context: session_date=$session_date proof_start=$activity_proof_start strategy=$activity_strategy strategies=$activity_strategy_csv reason=lock_busy_already_skipped"
+        echo "paper activity skipped: lock busy after recent skipped result for session $session_date created_at=${latest_activity_created_at:-unknown} age_minutes=$latest_activity_age_minutes"
+        exit 0
+      fi
+    fi
+    echo "scheduled check context: session_date=$session_date proof_start=$activity_proof_start strategy=$activity_strategy strategies=$activity_strategy_csv reason=lock_busy"
     ;;
   session_guard)
     post_close_lock_max_age="${POST_CLOSE_LOCK_MAX_AGE_MINUTES:-30}"
@@ -794,8 +1082,10 @@ case "$CHECK_NAME" in
       echo "POST_CLOSE_LOCK_MAX_AGE_MINUTES must be a positive integer" >&2
       exit 1
     fi
-    guard_proof_start="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"
+    guard_proof_start="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}}"
     guard_strategy="${SESSION_GUARD_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
+    guard_strategies="${SESSION_GUARD_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$guard_strategy}}"
+    guard_strategy_csv="$(normalize_strategy_csv "$guard_strategy" "$guard_strategies" "SESSION_GUARD_STRATEGIES")"
     guard_min_trades="${SESSION_GUARD_MIN_TRADES:-10}"
     guard_min_pnl="${SESSION_GUARD_FAIL_BELOW_PNL:-0}"
     latest_guard="$(
@@ -804,6 +1094,7 @@ case "$CHECK_NAME" in
         "$session_date" \
         "$guard_proof_start" \
         "$guard_strategy" \
+        "$guard_strategy_csv" \
         "$guard_min_trades" \
         "$guard_min_pnl"
     )"
@@ -815,17 +1106,17 @@ case "$CHECK_NAME" in
     if [[ "$latest_guard_age_minutes" =~ ^[0-9]+$ ]] \
       && (( 10#$latest_guard_age_minutes <= 10#$post_close_lock_max_age )); then
       if [[ "$latest_guard_status" == "passed" && "$latest_guard_exit_code" == "0" ]]; then
-        echo "scheduled check context: session_date=$session_date proof_start=$guard_proof_start strategy=$guard_strategy min_trades=$guard_min_trades min_pnl=$guard_min_pnl reason=lock_busy_already_passed"
+        echo "scheduled check context: session_date=$session_date proof_start=$guard_proof_start strategy=$guard_strategy strategies=$guard_strategy_csv min_trades=$guard_min_trades min_pnl=$guard_min_pnl reason=lock_busy_already_passed"
         echo "session guard passed: lock busy after recent pass for session $session_date created_at=${latest_guard_created_at:-unknown} age_minutes=$latest_guard_age_minutes"
         exit 0
       fi
       if [[ "$latest_guard_status" == "pending" && "$latest_guard_exit_code" == "43" ]]; then
-        echo "scheduled check context: session_date=$session_date proof_start=$guard_proof_start strategy=$guard_strategy min_trades=$guard_min_trades min_pnl=$guard_min_pnl reason=lock_busy_already_pending"
+        echo "scheduled check context: session_date=$session_date proof_start=$guard_proof_start strategy=$guard_strategy strategies=$guard_strategy_csv min_trades=$guard_min_trades min_pnl=$guard_min_pnl reason=lock_busy_already_pending"
         echo "session guard pending: lock busy after recent pending result for session $session_date created_at=${latest_guard_created_at:-unknown} age_minutes=$latest_guard_age_minutes"
         exit 43
       fi
     fi
-    echo "scheduled check context: session_date=$session_date proof_start=$guard_proof_start strategy=$guard_strategy min_trades=$guard_min_trades min_pnl=$guard_min_pnl reason=lock_busy"
+    echo "scheduled check context: session_date=$session_date proof_start=$guard_proof_start strategy=$guard_strategy strategies=$guard_strategy_csv min_trades=$guard_min_trades min_pnl=$guard_min_pnl reason=lock_busy"
     ;;
   paper_profit_probe)
     post_close_lock_max_age="${POST_CLOSE_LOCK_MAX_AGE_MINUTES:-30}"
@@ -833,9 +1124,16 @@ case "$CHECK_NAME" in
       echo "POST_CLOSE_LOCK_MAX_AGE_MINUTES must be a positive integer" >&2
       exit 1
     fi
-    probe_proof_start="${PROFIT_PROBE_START_DATE:-2026-06-30}"
+    probe_proof_start="${PROFIT_PROBE_START_DATE:-2026-07-07}"
     probe_strategy="${PROFIT_PROBE_STRATEGY:-bull_flag}"
-    probe_min_trades="${PROFIT_PROBE_MIN_TRADES:-10}"
+    probe_strategies="${PROFIT_PROBE_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$probe_strategy}}"
+    probe_strategy_csv="$(normalize_strategy_csv "$probe_strategy" "$probe_strategies" "PROFIT_PROBE_STRATEGIES")"
+    probe_min_trades="${PROFIT_PROBE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}"
+    if [[ "$probe_min_trades" =~ ^[0-9]+$ \
+      && "${PAPER_SCALE_MIN_TRADES:-30}" =~ ^[0-9]+$ \
+      && "$probe_min_trades" -lt "${PAPER_SCALE_MIN_TRADES:-30}" ]]; then
+      probe_min_trades="${PAPER_SCALE_MIN_TRADES:-30}"
+    fi
     probe_min_pnl="${PROFIT_PROBE_MIN_PNL:-0.01}"
     latest_probe="$(
       load_latest_post_close_check_status \
@@ -843,6 +1141,7 @@ case "$CHECK_NAME" in
         "$session_date" \
         "$probe_proof_start" \
         "$probe_strategy" \
+        "$probe_strategy_csv" \
         "$probe_min_trades" \
         "$probe_min_pnl"
     )"
@@ -854,34 +1153,56 @@ case "$CHECK_NAME" in
     if [[ "$latest_probe_age_minutes" =~ ^[0-9]+$ ]] \
       && (( 10#$latest_probe_age_minutes <= 10#$post_close_lock_max_age )); then
       if [[ "$latest_probe_status" == "passed" && "$latest_probe_exit_code" == "0" ]]; then
-        echo "scheduled check context: session_date=$session_date proof_start=$probe_proof_start strategy=$probe_strategy min_trades=$probe_min_trades min_pnl=$probe_min_pnl reason=lock_busy_already_passed"
+        echo "scheduled check context: session_date=$session_date proof_start=$probe_proof_start strategy=$probe_strategy strategies=$probe_strategy_csv min_trades=$probe_min_trades min_pnl=$probe_min_pnl reason=lock_busy_already_passed"
         echo "paper profit probe passed: lock busy after recent pass for session $session_date created_at=${latest_probe_created_at:-unknown} age_minutes=$latest_probe_age_minutes"
         exit 0
       fi
       if [[ "$latest_probe_status" == "pending" && "$latest_probe_exit_code" == "43" ]]; then
-        echo "scheduled check context: session_date=$session_date proof_start=$probe_proof_start strategy=$probe_strategy min_trades=$probe_min_trades min_pnl=$probe_min_pnl reason=lock_busy_already_pending"
+        echo "scheduled check context: session_date=$session_date proof_start=$probe_proof_start strategy=$probe_strategy strategies=$probe_strategy_csv min_trades=$probe_min_trades min_pnl=$probe_min_pnl reason=lock_busy_already_pending"
         echo "paper profit probe pending: lock busy after recent pending result for session $session_date created_at=${latest_probe_created_at:-unknown} age_minutes=$latest_probe_age_minutes"
         exit 43
       fi
     fi
-    echo "scheduled check context: session_date=$session_date proof_start=$probe_proof_start strategy=$probe_strategy min_trades=$probe_min_trades min_pnl=$probe_min_pnl reason=lock_busy"
+    echo "scheduled check context: session_date=$session_date proof_start=$probe_proof_start strategy=$probe_strategy strategies=$probe_strategy_csv min_trades=$probe_min_trades min_pnl=$probe_min_pnl reason=lock_busy"
     ;;
   paper_proof_status)
-    proof_start="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"
+    proof_start="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}}"
     proof_strategy="${PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
-    proof_min_trades="${PROOF_STATUS_MIN_TRADES:-${PROFIT_PROBE_MIN_TRADES:-10}}"
+    proof_strategies="${PROOF_STATUS_APPROVED_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$proof_strategy}}"
+    proof_strategy_csv="$(normalize_strategy_csv "$proof_strategy" "$proof_strategies" "PROOF_STATUS_APPROVED_STRATEGIES")"
+    proof_min_trades="${PROOF_STATUS_MIN_TRADES:-${PROFIT_PROBE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}}"
+    if [[ "$proof_min_trades" =~ ^[0-9]+$ \
+      && "${PAPER_SCALE_MIN_TRADES:-30}" =~ ^[0-9]+$ \
+      && "$proof_min_trades" -lt "${PAPER_SCALE_MIN_TRADES:-30}" ]]; then
+      proof_min_trades="${PAPER_SCALE_MIN_TRADES:-30}"
+    fi
     proof_min_pnl="${PROOF_STATUS_MIN_PNL:-${PROFIT_PROBE_MIN_PNL:-0.01}}"
+    proof_session_guard_min_trades="${PROOF_STATUS_SESSION_GUARD_MIN_TRADES:-${SESSION_GUARD_MIN_TRADES:-10}}"
+    proof_session_guard_min_pnl="${PROOF_STATUS_SESSION_GUARD_MIN_PNL:-${SESSION_GUARD_FAIL_BELOW_PNL:-0}}"
+    if [[ ! "$proof_session_guard_min_trades" =~ ^[0-9]+$ ]]; then
+      echo "PROOF_STATUS_SESSION_GUARD_MIN_TRADES must be a non-negative integer" >&2
+      exit 1
+    fi
+    if [[ ! "$proof_session_guard_min_pnl" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+      echo "PROOF_STATUS_SESSION_GUARD_MIN_PNL must be a number" >&2
+      exit 1
+    fi
     PROOF_STATUS_LOCK_MAX_AGE_MINUTES="${PROOF_STATUS_LOCK_MAX_AGE_MINUTES:-30}"
     if [[ ! "$PROOF_STATUS_LOCK_MAX_AGE_MINUTES" =~ ^[0-9]+$ || "$PROOF_STATUS_LOCK_MAX_AGE_MINUTES" -le 0 ]]; then
       echo "PROOF_STATUS_LOCK_MAX_AGE_MINUTES must be a positive integer" >&2
       exit 1
     fi
-    latest_proof_status="$(load_latest_proof_status "$proof_start" "$proof_strategy" "$proof_min_trades" "$proof_min_pnl")"
+    latest_proof_status="$(load_latest_proof_status "$proof_start" "$proof_strategy" "$proof_strategy_csv" "$proof_min_trades" "$proof_min_pnl" "$proof_session_guard_min_trades" "$proof_session_guard_min_pnl")"
     latest_status=""
     latest_exit_code=""
     latest_proof=""
     latest_readiness=""
     latest_blockers=""
+    latest_evidence_blockers=""
+    latest_sealed_evidence_blockers=""
+    latest_overall_blockers=""
+    latest_clean_window_blockers=""
+    latest_sealed_clean_window_blockers=""
     latest_proof_reason=""
     latest_warnings=""
     latest_progress_status=""
@@ -900,7 +1221,7 @@ case "$CHECK_NAME" in
     latest_unpaired_symbols=""
     latest_created_at=""
     latest_age_minutes=""
-    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_proof_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes <<< "$latest_proof_status"
+    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes <<< "$latest_proof_status"
     proof_lock_is_recent=false
     if [[ "$latest_age_minutes" =~ ^[0-9]+$ ]] \
       && (( 10#$latest_age_minutes <= 10#$PROOF_STATUS_LOCK_MAX_AGE_MINUTES )); then
@@ -917,11 +1238,11 @@ case "$CHECK_NAME" in
       fi
     fi
     if [[ "$proof_lock_is_recent" == "true" && "$proof_lock_has_current_evidence" == "true" ]]; then
-      echo "scheduled check context: session_date=$session_date proof_start=$proof_start strategy=$proof_strategy min_trades=$proof_min_trades min_pnl=$proof_min_pnl reason=lock_busy_already_reported"
-      echo "paper proof summary: readiness=$latest_readiness proof=$latest_proof reason=${latest_proof_reason:-lock_busy_already_reported} blockers=$latest_blockers warnings=${latest_warnings:-none}"
-      echo "paper proof progress: status=${latest_progress_status:-$latest_proof} closed_trades=${latest_closed_trades:-unknown} required_trades=${latest_required_trades:-$proof_min_trades} pnl=${latest_pnl:-unknown} required_pnl=${latest_required_pnl:-$proof_min_pnl} window=lock_busy_already_reported first_exit_session=${latest_first_exit_session:-none} latest_exit_session=${latest_latest_exit_session:-none}"
+      echo "scheduled check context: session_date=$session_date proof_start=$proof_start strategy=$proof_strategy strategies=$proof_strategy_csv min_trades=$proof_min_trades min_pnl=$proof_min_pnl session_guard_min_trades=$proof_session_guard_min_trades session_guard_min_pnl=$proof_session_guard_min_pnl reason=lock_busy_already_reported"
+      echo "paper proof summary: readiness=$latest_readiness proof=$latest_proof reason=${latest_proof_reason:-lock_busy_already_reported} blockers=$latest_blockers evidence_blockers=${latest_evidence_blockers:-none} sealed_evidence_blockers=${latest_sealed_evidence_blockers:-none} overall_blockers=${latest_overall_blockers:-unknown} clean_window_blockers=${latest_clean_window_blockers:-unknown} sealed_clean_window_blockers=${latest_sealed_clean_window_blockers:-unknown} warnings=${latest_warnings:-none}"
+      echo "paper proof progress: status=${latest_progress_status:-$latest_proof} strategies=$proof_strategy_csv closed_trades=${latest_closed_trades:-unknown} required_trades=${latest_required_trades:-$proof_min_trades} pnl=${latest_pnl:-unknown} required_pnl=${latest_required_pnl:-$proof_min_pnl} window=lock_busy_already_reported first_exit_session=${latest_first_exit_session:-none} latest_exit_session=${latest_latest_exit_session:-none}"
       if [[ -n "$latest_scoreable_closed_trades$latest_unpaired_filled_exits$latest_unpaired_symbols" ]]; then
-        echo "paper proof scoring: scoreable_closed_trades=${latest_scoreable_closed_trades:-${latest_closed_trades:-unknown}} unpaired_filled_exits=${latest_unpaired_filled_exits:-unknown} unpaired_symbols=${latest_unpaired_symbols:-none}"
+        echo "paper proof scoring: strategies=$proof_strategy_csv scoreable_closed_trades=${latest_scoreable_closed_trades:-${latest_closed_trades:-unknown}} unpaired_filled_exits=${latest_unpaired_filled_exits:-unknown} unpaired_symbols=${latest_unpaired_symbols:-none}"
       fi
       if [[ -n "$latest_scenario_status" ]]; then
         echo "paper proof scenarios: status=$latest_scenario_status active=${latest_scenario_active:-unknown} expected_session=${latest_scenario_expected_session:-unknown} problems=${latest_scenario_problems:-unknown}"
@@ -929,7 +1250,7 @@ case "$CHECK_NAME" in
       echo "paper proof status check skipped: lock busy after recent proof status $latest_proof created_at=${latest_created_at:-unknown} age_minutes=$latest_age_minutes"
       exit 0
     fi
-    echo "scheduled check context: session_date=$session_date proof_start=$proof_start strategy=$proof_strategy min_trades=$proof_min_trades min_pnl=$proof_min_pnl reason=lock_busy"
+    echo "scheduled check context: session_date=$session_date proof_start=$proof_start strategy=$proof_strategy strategies=$proof_strategy_csv min_trades=$proof_min_trades min_pnl=$proof_min_pnl session_guard_min_trades=$proof_session_guard_min_trades session_guard_min_pnl=$proof_session_guard_min_pnl reason=lock_busy"
     ;;
   *)
     echo "scheduled check context: session_date=$session_date reason=lock_busy"

@@ -26,6 +26,7 @@ restore_env_overrides() {
 
 capture_env_overrides \
   SESSION_GUARD_STRATEGY \
+  SESSION_GUARD_STRATEGIES \
   SESSION_GUARD_MIN_TRADES \
   SESSION_GUARD_FAIL_BELOW_PNL \
   SESSION_GUARD_FAIL_ON_DIAGNOSTICS \
@@ -47,11 +48,12 @@ set +a
 restore_env_overrides
 
 SESSION_GUARD_STRATEGY="${SESSION_GUARD_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
+SESSION_GUARD_STRATEGIES="${SESSION_GUARD_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$SESSION_GUARD_STRATEGY}}"
 SESSION_GUARD_MIN_TRADES="${SESSION_GUARD_MIN_TRADES:-10}"
 SESSION_GUARD_FAIL_BELOW_PNL="${SESSION_GUARD_FAIL_BELOW_PNL:-0}"
 SESSION_GUARD_FAIL_ON_DIAGNOSTICS="${SESSION_GUARD_FAIL_ON_DIAGNOSTICS:-true}"
 SESSION_GUARD_REUSE_PASS_MAX_AGE_MINUTES="${SESSION_GUARD_REUSE_PASS_MAX_AGE_MINUTES:-180}"
-SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"
+SESSION_GUARD_START_DATE="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}}"
 SESSION_GUARD_DATE="${SESSION_GUARD_DATE:-}"
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
@@ -68,6 +70,54 @@ if [[ ! "$SESSION_GUARD_STRATEGY" =~ ^[A-Za-z0-9_:-]+$ ]]; then
   echo "SESSION_GUARD_STRATEGY contains unsupported characters" >&2
   exit 1
 fi
+
+session_guard_strategy_names=()
+session_guard_strategy_csv=""
+
+add_session_guard_strategy() {
+  local raw="$1"
+  local name
+  local existing
+
+  name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+  if [[ -z "$name" ]]; then
+    return
+  fi
+  if [[ ! "$name" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+    echo "SESSION_GUARD_STRATEGIES contains unsupported strategy: $name" >&2
+    exit 1
+  fi
+  for existing in "${session_guard_strategy_names[@]}"; do
+    if [[ "$existing" == "$name" ]]; then
+      return
+    fi
+  done
+  session_guard_strategy_names+=("$name")
+}
+
+build_session_guard_strategies() {
+  local csv="$1"
+  local raw
+  local -a raw_names
+
+  session_guard_strategy_names=()
+  add_session_guard_strategy "$SESSION_GUARD_STRATEGY"
+  IFS=',' read -r -a raw_names <<< "$csv"
+  for raw in "${raw_names[@]}"; do
+    add_session_guard_strategy "$raw"
+  done
+  if [[ "${#session_guard_strategy_names[@]}" -eq 0 ]]; then
+    echo "SESSION_GUARD_STRATEGIES must contain at least one strategy" >&2
+    exit 1
+  fi
+  session_guard_strategy_csv="$(
+    IFS=,
+    printf '%s' "${session_guard_strategy_names[*]}"
+  )"
+}
+
+build_session_guard_strategies "$SESSION_GUARD_STRATEGIES"
+
 if [[ ! "$SESSION_GUARD_START_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   echo "SESSION_GUARD_START_DATE must use YYYY-MM-DD" >&2
   exit 1
@@ -160,6 +210,7 @@ load_latest_session_guard_pass() {
     -e SESSION_GUARD_PASS_SESSION_DATE="$SESSION_GUARD_DATE" \
     -e SESSION_GUARD_PASS_PROOF_START="$SESSION_GUARD_START_DATE" \
     -e SESSION_GUARD_PASS_STRATEGY="$SESSION_GUARD_STRATEGY" \
+    -e SESSION_GUARD_PASS_STRATEGIES="$session_guard_strategy_csv" \
     -e SESSION_GUARD_PASS_MIN_TRADES="$SESSION_GUARD_MIN_TRADES" \
     -e SESSION_GUARD_PASS_MIN_PNL="$SESSION_GUARD_FAIL_BELOW_PNL" \
     --entrypoint python admin <<'PY'
@@ -175,6 +226,7 @@ settings = Settings.from_env()
 session_date = os.environ["SESSION_GUARD_PASS_SESSION_DATE"]
 proof_start = os.environ["SESSION_GUARD_PASS_PROOF_START"]
 strategy = os.environ["SESSION_GUARD_PASS_STRATEGY"]
+strategies = os.environ["SESSION_GUARD_PASS_STRATEGIES"]
 min_trades = os.environ["SESSION_GUARD_PASS_MIN_TRADES"]
 min_pnl = os.environ["SESSION_GUARD_PASS_MIN_PNL"]
 
@@ -196,6 +248,7 @@ try:
               AND payload->>'trading_mode' = %s
               AND payload->>'strategy_version' = %s
               AND payload->>'strategy' = %s
+              AND (%s = %s OR payload->>'strategies' = %s)
               AND payload->>'min_trades' = %s
               AND payload->>'min_pnl' = %s
             ORDER BY created_at DESC, event_id DESC
@@ -207,6 +260,9 @@ try:
                 settings.trading_mode.value,
                 settings.strategy_version,
                 strategy,
+                strategies,
+                strategy,
+                strategies,
                 min_trades,
                 min_pnl,
             ),
@@ -239,14 +295,14 @@ if [[ ! "$SESSION_GUARD_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   exit 1
 fi
 
-echo "scheduled check context: session_date=$SESSION_GUARD_DATE proof_start=$SESSION_GUARD_START_DATE strategy=$SESSION_GUARD_STRATEGY min_trades=$SESSION_GUARD_MIN_TRADES min_pnl=$SESSION_GUARD_FAIL_BELOW_PNL"
+echo "scheduled check context: session_date=$SESSION_GUARD_DATE proof_start=$SESSION_GUARD_START_DATE strategy=$SESSION_GUARD_STRATEGY strategies=$session_guard_strategy_csv min_trades=$SESSION_GUARD_MIN_TRADES min_pnl=$SESSION_GUARD_FAIL_BELOW_PNL"
 
 if [[ "$SESSION_GUARD_DATE" < "$SESSION_GUARD_START_DATE" ]]; then
   echo \
     "session guard pending: latest completed session $SESSION_GUARD_DATE is before proof start $SESSION_GUARD_START_DATE"
-  if ! BROKER_FLAT_CONTEXT="${SESSION_GUARD_STRATEGY} session guard pending ${SESSION_GUARD_START_DATE}" \
+  if ! BROKER_FLAT_CONTEXT="${session_guard_strategy_csv} session guard pending ${SESSION_GUARD_START_DATE}" \
     ./scripts/broker_flat_check.sh "$ENV_FILE"; then
-    reason="${SESSION_GUARD_STRATEGY} session guard pending ${SESSION_GUARD_START_DATE}: broker exposure remains before proof start"
+    reason="${session_guard_strategy_csv} session guard pending ${SESSION_GUARD_START_DATE}: broker exposure remains before proof start"
     if ! "${compose[@]}" run -T --rm admin \
       close-only \
       --mode "${TRADING_MODE:-paper}" \
@@ -271,9 +327,9 @@ latest_pass_age_minutes=""
 IFS='|' read -r latest_pass_created_at latest_pass_age_minutes <<< "$latest_session_guard_pass"
 if [[ "$latest_pass_age_minutes" =~ ^[0-9]+$ ]] \
   && (( 10#$latest_pass_age_minutes <= 10#$SESSION_GUARD_REUSE_PASS_MAX_AGE_MINUTES )); then
-  if ! BROKER_FLAT_CONTEXT="${SESSION_GUARD_STRATEGY} session guard prior pass ${SESSION_GUARD_DATE}" \
+  if ! BROKER_FLAT_CONTEXT="${session_guard_strategy_csv} session guard prior pass ${SESSION_GUARD_DATE}" \
     ./scripts/broker_flat_check.sh "$ENV_FILE"; then
-    reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: broker exposure remains after prior pass"
+    reason="${session_guard_strategy_csv} session guard failed ${SESSION_GUARD_DATE}: broker exposure remains after prior pass"
     if ! "${compose[@]}" run -T --rm admin \
       close-only \
       --mode "${TRADING_MODE:-paper}" \
@@ -284,7 +340,7 @@ if [[ "$latest_pass_age_minutes" =~ ^[0-9]+$ ]] \
     fi
     exit 44
   fi
-  echo "scheduled check context: session_date=$SESSION_GUARD_DATE proof_start=$SESSION_GUARD_START_DATE strategy=$SESSION_GUARD_STRATEGY min_trades=$SESSION_GUARD_MIN_TRADES min_pnl=$SESSION_GUARD_FAIL_BELOW_PNL reason=already_passed"
+  echo "scheduled check context: session_date=$SESSION_GUARD_DATE proof_start=$SESSION_GUARD_START_DATE strategy=$SESSION_GUARD_STRATEGY strategies=$session_guard_strategy_csv min_trades=$SESSION_GUARD_MIN_TRADES min_pnl=$SESSION_GUARD_FAIL_BELOW_PNL reason=already_passed"
   echo "session guard already passed for session $SESSION_GUARD_DATE created_at=${latest_pass_created_at:-unknown} age_minutes=$latest_pass_age_minutes"
   exit 0
 fi
@@ -293,7 +349,7 @@ session_eval_args=(
   --date "$SESSION_GUARD_DATE"
   --mode "${TRADING_MODE:-paper}"
   --strategy-version "$STRATEGY_VERSION"
-  --strategy "$SESSION_GUARD_STRATEGY"
+  --strategies "$session_guard_strategy_csv"
   --fail-on-open-positions
   --fail-below-pnl "$SESSION_GUARD_FAIL_BELOW_PNL"
   --min-trades-for-gate "$SESSION_GUARD_MIN_TRADES"
@@ -309,7 +365,7 @@ fi
 rc=$?
 
 broker_flat_failed=false
-if ! BROKER_FLAT_CONTEXT="${SESSION_GUARD_STRATEGY} session guard ${SESSION_GUARD_DATE}" \
+if ! BROKER_FLAT_CONTEXT="${session_guard_strategy_csv} session guard ${SESSION_GUARD_DATE}" \
   ./scripts/broker_flat_check.sh "$ENV_FILE"; then
   broker_flat_failed=true
   rc=44
@@ -335,13 +391,13 @@ fi
 if [[ "$rc" -eq 44 || "$rc" -eq 46 ]]; then
   case "$rc" in
     44)
-      reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: open positions remain after close"
+      reason="${session_guard_strategy_csv} session guard failed ${SESSION_GUARD_DATE}: open positions remain after close"
       if [[ "$broker_flat_failed" == "true" ]]; then
-        reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: broker exposure remains after close"
+        reason="${session_guard_strategy_csv} session guard failed ${SESSION_GUARD_DATE}: broker exposure remains after close"
       fi
       ;;
     46)
-      reason="${SESSION_GUARD_STRATEGY} session guard failed ${SESSION_GUARD_DATE}: operational diagnostics contain proof-blocking issues"
+      reason="${session_guard_strategy_csv} session guard failed ${SESSION_GUARD_DATE}: operational diagnostics contain proof-blocking issues"
       ;;
   esac
 

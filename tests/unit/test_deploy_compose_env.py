@@ -17,6 +17,9 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "BULL_FLAG_MIN_RUN_PCT",
         "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO",
         "BULL_FLAG_CONSOLIDATION_RANGE_PCT",
+        "ENTRY_ORDER_ACTIVE_BARS",
+        "ENTRY_MIN_CLOSE_TO_ENTRY_PCT",
+        "ENTRY_MAX_CLOSE_TO_ENTRY_PCT",
         "MAX_LOSS_PER_TRADE_DOLLARS",
         "MAX_OPEN_POSITIONS",
         "CONFIDENCE_FLOOR",
@@ -26,8 +29,27 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "OPTION_STRATEGY_MAX_ROLLING_LOSS_USD",
         "OPTION_STRATEGY_ROLLING_LOSS_DAYS",
         "PAPER_PROOF_FREEZE",
+        "PAPER_APPROVED_STRATEGIES",
+        "PAPER_SCALE_MIN_TRADES",
+        "PAPER_SCALE_MIN_STRATEGIES",
+        "PAPER_SCALE_MIN_ACTIVE_DAYS",
+        "PAPER_SCALE_MAX_SINGLE_WIN_PNL_SHARE",
+        "PAPER_SCALE_MIN_PROFIT_FACTOR",
+        "PAPER_SCALE_MAX_EOD_LOSS_SHARE",
+        "PAPER_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE",
+        "PAPER_EXECUTION_MIN_ENTRY_FILL_RATE",
+        "PAPER_EXECUTION_MAX_CAPACITY_REJECT_RATE",
+        "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES",
+        "PAPER_ACTIVITY_STRATEGIES",
+        "PROFIT_PROBE_STRATEGIES",
+        "SESSION_GUARD_STRATEGIES",
+        "SESSION_GUARD_MIN_TRADES",
+        "SESSION_GUARD_FAIL_BELOW_PNL",
         "PAPER_READINESS_MAX_PASS_AGE_MINUTES",
         "PROFIT_PROBE_START_DATE",
+        "PROFIT_PROBE_STRATEGY",
+        "PROFIT_PROBE_MIN_TRADES",
+        "PROFIT_PROBE_MIN_PNL",
         "ENABLE_REGIME_FILTER",
         "ENABLE_NEWS_FILTER",
         "ENABLE_SPREAD_FILTER",
@@ -36,6 +58,18 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "ENABLE_BREAKEVEN_STOP",
         "BREAKEVEN_TRIGGER_PCT",
         "BREAKEVEN_TRAIL_PCT",
+        "ENABLE_TREND_FILTER_EXIT",
+        "ENABLE_VWAP_BREAKDOWN_EXIT",
+        "VWAP_BREAKDOWN_MIN_BARS",
+        "ENABLE_NO_FOLLOW_THROUGH_EXIT",
+        "NO_FOLLOW_THROUGH_EXIT_MINUTES",
+        "NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT",
+        "ENABLE_GIVEBACK_EXIT",
+        "GIVEBACK_EXIT_MIN_FAVORABLE_PCT",
+        "GIVEBACK_EXIT_MAX_RETURN_PCT",
+        "ENABLE_EARLY_LOSS_EXIT",
+        "EARLY_LOSS_EXIT_MINUTES",
+        "EARLY_LOSS_EXIT_RETURN_PCT",
         "REPLAY_SLIPPAGE_BPS",
     }
 
@@ -46,6 +80,64 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         in compose_text
     )
     assert "BULL_FLAG_MIN_RUN_PCT: ${BULL_FLAG_MIN_RUN_PCT:-0.02}" in compose_text
+    assert "ENTRY_ORDER_ACTIVE_BARS: ${ENTRY_ORDER_ACTIVE_BARS:-1}" in compose_text
+    assert (
+        "ENTRY_MIN_CLOSE_TO_ENTRY_PCT: ${ENTRY_MIN_CLOSE_TO_ENTRY_PCT:--0.01}"
+        in compose_text
+    )
+    assert (
+        "ENTRY_MAX_CLOSE_TO_ENTRY_PCT: ${ENTRY_MAX_CLOSE_TO_ENTRY_PCT:-1.0}"
+        in compose_text
+    )
+    assert (
+        "PAPER_APPROVED_STRATEGIES: "
+        "${PAPER_APPROVED_STRATEGIES:-bull_flag,vwap_cross}"
+    ) in compose_text
+    assert "PAPER_SCALE_MIN_TRADES: ${PAPER_SCALE_MIN_TRADES:-30}" in compose_text
+    assert "PAPER_SCALE_MIN_STRATEGIES: ${PAPER_SCALE_MIN_STRATEGIES:-2}" in compose_text
+    assert "PAPER_SCALE_MIN_ACTIVE_DAYS: ${PAPER_SCALE_MIN_ACTIVE_DAYS:-5}" in compose_text
+    assert (
+        "PAPER_SCALE_MAX_SINGLE_WIN_PNL_SHARE: "
+        "${PAPER_SCALE_MAX_SINGLE_WIN_PNL_SHARE:-0.50}"
+    ) in compose_text
+    assert (
+        "PAPER_SCALE_MIN_PROFIT_FACTOR: "
+        "${PAPER_SCALE_MIN_PROFIT_FACTOR:-1.20}"
+    ) in compose_text
+    assert "PAPER_SCALE_MAX_EOD_LOSS_SHARE: ${PAPER_SCALE_MAX_EOD_LOSS_SHARE:-0.50}" in compose_text
+    assert (
+        "PAPER_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE: "
+        "${PAPER_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE:-0.00}"
+    ) in compose_text
+    assert (
+        "PAPER_EXECUTION_MIN_ENTRY_FILL_RATE: "
+        "${PAPER_EXECUTION_MIN_ENTRY_FILL_RATE:-0.25}"
+    ) in compose_text
+    assert (
+        "PAPER_EXECUTION_MAX_CAPACITY_REJECT_RATE: "
+        "${PAPER_EXECUTION_MAX_CAPACITY_REJECT_RATE:-0.05}"
+    ) in compose_text
+    assert (
+        "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES: "
+        "${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-bull_flag,vwap_cross}"
+    ) in compose_text
+    assert (
+        "PAPER_ACTIVITY_STRATEGIES: "
+        "${PAPER_ACTIVITY_STRATEGIES:-bull_flag,vwap_cross}"
+    ) in compose_text
+    assert (
+        "PROFIT_PROBE_STRATEGIES: "
+        "${PROFIT_PROBE_STRATEGIES:-bull_flag,vwap_cross}"
+    ) in compose_text
+    assert (
+        "SESSION_GUARD_STRATEGIES: "
+        "${SESSION_GUARD_STRATEGIES:-bull_flag,vwap_cross}"
+    ) in compose_text
+    assert "SESSION_GUARD_MIN_TRADES: ${SESSION_GUARD_MIN_TRADES:-10}" in compose_text
+    assert "SESSION_GUARD_FAIL_BELOW_PNL: ${SESSION_GUARD_FAIL_BELOW_PNL:-0}" in compose_text
+    assert "PROFIT_PROBE_STRATEGY: ${PROFIT_PROBE_STRATEGY:-bull_flag}" in compose_text
+    assert "PROFIT_PROBE_MIN_TRADES: ${PROFIT_PROBE_MIN_TRADES:-30}" in compose_text
+    assert "PROFIT_PROBE_MIN_PNL: ${PROFIT_PROBE_MIN_PNL:-0.01}" in compose_text
     assert (
         "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO: "
         "${BULL_FLAG_CONSOLIDATION_VOLUME_RATIO:-0.6}"
@@ -63,6 +155,36 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
     assert "ENABLE_BREAKEVEN_STOP: ${ENABLE_BREAKEVEN_STOP:-true}" in compose_text
     assert "BREAKEVEN_TRIGGER_PCT: ${BREAKEVEN_TRIGGER_PCT:-0.0025}" in compose_text
     assert "BREAKEVEN_TRAIL_PCT: ${BREAKEVEN_TRAIL_PCT:-0.002}" in compose_text
+    assert "ENABLE_TREND_FILTER_EXIT: ${ENABLE_TREND_FILTER_EXIT:-false}" in compose_text
+    assert "ENABLE_VWAP_BREAKDOWN_EXIT: ${ENABLE_VWAP_BREAKDOWN_EXIT:-false}" in compose_text
+    assert "VWAP_BREAKDOWN_MIN_BARS: ${VWAP_BREAKDOWN_MIN_BARS:-1}" in compose_text
+    assert (
+        "ENABLE_NO_FOLLOW_THROUGH_EXIT: ${ENABLE_NO_FOLLOW_THROUGH_EXIT:-false}"
+        in compose_text
+    )
+    assert (
+        "NO_FOLLOW_THROUGH_EXIT_MINUTES: ${NO_FOLLOW_THROUGH_EXIT_MINUTES:-0}"
+        in compose_text
+    )
+    assert (
+        "NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT: "
+        "${NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT:-0.0025}"
+    ) in compose_text
+    assert "ENABLE_GIVEBACK_EXIT: ${ENABLE_GIVEBACK_EXIT:-false}" in compose_text
+    assert (
+        "GIVEBACK_EXIT_MIN_FAVORABLE_PCT: "
+        "${GIVEBACK_EXIT_MIN_FAVORABLE_PCT:-0.0025}"
+    ) in compose_text
+    assert (
+        "GIVEBACK_EXIT_MAX_RETURN_PCT: ${GIVEBACK_EXIT_MAX_RETURN_PCT:-0.0}"
+        in compose_text
+    )
+    assert "ENABLE_EARLY_LOSS_EXIT: ${ENABLE_EARLY_LOSS_EXIT:-false}" in compose_text
+    assert "EARLY_LOSS_EXIT_MINUTES: ${EARLY_LOSS_EXIT_MINUTES:-0}" in compose_text
+    assert (
+        "EARLY_LOSS_EXIT_RETURN_PCT: ${EARLY_LOSS_EXIT_RETURN_PCT:-0.01}"
+        in compose_text
+    )
     assert "MAX_LOSS_PER_TRADE_DOLLARS: ${MAX_LOSS_PER_TRADE_DOLLARS:-}" in compose_text
 
 
@@ -104,10 +226,13 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
         in deploy_text
     )
     assert 'DEPLOY_DECISION_DRY_RUN_STRATEGY="${DEPLOY_DECISION_DRY_RUN_STRATEGY:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}}"' in deploy_text
+    assert 'DEPLOY_DECISION_DRY_RUN_STRATEGIES="${DEPLOY_DECISION_DRY_RUN_STRATEGIES:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$DEPLOY_DECISION_DRY_RUN_STRATEGY}}}"' in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_MIN_RECORDS="${DEPLOY_DECISION_DRY_RUN_MIN_RECORDS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}}"' in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}}"' in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES="${DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES:-${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}}"' in deploy_text
     assert "DEPLOY_DECISION_DRY_RUN_STRATEGY contains unsupported characters" in deploy_text
+    assert "DEPLOY_DECISION_DRY_RUN_STRATEGIES contains unsupported strategy" in deploy_text
+    assert "DEPLOY_DECISION_DRY_RUN_STRATEGIES must contain at least one strategy" in deploy_text
     assert "DEPLOY_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in deploy_text
     assert "DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED must be true or false" in deploy_text
     assert "DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES must be comma-separated HH:MM values" in deploy_text
@@ -127,8 +252,9 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert 'retry_expected_status="$(load_deploy_ops_expected_trading_status)"' in deploy_text
     assert "deploy ops check retrying after flat paper profit lock transition" in deploy_text
     assert "verify_paper_decision_dry_run()" in deploy_text
+    assert 'for strategy in "${deploy_decision_dry_run_strategies[@]}"' in deploy_text
     assert "Paper decision dry run skipped because DEPLOY_REQUIRE_DECISION_DRY_RUN=false" in deploy_text
-    assert 'PAPER_DECISION_DRY_RUN_STRATEGY="$DEPLOY_DECISION_DRY_RUN_STRATEGY"' in deploy_text
+    assert 'PAPER_DECISION_DRY_RUN_STRATEGY="$strategy"' in deploy_text
     assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="$DEPLOY_DECISION_DRY_RUN_MIN_RECORDS"' in deploy_text
     assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED"' in deploy_text
     assert 'PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="$DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES"' in deploy_text
@@ -138,7 +264,13 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert '--expect-trading-status "$expected_status"' in deploy_text
     assert "--expect-trading-status close_only" in deploy_text
     assert "--expect-kill-switch false" in deploy_text
-    assert "--expect-only-enabled-strategy bull_flag" in deploy_text
+    assert "DEPLOY_EXPECT_ENABLED_STRATEGIES" in deploy_text
+    assert (
+        'DEPLOY_EXPECT_ENABLED_STRATEGIES="${DEPLOY_EXPECT_ENABLED_STRATEGIES:-'
+        '${PAPER_APPROVED_STRATEGIES:-bull_flag,vwap_cross}}"'
+    ) in deploy_text
+    assert 'expected_enabled_strategy_args+=(--expect-only-enabled-strategy "$name")' in deploy_text
+    assert '"${expected_enabled_strategy_args[@]}"' in deploy_text
     assert 'compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")' in deploy_text
     assert "remove_supervisor_container()" in deploy_text
     assert '"${compose[@]}" stop supervisor >/dev/null 2>&1 || true' in deploy_text
@@ -178,7 +310,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
 
     assert "MARKET_DATA_FEED=iex" in env_text
     assert "RELATIVE_VOLUME_THRESHOLD=2.0" in env_text
-    assert "MAX_OPEN_POSITIONS=4" in env_text
+    assert "MAX_OPEN_POSITIONS=1" in env_text
     assert "BULL_FLAG_MIN_RUN_PCT=0.02" in env_text
     assert "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO=0.6" in env_text
     assert "BULL_FLAG_CONSOLIDATION_RANGE_PCT=0.5" in env_text
@@ -186,9 +318,20 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "NIGHTLY_MAX_COMBOS=24" in env_text
     assert "PAPER_PROOF_FREEZE=true" in env_text
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180" in env_text
-    assert "PROFIT_PROBE_START_DATE=2026-06-30" in env_text
+    assert "PROFIT_PROBE_START_DATE=2026-07-07" in env_text
     assert "PROFIT_PROBE_STRATEGY=bull_flag" in env_text
-    assert "PROFIT_PROBE_MIN_TRADES=10" in env_text
+    assert "PROFIT_PROBE_STRATEGIES=bull_flag,vwap_cross" in env_text
+    assert "PROFIT_PROBE_MIN_TRADES=30" in env_text
+    assert "PAPER_SCALE_MIN_TRADES=30" in env_text
+    assert "PAPER_SCALE_MIN_STRATEGIES=2" in env_text
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag,vwap_cross" in env_text
+    assert "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES=bull_flag,vwap_cross" in env_text
+    assert "PAPER_ACTIVITY_STRATEGIES=bull_flag,vwap_cross" in env_text
+    assert "SESSION_GUARD_STRATEGIES=bull_flag,vwap_cross" in env_text
+    assert "SESSION_GUARD_MIN_TRADES=10" in env_text
+    assert "SESSION_GUARD_FAIL_BELOW_PNL=0" in env_text
+    assert "PAPER_EXECUTION_MIN_ENTRY_FILL_RATE=0.25" in env_text
+    assert "PAPER_EXECUTION_MAX_CAPACITY_REJECT_RATE=0.05" in env_text
     assert "PROFIT_PROBE_MIN_PNL=0.01" in env_text
     assert "RISK_PER_TRADE_PCT=0.01" in env_text
     assert "MAX_POSITION_PCT=0.05" in env_text
@@ -204,6 +347,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "ENABLE_VIX_FILTER=false" in env_text
     assert "ENABLE_SECTOR_FILTER=false" in env_text
     assert "ENABLE_VWAP_ENTRY_FILTER=false" in env_text
+    assert "ENTRY_ORDER_ACTIVE_BARS=1" in env_text
     assert "ENABLE_PROFIT_TRAIL=true" in env_text
     assert "PROFIT_TRAIL_PCT=0.90" in env_text
     assert "ENABLE_PROFIT_TARGET=true" in env_text
@@ -211,6 +355,18 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "ENABLE_BREAKEVEN_STOP=true" in env_text
     assert "BREAKEVEN_TRIGGER_PCT=0.005" in env_text
     assert "BREAKEVEN_TRAIL_PCT=0.002" in env_text
+    assert "ENABLE_TREND_FILTER_EXIT=false" in env_text
+    assert "ENABLE_VWAP_BREAKDOWN_EXIT=false" in env_text
+    assert "VWAP_BREAKDOWN_MIN_BARS=1" in env_text
+    assert "ENABLE_NO_FOLLOW_THROUGH_EXIT=false" in env_text
+    assert "NO_FOLLOW_THROUGH_EXIT_MINUTES=0" in env_text
+    assert "NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT=0.0025" in env_text
+    assert "ENABLE_GIVEBACK_EXIT=true" in env_text
+    assert "GIVEBACK_EXIT_MIN_FAVORABLE_PCT=0.0025" in env_text
+    assert "GIVEBACK_EXIT_MAX_RETURN_PCT=0.0" in env_text
+    assert "ENABLE_EARLY_LOSS_EXIT=false" in env_text
+    assert "EARLY_LOSS_EXIT_MINUTES=0" in env_text
+    assert "EARLY_LOSS_EXIT_RETURN_PCT=0.01" in env_text
     assert "ENABLE_REGIME_FILTER=false" in env_text
     assert "ENABLE_NEWS_FILTER=false" in env_text
     assert "ENABLE_SPREAD_FILTER=false" in env_text
@@ -223,18 +379,30 @@ def test_init_server_generates_audited_paper_posture() -> None:
 
     assert "MARKET_DATA_FEED=iex" in script
     assert 'RISK_PER_TRADE_PCT="0.01"' in script
-    assert 'MAX_OPEN_POSITIONS="4"' in script
+    assert 'MAX_OPEN_POSITIONS="1"' in script
     assert 'RELATIVE_VOLUME_THRESHOLD="2.0"' in script
     assert "BULL_FLAG_MIN_RUN_PCT=0.02" in script
     assert "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO=0.6" in script
     assert "BULL_FLAG_CONSOLIDATION_RANGE_PCT=0.5" in script
+    assert "ENTRY_ORDER_ACTIVE_BARS=1" in script
     assert 'REPLAY_SLIPPAGE_BPS="2.0"' in script
     assert "NIGHTLY_MAX_COMBOS=24" in script
     assert 'PAPER_PROOF_FREEZE="true"' in script
     assert "PAPER_READINESS_MAX_PASS_AGE_MINUTES=180" in script
-    assert "PROFIT_PROBE_START_DATE=2026-06-30" in script
+    assert "PROFIT_PROBE_START_DATE=2026-07-07" in script
     assert "PROFIT_PROBE_STRATEGY=bull_flag" in script
-    assert "PROFIT_PROBE_MIN_TRADES=10" in script
+    assert "PROFIT_PROBE_STRATEGIES=bull_flag,vwap_cross" in script
+    assert "PROFIT_PROBE_MIN_TRADES=30" in script
+    assert "PAPER_SCALE_MIN_TRADES=30" in script
+    assert "PAPER_SCALE_MIN_STRATEGIES=2" in script
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag,vwap_cross" in script
+    assert "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES=bull_flag,vwap_cross" in script
+    assert "PAPER_ACTIVITY_STRATEGIES=bull_flag,vwap_cross" in script
+    assert "SESSION_GUARD_STRATEGIES=bull_flag,vwap_cross" in script
+    assert "SESSION_GUARD_MIN_TRADES=10" in script
+    assert "SESSION_GUARD_FAIL_BELOW_PNL=0" in script
+    assert "PAPER_EXECUTION_MIN_ENTRY_FILL_RATE=0.25" in script
+    assert "PAPER_EXECUTION_MAX_CAPACITY_REJECT_RATE=0.05" in script
     assert "PROFIT_PROBE_MIN_PNL=0.01" in script
     assert "CONFIDENCE_FLOOR=0.25" in script
     assert "INTRADAY_CONSECUTIVE_LOSS_GATE=0" in script
@@ -258,6 +426,24 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "ENABLE_BREAKEVEN_STOP=$ENABLE_BREAKEVEN_STOP" in script
     assert "BREAKEVEN_TRIGGER_PCT=$BREAKEVEN_TRIGGER_PCT" in script
     assert "BREAKEVEN_TRAIL_PCT=$BREAKEVEN_TRAIL_PCT" in script
+    assert 'ENABLE_TREND_FILTER_EXIT="false"' in script
+    assert "ENABLE_TREND_FILTER_EXIT=$ENABLE_TREND_FILTER_EXIT" in script
+    assert 'ENABLE_VWAP_BREAKDOWN_EXIT="false"' in script
+    assert "ENABLE_VWAP_BREAKDOWN_EXIT=$ENABLE_VWAP_BREAKDOWN_EXIT" in script
+    assert "VWAP_BREAKDOWN_MIN_BARS=1" in script
+    assert 'ENABLE_NO_FOLLOW_THROUGH_EXIT="false"' in script
+    assert "ENABLE_NO_FOLLOW_THROUGH_EXIT=$ENABLE_NO_FOLLOW_THROUGH_EXIT" in script
+    assert "NO_FOLLOW_THROUGH_EXIT_MINUTES=0" in script
+    assert "NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT=0.0025" in script
+    assert 'ENABLE_GIVEBACK_EXIT="true"' in script
+    assert 'ENABLE_GIVEBACK_EXIT="false"' in script
+    assert "ENABLE_GIVEBACK_EXIT=$ENABLE_GIVEBACK_EXIT" in script
+    assert "GIVEBACK_EXIT_MIN_FAVORABLE_PCT=0.0025" in script
+    assert "GIVEBACK_EXIT_MAX_RETURN_PCT=0.0" in script
+    assert 'ENABLE_EARLY_LOSS_EXIT="false"' in script
+    assert "ENABLE_EARLY_LOSS_EXIT=$ENABLE_EARLY_LOSS_EXIT" in script
+    assert "EARLY_LOSS_EXIT_MINUTES=0" in script
+    assert "EARLY_LOSS_EXIT_RETURN_PCT=0.01" in script
     assert "ENABLE_NEWS_FILTER=false" in script
     assert "ENABLE_SPREAD_FILTER=false" in script
     assert "OPTION_CHAIN_SYMBOLS=" in script

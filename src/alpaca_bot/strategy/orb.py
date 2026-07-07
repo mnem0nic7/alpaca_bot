@@ -8,6 +8,22 @@ from alpaca_bot.risk.atr import atr_stop_buffer, calculate_atr
 from alpaca_bot.strategy.breakout import daily_trend_filter_passes, is_entry_session_time, session_day
 
 
+def _session_bars_through_signal(
+    intraday_bars: Sequence[Bar],
+    *,
+    signal_index: int,
+    settings: Settings,
+) -> list[Bar]:
+    signal_date = session_day(intraday_bars[signal_index].timestamp, settings)
+    start_index = signal_index
+    while start_index > 0:
+        previous = intraday_bars[start_index - 1]
+        if session_day(previous.timestamp, settings) != signal_date:
+            break
+        start_index -= 1
+    return list(intraday_bars[start_index : signal_index + 1])
+
+
 def evaluate_orb_signal(
     *,
     symbol: str,
@@ -27,12 +43,11 @@ def evaluate_orb_signal(
     if not daily_trend_filter_passes(daily_bars, settings):
         return None
 
-    # intraday_bars spans multiple days — filter to the signal bar's session date
-    signal_date = session_day(signal_bar.timestamp, settings)
-    today_bars = [
-        bar for bar in intraday_bars[: signal_index + 1]
-        if session_day(bar.timestamp, settings) == signal_date
-    ]
+    # In replay, intraday_bars can span many days. Walk back only through the
+    # current session instead of re-filtering the whole historical prefix.
+    today_bars = _session_bars_through_signal(
+        intraday_bars, signal_index=signal_index, settings=settings
+    )
 
     # need at least orb_opening_bars + 1 bars (the range bars plus a signal bar beyond the range)
     if len(today_bars) <= settings.orb_opening_bars:

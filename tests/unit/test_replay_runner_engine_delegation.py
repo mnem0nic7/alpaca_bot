@@ -649,6 +649,67 @@ def test_existing_order_fill_preserves_engine_selected_quantity() -> None:
     assert fills[0].details["quantity"] == 123.0
 
 
+def test_existing_order_can_fill_on_second_configured_active_bar() -> None:
+    from alpaca_bot.domain.enums import IntentType
+    from alpaca_bot.domain.models import ReplayEvent, WorkingEntryOrder
+    from alpaca_bot.replay.runner import ReplayRunner, ReplayState
+
+    settings = make_settings(ENTRY_ORDER_ACTIVE_BARS="2", REPLAY_SLIPPAGE_BPS="0")
+    runner = ReplayRunner(settings)
+    first_active = datetime(2026, 4, 24, 14, 15, tzinfo=timezone.utc)
+    second_active = datetime(2026, 4, 24, 14, 30, tzinfo=timezone.utc)
+    order = WorkingEntryOrder(
+        symbol="AAPL",
+        signal_timestamp=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
+        active_bar_timestamp=first_active,
+        expires_at_timestamp=second_active,
+        stop_price=100.0,
+        limit_price=101.0,
+        initial_stop_price=95.0,
+        entry_level=100.0,
+        relative_volume=2.0,
+        quantity=10.0,
+    )
+    state = ReplayState(equity=100_000.0, working_order=order)
+    events: list[ReplayEvent] = []
+
+    runner._process_existing_order(
+        bar=Bar(
+            symbol="AAPL",
+            timestamp=first_active,
+            open=99.0,
+            high=99.5,
+            low=98.5,
+            close=99.0,
+            volume=5000,
+        ),
+        state=state,
+        events=events,
+    )
+
+    assert state.working_order is order
+    assert not any(event.event_type is IntentType.ENTRY_EXPIRED for event in events)
+
+    runner._process_existing_order(
+        bar=Bar(
+            symbol="AAPL",
+            timestamp=second_active,
+            open=99.5,
+            high=100.5,
+            low=99.0,
+            close=100.2,
+            volume=5000,
+        ),
+        state=state,
+        events=events,
+    )
+
+    assert state.position is not None
+    assert state.position.entry_timestamp == second_active
+    fills = [event for event in events if event.event_type is IntentType.ENTRY_FILLED]
+    assert len(fills) == 1
+
+
 # ---------------------------------------------------------------------------
 # Test: equity compounding after stop hit and EOD exit
 # ---------------------------------------------------------------------------
@@ -737,3 +798,41 @@ def test_equity_updated_after_eod_exit() -> None:
     expected_pnl = (bar.close - entry_price) * quantity  # (112.5-110.0)*30 = 75.0
     assert state.equity == pytest.approx(starting_equity + expected_pnl)
     assert state.position is None
+    assert events[0].details["reason"] == "eod_flatten"
+
+
+def test_eod_exit_event_can_record_viability_reason() -> None:
+    from alpaca_bot.replay.runner import ReplayRunner, ReplayState
+    from alpaca_bot.domain.models import ReplayEvent
+
+    runner = ReplayRunner(make_settings())
+    position = OpenPosition(
+        symbol="AAPL",
+        entry_timestamp=datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc),
+        entry_price=110.0,
+        quantity=30,
+        entry_level=110.0,
+        initial_stop_price=108.0,
+        stop_price=108.0,
+        highest_price=110.0,
+    )
+    state = ReplayState(equity=100_000.0, position=position)
+    events: list[ReplayEvent] = []
+    bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 15, 45, tzinfo=timezone.utc),
+        open=112.0,
+        high=113.0,
+        low=111.5,
+        close=112.5,
+        volume=3000,
+    )
+
+    runner._handle_eod_exit(
+        bar=bar,
+        state=state,
+        events=events,
+        reason="viability_trend_filter_failed",
+    )
+
+    assert events[0].details["reason"] == "viability_trend_filter_failed"

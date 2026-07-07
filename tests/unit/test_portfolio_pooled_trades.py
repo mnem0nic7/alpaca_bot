@@ -8,7 +8,10 @@ from alpaca_bot.config import Settings
 from alpaca_bot.domain.models import Bar, EntrySignal, ReplayScenario
 from alpaca_bot.replay.audit import run_audit
 from alpaca_bot.replay.break_even import run_break_even_sweep
-from alpaca_bot.replay.portfolio import portfolio_pooled_trades
+from alpaca_bot.replay.portfolio import (
+    portfolio_basket_pooled_trades,
+    portfolio_pooled_trades,
+)
 
 ENV = {
     "TRADING_MODE": "paper", "ENABLE_LIVE_TRADING": "false",
@@ -113,7 +116,9 @@ def test_portfolio_replay_blocks_same_day_retry_after_unfilled_entry_attempt(
     monkeypatch.setattr(
         "alpaca_bot.replay.portfolio.STRATEGY_REGISTRY", {"breakout": fake_eval}, raising=False
     )
-    settings = Settings.from_env({**ENV, "REPLAY_SLIPPAGE_BPS": "0"})
+    settings = Settings.from_env(
+        {**ENV, "REPLAY_SLIPPAGE_BPS": "0", "ENTRY_MIN_CLOSE_TO_ENTRY_PCT": "-1.0"}
+    )
     intraday = [
         _bar("AAA", _utc(14, 30), o=100, h=101, l=99, c=100, v=5000),
         _bar("AAA", _utc(14, 45), o=100, h=105, l=99, c=100, v=5000),
@@ -149,6 +154,71 @@ def test_portfolio_pooled_trades_reports_progress(monkeypatch):
     assert messages[-1].startswith(f"breakout {settings.replay_slippage_bps:g}bps")
     assert "replay 100%" in messages[-1]
     assert "timestamps" in messages[-1]
+
+
+def test_portfolio_basket_pooled_trades_scores_multiple_strategies(monkeypatch):
+    def alpha(*, symbol, intraday_bars, signal_index, daily_bars, settings):
+        del daily_bars, settings
+        bar = intraday_bars[signal_index]
+        if symbol == "AAA" and bar.timestamp == _utc(14, 30):
+            return EntrySignal(
+                symbol=symbol,
+                signal_bar=bar,
+                entry_level=100.0,
+                relative_volume=2.0,
+                stop_price=99.0,
+                limit_price=100.5,
+                initial_stop_price=99.0,
+                option_contract=None,
+            )
+        return None
+
+    def beta(*, symbol, intraday_bars, signal_index, daily_bars, settings):
+        del daily_bars, settings
+        bar = intraday_bars[signal_index]
+        if symbol == "BBB" and bar.timestamp == _utc(14, 30):
+            return EntrySignal(
+                symbol=symbol,
+                signal_bar=bar,
+                entry_level=100.0,
+                relative_volume=2.0,
+                stop_price=99.0,
+                limit_price=100.5,
+                initial_stop_price=99.0,
+                option_contract=None,
+            )
+        return None
+
+    monkeypatch.setattr(
+        "alpaca_bot.replay.portfolio.STRATEGY_REGISTRY",
+        {"alpha": alpha, "beta": beta},
+        raising=False,
+    )
+    settings = Settings.from_env(ENV)
+    trades = portfolio_basket_pooled_trades(
+        [_scn("AAA"), _scn("BBB")],
+        settings,
+        ["alpha", "beta"],
+    )
+
+    assert {trade.symbol for trade in trades} == {"AAA", "BBB"}
+
+
+def test_portfolio_basket_pooled_trades_reports_progress(monkeypatch):
+    _fake_registry(monkeypatch)
+    settings = Settings.from_env(ENV)
+    messages: list[str] = []
+
+    portfolio_basket_pooled_trades(
+        [_scn("AAA"), _scn("BBB")],
+        settings,
+        ["breakout"],
+        on_progress=messages.append,
+    )
+
+    assert messages
+    assert messages[-1].startswith(f"breakout {settings.replay_slippage_bps:g}bps")
+    assert "replay 100%" in messages[-1]
 
 
 def test_injectable_into_run_audit(monkeypatch):

@@ -47,6 +47,7 @@ capture_env_overrides \
   PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS \
   PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED \
   PAPER_READINESS_DECISION_DRY_RUN_STRATEGY \
+  PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES \
   PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES \
   PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS \
   PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX \
@@ -89,6 +90,7 @@ PAPER_READINESS_DATA_SMOKE_LOOKBACK_DAYS="${PAPER_READINESS_DATA_SMOKE_LOOKBACK_
 PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}"
 PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}"
 PAPER_READINESS_DECISION_DRY_RUN_STRATEGY="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
+PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY}}"
 PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES="${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}"
 PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS="${PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIOS:-true}"
 PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX="${PAPER_READINESS_AUTO_IGNORE_STALE_SCENARIO_MAX:-5}"
@@ -98,7 +100,7 @@ PAPER_READINESS_SCENARIO_DIR="${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bo
 PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-}"
 PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-}"
 PAPER_READINESS_LOSING_STREAK_N="${PAPER_READINESS_LOSING_STREAK_N:-${LOSING_STREAK_N:-3}}"
-PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"
+PAPER_READINESS_PRIOR_PROOF_START_DATE="${PAPER_READINESS_PRIOR_PROOF_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}}"
 
 if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
   echo "paper readiness check skipped for TRADING_MODE=${TRADING_MODE:-unset}"
@@ -428,14 +430,83 @@ require_env_empty_or_unset() {
   fi
 }
 
+readiness_enabled_strategy_args=()
+readiness_decision_dry_run_strategies=()
+build_readiness_enabled_strategy_args() {
+  local csv="$1"
+  local raw
+  local name
+  local -a raw_names
+  readiness_enabled_strategy_args=()
+  IFS=',' read -r -a raw_names <<< "$csv"
+  for raw in "${raw_names[@]}"; do
+    name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+    if [[ -z "$name" ]]; then
+      continue
+    fi
+    if [[ ! "$name" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+      echo "PAPER_READINESS_EXPECT_ENABLED_STRATEGIES contains unsupported strategy: $name" >&2
+      exit 1
+    fi
+    readiness_enabled_strategy_args+=(--expect-only-enabled-strategy "$name")
+  done
+  if [[ "${#readiness_enabled_strategy_args[@]}" -eq 0 ]]; then
+    echo "PAPER_READINESS_EXPECT_ENABLED_STRATEGIES must contain at least one strategy" >&2
+    exit 1
+  fi
+}
+
+add_readiness_decision_dry_run_strategy() {
+  local raw="$1"
+  local name
+  local existing
+
+  name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+  if [[ -z "$name" ]]; then
+    return
+  fi
+  if [[ ! "$name" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+    echo "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES contains unsupported strategy: $name" >&2
+    exit 1
+  fi
+  for existing in "${readiness_decision_dry_run_strategies[@]}"; do
+    if [[ "$existing" == "$name" ]]; then
+      return
+    fi
+  done
+  readiness_decision_dry_run_strategies+=("$name")
+}
+
+build_readiness_decision_dry_run_strategies() {
+  local csv="$1"
+  local raw
+  local -a raw_names
+
+  readiness_decision_dry_run_strategies=()
+  add_readiness_decision_dry_run_strategy "$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY"
+  IFS=',' read -r -a raw_names <<< "$csv"
+  for raw in "${raw_names[@]}"; do
+    add_readiness_decision_dry_run_strategy "$raw"
+  done
+  if [[ "${#readiness_decision_dry_run_strategies[@]}" -eq 0 ]]; then
+    echo "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES must contain at least one strategy" >&2
+    exit 1
+  fi
+}
+
+build_readiness_enabled_strategy_args \
+  "${PAPER_READINESS_EXPECT_ENABLED_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-bull_flag,vwap_cross}}"
+build_readiness_decision_dry_run_strategies "$PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES"
+
 require_env_value STRATEGY_VERSION v1-breakout
 require_env_value MARKET_DATA_FEED iex
 require_env_value DAILY_SMA_PERIOD 20
 require_env_value BREAKOUT_LOOKBACK_BARS 20
-require_env_value RELATIVE_VOLUME_LOOKBACK_BARS 20
+require_env_value RELATIVE_VOLUME_LOOKBACK_BARS 10
 require_env_value RELATIVE_VOLUME_THRESHOLD 2.0
 require_env_value ENTRY_TIMEFRAME_MINUTES 15
-require_env_value MAX_OPEN_POSITIONS 4
+require_env_value_or_unset ENTRY_ORDER_ACTIVE_BARS 1
+require_env_value MAX_OPEN_POSITIONS 1
 require_env_value REPLAY_SLIPPAGE_BPS 2.0
 require_env_value RISK_PER_TRADE_PCT 0.01
 require_env_value MAX_POSITION_PCT 0.05
@@ -444,6 +515,8 @@ require_env_value MAX_PORTFOLIO_EXPOSURE_PCT 0.30
 require_env_value DAILY_LOSS_LIMIT_PCT 0.01
 require_env_value STOP_LIMIT_BUFFER_PCT 0.0005
 require_env_value ENTRY_STOP_PRICE_BUFFER 0.02
+require_env_value_or_unset ENTRY_MIN_CLOSE_TO_ENTRY_PCT -0.01
+require_env_value_or_unset ENTRY_MAX_CLOSE_TO_ENTRY_PCT 1.0
 require_env_value_or_unset ATR_PERIOD 20
 require_env_value_or_unset ATR_STOP_MULTIPLIER 1.0
 require_env_value TRAILING_STOP_ATR_MULTIPLIER 1.0
@@ -508,16 +581,19 @@ check("strategy_version", settings.strategy_version, "v1-breakout")
 check("market_data_feed", settings.market_data_feed.value, "iex")
 check("daily_sma_period", settings.daily_sma_period, 20)
 check("breakout_lookback_bars", settings.breakout_lookback_bars, 20)
-check("relative_volume_lookback_bars", settings.relative_volume_lookback_bars, 20)
+check("relative_volume_lookback_bars", settings.relative_volume_lookback_bars, 10)
 check("relative_volume_threshold", settings.relative_volume_threshold, 2.0)
 check("entry_timeframe_minutes", settings.entry_timeframe_minutes, 15)
+check("entry_order_active_bars", settings.entry_order_active_bars, 1)
 check("risk_per_trade_pct", settings.risk_per_trade_pct, 0.01)
 check("max_position_pct", settings.max_position_pct, 0.05)
-check("max_open_positions", settings.max_open_positions, 4)
+check("max_open_positions", settings.max_open_positions, 1)
 check("max_portfolio_exposure_pct", settings.max_portfolio_exposure_pct, 0.30)
 check("daily_loss_limit_pct", settings.daily_loss_limit_pct, 0.01)
 check("stop_limit_buffer_pct", settings.stop_limit_buffer_pct, 0.0005)
 check("entry_stop_price_buffer", settings.entry_stop_price_buffer, 0.02)
+check("entry_min_close_to_entry_pct", settings.entry_min_close_to_entry_pct, -0.01)
+check("entry_max_close_to_entry_pct", settings.entry_max_close_to_entry_pct, 1.0)
 check("atr_period", settings.atr_period, 20)
 check("atr_stop_multiplier", settings.atr_stop_multiplier, 1.0)
 check("trailing_stop_atr_multiplier", settings.trailing_stop_atr_multiplier, 1.0)
@@ -547,6 +623,7 @@ check("option_chain_symbols", settings.option_chain_symbols, ())
 check("extended_hours_enabled", settings.extended_hours_enabled, False)
 check("enable_trend_filter_exit", settings.enable_trend_filter_exit, False)
 check("enable_vwap_breakdown_exit", settings.enable_vwap_breakdown_exit, False)
+check("enable_early_loss_exit", settings.enable_early_loss_exit, False)
 check("per_symbol_loss_limit_pct", settings.per_symbol_loss_limit_pct, 0.0)
 check("min_position_notional", settings.min_position_notional, 0.0)
 check("max_stop_pct", settings.max_stop_pct, 0.05)
@@ -1338,12 +1415,41 @@ else
 fi
 
 run_decision_dry_run_check() {
-  PAPER_DECISION_DRY_RUN_STRATEGY="$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY" \
-  PAPER_DECISION_DRY_RUN_MIN_RECORDS="$PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS" \
-  PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED" \
-  PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="$PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES" \
-  PAPER_DECISION_DRY_RUN_SESSION_DATE="$PAPER_READINESS_PREVIOUS_SESSION_DATE" \
-    ./scripts/paper_decision_dry_run.sh "$ENV_FILE"
+  local output
+  local strategy
+  local strategy_csv
+
+  for strategy in "${readiness_decision_dry_run_strategies[@]}"; do
+    if [[ "$strategy" == "$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY" ]]; then
+      PAPER_DECISION_DRY_RUN_STRATEGY="$strategy" \
+      PAPER_DECISION_DRY_RUN_MIN_RECORDS="$PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS" \
+      PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED" \
+      PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="$PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES" \
+      PAPER_DECISION_DRY_RUN_SESSION_DATE="$PAPER_READINESS_PREVIOUS_SESSION_DATE" \
+        ./scripts/paper_decision_dry_run.sh "$ENV_FILE"
+      continue
+    fi
+
+    if ! output="$(
+      PAPER_DECISION_DRY_RUN_STRATEGY="$strategy" \
+      PAPER_DECISION_DRY_RUN_MIN_RECORDS="$PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS" \
+      PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED" \
+      PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="$PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES" \
+      PAPER_DECISION_DRY_RUN_SESSION_DATE="$PAPER_READINESS_PREVIOUS_SESSION_DATE" \
+        ./scripts/paper_decision_dry_run.sh "$ENV_FILE" 2>&1
+    )"; then
+      printf '%s\n' "$output" >&2
+      return 1
+    fi
+    printf '%s\n' "$output" \
+      | sed 's/^paper decision dry run ok: /paper readiness additional decision dry run ok: /'
+  done
+
+  strategy_csv="$(
+    IFS=,
+    printf '%s' "${readiness_decision_dry_run_strategies[*]}"
+  )"
+  echo "paper readiness decision dry run strategies ok: strategies=$strategy_csv count=${#readiness_decision_dry_run_strategies[@]}"
 }
 
 if [[ "${PAPER_READINESS_REQUIRE_DECISION_DRY_RUN,,}" == "true" ]]; then
@@ -2140,4 +2246,4 @@ fi
   --expect-strategy-version "$STRATEGY_VERSION" \
   --expect-trading-status "$ops_expected_trading_status" \
   --expect-kill-switch false \
-  --expect-only-enabled-strategy bull_flag
+  "${readiness_enabled_strategy_args[@]}"

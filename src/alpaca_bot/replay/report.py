@@ -16,7 +16,7 @@ class ReplayTradeRecord:
     quantity: float
     entry_time: datetime
     exit_time: datetime
-    exit_reason: str  # "stop" or "eod"
+    exit_reason: str  # "stop", "eod", "profit_target", or strategy exit reason
     pnl: float
     return_pct: float
 
@@ -152,7 +152,8 @@ def _extract_trades(events: list[ReplayEvent]) -> list[ReplayTradeRecord]:
             elif event.event_type == IntentType.PROFIT_TARGET_HIT:
                 exit_reason = "profit_target"
             else:
-                exit_reason = "eod"
+                raw_reason = str(event.details.get("reason") or "eod_flatten")
+                exit_reason = "eod" if raw_reason == "eod_flatten" else raw_reason
             trades.append(
                 ReplayTradeRecord(
                     symbol=event.symbol,

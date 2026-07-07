@@ -152,6 +152,8 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_readiness": "ready",
             "proof_reason": "awaiting_min_trades",
             "proof_blockers": "none",
+            "proof_evidence_blockers": "sample_trades,strategy_diversification",
+            "proof_sealed_evidence_blockers": "eod_loss_share",
             "proof_closed_trades": "3",
             "proof_required_trades": "10",
             "proof_pnl": "12.34",
@@ -259,6 +261,10 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "Readiness" in response.text
     assert "Closed Trades" in response.text
     assert "Proof P&L" in response.text
+    assert "Evidence Blockers" in response.text
+    assert "sample_trades,strategy_diversification" in response.text
+    assert "Sealed Evidence" in response.text
+    assert "eod_loss_share" in response.text
     assert "Scenario Evidence" in response.text
     assert "Scenario Problems" in response.text
     assert "ok\n              980\n              @ 2026-06-26" in response.text

@@ -166,24 +166,276 @@ def run_lever_sweep(
 
 # Single-field families: (label_prefix, settings_field, candidate_values).
 # Values that equal the baseline are skipped (baseline is its own point).
-_SINGLE_FIELD_FAMILIES: tuple[tuple[str, str, tuple[float, ...]], ...] = (
+_SINGLE_FIELD_FAMILIES: tuple[tuple[str, str, tuple[float | int, ...]], ...] = (
     ("A_initial_stop", "atr_stop_multiplier", (0.75, 1.0, 1.5, 2.0)),
     ("B_trail_atr", "trailing_stop_atr_multiplier", (0.0, 1.0, 1.5, 2.5, 3.5)),
     ("C_trail_trigger", "trailing_stop_profit_trigger_r", (0.5, 1.0, 1.5, 2.0)),
     ("E_rel_vol", "relative_volume_threshold", (1.5, 2.0, 2.5, 3.0)),
+    ("Y_rel_vol_lookback", "relative_volume_lookback_bars", (10, 15, 20, 30, 40)),
+    (
+        "Z_breakout_stop_buffer",
+        "breakout_stop_buffer_pct",
+        (0.0005, 0.001, 0.002, 0.005),
+    ),
+    ("N_max_stop", "max_stop_pct", (0.02, 0.03, 0.04, 0.05)),
+    ("O_loss_cap", "max_loss_per_trade_dollars", (5.0, 10.0, 15.0, 20.0)),
+    ("R_stop_limit_buffer", "stop_limit_buffer_pct", (0.00025, 0.0005, 0.001, 0.002)),
+    ("S_entry_stop_buffer", "entry_stop_price_buffer", (0.01, 0.03, 0.05)),
+    (
+        "T_max_close_to_entry",
+        "entry_max_close_to_entry_pct",
+        (0.001, 0.0025, 0.005, 0.01),
+    ),
+    (
+        "W_min_close_to_entry",
+        "entry_min_close_to_entry_pct",
+        (-1.0, -0.05, -0.02, -0.005, 0.0),
+    ),
+)
+
+_FAILED_BREAKDOWN_FIELD_FAMILIES: tuple[tuple[str, str, tuple[float, ...]], ...] = (
+    ("I_failed_breakdown_volume", "failed_breakdown_volume_ratio", (1.5, 2.0, 2.5, 3.0)),
+    (
+        "J_failed_breakdown_recapture",
+        "failed_breakdown_recapture_buffer_pct",
+        (0.0005, 0.001, 0.002, 0.003),
+    ),
+)
+
+_MOMENTUM_FIELD_FAMILIES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
+    ("U_prior_high_lookback", "prior_day_high_lookback_bars", (1, 2, 3, 5)),
+)
+
+_EMA_PULLBACK_FIELD_FAMILIES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
+    ("AH_ema_period", "ema_period", (5, 7, 9, 12, 20)),
+)
+
+_BREAKOUT_FIELD_FAMILIES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
+    ("X_breakout_lookback", "breakout_lookback_bars", (10, 15, 20, 30, 40)),
+)
+
+_ORB_FIELD_FAMILIES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
+    ("AA_orb_opening_bars", "orb_opening_bars", (1, 2, 3, 4)),
+)
+
+_HIGH_WATERMARK_FIELD_FAMILIES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
+    ("AB_high_watermark_lookback", "high_watermark_lookback_days", (63, 126, 252, 504)),
+)
+
+_VWAP_REVERSION_FIELD_FAMILIES: tuple[tuple[str, str, tuple[float, ...]], ...] = (
+    ("AI_vwap_dip", "vwap_dip_threshold_pct", (0.005, 0.01, 0.015, 0.02, 0.03)),
+)
+
+_GAP_AND_GO_FIELD_FAMILIES: tuple[tuple[str, str, tuple[float, ...]], ...] = (
+    ("AJ_gap_threshold", "gap_threshold_pct", (0.01, 0.015, 0.02, 0.03, 0.05)),
+    ("AK_gap_volume", "gap_volume_threshold", (1.5, 2.0, 2.5, 3.0)),
+)
+
+_BB_SQUEEZE_FIELD_FAMILIES: tuple[tuple[str, str, tuple[float | int, ...]], ...] = (
+    ("AL_bb_period", "bb_period", (10, 20, 30)),
+    ("AM_bb_std_dev", "bb_std_dev", (1.5, 2.0, 2.5)),
+    (
+        "AN_bb_squeeze_threshold",
+        "bb_squeeze_threshold_pct",
+        (0.015, 0.02, 0.03, 0.05),
+    ),
+    ("AO_bb_squeeze_min_bars", "bb_squeeze_min_bars", (3, 5, 8)),
 )
 
 _PROFIT_TARGET_RS: tuple[float, ...] = (1.5, 2.0, 3.0, 4.0)
 # entry_window_end values: must be > entry_window_start (10:00) and
 # < flatten_time (15:45). These restrict entries to earlier windows.
 _SESSION_ENDS: tuple[time, ...] = (time(12, 0), time(14, 0))
+_EARLY_FLATTEN_WINDOWS: tuple[tuple[time, time], ...] = (
+    (time(15, 30), time(15, 15)),
+    (time(15, 15), time(15, 0)),
+    (time(15, 0), time(14, 45)),
+    (time(14, 45), time(14, 30)),
+)
+_EXIT_FILTER_POINTS: tuple[LeverPoint, ...] = (
+    LeverPoint(
+        label="K_trend_exit:on",
+        overrides={"enable_trend_filter_exit": True},
+    ),
+    LeverPoint(
+        label="L_vwap_breakdown_exit:on",
+        overrides={"enable_vwap_breakdown_exit": True},
+    ),
+    LeverPoint(
+        label="M_vwap_breakdown_exit:on,min_bars=2",
+        overrides={"enable_vwap_breakdown_exit": True, "vwap_breakdown_min_bars": 2},
+    ),
+)
+_NO_FOLLOW_THROUGH_POINTS: tuple[LeverPoint, ...] = (
+    LeverPoint(
+        label="Q_no_follow_through:60m@0.0025",
+        overrides={
+            "enable_no_follow_through_exit": True,
+            "no_follow_through_exit_minutes": 60,
+            "no_follow_through_min_favorable_pct": 0.0025,
+        },
+    ),
+    LeverPoint(
+        label="Q_no_follow_through:90m@0.0025",
+        overrides={
+            "enable_no_follow_through_exit": True,
+            "no_follow_through_exit_minutes": 90,
+            "no_follow_through_min_favorable_pct": 0.0025,
+        },
+    ),
+    LeverPoint(
+        label="Q_no_follow_through:120m@0.005",
+        overrides={
+            "enable_no_follow_through_exit": True,
+            "no_follow_through_exit_minutes": 120,
+            "no_follow_through_min_favorable_pct": 0.005,
+        },
+    ),
+)
+_GIVEBACK_EXIT_POINTS: tuple[LeverPoint, ...] = (
+    LeverPoint(
+        label="V_giveback_exit:on@0.0025,max_return=0",
+        overrides={
+            "enable_giveback_exit": True,
+            "giveback_exit_min_favorable_pct": 0.0025,
+            "giveback_exit_max_return_pct": 0.0,
+        },
+    ),
+    LeverPoint(
+        label="V_giveback_exit:on@0.005,max_return=0.001",
+        overrides={
+            "enable_giveback_exit": True,
+            "giveback_exit_min_favorable_pct": 0.005,
+            "giveback_exit_max_return_pct": 0.001,
+        },
+    ),
+)
+_EARLY_LOSS_EXIT_POINTS: tuple[LeverPoint, ...] = (
+    LeverPoint(
+        label="AF_early_loss_exit:30m@0.005",
+        overrides={
+            "enable_early_loss_exit": True,
+            "early_loss_exit_minutes": 30,
+            "early_loss_exit_return_pct": 0.005,
+        },
+    ),
+    LeverPoint(
+        label="AF_early_loss_exit:45m@0.005",
+        overrides={
+            "enable_early_loss_exit": True,
+            "early_loss_exit_minutes": 45,
+            "early_loss_exit_return_pct": 0.005,
+        },
+    ),
+    LeverPoint(
+        label="AF_early_loss_exit:60m@0.01",
+        overrides={
+            "enable_early_loss_exit": True,
+            "early_loss_exit_minutes": 60,
+            "early_loss_exit_return_pct": 0.01,
+        },
+    ),
+)
+_ENTRY_ORDER_ACTIVE_BAR_POINTS: tuple[LeverPoint, ...] = (
+    LeverPoint(
+        label="AG_entry_order_active_bars:2",
+        overrides={"entry_order_active_bars": 2},
+    ),
+    LeverPoint(
+        label="AG_entry_order_active_bars:3",
+        overrides={"entry_order_active_bars": 3},
+    ),
+)
 
 
-def build_ofat_grid(base_settings: Settings) -> list[LeverPoint]:
+def scenarios_support_regime_filter(
+    scenarios: Sequence[ReplayScenario],
+    settings: Settings,
+) -> bool:
+    """Return True when replay can supply point-in-time regime bars."""
+    regime_symbol = settings.regime_symbol.upper()
+    return any(
+        (
+            scenario.symbol.upper() == regime_symbol and bool(scenario.daily_bars)
+        )
+        or bool(scenario.regime_daily_bars)
+        for scenario in scenarios
+    )
+
+
+def scenarios_support_vix_filter(
+    scenarios: Sequence[ReplayScenario],
+    settings: Settings,
+) -> bool:
+    """Return True when replay can supply point-in-time VIX proxy bars."""
+    vix_symbol = settings.vix_proxy_symbol.upper()
+    return any(
+        (
+            scenario.symbol.upper() == vix_symbol and bool(scenario.daily_bars)
+        )
+        or bool(scenario.vix_daily_bars)
+        for scenario in scenarios
+    )
+
+
+def scenarios_support_sector_filter(
+    scenarios: Sequence[ReplayScenario],
+    settings: Settings,
+) -> bool:
+    """Return True when replay can supply point-in-time sector ETF bars."""
+    sector_symbols = {symbol.upper() for symbol in settings.sector_etf_symbols}
+    return any(
+        (
+            scenario.symbol.upper() in sector_symbols
+            and bool(scenario.daily_bars)
+        )
+        or bool(scenario.sector_daily_bars_by_etf)
+        for scenario in scenarios
+    )
+
+
+def _single_field_families(
+    strategy: str | None,
+) -> tuple[tuple[str, str, tuple[float | int, ...]], ...]:
+    if strategy == "failed_breakdown":
+        # `relative_volume_threshold` is ignored by failed_breakdown; it has its
+        # own strategy-specific volume/recapture filters.
+        return tuple(
+            family
+            for family in _SINGLE_FIELD_FAMILIES
+            if family[1] != "relative_volume_threshold"
+        ) + _FAILED_BREAKDOWN_FIELD_FAMILIES
+    if strategy == "momentum":
+        return _SINGLE_FIELD_FAMILIES + _MOMENTUM_FIELD_FAMILIES
+    if strategy == "ema_pullback":
+        return _SINGLE_FIELD_FAMILIES + _EMA_PULLBACK_FIELD_FAMILIES
+    if strategy == "breakout":
+        return _SINGLE_FIELD_FAMILIES + _BREAKOUT_FIELD_FAMILIES
+    if strategy == "orb":
+        return _SINGLE_FIELD_FAMILIES + _ORB_FIELD_FAMILIES
+    if strategy == "high_watermark":
+        return _SINGLE_FIELD_FAMILIES + _HIGH_WATERMARK_FIELD_FAMILIES
+    if strategy == "vwap_reversion":
+        return _SINGLE_FIELD_FAMILIES + _VWAP_REVERSION_FIELD_FAMILIES
+    if strategy == "gap_and_go":
+        return _SINGLE_FIELD_FAMILIES + _GAP_AND_GO_FIELD_FAMILIES
+    if strategy == "bb_squeeze":
+        return _SINGLE_FIELD_FAMILIES + _BB_SQUEEZE_FIELD_FAMILIES
+    return _SINGLE_FIELD_FAMILIES
+
+
+def build_ofat_grid(
+    base_settings: Settings,
+    *,
+    strategy: str | None = None,
+    include_regime: bool = False,
+    include_vix: bool = False,
+    include_sector: bool = False,
+) -> list[LeverPoint]:
     """One-factor-at-a-time grid around the baseline. ~22 points."""
     points: list[LeverPoint] = [LeverPoint(label="baseline", overrides={})]
 
-    for prefix, field, values in _SINGLE_FIELD_FAMILIES:
+    for prefix, field, values in _single_field_families(strategy):
         base_val = getattr(base_settings, field)
         for v in values:
             if v == base_val:
@@ -201,12 +453,52 @@ def build_ofat_grid(base_settings: Settings) -> list[LeverPoint]:
             )
         )
 
-    # Family F (regime filter) is intentionally OMITTED: the replay harness calls
-    # evaluate_cycle() without regime_bars (runner.py:124-136), so engine.py:519
-    # short-circuits `enable_regime_filter` to a no-op. Sweeping it would yield a
-    # guaranteed baseline-identical row that *reads* as "regime has no edge" when
-    # the truth is "the replay cannot evaluate regime." Excluded to avoid that
-    # measurement artifact; evaluating it needs a benchmark series in replay.
+    # Family F — broad-market regime filter. Only include it when the caller
+    # confirmed the scenario set contains a benchmark series; otherwise the
+    # engine fail-opens and the row would be baseline-identical.
+    if include_regime:
+        points.append(
+            LeverPoint(
+                label="F_regime:on",
+                overrides={"enable_regime_filter": True},
+            )
+        )
+
+    # Families AC/AD — market-context gates. Only include them after the caller
+    # confirms replay can supply the matching daily context bars; otherwise the
+    # engine fail-opens and the row would be baseline-identical.
+    if include_vix:
+        vix_target = not base_settings.enable_vix_filter
+        points.append(
+            LeverPoint(
+                label=f"AC_vix:{'on' if vix_target else 'off'}",
+                overrides={"enable_vix_filter": vix_target},
+            )
+        )
+    if include_sector:
+        sector_target = not base_settings.enable_sector_filter
+        points.append(
+            LeverPoint(
+                label=f"AD_sector:{'on' if sector_target else 'off'}",
+                overrides={"enable_sector_filter": sector_target},
+            )
+        )
+    if include_vix and include_sector:
+        vix_target = not base_settings.enable_vix_filter
+        sector_target = not base_settings.enable_sector_filter
+        points.append(
+            LeverPoint(
+                label=(
+                    "AE_vix_sector:"
+                    f"vix={'on' if vix_target else 'off'},"
+                    f"sector={'on' if sector_target else 'off'}"
+                ),
+                overrides={
+                    "enable_vix_filter": vix_target,
+                    "enable_sector_filter": sector_target,
+                },
+            )
+        )
 
     # Family G — VWAP entry filter (toggle opposite of baseline).
     vwap_target = not base_settings.enable_vwap_entry_filter
@@ -228,13 +520,45 @@ def build_ofat_grid(base_settings: Settings) -> list[LeverPoint]:
             )
         )
 
+    # Family P — earlier flatten windows, coupled with an earlier entry cutoff
+    # so Settings validation keeps entry_window_end < flatten_time.
+    for flatten, entry_end in _EARLY_FLATTEN_WINDOWS:
+        if flatten >= base_settings.flatten_time:
+            continue
+        if entry_end <= base_settings.entry_window_start or entry_end >= flatten:
+            continue
+        points.append(
+            LeverPoint(
+                label=(
+                    f"P_flatten:flatten={flatten.strftime('%H:%M')},"
+                    f"entry_end={entry_end.strftime('%H:%M')}"
+                ),
+                overrides={
+                    "flatten_time": flatten,
+                    "entry_window_end": entry_end,
+                },
+            )
+        )
+
+    points.extend(_EXIT_FILTER_POINTS)
+    points.extend(_NO_FOLLOW_THROUGH_POINTS)
+    points.extend(_GIVEBACK_EXIT_POINTS)
+    points.extend(_EARLY_LOSS_EXIT_POINTS)
+    points.extend(_ENTRY_ORDER_ACTIVE_BAR_POINTS)
     return points
 
 
-def build_coarse_grid(base_settings: Settings) -> list[LeverPoint]:
+def build_coarse_grid(
+    base_settings: Settings,
+    *,
+    strategy: str | None = None,
+    include_regime: bool = False,
+    include_vix: bool = False,
+    include_sector: bool = False,
+) -> list[LeverPoint]:
     """Reduced grid (one hypothesised-best value per family) for a fast pass."""
     points: list[LeverPoint] = [LeverPoint(label="baseline", overrides={})]
-    coarse: tuple[tuple[str, dict], ...] = (
+    coarse: list[tuple[str, dict]] = [
         ("A_initial_stop:atr_stop_multiplier=1.5", {"atr_stop_multiplier": 1.5}),
         ("B_trail_atr:trailing_stop_atr_multiplier=2.5",
          {"trailing_stop_atr_multiplier": 2.5}),
@@ -242,12 +566,192 @@ def build_coarse_grid(base_settings: Settings) -> list[LeverPoint]:
          {"trailing_stop_profit_trigger_r": 1.5}),
         ("D_profit_target:on@3.0",
          {"enable_profit_target": True, "profit_target_r": 3.0}),
-        ("E_rel_vol:relative_volume_threshold=2.0",
-         {"relative_volume_threshold": 2.0}),
-        # Family F (regime) omitted — inert in replay (see build_ofat_grid).
-        ("G_vwap:off", {"enable_vwap_entry_filter": False}),
+        (
+            f"G_vwap:{'off' if base_settings.enable_vwap_entry_filter else 'on'}",
+            {"enable_vwap_entry_filter": not base_settings.enable_vwap_entry_filter},
+        ),
         ("H_session:end=14:00", {"entry_window_end": time(14, 0)}),
-    )
+        ("K_trend_exit:on", {"enable_trend_filter_exit": True}),
+        ("L_vwap_breakdown_exit:on", {"enable_vwap_breakdown_exit": True}),
+        (
+            "Q_no_follow_through:90m@0.0025",
+            {
+                "enable_no_follow_through_exit": True,
+                "no_follow_through_exit_minutes": 90,
+                "no_follow_through_min_favorable_pct": 0.0025,
+            },
+        ),
+        (
+            "V_giveback_exit:on@0.0025,max_return=0",
+            {
+                "enable_giveback_exit": True,
+                "giveback_exit_min_favorable_pct": 0.0025,
+                "giveback_exit_max_return_pct": 0.0,
+            },
+        ),
+        (
+            "AF_early_loss_exit:45m@0.005",
+            {
+                "enable_early_loss_exit": True,
+                "early_loss_exit_minutes": 45,
+                "early_loss_exit_return_pct": 0.005,
+            },
+        ),
+        ("AG_entry_order_active_bars:2", {"entry_order_active_bars": 2}),
+        ("N_max_stop:max_stop_pct=0.04", {"max_stop_pct": 0.04}),
+        ("O_loss_cap:max_loss_per_trade_dollars=10.0",
+         {"max_loss_per_trade_dollars": 10.0}),
+        ("R_stop_limit_buffer:stop_limit_buffer_pct=0.00025",
+         {"stop_limit_buffer_pct": 0.00025}),
+        ("S_entry_stop_buffer:entry_stop_price_buffer=0.03",
+         {"entry_stop_price_buffer": 0.03}),
+        ("T_max_close_to_entry:entry_max_close_to_entry_pct=0.005",
+         {"entry_max_close_to_entry_pct": 0.005}),
+        ("W_min_close_to_entry:entry_min_close_to_entry_pct=-0.02",
+         {"entry_min_close_to_entry_pct": -0.02}),
+        ("Y_rel_vol_lookback:relative_volume_lookback_bars=10",
+         {"relative_volume_lookback_bars": 10}),
+        ("Z_breakout_stop_buffer:breakout_stop_buffer_pct=0.0005",
+         {"breakout_stop_buffer_pct": 0.0005}),
+        ("P_flatten:flatten=15:15,entry_end=15:00",
+         {"flatten_time": time(15, 15), "entry_window_end": time(15, 0)}),
+    ]
+    if include_regime:
+        coarse.insert(
+            5,
+            ("F_regime:on", {"enable_regime_filter": True}),
+        )
+    if include_vix:
+        vix_target = not base_settings.enable_vix_filter
+        coarse.insert(
+            6,
+            (
+                f"AC_vix:{'on' if vix_target else 'off'}",
+                {"enable_vix_filter": vix_target},
+            ),
+        )
+    if include_sector:
+        sector_target = not base_settings.enable_sector_filter
+        coarse.insert(
+            7,
+            (
+                f"AD_sector:{'on' if sector_target else 'off'}",
+                {"enable_sector_filter": sector_target},
+            ),
+        )
+    if include_vix and include_sector:
+        vix_target = not base_settings.enable_vix_filter
+        sector_target = not base_settings.enable_sector_filter
+        coarse.insert(
+            8,
+            (
+                (
+                    "AE_vix_sector:"
+                    f"vix={'on' if vix_target else 'off'},"
+                    f"sector={'on' if sector_target else 'off'}"
+                ),
+                {
+                    "enable_vix_filter": vix_target,
+                    "enable_sector_filter": sector_target,
+                },
+            ),
+        )
+    if strategy == "failed_breakdown":
+        coarse.extend(
+            [
+                (
+                    "I_failed_breakdown_volume:failed_breakdown_volume_ratio=2.5",
+                    {"failed_breakdown_volume_ratio": 2.5},
+                ),
+                (
+                    "J_failed_breakdown_recapture:failed_breakdown_recapture_buffer_pct=0.002",
+                    {"failed_breakdown_recapture_buffer_pct": 0.002},
+                ),
+            ]
+        )
+    else:
+        coarse.append(
+            (
+                "E_rel_vol:relative_volume_threshold=2.0",
+                {"relative_volume_threshold": 2.0},
+            )
+        )
+    if strategy == "momentum":
+        coarse.append(
+            (
+                "U_prior_high_lookback:prior_day_high_lookback_bars=2",
+                {"prior_day_high_lookback_bars": 2},
+            )
+        )
+    if strategy == "ema_pullback":
+        coarse.append(
+            (
+                "AH_ema_period:ema_period=7",
+                {"ema_period": 7},
+            )
+        )
+    if strategy == "breakout":
+        coarse.append(
+            (
+                "X_breakout_lookback:breakout_lookback_bars=10",
+                {"breakout_lookback_bars": 10},
+            )
+        )
+    if strategy == "orb":
+        coarse.append(
+            (
+                "AA_orb_opening_bars:orb_opening_bars=3",
+                {"orb_opening_bars": 3},
+            )
+        )
+    if strategy == "high_watermark":
+        coarse.append(
+            (
+                "AB_high_watermark_lookback:high_watermark_lookback_days=126",
+                {"high_watermark_lookback_days": 126},
+            )
+        )
+    if strategy == "vwap_reversion":
+        coarse.append(
+            (
+                "AI_vwap_dip:vwap_dip_threshold_pct=0.02",
+                {"vwap_dip_threshold_pct": 0.02},
+            )
+        )
+    if strategy == "gap_and_go":
+        coarse.extend(
+            [
+                (
+                    "AJ_gap_threshold:gap_threshold_pct=0.01",
+                    {"gap_threshold_pct": 0.01},
+                ),
+                (
+                    "AK_gap_volume:gap_volume_threshold=1.5",
+                    {"gap_volume_threshold": 1.5},
+                ),
+            ]
+        )
+    if strategy == "bb_squeeze":
+        coarse.extend(
+            [
+                (
+                    "AL_bb_period:bb_period=10",
+                    {"bb_period": 10},
+                ),
+                (
+                    "AM_bb_std_dev:bb_std_dev=1.5",
+                    {"bb_std_dev": 1.5},
+                ),
+                (
+                    "AN_bb_squeeze_threshold:bb_squeeze_threshold_pct=0.05",
+                    {"bb_squeeze_threshold_pct": 0.05},
+                ),
+                (
+                    "AO_bb_squeeze_min_bars:bb_squeeze_min_bars=3",
+                    {"bb_squeeze_min_bars": 3},
+                ),
+            ]
+        )
     for label, overrides in coarse:
         points.append(LeverPoint(label=label, overrides=overrides))
     return points
@@ -263,6 +767,7 @@ def format_lever_sweep_markdown(
     strategy: str,
     slippage_bps: float,
     baseline_label: str = "baseline",
+    scoring_note: str | None = None,
 ) -> str:
     base = next((r for r in rows if r.label == baseline_label), None)
     base_ci = base.is_row.ci_low if base and base.is_row.ci_low is not None else None
@@ -276,6 +781,8 @@ def format_lever_sweep_markdown(
         "Candidates only — promotion is via the nightly OOS gate.",
         "",
     ]
+    if scoring_note:
+        lines += [scoring_note, ""]
 
     if base is not None:
         lines += [

@@ -664,6 +664,27 @@ def test_proof_guard_regressions_rejects_weaker_metrics():
     ]
 
 
+def test_proof_guard_thresholds_use_scale_floor():
+    from alpaca_bot.nightly import cli as module
+
+    assert module._resolve_proof_guard_thresholds(
+        {"PAPER_SCALE_MIN_TRADES": "30"}
+    ) == (30, 0.01)
+    assert module._resolve_proof_guard_thresholds(
+        {
+            "PAPER_SCALE_MIN_TRADES": "30",
+            "PROFIT_PROBE_MIN_TRADES": "12",
+            "PROFIT_PROBE_MIN_PNL": "2.34",
+        }
+    ) == (30, 2.34)
+    assert module._resolve_proof_guard_thresholds(
+        {
+            "PAPER_SCALE_MIN_TRADES": "30",
+            "PROFIT_PROBE_MIN_TRADES": "44",
+        }
+    ) == (44, 0.01)
+
+
 def test_proof_guard_forwards_fractionable_symbols(monkeypatch):
     from alpaca_bot.nightly import cli as module
     from alpaca_bot.replay.report import BacktestReport

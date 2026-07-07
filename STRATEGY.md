@@ -198,6 +198,38 @@ if latest_close < vwap → emit EXIT
 
 **Why VWAP as a viability signal**: VWAP is the institutional cost basis for the day. When price breaks below it, the institutional bid that sustained the breakout has likely exhausted — the move is fading.
 
+### No Follow-Through Exit (`no_follow_through`)
+
+**Activation**: `ENABLE_NO_FOLLOW_THROUGH_EXIT = true` AND
+`position_age >= NO_FOLLOW_THROUGH_EXIT_MINUTES` AND
+`position_age >= VIABILITY_MIN_HOLD_MINUTES`.
+
+For long equity positions, if the trade never reached
+`entry_price * (1 + NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT)` and the latest close
+is back at or below entry, emit EXIT. Short equity uses the symmetric test:
+the trade must fail to reach the configured favorable move below entry and
+close back at or above entry.
+
+Default: disabled. The July 6, 2026 `bull_flag` EOD-loss mitigation sweep found
+in-sample improvement for a few settings, but no point survived OOS validation,
+so this remains a diagnostic lever rather than an approved paper setting.
+
+### Early Loss Exit (`early_loss_exit`)
+
+**Activation**: `ENABLE_EARLY_LOSS_EXIT = true` AND
+`position_age >= EARLY_LOSS_EXIT_MINUTES` AND
+`position_age >= VIABILITY_MIN_HOLD_MINUTES`.
+
+For long equity positions, if the latest close is down by at least
+`EARLY_LOSS_EXIT_RETURN_PCT` from entry after the configured hold time, emit
+EXIT. This is narrower than `no_follow_through`: it only cuts materially red
+early failures instead of flat trades that never made enough favorable progress.
+
+Default: disabled. The July 7, 2026 validation improved lower bounds versus
+baseline on the DDOG/PANW-inspired sample, but all tested points still had
+negative IS and OOS confidence lower bounds, so this remains a diagnostic lever
+rather than an approved paper setting.
+
 ---
 
 ## Risk and Position Sizing
@@ -360,6 +392,18 @@ The primary and most-tested strategy.
 **Breakout level**: `max(high for bar in last BREAKOUT_LOOKBACK_BARS intraday bars)` — the highest high over the lookback window.
 
 **Stop placement**: ATR-based below the breakout level; entry stop (for limit order) is at `breakout_level + ENTRY_STOP_PRICE_BUFFER`.
+
+**Entry order lifetime**: by default a stop-limit entry is active for only the
+next 15-minute execution bar. `ENTRY_ORDER_ACTIVE_BARS` is a diagnostic lever
+for testing longer entry lifetimes; live expiry is still capped at
+`FLATTEN_TIME`.
+
+**Entry quality guard**: when enabled, `ENTRY_MIN_CLOSE_TO_ENTRY_PCT` and
+`ENTRY_MAX_CLOSE_TO_ENTRY_PCT` bound the signal-bar close relative to the
+strategy's entry level. The lower bound avoids stale breakouts that closed too
+far below the trigger; the upper bound avoids chasing signals that already ran
+too far above the intended entry. `ENTRY_MAX_CLOSE_TO_ENTRY_PCT=1.0` is the
+disabled default.
 
 **Rationale**: A stock breaking to new N-bar highs on elevated volume is exhibiting relative strength. The daily trend filter ensures entries are with the primary trend, not against it. Volume confirmation distinguishes genuine breakouts from false ones.
 
@@ -632,6 +676,7 @@ All parameters are read from environment variables at startup via `Settings.from
 | Parameter | Default | Unit | Rationale |
 |---|---|---|---|
 | `ENTRY_TIMEFRAME_MINUTES` | 15 | minutes | Hardcoded in `Settings.validate()`. 15-min bars balance signal frequency with noise reduction. |
+| `ENTRY_ORDER_ACTIVE_BARS` | 1 | bars | Stop-limit entries are active for one execution bar by default. Higher diagnostic values must prove edge in replay and are still capped at flatten. |
 | `ENTRY_WINDOW_START` | 10:00 | ET | Avoids opening 30-minute noise and wide spreads. |
 | `ENTRY_WINDOW_END` | 15:30 | ET | Stops new entries 15 min before flatten; no new positions into close. |
 | `FLATTEN_TIME` | 15:45 | ET | 15-min buffer before close for orderly exit. |
@@ -646,7 +691,7 @@ All parameters are read from environment variables at startup via `Settings.from
 |---|---|---|---|
 | `RISK_PER_TRADE_PCT` | 0.0025 | fraction | 0.25% equity at risk per trade. At 20 positions, total theoretical risk is 5% — manageable. |
 | `MAX_POSITION_PCT` | 0.015 | fraction | 1.5% of equity max per position. Limits concentration; 20 positions = 30% gross notional. |
-| `MAX_OPEN_POSITIONS` | 20 | count | Balances diversification benefit against tracking complexity. |
+| `MAX_OPEN_POSITIONS` | 20 | count | Balances diversification benefit against tracking complexity. Current paper proof posture overrides this to 1 after the 2026-07-07 capacity reduction audit; the paper proof epoch starts 2026-07-07 for that posture. |
 | `MAX_PORTFOLIO_EXPOSURE_PCT` | 0.30 | fraction | 30% gross notional cap. Prevents over-leveraged portfolios even with many small positions. |
 | `MAX_STOP_PCT` | 0.05 | fraction | 5% max drawdown from entry before forced stop-up. Hard limit on individual position losses. |
 | `MIN_POSITION_NOTIONAL` | 0.0 | dollars | Disabled by default. Set to filter out penny-stock sizing anomalies. |
@@ -659,6 +704,8 @@ All parameters are read from environment variables at startup via `Settings.from
 | `ATR_STOP_MULTIPLIER` | 1.0 | × ATR | 1 ATR below breakout level. Allows normal daily noise without stopping out. |
 | `BREAKOUT_STOP_BUFFER_PCT` | 0.001 | fraction | 0.1% fallback buffer when ATR unavailable. Tiny — prefer ATR. |
 | `ENTRY_STOP_PRICE_BUFFER` | 0.01 | dollars | $0.01 above breakout level for entry stop placement. Ensures fill above the breakout level. |
+| `ENTRY_MIN_CLOSE_TO_ENTRY_PCT` | -1.0 | fraction | Disabled lower bound by default. In paper posture this is tightened to -0.01 to reject signals that closed more than 1% below entry. |
+| `ENTRY_MAX_CLOSE_TO_ENTRY_PCT` | 1.0 | fraction | Disabled upper bound by default. Lower values reject entries whose signal close already ran too far above entry. |
 | `STOP_LIMIT_BUFFER_PCT` | 0.001 | fraction | 0.1% above stop for limit price. Small buffer to improve fill probability. |
 | `TRAILING_STOP_PROFIT_TRIGGER_R` | 1.0 | × risk | Trailing activates at breakeven + full initial risk. Protects gains before trailing. |
 | `TRAILING_STOP_ATR_MULTIPLIER` | 0.0 | × ATR | Disabled by default. Set to 1.0–2.0 for ATR-based trailing. |

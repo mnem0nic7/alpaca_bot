@@ -85,6 +85,56 @@ def test_run_audit_reports_replay_phase_progress():
     ]
 
 
+def test_run_audit_skips_frictionless_replay_when_costed_has_zero_trades():
+    calls = []
+
+    def fake_pooled(scenarios, settings, strategy_name):
+        calls.append(settings.replay_slippage_bps)
+        return []
+
+    progress = []
+
+    rows = run_audit(
+        scenarios=["s1", "s2"],
+        settings=make_settings(),
+        strategies=["gap_and_go"],
+        slippage_bps=2.0,
+        pooled_trades_fn=fake_pooled,
+        on_progress=progress.append,
+    )
+
+    assert calls == [2.0]
+    assert progress == [
+        "gap_and_go: costed replay complete (0 trades)",
+        "gap_and_go: frictionless replay skipped (0 costed trades)",
+        "gap_and_go: 0 trades, verdict=insufficient-data",
+    ]
+    assert rows[0].trades == 0
+    assert rows[0].zero_cost_total_pnl == 0.0
+    assert rows[0].cost_drag == 0.0
+    assert rows[0].verdict == "insufficient-data"
+
+
+def test_run_audit_reports_completed_rows():
+    def fake_pooled(scenarios, settings, strategy_name):
+        per_trade = 10.0 if settings.replay_slippage_bps == 0.0 else 8.0
+        return [_trade(per_trade, day=d) for d in range(1, 7)]
+
+    completed_rows = []
+
+    rows = run_audit(
+        scenarios=["s1", "s2"],
+        settings=make_settings(),
+        strategies=["breakout"],
+        slippage_bps=5.0,
+        pooled_trades_fn=fake_pooled,
+        on_row=completed_rows.append,
+    )
+
+    assert completed_rows == rows
+    assert completed_rows[0].strategy == "breakout"
+
+
 def test_run_audit_insufficient_data():
     def fake_pooled(scenarios, settings, strategy_name):
         return [_trade(1.0)] * 3

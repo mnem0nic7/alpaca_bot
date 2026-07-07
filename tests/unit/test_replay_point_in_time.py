@@ -17,9 +17,10 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta, timezone
 
 from alpaca_bot.config import Settings
+from alpaca_bot.core.engine import CycleResult
 from alpaca_bot.domain import Bar
 from alpaca_bot.domain.enums import IntentType
-from alpaca_bot.domain.models import EntrySignal, ReplayScenario
+from alpaca_bot.domain.models import EntrySignal, MarketContext, ReplayScenario
 from alpaca_bot.replay import ReplayRunner
 from alpaca_bot.strategy.breakout import session_day
 
@@ -258,3 +259,145 @@ def test_trend_gate_varies_within_scenario() -> None:
     placed = [e for e in result.events if e.event_type == IntentType.ENTRY_ORDER_PLACED]
     assert len(placed) == 1, f"expected exactly one entry (day 1 only), got {len(placed)}"
     assert session_day(placed[0].timestamp, settings) == date(2026, 4, 23)
+
+
+def test_regime_bars_are_point_in_time_not_full_scenario(monkeypatch) -> None:
+    settings = make_settings(
+        ENABLE_REGIME_FILTER="true",
+        REGIME_SYMBOL="SPY",
+        REGIME_SMA_PERIOD="2",
+    )
+    symbol = "NVDA"
+    session = datetime(2026, 4, 24, 14, 30, tzinfo=timezone.utc)
+    intraday = [
+        Bar(
+            symbol=symbol,
+            timestamp=session + timedelta(minutes=15 * i),
+            open=100.0,
+            high=101.0,
+            low=99.0,
+            close=100.5,
+            volume=1_000_000,
+        )
+        for i in range(3)
+    ]
+    regime_daily = [
+        Bar(
+            symbol="SPY",
+            timestamp=datetime(2026, 4, day, 20, 0, tzinfo=timezone.utc),
+            open=500.0,
+            high=501.0,
+            low=499.0,
+            close=500.0 + day,
+            volume=10_000_000,
+        )
+        for day in (21, 22, 23, 24)
+    ]
+    seen_regime_dates: list[tuple[date, ...]] = []
+
+    def fake_evaluate_cycle(**kwargs):
+        bars = kwargs["regime_bars"]
+        seen_regime_dates.append(tuple(bar.timestamp.date() for bar in bars or ()))
+        return CycleResult(as_of=kwargs["now"])
+
+    import alpaca_bot.replay.runner as runner_module
+
+    monkeypatch.setattr(runner_module, "evaluate_cycle", fake_evaluate_cycle)
+    scenario = ReplayScenario(
+        name="regime-point-in-time",
+        symbol=symbol,
+        starting_equity=100_000.0,
+        daily_bars=[],
+        intraday_bars=intraday,
+        regime_daily_bars=regime_daily,
+    )
+
+    ReplayRunner(settings).run(scenario)
+
+    assert seen_regime_dates
+    assert all(date(2026, 4, 24) not in dates for dates in seen_regime_dates)
+    assert seen_regime_dates[0] == (
+        date(2026, 4, 21),
+        date(2026, 4, 22),
+        date(2026, 4, 23),
+    )
+
+
+def test_market_context_bars_are_point_in_time(monkeypatch) -> None:
+    settings = make_settings(
+        ENABLE_VIX_FILTER="true",
+        ENABLE_SECTOR_FILTER="true",
+        VIX_LOOKBACK_BARS="2",
+        SECTOR_ETF_SYMBOLS="XLK",
+        SECTOR_ETF_SMA_PERIOD="2",
+    )
+    symbol = "NVDA"
+    session = datetime(2026, 4, 24, 14, 30, tzinfo=timezone.utc)
+    intraday = [
+        Bar(
+            symbol=symbol,
+            timestamp=session + timedelta(minutes=15 * i),
+            open=100.0,
+            high=101.0,
+            low=99.0,
+            close=100.5,
+            volume=1_000_000,
+        )
+        for i in range(3)
+    ]
+    vix_daily = _daily_bars(
+        "VIXY", start=datetime(2026, 4, 21, 20, 0, tzinfo=timezone.utc), count=4
+    )
+    sector_daily = _daily_bars(
+        "XLK", start=datetime(2026, 4, 21, 20, 0, tzinfo=timezone.utc), count=4
+    )
+    seen_context_dates: list[tuple[tuple[date, ...], tuple[date, ...]]] = []
+    seen_market_context: list[MarketContext | None] = []
+
+    def fake_compute_market_context(**kwargs):
+        seen_context_dates.append(
+            (
+                tuple(bar.timestamp.date() for bar in kwargs["vix_bars"]),
+                tuple(
+                    bar.timestamp.date()
+                    for bar in kwargs["sector_bars_by_etf"]["XLK"]
+                ),
+            )
+        )
+        return MarketContext(
+            as_of=kwargs["as_of"],
+            vix_above_sma=True,
+            sector_passing_pct=0.0,
+        )
+
+    def fake_evaluate_cycle(**kwargs):
+        seen_market_context.append(kwargs["market_context"])
+        return CycleResult(as_of=kwargs["now"])
+
+    import alpaca_bot.replay.runner as runner_module
+
+    monkeypatch.setattr(
+        runner_module, "compute_market_context", fake_compute_market_context
+    )
+    monkeypatch.setattr(runner_module, "evaluate_cycle", fake_evaluate_cycle)
+    scenario = ReplayScenario(
+        name="context-point-in-time",
+        symbol=symbol,
+        starting_equity=100_000.0,
+        daily_bars=[],
+        intraday_bars=intraday,
+        vix_daily_bars=vix_daily,
+        sector_daily_bars_by_etf={"XLK": sector_daily},
+    )
+
+    ReplayRunner(settings).run(scenario)
+
+    assert seen_context_dates
+    for vix_dates, sector_dates in seen_context_dates:
+        assert date(2026, 4, 24) not in vix_dates
+        assert date(2026, 4, 24) not in sector_dates
+    assert seen_context_dates[0] == (
+        (date(2026, 4, 21), date(2026, 4, 22), date(2026, 4, 23)),
+        (date(2026, 4, 21), date(2026, 4, 22), date(2026, 4, 23)),
+    )
+    assert seen_market_context and all(ctx is not None for ctx in seen_market_context)

@@ -315,6 +315,8 @@
       {% set proof_status = proof_payload.get("proof_status", "unknown") %}
       {% set proof_readiness = proof_payload.get("proof_readiness", "unknown") %}
       {% set proof_blockers = proof_payload.get("proof_blockers", "unknown") %}
+      {% set proof_evidence_blockers = proof_payload.get("proof_evidence_blockers", "unknown") %}
+      {% set proof_sealed_evidence_blockers = proof_payload.get("proof_sealed_evidence_blockers", "unknown") %}
       <div class="panel" style="margin-bottom: 1rem;">
         <h2>Paper Proof</h2>
         <div class="status-grid">
@@ -341,6 +343,14 @@
           <div>
             <p class="eyebrow">Blockers</p>
             <p class="value mono {{ 'warn' if proof_blockers != 'none' else '' }}">{{ proof_blockers }}</p>
+          </div>
+          <div>
+            <p class="eyebrow">Evidence Blockers</p>
+            <p class="value mono {{ 'warn' if proof_evidence_blockers != 'none' else '' }}">{{ proof_evidence_blockers }}</p>
+          </div>
+          <div>
+            <p class="eyebrow">Sealed Evidence</p>
+            <p class="value mono {{ 'warn' if proof_sealed_evidence_blockers != 'none' else '' }}">{{ proof_sealed_evidence_blockers }}</p>
           </div>
           <div>
             <p class="eyebrow">Scenario Evidence</p>

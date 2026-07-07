@@ -54,6 +54,155 @@ def test_market_context_filter_env_overrides():
     assert s.enable_vwap_entry_filter is True
 
 
+def test_entry_min_close_to_entry_pct_defaults_on_for_paper_and_parses_env():
+    settings = Settings.from_env(_base_env())
+    assert settings.entry_min_close_to_entry_pct == -0.01
+    assert settings.entry_max_close_to_entry_pct == 1.0
+    assert settings.entry_order_active_bars == 1
+
+    settings = Settings.from_env(_base_env(ENTRY_MIN_CLOSE_TO_ENTRY_PCT="-1.0"))
+    assert settings.entry_min_close_to_entry_pct == -1.0
+
+    settings = Settings.from_env(_base_env(ENTRY_MAX_CLOSE_TO_ENTRY_PCT="0.005"))
+    assert settings.entry_max_close_to_entry_pct == 0.005
+
+    settings = Settings.from_env(_base_env(ENTRY_ORDER_ACTIVE_BARS="3"))
+    assert settings.entry_order_active_bars == 3
+
+
+def test_entry_min_close_to_entry_pct_defaults_off_for_live():
+    settings = Settings.from_env(
+        _base_env(TRADING_MODE="live", ENABLE_LIVE_TRADING="true")
+    )
+    assert settings.entry_min_close_to_entry_pct == -1.0
+    assert settings.entry_max_close_to_entry_pct == 1.0
+
+
+@pytest.mark.parametrize("value", ["-1.01", "1.01"])
+def test_entry_min_close_to_entry_pct_validates_bounds(value: str):
+    with pytest.raises(ValueError, match="ENTRY_MIN_CLOSE_TO_ENTRY_PCT"):
+        Settings.from_env(_base_env(ENTRY_MIN_CLOSE_TO_ENTRY_PCT=value))
+
+
+@pytest.mark.parametrize("value", ["-1.01", "1.01"])
+def test_entry_max_close_to_entry_pct_validates_bounds(value: str):
+    with pytest.raises(ValueError, match="ENTRY_MAX_CLOSE_TO_ENTRY_PCT"):
+        Settings.from_env(_base_env(ENTRY_MAX_CLOSE_TO_ENTRY_PCT=value))
+
+
+def test_entry_max_close_to_entry_pct_must_not_be_below_min():
+    with pytest.raises(ValueError, match="ENTRY_MAX_CLOSE_TO_ENTRY_PCT"):
+        Settings.from_env(
+            _base_env(
+                ENTRY_MIN_CLOSE_TO_ENTRY_PCT="0.005",
+                ENTRY_MAX_CLOSE_TO_ENTRY_PCT="0.001",
+            )
+        )
+
+
+@pytest.mark.parametrize("value", ["0", "5"])
+def test_entry_order_active_bars_validates_bounds(value: str):
+    with pytest.raises(ValueError, match="ENTRY_ORDER_ACTIVE_BARS"):
+        Settings.from_env(_base_env(ENTRY_ORDER_ACTIVE_BARS=value))
+
+
+def test_no_follow_through_exit_defaults_and_env_overrides():
+    settings = Settings.from_env(_base_env())
+    assert settings.enable_no_follow_through_exit is False
+    assert settings.no_follow_through_exit_minutes == 0
+    assert settings.no_follow_through_min_favorable_pct == 0.0025
+
+    settings = Settings.from_env(
+        _base_env(
+            ENABLE_NO_FOLLOW_THROUGH_EXIT="true",
+            NO_FOLLOW_THROUGH_EXIT_MINUTES="90",
+            NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT="0.005",
+        )
+    )
+    assert settings.enable_no_follow_through_exit is True
+    assert settings.no_follow_through_exit_minutes == 90
+    assert settings.no_follow_through_min_favorable_pct == 0.005
+
+
+def test_no_follow_through_exit_validation():
+    with pytest.raises(ValueError, match="NO_FOLLOW_THROUGH_EXIT_MINUTES"):
+        Settings.from_env(
+            _base_env(
+                ENABLE_NO_FOLLOW_THROUGH_EXIT="true",
+                NO_FOLLOW_THROUGH_EXIT_MINUTES="0",
+            )
+        )
+    with pytest.raises(ValueError, match="NO_FOLLOW_THROUGH_EXIT_MINUTES"):
+        Settings.from_env(_base_env(NO_FOLLOW_THROUGH_EXIT_MINUTES="-1"))
+    with pytest.raises(ValueError, match="NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT"):
+        Settings.from_env(_base_env(NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT="-0.01"))
+    with pytest.raises(ValueError, match="NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT"):
+        Settings.from_env(_base_env(NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT="1.0"))
+
+
+def test_giveback_exit_defaults_and_env_overrides():
+    settings = Settings.from_env(_base_env())
+    assert settings.enable_giveback_exit is False
+    assert settings.giveback_exit_min_favorable_pct == 0.0025
+    assert settings.giveback_exit_max_return_pct == 0.0
+
+    settings = Settings.from_env(
+        _base_env(
+            ENABLE_GIVEBACK_EXIT="true",
+            GIVEBACK_EXIT_MIN_FAVORABLE_PCT="0.005",
+            GIVEBACK_EXIT_MAX_RETURN_PCT="0.001",
+        )
+    )
+    assert settings.enable_giveback_exit is True
+    assert settings.giveback_exit_min_favorable_pct == 0.005
+    assert settings.giveback_exit_max_return_pct == 0.001
+
+
+def test_giveback_exit_validation():
+    with pytest.raises(ValueError, match="GIVEBACK_EXIT_MIN_FAVORABLE_PCT"):
+        Settings.from_env(_base_env(GIVEBACK_EXIT_MIN_FAVORABLE_PCT="-0.01"))
+    with pytest.raises(ValueError, match="GIVEBACK_EXIT_MIN_FAVORABLE_PCT"):
+        Settings.from_env(_base_env(GIVEBACK_EXIT_MIN_FAVORABLE_PCT="1.0"))
+    with pytest.raises(ValueError, match="GIVEBACK_EXIT_MAX_RETURN_PCT"):
+        Settings.from_env(_base_env(GIVEBACK_EXIT_MAX_RETURN_PCT="-0.01"))
+    with pytest.raises(ValueError, match="GIVEBACK_EXIT_MAX_RETURN_PCT"):
+        Settings.from_env(_base_env(GIVEBACK_EXIT_MAX_RETURN_PCT="1.0"))
+
+
+def test_early_loss_exit_defaults_and_env_overrides():
+    settings = Settings.from_env(_base_env())
+    assert settings.enable_early_loss_exit is False
+    assert settings.early_loss_exit_minutes == 0
+    assert settings.early_loss_exit_return_pct == 0.01
+
+    settings = Settings.from_env(
+        _base_env(
+            ENABLE_EARLY_LOSS_EXIT="true",
+            EARLY_LOSS_EXIT_MINUTES="45",
+            EARLY_LOSS_EXIT_RETURN_PCT="0.005",
+        )
+    )
+    assert settings.enable_early_loss_exit is True
+    assert settings.early_loss_exit_minutes == 45
+    assert settings.early_loss_exit_return_pct == 0.005
+
+
+def test_early_loss_exit_validation():
+    with pytest.raises(ValueError, match="EARLY_LOSS_EXIT_MINUTES"):
+        Settings.from_env(
+            _base_env(
+                ENABLE_EARLY_LOSS_EXIT="true",
+                EARLY_LOSS_EXIT_MINUTES="0",
+            )
+        )
+    with pytest.raises(ValueError, match="EARLY_LOSS_EXIT_MINUTES"):
+        Settings.from_env(_base_env(EARLY_LOSS_EXIT_MINUTES="-1"))
+    with pytest.raises(ValueError, match="EARLY_LOSS_EXIT_RETURN_PCT"):
+        Settings.from_env(_base_env(EARLY_LOSS_EXIT_RETURN_PCT="0"))
+    with pytest.raises(ValueError, match="EARLY_LOSS_EXIT_RETURN_PCT"):
+        Settings.from_env(_base_env(EARLY_LOSS_EXIT_RETURN_PCT="1.0"))
+
+
 def test_option_chain_symbols_default_is_empty():
     s = Settings.from_env(_base_env())
     assert s.option_chain_symbols == ()
@@ -90,6 +239,31 @@ def test_paper_proof_freeze_defaults_false_and_parses_env():
 
     settings = Settings.from_env(_base_env(PAPER_PROOF_FREEZE="true"))
     assert settings.paper_proof_freeze is True
+
+
+def test_paper_approved_strategies_defaults_to_current_proof_basket_and_parses_env():
+    settings = Settings.from_env(_base_env())
+    assert settings.paper_approved_strategies == ("bull_flag", "vwap_cross")
+
+    settings = Settings.from_env(
+        _base_env(PAPER_APPROVED_STRATEGIES="bull_flag,failed_breakdown")
+    )
+    assert settings.paper_approved_strategies == ("bull_flag", "failed_breakdown")
+
+
+def test_paper_approved_strategies_strips_whitespace_and_rejects_empty():
+    settings = Settings.from_env(
+        _base_env(PAPER_APPROVED_STRATEGIES=" bull_flag , failed_breakdown ")
+    )
+    assert settings.paper_approved_strategies == ("bull_flag", "failed_breakdown")
+
+    with pytest.raises(ValueError, match="PAPER_APPROVED_STRATEGIES"):
+        Settings.from_env(_base_env(PAPER_APPROVED_STRATEGIES=" , "))
+
+
+def test_paper_approved_strategies_rejects_unsupported_characters():
+    with pytest.raises(ValueError, match="PAPER_APPROVED_STRATEGIES"):
+        Settings.from_env(_base_env(PAPER_APPROVED_STRATEGIES="bull flag"))
 
 
 def test_paper_readiness_max_pass_age_minutes_default_and_validation():
@@ -156,7 +330,7 @@ def test_paper_readiness_decision_dry_run_thresholds_default_and_overrides():
 
 def test_profit_probe_start_date_default_and_validation():
     settings = Settings.from_env(_base_env())
-    assert settings.profit_probe_start_date == date(2026, 6, 30)
+    assert settings.profit_probe_start_date == date(2026, 7, 7)
 
     with pytest.raises(ValueError, match="PROFIT_PROBE_START_DATE"):
         Settings.from_env(_base_env(PROFIT_PROBE_START_DATE="20260629"))

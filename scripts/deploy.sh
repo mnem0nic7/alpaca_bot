@@ -21,16 +21,82 @@ source "$ENV_FILE"
 set +a
 
 DEPLOY_DECISION_DRY_RUN_STRATEGY="${DEPLOY_DECISION_DRY_RUN_STRATEGY:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}}"
+DEPLOY_DECISION_DRY_RUN_STRATEGIES="${DEPLOY_DECISION_DRY_RUN_STRATEGIES:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$DEPLOY_DECISION_DRY_RUN_STRATEGY}}}"
 DEPLOY_DECISION_DRY_RUN_MIN_RECORDS="${DEPLOY_DECISION_DRY_RUN_MIN_RECORDS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}}"
 DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}}"
 DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES="${DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES:-${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}}"
+DEPLOY_EXPECT_ENABLED_STRATEGIES="${DEPLOY_EXPECT_ENABLED_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-bull_flag,vwap_cross}}"
 
 compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+expected_enabled_strategy_args=()
+deploy_decision_dry_run_strategies=()
 
 require_var() {
   local name="$1"
   if [[ -z "${!name:-}" ]]; then
     echo "missing required env var: $name" >&2
+    exit 1
+  fi
+}
+
+build_expected_enabled_strategy_args() {
+  local csv="$1"
+  local raw
+  local name
+  local -a raw_names
+  expected_enabled_strategy_args=()
+  IFS=',' read -r -a raw_names <<< "$csv"
+  for raw in "${raw_names[@]}"; do
+    name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+    if [[ -z "$name" ]]; then
+      continue
+    fi
+    if [[ ! "$name" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+      echo "DEPLOY_EXPECT_ENABLED_STRATEGIES contains unsupported strategy: $name" >&2
+      exit 1
+    fi
+    expected_enabled_strategy_args+=(--expect-only-enabled-strategy "$name")
+  done
+  if [[ "${#expected_enabled_strategy_args[@]}" -eq 0 ]]; then
+    echo "DEPLOY_EXPECT_ENABLED_STRATEGIES must contain at least one strategy" >&2
+    exit 1
+  fi
+}
+
+add_deploy_decision_dry_run_strategy() {
+  local raw="$1"
+  local name
+  local existing
+
+  name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+  if [[ -z "$name" ]]; then
+    return
+  fi
+  if [[ ! "$name" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+    echo "DEPLOY_DECISION_DRY_RUN_STRATEGIES contains unsupported strategy: $name" >&2
+    exit 1
+  fi
+  for existing in "${deploy_decision_dry_run_strategies[@]}"; do
+    if [[ "$existing" == "$name" ]]; then
+      return
+    fi
+  done
+  deploy_decision_dry_run_strategies+=("$name")
+}
+
+build_deploy_decision_dry_run_strategies() {
+  local csv="$1"
+  local raw
+  local -a raw_names
+
+  deploy_decision_dry_run_strategies=()
+  add_deploy_decision_dry_run_strategy "$DEPLOY_DECISION_DRY_RUN_STRATEGY"
+  IFS=',' read -r -a raw_names <<< "$csv"
+  for raw in "${raw_names[@]}"; do
+    add_deploy_decision_dry_run_strategy "$raw"
+  done
+  if [[ "${#deploy_decision_dry_run_strategies[@]}" -eq 0 ]]; then
+    echo "DEPLOY_DECISION_DRY_RUN_STRATEGIES must contain at least one strategy" >&2
     exit 1
   fi
 }
@@ -110,7 +176,7 @@ run_deploy_ops_check() {
     --expect-strategy-version "${STRATEGY_VERSION}" \
     --expect-trading-status "$expected_status" \
     --expect-kill-switch false \
-    --expect-only-enabled-strategy bull_flag
+    "${expected_enabled_strategy_args[@]}"
   rc="$?"
   set -e
 
@@ -129,7 +195,7 @@ run_deploy_ops_check() {
       --expect-strategy-version "${STRATEGY_VERSION}" \
       --expect-trading-status close_only \
       --expect-kill-switch false \
-      --expect-only-enabled-strategy bull_flag
+      "${expected_enabled_strategy_args[@]}"
     return
   fi
 
@@ -219,16 +285,20 @@ verify_paper_proof_ready() {
 }
 
 verify_paper_decision_dry_run() {
+  local strategy
+
   if [[ "${DEPLOY_REQUIRE_DECISION_DRY_RUN,,}" != "true" ]]; then
     echo "Paper decision dry run skipped because DEPLOY_REQUIRE_DECISION_DRY_RUN=false" >&2
     return
   fi
 
-  PAPER_DECISION_DRY_RUN_STRATEGY="$DEPLOY_DECISION_DRY_RUN_STRATEGY" \
-  PAPER_DECISION_DRY_RUN_MIN_RECORDS="$DEPLOY_DECISION_DRY_RUN_MIN_RECORDS" \
-  PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED" \
-  PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="$DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES" \
-    "$ROOT_DIR/scripts/paper_decision_dry_run.sh" "$ENV_FILE"
+  for strategy in "${deploy_decision_dry_run_strategies[@]}"; do
+    PAPER_DECISION_DRY_RUN_STRATEGY="$strategy" \
+    PAPER_DECISION_DRY_RUN_MIN_RECORDS="$DEPLOY_DECISION_DRY_RUN_MIN_RECORDS" \
+    PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED" \
+    PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="$DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES" \
+      "$ROOT_DIR/scripts/paper_decision_dry_run.sh" "$ENV_FILE"
+  done
 }
 
 require_var POSTGRES_DB
@@ -273,6 +343,8 @@ if [[ -n "$DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES" \
   echo "DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES must be comma-separated HH:MM values" >&2
   exit 1
 fi
+build_expected_enabled_strategy_args "$DEPLOY_EXPECT_ENABLED_STRATEGIES"
+build_deploy_decision_dry_run_strategies "$DEPLOY_DECISION_DRY_RUN_STRATEGIES"
 
 if [[ ! "$DEPLOY_PROOF_SETTLE_SECONDS" =~ ^[0-9]+$ ]]; then
   echo "DEPLOY_PROOF_SETTLE_SECONDS must be a non-negative integer" >&2

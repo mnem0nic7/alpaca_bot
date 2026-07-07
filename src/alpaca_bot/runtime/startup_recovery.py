@@ -413,7 +413,10 @@ def recover_startup_state(
             strategy_version=existing.strategy_version,
             strategy_name=existing.strategy_name,
             created_at=existing.created_at,
-            updated_at=broker_order.updated_at or timestamp,
+            updated_at=_not_before(
+                broker_order.updated_at or timestamp,
+                existing.created_at,
+            ),
             stop_price=existing.stop_price,
             limit_price=existing.limit_price,
             initial_stop_price=existing.initial_stop_price,
@@ -643,6 +646,7 @@ def recover_startup_state(
                         trading_mode=settings.trading_mode,
                         strategy_version=settings.strategy_version,
                         strategy_name=pos.strategy_name,
+                        reason="startup_recovery_stop_triggered",
                         created_at=timestamp,
                         updated_at=timestamp,
                         stop_price=None,
@@ -1085,3 +1089,17 @@ def _resolve_now(now: datetime | Callable[[], datetime] | None) -> datetime:
     if callable(now):
         return now()
     return datetime.now(timezone.utc)
+
+
+def _not_before(timestamp: datetime, floor: datetime) -> datetime:
+    timestamp_utc = (
+        timestamp.astimezone(timezone.utc)
+        if timestamp.tzinfo
+        else timestamp.replace(tzinfo=timezone.utc)
+    )
+    floor_utc = (
+        floor.astimezone(timezone.utc)
+        if floor.tzinfo
+        else floor.replace(tzinfo=timezone.utc)
+    )
+    return floor_utc if timestamp_utc < floor_utc else timestamp_utc

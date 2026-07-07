@@ -1,5 +1,10 @@
 # Bull Flag Portfolio K Audit - 2026-06-26
 
+Supersession note, 2026-07-07: the current paper proof posture is now
+`MAX_OPEN_POSITIONS=1`. See
+`docs/strategy-audit/2026-07-07-bull-flag-capacity-reduction.md` for the
+capacity validation that superseded this earlier K=2 decision.
+
 Command:
 
 ```bash

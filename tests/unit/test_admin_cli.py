@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from alpaca_bot.admin.cli import main
-from alpaca_bot.config import TradingMode
+from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.storage import (
     AuditEvent,
     DailySessionState,
@@ -63,6 +63,34 @@ class RecordingDailySessionStateStore:
 
     def save(self, state: DailySessionState, *, commit: bool = True) -> None:
         self.saved.append(state)
+
+
+def _make_settings(**overrides: str) -> Settings:
+    values = {
+        "TRADING_MODE": "paper",
+        "ENABLE_LIVE_TRADING": "false",
+        "STRATEGY_VERSION": "v1-breakout",
+        "DATABASE_URL": "postgresql://example",
+        "MARKET_DATA_FEED": "iex",
+        "SYMBOLS": "AAPL",
+        "DAILY_SMA_PERIOD": "20",
+        "BREAKOUT_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_LOOKBACK_BARS": "20",
+        "RELATIVE_VOLUME_THRESHOLD": "1.5",
+        "ENTRY_TIMEFRAME_MINUTES": "15",
+        "RISK_PER_TRADE_PCT": "0.0025",
+        "MAX_POSITION_PCT": "0.05",
+        "MAX_OPEN_POSITIONS": "3",
+        "DAILY_LOSS_LIMIT_PCT": "0.01",
+        "STOP_LIMIT_BUFFER_PCT": "0.001",
+        "BREAKOUT_STOP_BUFFER_PCT": "0.001",
+        "ENTRY_STOP_PRICE_BUFFER": "0.01",
+        "ENTRY_WINDOW_START": "10:00",
+        "ENTRY_WINDOW_END": "15:30",
+        "FLATTEN_TIME": "15:45",
+    }
+    values.update(overrides)
+    return Settings.from_env(values)
 
 
 def test_halt_command_saves_halted_status_and_appends_audit_event() -> None:
@@ -557,8 +585,10 @@ def test_close_excess_preserves_position_strategy_on_force_exit() -> None:
     force_exit = next(order for order in order_store.saved if order.intent_type == "exit")
     assert force_exit.strategy_name == "bull_flag"
     assert force_exit.symbol == "RARE"
+    assert force_exit.reason == "force_exit"
     force_closed = next(e for e in audit_store.appended if e.event_type == "position_force_closed")
     assert force_closed.payload["strategy_name"] == "bull_flag"
+    assert force_closed.payload["reason"] == "force_exit"
 
 
 def test_close_excess_dry_run_prints_plan_without_broker_calls() -> None:
@@ -751,9 +781,243 @@ def test_cancel_partial_fills_dry_run_prints_without_acting() -> None:
 class FakeStrategyFlagStore:
     def __init__(self, flags: list[StrategyFlag] | None = None) -> None:
         self._flags = flags or []
+        self.saved: list[StrategyFlag] = []
 
     def list_all(self, *, trading_mode: TradingMode, strategy_version: str) -> list[StrategyFlag]:
         return self._flags
+
+    def save(self, flag: StrategyFlag, *, commit: bool = True) -> None:
+        self.saved.append(flag)
+
+
+def test_enable_strategy_rejects_unapproved_paper_strategy() -> None:
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+    flag_store = FakeStrategyFlagStore()
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            [
+                "enable-strategy",
+                "failed_breakdown",
+                "--mode",
+                "paper",
+                "--strategy-version",
+                "v1-breakout",
+            ],
+            settings=_make_settings(PAPER_APPROVED_STRATEGIES="bull_flag"),
+            connect=lambda: connection,
+            trading_status_store_factory=StoreFactoryStub(RecordingTradingStatusStore()),
+            audit_event_store_factory=StoreFactoryStub(audit_store),
+            strategy_flag_store_factory=StoreFactoryStub(flag_store),
+            stdout=io.StringIO(),
+        )
+
+    assert "PAPER_APPROVED_STRATEGIES" in str(excinfo.value)
+    assert flag_store.saved == []
+    assert audit_store.appended == []
+
+
+def test_enable_strategy_allows_approved_paper_strategy() -> None:
+    now = datetime(2026, 7, 6, 14, 30, tzinfo=timezone.utc)
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+    flag_store = FakeStrategyFlagStore()
+    stdout = io.StringIO()
+
+    exit_code = main(
+        [
+            "enable-strategy",
+            "bull_flag",
+            "--mode",
+            "paper",
+            "--strategy-version",
+            "v1-breakout",
+        ],
+        settings=_make_settings(PAPER_APPROVED_STRATEGIES="bull_flag"),
+        connect=lambda: connection,
+        trading_status_store_factory=StoreFactoryStub(RecordingTradingStatusStore()),
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        strategy_flag_store_factory=StoreFactoryStub(flag_store),
+        now=lambda: now,
+        stdout=stdout,
+    )
+
+    assert exit_code == 0
+    assert flag_store.saved == [
+        StrategyFlag(
+            strategy_name="bull_flag",
+            trading_mode=TradingMode.PAPER,
+            strategy_version="v1-breakout",
+            enabled=True,
+            updated_at=now,
+        )
+    ]
+    assert audit_store.appended[0].payload["paper_approved"] == "true"
+    assert audit_store.appended[0].payload["allow_unapproved"] == "false"
+    assert "strategy=bull_flag" in stdout.getvalue()
+
+
+def test_enable_strategy_rejects_option_strategy_during_paper_proof_freeze() -> None:
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+    flag_store = FakeStrategyFlagStore()
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            [
+                "enable-strategy",
+                "breakout_calls",
+                "--mode",
+                "paper",
+                "--strategy-version",
+                "v1-breakout",
+                "--allow-unapproved",
+            ],
+            settings=_make_settings(
+                PAPER_APPROVED_STRATEGIES="bull_flag,breakout_calls",
+                PAPER_PROOF_FREEZE="true",
+                ENABLE_OPTIONS_TRADING="true",
+            ),
+            connect=lambda: connection,
+            trading_status_store_factory=StoreFactoryStub(RecordingTradingStatusStore()),
+            audit_event_store_factory=StoreFactoryStub(audit_store),
+            strategy_flag_store_factory=StoreFactoryStub(flag_store),
+            stdout=io.StringIO(),
+        )
+
+    assert "PAPER_PROOF_FREEZE=true" in str(excinfo.value)
+    assert "replay-supported" in str(excinfo.value)
+    assert flag_store.saved == []
+    assert audit_store.appended == []
+
+
+def test_enable_strategy_rejects_option_strategy_when_options_disabled() -> None:
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+    flag_store = FakeStrategyFlagStore()
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            [
+                "enable-strategy",
+                "breakout_calls",
+                "--mode",
+                "paper",
+                "--strategy-version",
+                "v1-breakout",
+            ],
+            settings=_make_settings(
+                PAPER_APPROVED_STRATEGIES="breakout_calls",
+                PAPER_PROOF_FREEZE="false",
+                ENABLE_OPTIONS_TRADING="false",
+            ),
+            connect=lambda: connection,
+            trading_status_store_factory=StoreFactoryStub(RecordingTradingStatusStore()),
+            audit_event_store_factory=StoreFactoryStub(audit_store),
+            strategy_flag_store_factory=StoreFactoryStub(flag_store),
+            stdout=io.StringIO(),
+        )
+
+    assert "ENABLE_OPTIONS_TRADING=true" in str(excinfo.value)
+    assert flag_store.saved == []
+    assert audit_store.appended == []
+
+
+def test_enable_strategy_rejects_unapproved_override_during_paper_proof_freeze() -> None:
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+    flag_store = FakeStrategyFlagStore()
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            [
+                "enable-strategy",
+                "failed_breakdown",
+                "--mode",
+                "paper",
+                "--strategy-version",
+                "v1-breakout",
+                "--allow-unapproved",
+            ],
+            settings=_make_settings(
+                PAPER_APPROVED_STRATEGIES="bull_flag",
+                PAPER_PROOF_FREEZE="true",
+            ),
+            connect=lambda: connection,
+            trading_status_store_factory=StoreFactoryStub(RecordingTradingStatusStore()),
+            audit_event_store_factory=StoreFactoryStub(audit_store),
+            strategy_flag_store_factory=StoreFactoryStub(flag_store),
+            stdout=io.StringIO(),
+        )
+
+    assert "--allow-unapproved" in str(excinfo.value)
+    assert "PAPER_PROOF_FREEZE=true" in str(excinfo.value)
+    assert "replay approval" in str(excinfo.value)
+    assert flag_store.saved == []
+    assert audit_store.appended == []
+
+
+def test_enable_strategy_allows_approved_option_strategy_outside_paper_proof() -> None:
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+    flag_store = FakeStrategyFlagStore()
+
+    exit_code = main(
+        [
+            "enable-strategy",
+            "breakout_calls",
+            "--mode",
+            "paper",
+            "--strategy-version",
+            "v1-breakout",
+        ],
+        settings=_make_settings(
+            PAPER_APPROVED_STRATEGIES="breakout_calls",
+            PAPER_PROOF_FREEZE="false",
+            ENABLE_OPTIONS_TRADING="true",
+        ),
+        connect=lambda: connection,
+        trading_status_store_factory=StoreFactoryStub(RecordingTradingStatusStore()),
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        strategy_flag_store_factory=StoreFactoryStub(flag_store),
+        stdout=io.StringIO(),
+    )
+
+    assert exit_code == 0
+    assert flag_store.saved[0].strategy_name == "breakout_calls"
+    assert flag_store.saved[0].enabled is True
+    assert audit_store.appended[0].payload["paper_approved"] == "true"
+
+
+def test_enable_strategy_allows_unapproved_with_explicit_override() -> None:
+    connection = SimpleNamespace(commit=lambda: None, close=lambda: None)
+    audit_store = RecordingAuditEventStore()
+    flag_store = FakeStrategyFlagStore()
+
+    exit_code = main(
+        [
+            "enable-strategy",
+            "failed_breakdown",
+            "--mode",
+            "paper",
+            "--strategy-version",
+            "v1-breakout",
+            "--allow-unapproved",
+        ],
+        settings=_make_settings(PAPER_APPROVED_STRATEGIES="bull_flag"),
+        connect=lambda: connection,
+        trading_status_store_factory=StoreFactoryStub(RecordingTradingStatusStore()),
+        audit_event_store_factory=StoreFactoryStub(audit_store),
+        strategy_flag_store_factory=StoreFactoryStub(flag_store),
+        stdout=io.StringIO(),
+    )
+
+    assert exit_code == 0
+    assert flag_store.saved[0].strategy_name == "failed_breakdown"
+    assert flag_store.saved[0].enabled is True
+    assert audit_store.appended[0].payload["paper_approved"] == "false"
+    assert audit_store.appended[0].payload["allow_unapproved"] == "true"
 
 
 def test_status_shows_disabled_strategies_when_some_are_disabled() -> None:

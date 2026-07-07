@@ -33,16 +33,20 @@ def main() -> None:
         "--equity", type=float, default=100_000.0,
         help="starting_equity in each scenario file (default: 100000)",
     )
+    parser.add_argument(
+        "--context-only",
+        action="store_true",
+        help=(
+            "fetch only daily regime/VIX/sector context and enrich existing "
+            "scenario files; does not replace intraday or symbol daily bars"
+        ),
+    )
     args = parser.parse_args()
 
     try:
         settings = Settings.from_env(dict(os.environ))
     except ValueError as exc:
         sys.exit(f"Configuration error: {exc}")
-
-    symbols = list(args.symbols) if args.symbols else list(settings.symbols)
-    if not symbols:
-        sys.exit("No symbols specified and SYMBOLS is not set in the environment.")
 
     try:
         adapter = AlpacaMarketDataAdapter.from_settings(settings)
@@ -51,6 +55,25 @@ def main() -> None:
 
     fetcher = BackfillFetcher(adapter, settings)
     output_dir = Path(args.output_dir)
+
+    if args.context_only:
+        results = fetcher.enrich_existing_scenarios_with_context(
+            output_dir=output_dir,
+            days=args.days,
+            symbols=list(args.symbols) if args.symbols else None,
+        )
+        for path, n_regime, n_vix, n_sector in results:
+            print(
+                f"Enriched {path} "
+                f"({n_regime} regime, {n_vix} vix, {n_sector} sector ETFs)"
+            )
+        if not results:
+            sys.exit("No files enriched — check existing scenarios and context data.")
+        return
+
+    symbols = list(args.symbols) if args.symbols else list(settings.symbols)
+    if not symbols:
+        sys.exit("No symbols specified and SYMBOLS is not set in the environment.")
 
     results = fetcher.fetch_and_save(
         symbols=symbols,

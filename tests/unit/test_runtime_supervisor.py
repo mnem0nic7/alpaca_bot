@@ -4372,6 +4372,76 @@ def test_run_cycle_once_keeps_fresh_live_entry_until_next_bar(monkeypatch) -> No
     assert "AAPL" in cycle_calls[0]["working_order_symbols"]
 
 
+def test_run_cycle_once_keeps_live_entry_through_configured_active_bars(monkeypatch) -> None:
+    """A two-bar live entry is still active at the old one-bar expiry boundary."""
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings({"SYMBOLS": "AAPL", "ENTRY_ORDER_ACTIVE_BARS": "2"})
+    signal_ts = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+    now = signal_ts + timedelta(minutes=settings.entry_timeframe_minutes * 2)
+    entry_order = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:two-bar",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="accepted",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=signal_ts,
+        updated_at=signal_ts,
+        stop_price=101.0,
+        limit_price=101.1,
+        initial_stop_price=99.5,
+        broker_order_id="broker-entry-two-bar",
+        signal_timestamp=signal_ts,
+    )
+    order_store = RecordingOrderStore([entry_order])
+    runtime = make_runtime_context(settings, order_store=order_store)
+    broker = FakeBroker(
+        open_orders=[
+            BrokerOrder(
+                client_order_id=entry_order.client_order_id,
+                broker_order_id="broker-entry-two-bar",
+                symbol="AAPL",
+                side="buy",
+                status="accepted",
+                quantity=10,
+            )
+        ],
+    )
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=21)},
+        daily_bars_by_symbol={"AAPL": make_bar_series("AAPL", end=now, count=20, days=True)},
+    )
+    cycle_calls: list[dict] = []
+
+    def fake_run_cycle(**kwargs):
+        cycle_calls.append(kwargs)
+        return SimpleNamespace(intents=[])
+
+    monkeypatch.setattr(module, "run_cycle", fake_run_cycle)
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **_: {"submitted_count": 0})
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    assert broker.cancel_calls == []
+    assert not any(
+        event.event_type == "entry_order_expired_next_bar"
+        for event in runtime.audit_event_store.appended
+    )
+    assert "AAPL" in cycle_calls[0]["working_order_symbols"]
+
+
 def test_run_cycle_once_cancels_stale_partial_entry_after_recovery_stop(monkeypatch) -> None:
     """A stale partial entry can be canceled only after recovery protects exposure."""
     module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()

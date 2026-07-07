@@ -34,9 +34,39 @@ ACTIVE_EXIT_STATUSES = (
 
 
 def entry_order_next_bar_expiry_age(settings: Settings) -> timedelta:
-    # Alpaca intraday bars are timestamped at the start of the interval.  A
-    # signal on bar N is active for bar N+1, so it expires at the end of N+1.
-    return timedelta(minutes=settings.entry_timeframe_minutes * 2)
+    # Alpaca intraday bars are timestamped at the start of the interval. A
+    # signal on bar N starts executing on bar N+1, so N active bars expire at
+    # the end of bar N+active_bars.
+    return timedelta(
+        minutes=settings.entry_timeframe_minutes
+        * (settings.entry_order_active_bars + 1)
+    )
+
+
+def entry_order_expiry_timestamp(
+    settings: Settings,
+    signal_timestamp: datetime,
+    *,
+    session_type: "SessionType | None" = None,
+) -> datetime:
+    signal_utc = (
+        signal_timestamp.replace(tzinfo=timezone.utc)
+        if signal_timestamp.tzinfo is None
+        else signal_timestamp.astimezone(timezone.utc)
+    )
+    expiry_utc = signal_utc + entry_order_next_bar_expiry_age(settings)
+    if session_type is not None:
+        from alpaca_bot.strategy.session import SessionType
+
+        if session_type in (SessionType.PRE_MARKET, SessionType.AFTER_HOURS):
+            return expiry_utc
+    signal_local = signal_utc.astimezone(settings.market_timezone)
+    flatten_local = datetime.combine(
+        signal_local.date(),
+        settings.flatten_time,
+        tzinfo=settings.market_timezone,
+    )
+    return min(expiry_utc, flatten_local.astimezone(timezone.utc))
 
 
 def _is_unrecoverable_stop_error(exc: Exception) -> bool:
@@ -266,9 +296,14 @@ def dispatch_pending_orders(
                 if timestamp.tzinfo is None
                 else timestamp.astimezone(timezone.utc)
             )
-            max_age = entry_order_next_bar_expiry_age(settings)
             age = timestamp_utc - sig_ts.astimezone(timezone.utc)
-            if age >= max_age:
+            expiry_at = entry_order_expiry_timestamp(
+                settings,
+                sig_ts,
+                session_type=session_type,
+            )
+            max_age = expiry_at - sig_ts.astimezone(timezone.utc)
+            if timestamp_utc >= expiry_at:
                 logger.warning(
                     "order_dispatch: expiring next-bar entry order for %s "
                     "(signal age %.1fs, max %.1fs)",

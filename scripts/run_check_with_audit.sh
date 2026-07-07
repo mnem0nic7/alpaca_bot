@@ -67,6 +67,7 @@ proof_progress_line="$(grep -E '^paper proof progress: ' "$output_file" | tail -
 proof_scoring_line="$(grep -E '^paper proof scoring: ' "$output_file" | tail -n 1 || true)"
 proof_scenarios_line="$(grep -E '^paper proof scenarios: ' "$output_file" | tail -n 1 || true)"
 decision_dry_run_line="$(grep -E '^paper decision dry run ok: ' "$output_file" | tail -n 1 || true)"
+decision_dry_run_strategies_line="$(grep -E '^paper readiness decision dry run strategies ok: ' "$output_file" | tail -n 1 || true)"
 
 export AUDIT_CHECK_NAME="$CHECK_NAME"
 export AUDIT_STATUS="$status"
@@ -78,6 +79,7 @@ export AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"
 export AUDIT_PROOF_SCORING_LINE="$proof_scoring_line"
 export AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"
 export AUDIT_DECISION_DRY_RUN_LINE="$decision_dry_run_line"
+export AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE="$decision_dry_run_strategies_line"
 
 audit_failed=false
 if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
@@ -91,6 +93,7 @@ if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_PROOF_SCORING_LINE \
     -e AUDIT_PROOF_SCENARIOS_LINE \
     -e AUDIT_DECISION_DRY_RUN_LINE \
+    -e AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE \
     --entrypoint python admin <<'PY'
 from __future__ import annotations
 
@@ -110,21 +113,30 @@ CONTEXT_KEYS = {
     "proof_start",
     "reason",
     "strategy",
+    "strategies",
     "min_trades",
     "min_pnl",
+    "session_guard_min_trades",
+    "session_guard_min_pnl",
 }
-CONTEXT_VALUE = re.compile(r"^[A-Za-z0-9_.:+-]+$")
+CONTEXT_VALUE = re.compile(r"^[A-Za-z0-9_.:,+-]+$")
 PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")
 PROOF_SUMMARY_PREFIX = "paper proof summary: "
 PROOF_PROGRESS_PREFIX = "paper proof progress: "
 PROOF_SCORING_PREFIX = "paper proof scoring: "
 PROOF_SCENARIOS_PREFIX = "paper proof scenarios: "
 DECISION_DRY_RUN_PREFIX = "paper decision dry run ok: "
+DECISION_DRY_RUN_STRATEGIES_PREFIX = "paper readiness decision dry run strategies ok: "
 PROOF_SUMMARY_FIELDS = {
     "readiness": "proof_readiness",
     "proof": "proof_status",
     "reason": "proof_reason",
     "blockers": "proof_blockers",
+    "evidence_blockers": "proof_evidence_blockers",
+    "sealed_evidence_blockers": "proof_sealed_evidence_blockers",
+    "overall_blockers": "proof_overall_blockers",
+    "clean_window_blockers": "proof_clean_window_blockers",
+    "sealed_clean_window_blockers": "proof_sealed_clean_window_blockers",
     "warnings": "proof_warnings",
 }
 PROOF_PROGRESS_FIELDS = {
@@ -171,6 +183,10 @@ DECISION_DRY_RUN_FIELDS = {
     "min_decision_records": "decision_dry_run_min_decision_records",
     "max_accepted": "decision_dry_run_max_accepted",
     "max_entry_intents": "decision_dry_run_max_entry_intents",
+}
+DECISION_DRY_RUN_STRATEGIES_FIELDS = {
+    "strategies": "decision_dry_run_strategies",
+    "count": "decision_dry_run_strategy_count",
 }
 
 
@@ -258,6 +274,13 @@ try:
             os.environ.get("AUDIT_DECISION_DRY_RUN_LINE", ""),
             prefix=DECISION_DRY_RUN_PREFIX,
             field_map=DECISION_DRY_RUN_FIELDS,
+        )
+    )
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE", ""),
+            prefix=DECISION_DRY_RUN_STRATEGIES_PREFIX,
+            field_map=DECISION_DRY_RUN_STRATEGIES_FIELDS,
         )
     )
 

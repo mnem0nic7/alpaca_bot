@@ -25,9 +25,20 @@ restore_env_overrides() {
 }
 
 capture_env_overrides \
+  PROFIT_PROBE_STRATEGY \
+  PROFIT_PROBE_MIN_TRADES \
+  PROFIT_PROBE_MIN_PNL \
+  PROFIT_PROBE_START_DATE \
+  PAPER_SCALE_MIN_TRADES \
+  PAPER_APPROVED_STRATEGIES \
+  SESSION_GUARD_MIN_TRADES \
+  SESSION_GUARD_FAIL_BELOW_PNL \
   PROOF_STATUS_STRATEGY \
+  PROOF_STATUS_APPROVED_STRATEGIES \
   PROOF_STATUS_MIN_TRADES \
   PROOF_STATUS_MIN_PNL \
+  PROOF_STATUS_SESSION_GUARD_MIN_TRADES \
+  PROOF_STATUS_SESSION_GUARD_MIN_PNL \
   PROOF_STATUS_START_DATE \
   PROOF_STATUS_END_DATE \
   PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT \
@@ -39,7 +50,16 @@ capture_env_overrides \
   PROOF_STATUS_STREAM_START_GRACE_SECONDS \
   PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES \
   PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS \
-  PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS
+  PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS \
+  PROOF_STATUS_SCALE_MIN_TRADES \
+  PROOF_STATUS_SCALE_MIN_STRATEGIES \
+  PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS \
+  PROOF_STATUS_SCALE_MAX_SINGLE_WIN_PNL_SHARE \
+  PROOF_STATUS_SCALE_MIN_PROFIT_FACTOR \
+  PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE \
+  PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE \
+  PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE \
+  PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE
 
 cd "$(dirname "$0")/.."
 
@@ -55,9 +75,12 @@ set +a
 restore_env_overrides
 
 PROOF_STATUS_STRATEGY="${PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
-PROOF_STATUS_MIN_TRADES="${PROOF_STATUS_MIN_TRADES:-${PROFIT_PROBE_MIN_TRADES:-10}}"
+PROOF_STATUS_APPROVED_STRATEGIES="${PROOF_STATUS_APPROVED_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PROOF_STATUS_STRATEGY}}"
+PROOF_STATUS_MIN_TRADES="${PROOF_STATUS_MIN_TRADES:-${PROFIT_PROBE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}}"
 PROOF_STATUS_MIN_PNL="${PROOF_STATUS_MIN_PNL:-${PROFIT_PROBE_MIN_PNL:-0.01}}"
-PROOF_STATUS_START_DATE="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-06-30}}"
+PROOF_STATUS_SESSION_GUARD_MIN_TRADES="${PROOF_STATUS_SESSION_GUARD_MIN_TRADES:-${SESSION_GUARD_MIN_TRADES:-10}}"
+PROOF_STATUS_SESSION_GUARD_MIN_PNL="${PROOF_STATUS_SESSION_GUARD_MIN_PNL:-${SESSION_GUARD_FAIL_BELOW_PNL:-0}}"
+PROOF_STATUS_START_DATE="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}}"
 PROOF_STATUS_END_DATE="${PROOF_STATUS_END_DATE:-}"
 PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT="${PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT:-./scripts/runtime_image_health_check.sh}"
 PROOF_STATUS_FAIL_ON_ISSUES="${PROOF_STATUS_FAIL_ON_ISSUES:-false}"
@@ -69,6 +92,15 @@ PROOF_STATUS_STREAM_START_GRACE_SECONDS="${PROOF_STATUS_STREAM_START_GRACE_SECON
 PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES="${PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES:-${PAPER_READINESS_MAX_PASS_AGE_MINUTES:-180}}"
 PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS="${PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}}"
 PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS="${PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS:-6}}"
+PROOF_STATUS_SCALE_MIN_TRADES="${PROOF_STATUS_SCALE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}"
+PROOF_STATUS_SCALE_MIN_STRATEGIES="${PROOF_STATUS_SCALE_MIN_STRATEGIES:-${PAPER_SCALE_MIN_STRATEGIES:-2}}"
+PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS="${PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS:-${PAPER_SCALE_MIN_ACTIVE_DAYS:-5}}"
+PROOF_STATUS_SCALE_MAX_SINGLE_WIN_PNL_SHARE="${PROOF_STATUS_SCALE_MAX_SINGLE_WIN_PNL_SHARE:-${PAPER_SCALE_MAX_SINGLE_WIN_PNL_SHARE:-0.50}}"
+PROOF_STATUS_SCALE_MIN_PROFIT_FACTOR="${PROOF_STATUS_SCALE_MIN_PROFIT_FACTOR:-${PAPER_SCALE_MIN_PROFIT_FACTOR:-1.20}}"
+PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE="${PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE:-${PAPER_SCALE_MAX_EOD_LOSS_SHARE:-0.50}}"
+PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE="${PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE:-${PAPER_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE:-0.00}}"
+PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE="${PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE:-${PAPER_EXECUTION_MIN_ENTRY_FILL_RATE:-0.25}}"
+PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE="${PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE:-${PAPER_EXECUTION_MAX_CAPACITY_REJECT_RATE:-0.05}}"
 
 if [[ -z "${STRATEGY_VERSION:-}" ]]; then
   echo "missing STRATEGY_VERSION in $ENV_FILE" >&2
@@ -88,6 +120,14 @@ if [[ ! "$PROOF_STATUS_MIN_TRADES" =~ ^[0-9]+$ ]]; then
 fi
 if [[ ! "$PROOF_STATUS_MIN_PNL" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
   echo "PROOF_STATUS_MIN_PNL must be a number" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_SESSION_GUARD_MIN_TRADES" =~ ^[0-9]+$ ]]; then
+  echo "PROOF_STATUS_SESSION_GUARD_MIN_TRADES must be a non-negative integer" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_SESSION_GUARD_MIN_PNL" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+  echo "PROOF_STATUS_SESSION_GUARD_MIN_PNL must be a number" >&2
   exit 1
 fi
 if [[ ! "$PROOF_STATUS_MIN_WATCHLIST_SYMBOLS" =~ ^[0-9]+$ ]] \
@@ -113,6 +153,52 @@ if [[ ! "$PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS" =~ ^[0-9]+$ ]]; then
 fi
 if [[ ! "$PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS" =~ ^[1-9][0-9]*$ ]]; then
   echo "PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS must be a positive integer" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_APPROVED_STRATEGIES" =~ ^[A-Za-z0-9_.-]+(,[A-Za-z0-9_.-]+)*$ ]]; then
+  echo "PROOF_STATUS_APPROVED_STRATEGIES must be a comma-separated list of strategy names" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_SCALE_MIN_TRADES" =~ ^[0-9]+$ ]] \
+  || [[ "$PROOF_STATUS_SCALE_MIN_TRADES" -lt 1 ]]; then
+  echo "PROOF_STATUS_SCALE_MIN_TRADES must be a positive integer" >&2
+  exit 1
+fi
+if (( 10#$PROOF_STATUS_MIN_TRADES < 10#$PROOF_STATUS_SCALE_MIN_TRADES )); then
+  PROOF_STATUS_MIN_TRADES="$PROOF_STATUS_SCALE_MIN_TRADES"
+fi
+if [[ ! "$PROOF_STATUS_SCALE_MIN_STRATEGIES" =~ ^[0-9]+$ ]] \
+  || [[ "$PROOF_STATUS_SCALE_MIN_STRATEGIES" -lt 1 ]]; then
+  echo "PROOF_STATUS_SCALE_MIN_STRATEGIES must be a positive integer" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS" =~ ^[0-9]+$ ]] \
+  || [[ "$PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS" -lt 1 ]]; then
+  echo "PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS must be a positive integer" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_SCALE_MAX_SINGLE_WIN_PNL_SHARE" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
+  echo "PROOF_STATUS_SCALE_MAX_SINGLE_WIN_PNL_SHARE must be a non-negative number" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_SCALE_MIN_PROFIT_FACTOR" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
+  echo "PROOF_STATUS_SCALE_MIN_PROFIT_FACTOR must be a non-negative number" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
+  echo "PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE must be a non-negative number" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
+  echo "PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE must be a non-negative number" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
+  echo "PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE must be a non-negative number" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
+  echo "PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE must be a non-negative number" >&2
   exit 1
 fi
 case "${PROOF_STATUS_FAIL_ON_ISSUES,,}" in
@@ -147,6 +233,33 @@ compact_check_detail() {
   echo "$detail"
 }
 
+proof_status_enabled_strategy_args=()
+build_proof_status_enabled_strategy_args() {
+  local csv="$1"
+  local raw
+  local name
+  local -a raw_names
+  proof_status_enabled_strategy_args=()
+  IFS=',' read -r -a raw_names <<< "$csv"
+  for raw in "${raw_names[@]}"; do
+    name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+    if [[ -z "$name" ]]; then
+      continue
+    fi
+    if [[ ! "$name" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+      echo "PROOF_STATUS_APPROVED_STRATEGIES contains unsupported strategy: $name" >&2
+      exit 1
+    fi
+    proof_status_enabled_strategy_args+=(--expect-only-enabled-strategy "$name")
+  done
+  if [[ "${#proof_status_enabled_strategy_args[@]}" -eq 0 ]]; then
+    echo "PROOF_STATUS_APPROVED_STRATEGIES must contain at least one strategy" >&2
+    exit 1
+  fi
+}
+
+build_proof_status_enabled_strategy_args "$PROOF_STATUS_APPROVED_STRATEGIES"
+
 cron_health_status="ok"
 if ! cron_health_detail="$(./scripts/cron_health_check.sh 2>&1)"; then
   cron_health_status="failed"
@@ -159,7 +272,7 @@ if ! ops_health_detail="$(./scripts/ops_check.sh "$ENV_FILE" \
   --expect-strategy-version "$STRATEGY_VERSION" \
   --expect-trading-status enabled \
   --expect-kill-switch false \
-  --expect-only-enabled-strategy "$PROOF_STATUS_STRATEGY" \
+  "${proof_status_enabled_strategy_args[@]}" \
   2>&1)"; then
   ops_health_status="failed"
 fi
@@ -174,7 +287,7 @@ if [[ "$ops_health_status" != "ok" ]]; then
     --expect-strategy-version "$STRATEGY_VERSION" \
     --expect-trading-status close_only \
     --expect-kill-switch false \
-    --expect-only-enabled-strategy "$PROOF_STATUS_STRATEGY" \
+    "${proof_status_enabled_strategy_args[@]}" \
     2>&1)"; then
     ops_close_only_health_status="failed"
   fi
@@ -187,8 +300,8 @@ if ! runtime_image_health_detail="$("$PROOF_STATUS_RUNTIME_IMAGE_HEALTH_SCRIPT" 
 fi
 runtime_image_health_detail="$(compact_check_detail "$runtime_image_health_detail")"
 
-echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) proof_start=$PROOF_STATUS_START_DATE strategy=$PROOF_STATUS_STRATEGY min_trades=$PROOF_STATUS_MIN_TRADES min_pnl=$PROOF_STATUS_MIN_PNL"
-echo "paper proof status context: proof_start=$PROOF_STATUS_START_DATE mode=$trading_mode strategy_version=$STRATEGY_VERSION strategy=$PROOF_STATUS_STRATEGY min_trades=$PROOF_STATUS_MIN_TRADES min_pnl=$PROOF_STATUS_MIN_PNL"
+echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) proof_start=$PROOF_STATUS_START_DATE strategy=$PROOF_STATUS_STRATEGY strategies=$PROOF_STATUS_APPROVED_STRATEGIES min_trades=$PROOF_STATUS_MIN_TRADES min_pnl=$PROOF_STATUS_MIN_PNL session_guard_min_trades=$PROOF_STATUS_SESSION_GUARD_MIN_TRADES session_guard_min_pnl=$PROOF_STATUS_SESSION_GUARD_MIN_PNL"
+echo "paper proof status context: proof_start=$PROOF_STATUS_START_DATE mode=$trading_mode strategy_version=$STRATEGY_VERSION strategy=$PROOF_STATUS_STRATEGY strategies=$PROOF_STATUS_APPROVED_STRATEGIES min_trades=$PROOF_STATUS_MIN_TRADES min_pnl=$PROOF_STATUS_MIN_PNL session_guard_min_trades=$PROOF_STATUS_SESSION_GUARD_MIN_TRADES session_guard_min_pnl=$PROOF_STATUS_SESSION_GUARD_MIN_PNL"
 echo "paper proof trading status:"
 "${compose[@]}" run -T --rm admin \
   status \
@@ -200,8 +313,11 @@ echo "paper proof evidence status:"
 "${compose[@]}" run -T --rm \
   "${scenario_volume_args[@]}" \
   -e PROOF_STATUS_STRATEGY="$PROOF_STATUS_STRATEGY" \
+  -e PROOF_STATUS_APPROVED_STRATEGIES="$PROOF_STATUS_APPROVED_STRATEGIES" \
   -e PROOF_STATUS_MIN_TRADES="$PROOF_STATUS_MIN_TRADES" \
   -e PROOF_STATUS_MIN_PNL="$PROOF_STATUS_MIN_PNL" \
+  -e PROOF_STATUS_SESSION_GUARD_MIN_TRADES="$PROOF_STATUS_SESSION_GUARD_MIN_TRADES" \
+  -e PROOF_STATUS_SESSION_GUARD_MIN_PNL="$PROOF_STATUS_SESSION_GUARD_MIN_PNL" \
   -e PROOF_STATUS_MIN_WATCHLIST_SYMBOLS="$PROOF_STATUS_MIN_WATCHLIST_SYMBOLS" \
   -e PROOF_STATUS_MIN_CONFIDENCE_FLOOR="$PROOF_STATUS_MIN_CONFIDENCE_FLOOR" \
   -e PROOF_STATUS_REQUIRE_SCENARIOS="$PROOF_STATUS_REQUIRE_SCENARIOS" \
@@ -210,6 +326,15 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES="$PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" \
   -e PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS="$PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS" \
   -e PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS="$PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS" \
+  -e PROOF_STATUS_SCALE_MIN_TRADES="$PROOF_STATUS_SCALE_MIN_TRADES" \
+  -e PROOF_STATUS_SCALE_MIN_STRATEGIES="$PROOF_STATUS_SCALE_MIN_STRATEGIES" \
+  -e PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS="$PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS" \
+  -e PROOF_STATUS_SCALE_MAX_SINGLE_WIN_PNL_SHARE="$PROOF_STATUS_SCALE_MAX_SINGLE_WIN_PNL_SHARE" \
+  -e PROOF_STATUS_SCALE_MIN_PROFIT_FACTOR="$PROOF_STATUS_SCALE_MIN_PROFIT_FACTOR" \
+  -e PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE="$PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE" \
+  -e PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE="$PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE" \
+  -e PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE="$PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE" \
+  -e PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE="$PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE" \
   -e PROOF_STATUS_START_DATE="$PROOF_STATUS_START_DATE" \
   -e PROOF_STATUS_END_DATE="$PROOF_STATUS_END_DATE" \
   -e PROOF_STATUS_CRON_HEALTH_STATUS="$cron_health_status" \
@@ -234,6 +359,7 @@ from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
 from alpaca_bot.storage.db import connect_postgres
 from alpaca_bot.storage.repositories import OrderStore
+from alpaca_bot.strategy import OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY
 
 
 def parse_date(value: str, *, name: str) -> date:
@@ -284,14 +410,38 @@ def parse_symbol_set(raw: str | None) -> set[str]:
     return {symbol for symbol in raw.split(",") if symbol and symbol != "none"}
 
 
+def parse_name_list(raw: str | None) -> list[str]:
+    names: list[str] = []
+    for part in (raw or "").split(","):
+        name = part.strip()
+        if not name:
+            continue
+        if not re.fullmatch(r"[A-Za-z0-9_:-]+", name):
+            return []
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def format_name_list(names: list[str]) -> str:
+    return ",".join(names) if names else "none"
+
+
 def format_trade_pnl_atom(trade: dict, pnl: float) -> str:
     symbol = str(trade.get("symbol") or "unknown")
-    exit_time = trade.get("exit_time")
-    if isinstance(exit_time, datetime):
-        exit_session = exit_time.astimezone(settings.market_timezone).date().isoformat()
+    exit_session_date = trade_exit_session_date(trade)
+    if exit_session_date is not None:
+        exit_session = exit_session_date.isoformat()
     else:
         exit_session = "unknown"
     return f"{symbol}:{pnl:.2f}@{exit_session}"
+
+
+def trade_exit_session_date(trade: dict) -> date | None:
+    exit_time = trade.get("exit_time")
+    if isinstance(exit_time, datetime):
+        return exit_time.astimezone(settings.market_timezone).date()
+    return None
 
 
 def load_scenario_coverage(
@@ -410,6 +560,25 @@ def load_previous_market_session_date(
     return max(previous), None
 
 
+def load_next_market_session_after(
+    settings: Settings, *, after_date: date
+) -> tuple[date | None, str | None]:
+    try:
+        calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+            start=after_date + timedelta(days=1),
+            end=after_date + timedelta(days=14),
+        )
+    except Exception as exc:
+        return None, str(exc)
+
+    upcoming = [
+        session.session_date for session in calendar if session.session_date > after_date
+    ]
+    if not upcoming:
+        return None, f"no market session found after {after_date.isoformat()}"
+    return min(upcoming), None
+
+
 def load_broker_exposure(
     settings: Settings,
 ) -> tuple[
@@ -464,12 +633,46 @@ settings = Settings.from_env()
 trading_mode = TradingMode(os.environ.get("TRADING_MODE", "paper"))
 strategy_version = os.environ["STRATEGY_VERSION"]
 strategy_name = os.environ["PROOF_STATUS_STRATEGY"]
-min_trades = int(os.environ["PROOF_STATUS_MIN_TRADES"])
-min_pnl = float(os.environ["PROOF_STATUS_MIN_PNL"])
+approved_strategy_names = [
+    name.strip()
+    for name in os.environ["PROOF_STATUS_APPROVED_STRATEGIES"].split(",")
+    if name.strip()
+]
+approved_strategy_name_set = set(approved_strategy_names)
+proof_strategy_names = parse_name_list(
+    f"{strategy_name},{','.join(approved_strategy_names)}"
+)
+proof_strategy_csv = format_name_list(proof_strategy_names)
+expected_readiness_decision_dry_run_strategy_names = parse_name_list(
+    proof_strategy_csv
+)
+min_trades_text = os.environ["PROOF_STATUS_MIN_TRADES"]
+min_trades = int(min_trades_text)
+min_pnl_text = os.environ["PROOF_STATUS_MIN_PNL"]
+min_pnl = float(min_pnl_text)
+session_guard_min_trades_text = os.environ["PROOF_STATUS_SESSION_GUARD_MIN_TRADES"]
+session_guard_min_pnl_text = os.environ["PROOF_STATUS_SESSION_GUARD_MIN_PNL"]
 min_watchlist_symbols = int(os.environ["PROOF_STATUS_MIN_WATCHLIST_SYMBOLS"])
 min_decision_dry_run_records = int(os.environ["PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS"])
 min_decision_dry_run_evaluations = int(
     os.environ["PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS"]
+)
+scale_min_trades = int(os.environ["PROOF_STATUS_SCALE_MIN_TRADES"])
+scale_min_strategies = int(os.environ["PROOF_STATUS_SCALE_MIN_STRATEGIES"])
+scale_min_active_days = int(os.environ["PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS"])
+scale_max_single_win_pnl_share = float(
+    os.environ["PROOF_STATUS_SCALE_MAX_SINGLE_WIN_PNL_SHARE"]
+)
+scale_min_profit_factor = float(os.environ["PROOF_STATUS_SCALE_MIN_PROFIT_FACTOR"])
+scale_max_eod_loss_share = float(os.environ["PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE"])
+scale_max_operational_exit_loss_share = float(
+    os.environ["PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE"]
+)
+execution_min_entry_fill_rate = float(
+    os.environ["PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE"]
+)
+execution_max_capacity_reject_rate = float(
+    os.environ["PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE"]
 )
 min_confidence_floor = float(os.environ["PROOF_STATUS_MIN_CONFIDENCE_FLOOR"])
 require_scenarios = os.environ.get("PROOF_STATUS_REQUIRE_SCENARIOS", "true").lower() == "true"
@@ -600,6 +803,101 @@ try:
 
         cur.execute(
             """
+            SELECT COALESCE(string_agg(strategy_name, ',' ORDER BY strategy_name), '')
+            FROM strategy_flags
+            WHERE trading_mode = %s
+              AND strategy_version = %s
+              AND enabled = FALSE
+            """,
+            (trading_mode.value, strategy_version),
+        )
+        disabled_row = cur.fetchone()
+        disabled_strategies = disabled_row[0] if disabled_row else ""
+        disabled_strategy_names = [
+            name for name in disabled_strategies.split(",") if name
+        ]
+        stock_strategy_name_set = set(STRATEGY_REGISTRY)
+        option_strategy_name_set = set(OPTION_STRATEGY_NAMES)
+        active_stock_strategy_names = [
+            name for name in active_strategy_names if name in stock_strategy_name_set
+        ]
+        active_option_strategy_names = [
+            name for name in active_strategy_names if name in option_strategy_name_set
+        ]
+        disabled_stock_strategy_names = [
+            name for name in disabled_strategy_names if name in stock_strategy_name_set
+        ]
+        disabled_option_strategy_names = [
+            name for name in disabled_strategy_names if name in option_strategy_name_set
+        ]
+        # Replay scenarios and portfolio replay price stock bars only today.
+        replay_supported_option_strategy_name_set: set[str] = set()
+        replay_supported_strategy_name_set = (
+            stock_strategy_name_set | replay_supported_option_strategy_name_set
+        )
+        option_replay_status = (
+            "supported"
+            if option_strategy_name_set <= replay_supported_option_strategy_name_set
+            else "unsupported"
+        )
+        active_replay_supported_strategy_names = [
+            name
+            for name in active_strategy_names
+            if name in replay_supported_strategy_name_set
+        ]
+        disabled_replay_supported_strategy_names = [
+            name
+            for name in disabled_strategy_names
+            if name in replay_supported_strategy_name_set
+        ]
+        active_replay_unsupported_strategy_names = [
+            name
+            for name in active_strategy_names
+            if name not in replay_supported_strategy_name_set
+        ]
+        disabled_replay_unsupported_strategy_names = [
+            name
+            for name in disabled_strategy_names
+            if name not in replay_supported_strategy_name_set
+        ]
+        option_gated_disabled_strategy_names = (
+            disabled_option_strategy_names
+            if not bool(settings.enable_options_trading)
+            else []
+        )
+        approved_disabled_stock_candidate_names = [
+            name
+            for name in disabled_stock_strategy_names
+            if name in approved_strategy_name_set
+        ]
+        approved_disabled_option_candidate_names = [
+            name
+            for name in disabled_option_strategy_names
+            if name in approved_strategy_name_set
+        ]
+        approved_active_strategy_names = [
+            name for name in active_strategy_names if name in approved_strategy_name_set
+        ]
+        approved_replay_active_strategy_names = [
+            name
+            for name in approved_active_strategy_names
+            if name in replay_supported_strategy_name_set
+        ]
+        unapproved_active_strategy_names = [
+            name for name in active_strategy_names if name not in approved_strategy_name_set
+        ]
+        approved_active_strategies = ",".join(approved_active_strategy_names)
+        approved_replay_active_strategies = ",".join(
+            approved_replay_active_strategy_names
+        )
+        active_replay_unsupported_strategies = ",".join(
+            active_replay_unsupported_strategy_names
+        )
+        unapproved_active_strategies = ",".join(unapproved_active_strategy_names)
+        approved_strategy_allowlist = ",".join(approved_strategy_names)
+
+        cur.execute(
+            """
             SELECT strategy_name, weight, sharpe
             FROM strategy_weights
             WHERE trading_mode = %s
@@ -682,11 +980,47 @@ try:
                   'session_guard',
                   'paper_profit_probe'
                 )
+                AND (
+                  payload->>'check_name' NOT IN (
+                    'paper_activity',
+                    'session_guard',
+                    'paper_profit_probe'
+                  )
+                  OR %s = %s
+                  OR payload->>'strategies' = %s
+                )
+                AND (
+                  payload->>'check_name' <> 'paper_profit_probe'
+                  OR payload->>'min_trades' = %s
+                )
+                AND (
+                  payload->>'check_name' <> 'paper_profit_probe'
+                  OR payload->>'min_pnl' = %s
+                )
+                AND (
+                  payload->>'check_name' <> 'session_guard'
+                  OR payload->>'min_trades' = %s
+                )
+                AND (
+                  payload->>'check_name' <> 'session_guard'
+                  OR payload->>'min_pnl' = %s
+                )
               ORDER BY payload->>'check_name', created_at DESC, event_id DESC
             ) latest
             ORDER BY check_name
             """,
-            (trading_mode.value, strategy_version, proof_start.isoformat()),
+            (
+                trading_mode.value,
+                strategy_version,
+                proof_start.isoformat(),
+                proof_strategy_csv,
+                strategy_name,
+                proof_strategy_csv,
+                min_trades_text,
+                min_pnl_text,
+                session_guard_min_trades_text,
+                session_guard_min_pnl_text,
+            ),
         )
         scheduled_checks = cur.fetchall()
 
@@ -705,6 +1039,8 @@ try:
                   AND payload->>'check_name' = 'paper_activity'
                   AND payload->>'session_date' = %s
                   AND payload->>'proof_start' = %s
+                  AND (NOT (payload ? 'strategy') OR payload->>'strategy' = %s)
+                  AND (%s = %s OR payload->>'strategies' = %s)
                 ORDER BY created_at DESC, event_id DESC
                 LIMIT 1
                 """,
@@ -713,6 +1049,10 @@ try:
                     strategy_version,
                     activity_target_session.isoformat(),
                     proof_start.isoformat(),
+                    strategy_name,
+                    proof_strategy_csv,
+                    strategy_name,
+                    proof_strategy_csv,
                 ),
             )
             activity_audit_row = cur.fetchone()
@@ -791,7 +1131,9 @@ try:
               COALESCE(payload->>'decision_dry_run_max_accepted', '') AS decision_dry_run_max_accepted,
               COALESCE(payload->>'decision_dry_run_max_entry_intents', '') AS decision_dry_run_max_entry_intents,
               COALESCE(payload->>'decision_dry_run_reject_stages', '') AS decision_dry_run_reject_stages,
-              COALESCE(payload->>'decision_dry_run_reject_reasons', '') AS decision_dry_run_reject_reasons
+              COALESCE(payload->>'decision_dry_run_reject_reasons', '') AS decision_dry_run_reject_reasons,
+              COALESCE(payload->>'decision_dry_run_strategies', '') AS decision_dry_run_strategies,
+              COALESCE(payload->>'decision_dry_run_strategy_count', '') AS decision_dry_run_strategy_count
             FROM audit_events
             WHERE event_type = 'scheduled_check_completed'
               AND payload->>'trading_mode' = %s
@@ -832,6 +1174,24 @@ try:
                     )
                     AND payload->>'session_date' = %s
                     AND payload->>'proof_start' = %s
+                    AND (NOT (payload ? 'strategy') OR payload->>'strategy' = %s)
+                    AND (%s = %s OR payload->>'strategies' = %s)
+                    AND (
+                      payload->>'check_name' <> 'paper_profit_probe'
+                      OR payload->>'min_trades' = %s
+                    )
+                    AND (
+                      payload->>'check_name' <> 'paper_profit_probe'
+                      OR payload->>'min_pnl' = %s
+                    )
+                    AND (
+                      payload->>'check_name' <> 'session_guard'
+                      OR payload->>'min_trades' = %s
+                    )
+                    AND (
+                      payload->>'check_name' <> 'session_guard'
+                      OR payload->>'min_pnl' = %s
+                    )
                   ORDER BY payload->>'check_name', created_at DESC, event_id DESC
                 ) latest
                 ORDER BY check_name
@@ -841,6 +1201,14 @@ try:
                     strategy_version,
                     post_close_target_session.isoformat(),
                     proof_start.isoformat(),
+                    strategy_name,
+                    proof_strategy_csv,
+                    strategy_name,
+                    proof_strategy_csv,
+                    min_trades_text,
+                    min_pnl_text,
+                    session_guard_min_trades_text,
+                    session_guard_min_pnl_text,
                 ),
             )
             post_close_audit_rows = cur.fetchall()
@@ -1108,6 +1476,222 @@ try:
         )
         trading_status_reason = trading_status_row[2] if trading_status_row else ""
 
+        decision_evaluated = 0
+        decision_signal_fired = 0
+        decision_accepted = 0
+        decision_capacity_rejected = 0
+        decision_entry_quality_rejected = 0
+        decision_vwap_rejected = 0
+        decision_sizing_rejected = 0
+        entry_order_count = 0
+        entry_order_filled_count = 0
+        entry_order_canceled_count = 0
+        entry_order_expired_count = 0
+        entry_order_rejected_count = 0
+        entry_order_active_count = 0
+        entry_order_filled_symbols = "none"
+        posture_entry_order_count = 0
+        posture_entry_order_filled_count = 0
+        posture_entry_quality_would_reject_count = 0
+        posture_entry_order_filled_symbols = "none"
+        if proof_end >= proof_start:
+            cur.execute(
+                """
+                SELECT
+                  COALESCE(SUM(w), 0)::int AS evaluated,
+                  COALESCE(SUM(w) FILTER (
+                    WHERE decision NOT IN (
+                      'skipped_existing_position',
+                      'skipped_already_traded',
+                      'skipped_no_signal'
+                    )
+                      AND reject_stage IS DISTINCT FROM 'pre_filter'
+                      AND reject_stage IS DISTINCT FROM 'stale_data'
+                  ), 0)::int AS signal_fired,
+                  COALESCE(SUM(w) FILTER (WHERE decision = 'accepted'), 0)::int AS accepted,
+                  COALESCE(SUM(w) FILTER (WHERE reject_stage = 'capacity'), 0)::int AS capacity_rejected,
+                  COALESCE(SUM(w) FILTER (WHERE reject_stage = 'entry_quality'), 0)::int AS entry_quality_rejected,
+                  COALESCE(SUM(w) FILTER (WHERE reject_stage = 'vwap_filter'), 0)::int AS vwap_rejected,
+                  COALESCE(SUM(w) FILTER (WHERE reject_stage = 'sizing'), 0)::int AS sizing_rejected
+                FROM (
+                  SELECT
+                    decision,
+                    reject_stage,
+                    COALESCE((filter_results->>'blocked_symbol_count')::int, 1) AS w
+                  FROM decision_log
+                  WHERE trading_mode = %s
+                    AND strategy_version = %s
+                    AND strategy_name = ANY(%s)
+                    AND DATE(cycle_at AT TIME ZONE %s) >= %s
+                    AND DATE(cycle_at AT TIME ZONE %s) <= %s
+                ) weighted
+                """,
+                (
+                    trading_mode.value,
+                    strategy_version,
+                    proof_strategy_names,
+                    market_timezone,
+                    proof_start,
+                    market_timezone,
+                    proof_end,
+                ),
+            )
+            decision_quality_row = cur.fetchone()
+            if decision_quality_row:
+                decision_evaluated = int(decision_quality_row[0] or 0)
+                decision_signal_fired = int(decision_quality_row[1] or 0)
+                decision_accepted = int(decision_quality_row[2] or 0)
+                decision_capacity_rejected = int(decision_quality_row[3] or 0)
+                decision_entry_quality_rejected = int(decision_quality_row[4] or 0)
+                decision_vwap_rejected = int(decision_quality_row[5] or 0)
+                decision_sizing_rejected = int(decision_quality_row[6] or 0)
+
+            cur.execute(
+                """
+                SELECT
+                  COUNT(*)::int AS entry_orders,
+                  COUNT(*) FILTER (
+                    WHERE status = 'filled' OR COALESCE(filled_quantity, 0) > 0
+                  )::int AS filled_entries,
+                  COUNT(*) FILTER (WHERE status = 'canceled')::int AS canceled_entries,
+                  COUNT(*) FILTER (WHERE status = 'expired')::int AS expired_entries,
+                  COUNT(*) FILTER (WHERE status IN ('rejected', 'error'))::int AS rejected_entries,
+                  COUNT(*) FILTER (
+                    WHERE status IN (
+                      'pending_submit',
+                      'submitting',
+                      'pending_new',
+                      'new',
+                      'accepted',
+                      'accepted_for_bidding',
+                      'submitted',
+                      'partially_filled',
+                      'held',
+                      'pending_replace',
+                      'pending_cancel',
+                      'stopped',
+                      'suspended',
+                      'done_for_day'
+                    )
+                  )::int AS active_entries,
+                  COALESCE(
+                    string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                      WHERE status = 'filled' OR COALESCE(filled_quantity, 0) > 0
+                    ),
+                    'none'
+                  ) AS filled_symbols
+                FROM orders
+                WHERE trading_mode = %s
+                  AND strategy_version = %s
+                  AND strategy_name = ANY(%s)
+                  AND intent_type = 'entry'
+                  AND DATE(COALESCE(signal_timestamp, created_at) AT TIME ZONE %s) >= %s
+                  AND DATE(COALESCE(signal_timestamp, created_at) AT TIME ZONE %s) <= %s
+                """,
+                (
+                    trading_mode.value,
+                    strategy_version,
+                    proof_strategy_names,
+                    market_timezone,
+                    proof_start,
+                    market_timezone,
+                    proof_end,
+                ),
+            )
+            execution_quality_row = cur.fetchone()
+            if execution_quality_row:
+                entry_order_count = int(execution_quality_row[0] or 0)
+                entry_order_filled_count = int(execution_quality_row[1] or 0)
+                entry_order_canceled_count = int(execution_quality_row[2] or 0)
+                entry_order_expired_count = int(execution_quality_row[3] or 0)
+                entry_order_rejected_count = int(execution_quality_row[4] or 0)
+                entry_order_active_count = int(execution_quality_row[5] or 0)
+                entry_order_filled_symbols = execution_quality_row[6] or "none"
+
+            if (
+                settings.entry_min_close_to_entry_pct > -1.0
+                or settings.entry_max_close_to_entry_pct < 1.0
+            ):
+                cur.execute(
+                    """
+                    WITH paired AS (
+                      SELECT
+                        o.symbol,
+                        o.status,
+                        o.filled_quantity,
+                        (d.signal_bar_close / NULLIF(d.entry_level, 0) - 1)
+                          AS close_to_entry_pct
+                      FROM decision_log d
+                      JOIN orders o
+                        ON o.symbol = d.symbol
+                       AND o.trading_mode = d.trading_mode
+                       AND o.strategy_version = d.strategy_version
+                       AND o.strategy_name IS NOT DISTINCT FROM d.strategy_name
+                       AND o.intent_type = 'entry'
+                       AND o.created_at = d.cycle_at
+                      WHERE d.trading_mode = %s
+                        AND d.strategy_version = %s
+                        AND d.strategy_name = ANY(%s)
+                        AND d.decision = 'accepted'
+                        AND d.entry_level IS NOT NULL
+                        AND d.entry_level > 0
+                        AND d.signal_bar_close IS NOT NULL
+                        AND DATE(d.cycle_at AT TIME ZONE %s) >= %s
+                        AND DATE(d.cycle_at AT TIME ZONE %s) <= %s
+                    )
+                    SELECT
+                      COUNT(*) FILTER (
+                        WHERE close_to_entry_pct >= %s
+                          AND close_to_entry_pct <= %s
+                      )::int AS eligible_orders,
+                      COUNT(*) FILTER (
+                        WHERE close_to_entry_pct >= %s
+                          AND close_to_entry_pct <= %s
+                          AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
+                      )::int AS eligible_filled,
+                      COUNT(*) FILTER (
+                        WHERE close_to_entry_pct < %s
+                          OR close_to_entry_pct > %s
+                      )::int AS would_reject_now,
+                      COALESCE(
+                        string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                          WHERE close_to_entry_pct >= %s
+                            AND close_to_entry_pct <= %s
+                            AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
+                        ),
+                        'none'
+                      ) AS eligible_filled_symbols
+                    FROM paired
+                    """,
+                    (
+                        trading_mode.value,
+                        strategy_version,
+                        proof_strategy_names,
+                        market_timezone,
+                        proof_start,
+                        market_timezone,
+                        proof_end,
+                        settings.entry_min_close_to_entry_pct,
+                        settings.entry_max_close_to_entry_pct,
+                        settings.entry_min_close_to_entry_pct,
+                        settings.entry_max_close_to_entry_pct,
+                        settings.entry_min_close_to_entry_pct,
+                        settings.entry_max_close_to_entry_pct,
+                        settings.entry_min_close_to_entry_pct,
+                        settings.entry_max_close_to_entry_pct,
+                    ),
+                )
+                posture_execution_row = cur.fetchone()
+                if posture_execution_row:
+                    posture_entry_order_count = int(posture_execution_row[0] or 0)
+                    posture_entry_order_filled_count = int(posture_execution_row[1] or 0)
+                    posture_entry_quality_would_reject_count = int(
+                        posture_execution_row[2] or 0
+                    )
+                    posture_entry_order_filled_symbols = (
+                        posture_execution_row[3] or "none"
+                    )
+
         unpaired_filled_exit_count = 0
         unpaired_filled_exit_symbols = "none"
         if proof_end >= proof_start:
@@ -1119,7 +1703,7 @@ try:
                 FROM orders x
                 WHERE x.trading_mode = %s
                   AND x.strategy_version = %s
-                  AND x.strategy_name IS NOT DISTINCT FROM %s
+                  AND x.strategy_name = ANY(%s)
                   AND x.intent_type IN ('stop', 'exit')
                   AND x.fill_price IS NOT NULL
                   AND (x.status = 'filled' OR COALESCE(x.filled_quantity, 0) > 0)
@@ -1143,7 +1727,7 @@ try:
                 (
                     trading_mode.value,
                     strategy_version,
-                    strategy_name,
+                    proof_strategy_names,
                     market_timezone,
                     proof_start,
                     market_timezone,
@@ -1162,23 +1746,27 @@ try:
     unscored_current_session_trades = []
     if proof_end >= proof_start:
         for session_date in date_range(proof_start, proof_end):
-            trades.extend(
+            for proof_strategy_name in proof_strategy_names:
+                trades.extend(
+                    order_store.list_closed_trades(
+                        trading_mode=trading_mode,
+                        strategy_version=strategy_version,
+                        session_date=session_date,
+                        strategy_name=proof_strategy_name,
+                        market_timezone=market_timezone,
+                    )
+                )
+    if current_market_date > proof_end and current_market_date >= proof_start:
+        for proof_strategy_name in proof_strategy_names:
+            unscored_current_session_trades.extend(
                 order_store.list_closed_trades(
                     trading_mode=trading_mode,
                     strategy_version=strategy_version,
-                    session_date=session_date,
-                    strategy_name=strategy_name,
+                    session_date=current_market_date,
+                    strategy_name=proof_strategy_name,
                     market_timezone=market_timezone,
                 )
             )
-    if current_market_date > proof_end and current_market_date >= proof_start:
-        unscored_current_session_trades = order_store.list_closed_trades(
-            trading_mode=trading_mode,
-            strategy_version=strategy_version,
-            session_date=current_market_date,
-            strategy_name=strategy_name,
-            market_timezone=market_timezone,
-        )
 finally:
     conn.close()
 
@@ -1233,8 +1821,479 @@ exit_sessions = [
     for trade in trades
     if trade.get("exit_time") is not None
 ]
+active_trade_day_count = len(set(exit_sessions))
 first_exit_session = min(exit_sessions).isoformat() if exit_sessions else ""
 latest_exit_session = max(exit_sessions).isoformat() if exit_sessions else ""
+gross_profit = sum(trade_pnl for _, trade_pnl in trade_pnl_rows if trade_pnl > 0)
+gross_loss = abs(sum(trade_pnl for _, trade_pnl in trade_pnl_rows if trade_pnl < 0))
+profit_factor = gross_profit / gross_loss if gross_loss > 0 else None
+profit_factor_text = f"{profit_factor:.2f}" if profit_factor is not None else "none"
+best_winning_trade_pnl = max(
+    (trade_pnl for _, trade_pnl in trade_pnl_rows if trade_pnl > 0),
+    default=0.0,
+)
+single_win_pnl_share = (
+    best_winning_trade_pnl / pnl
+    if pnl > 0 and best_winning_trade_pnl > 0
+    else None
+)
+single_win_pnl_share_text = (
+    f"{single_win_pnl_share:.2f}" if single_win_pnl_share is not None else "none"
+)
+STRATEGY_EXIT_REASONS = {
+    "eod_flatten",
+    "loss_limit_flatten",
+    "stop_breach_extended_hours",
+    "profit_target",
+    "viability_trend_filter_failed",
+    "viability_vwap_breakdown",
+    "no_follow_through",
+    "giveback_exit",
+    "early_loss_exit",
+    "profit_trail",
+    "breakeven",
+}
+
+
+def exit_reason(trade: dict) -> str:
+    return str(trade.get("reason") or "").strip()
+
+
+def summarize_trade_pnl_rows(rows: list[tuple[dict, float]]) -> dict:
+    row_count = len(rows)
+    row_pnl = sum(trade_pnl for _, trade_pnl in rows)
+    row_losses = sum(1 for _, trade_pnl in rows if trade_pnl < 0)
+    row_exit_sessions = [
+        exit_session
+        for trade, _ in rows
+        if (exit_session := trade_exit_session_date(trade)) is not None
+    ]
+    row_gross_profit = sum(trade_pnl for _, trade_pnl in rows if trade_pnl > 0)
+    row_gross_loss = abs(sum(trade_pnl for _, trade_pnl in rows if trade_pnl < 0))
+    row_profit_factor = (
+        row_gross_profit / row_gross_loss if row_gross_loss > 0 else None
+    )
+    row_best_winning_trade_pnl = max(
+        (trade_pnl for _, trade_pnl in rows if trade_pnl > 0),
+        default=0.0,
+    )
+    row_single_win_pnl_share = (
+        row_best_winning_trade_pnl / row_pnl
+        if row_pnl > 0 and row_best_winning_trade_pnl > 0
+        else None
+    )
+    row_eod_loss_rows = [
+        (trade, trade_pnl)
+        for trade, trade_pnl in rows
+        if trade_pnl < 0 and exit_reason(trade) == "eod_flatten"
+    ]
+    row_operational_exit_loss_rows = [
+        (trade, trade_pnl)
+        for trade, trade_pnl in rows
+        if trade_pnl < 0
+        and trade.get("intent_type") == "exit"
+        and exit_reason(trade) not in STRATEGY_EXIT_REASONS
+    ]
+    row_eod_loss_share = len(row_eod_loss_rows) / row_losses if row_losses else 0.0
+    row_operational_exit_loss_share = (
+        len(row_operational_exit_loss_rows) / row_losses if row_losses else 0.0
+    )
+    return {
+        "active_days": len(set(row_exit_sessions)),
+        "eod_loss_count": len(row_eod_loss_rows),
+        "eod_loss_share": row_eod_loss_share,
+        "eod_loss_share_text": f"{row_eod_loss_share:.2f}" if row_losses else "none",
+        "eod_loss_symbols": (
+            ",".join(
+                sorted(
+                    {
+                        str(trade.get("symbol") or "")
+                        for trade, _ in row_eod_loss_rows
+                    }
+                )
+            )
+            if row_eod_loss_rows
+            else "none"
+        ),
+        "losses": row_losses,
+        "operational_exit_loss_count": len(row_operational_exit_loss_rows),
+        "operational_exit_loss_share": row_operational_exit_loss_share,
+        "operational_exit_loss_share_text": (
+            f"{row_operational_exit_loss_share:.2f}" if row_losses else "none"
+        ),
+        "operational_exit_loss_symbols": (
+            ",".join(
+                sorted(
+                    {
+                        str(trade.get("symbol") or "")
+                        for trade, _ in row_operational_exit_loss_rows
+                    }
+                )
+            )
+            if row_operational_exit_loss_rows
+            else "none"
+        ),
+        "pnl": row_pnl,
+        "profit_factor": row_profit_factor,
+        "profit_factor_text": (
+            f"{row_profit_factor:.2f}" if row_profit_factor is not None else "none"
+        ),
+        "single_win_pnl_share": row_single_win_pnl_share,
+        "single_win_pnl_share_text": (
+            f"{row_single_win_pnl_share:.2f}"
+            if row_single_win_pnl_share is not None
+            else "none"
+        ),
+        "trade_count": row_count,
+    }
+
+
+eod_loss_count = sum(
+    1
+    for trade, trade_pnl in trade_pnl_rows
+    if trade_pnl < 0 and exit_reason(trade) == "eod_flatten"
+)
+eod_loss_rows = [
+    (trade, trade_pnl)
+    for trade, trade_pnl in trade_pnl_rows
+    if trade_pnl < 0 and exit_reason(trade) == "eod_flatten"
+]
+eod_loss_share = eod_loss_count / losses if losses else 0.0
+eod_loss_share_text = f"{eod_loss_share:.2f}" if losses else "none"
+eod_loss_symbols = (
+    ",".join(sorted({str(trade.get("symbol") or "") for trade, _ in eod_loss_rows}))
+    if eod_loss_rows
+    else "none"
+)
+operational_exit_loss_rows = [
+    (trade, trade_pnl)
+    for trade, trade_pnl in trade_pnl_rows
+    if trade_pnl < 0
+    and trade.get("intent_type") == "exit"
+    and exit_reason(trade) not in STRATEGY_EXIT_REASONS
+]
+operational_exit_loss_count = len(operational_exit_loss_rows)
+operational_exit_loss_share = operational_exit_loss_count / losses if losses else 0.0
+operational_exit_loss_share_text = (
+    f"{operational_exit_loss_share:.2f}" if losses else "none"
+)
+operational_exit_loss_symbols = (
+    ",".join(
+        sorted({str(trade.get("symbol") or "") for trade, _ in operational_exit_loss_rows})
+    )
+    if operational_exit_loss_rows
+    else "none"
+)
+operational_exit_loss_reasons = (
+    ",".join(
+        sorted(
+            {
+                exit_reason(trade) if exit_reason(trade) else "unknown"
+                for trade, _ in operational_exit_loss_rows
+            }
+        )
+    )
+    if operational_exit_loss_rows
+    else "none"
+)
+latest_operational_exit_loss_row = max(
+    operational_exit_loss_rows,
+    key=lambda row: row[0].get("exit_time")
+    or datetime.min.replace(tzinfo=timezone.utc),
+    default=None,
+)
+latest_operational_exit_loss_text = (
+    format_trade_pnl_atom(
+        latest_operational_exit_loss_row[0],
+        latest_operational_exit_loss_row[1],
+    )
+    if latest_operational_exit_loss_row
+    else "none"
+)
+latest_operational_exit_loss_session = None
+if latest_operational_exit_loss_row is not None:
+    latest_operational_exit_time = latest_operational_exit_loss_row[0].get("exit_time")
+    if isinstance(latest_operational_exit_time, datetime):
+        latest_operational_exit_loss_session = (
+            latest_operational_exit_time.astimezone(settings.market_timezone).date()
+        )
+operational_exit_clean_start = None
+if latest_operational_exit_loss_session is not None:
+    (
+        operational_exit_clean_start,
+        operational_exit_clean_start_warning,
+    ) = load_next_market_session_after(
+        settings,
+        after_date=latest_operational_exit_loss_session,
+    )
+    if operational_exit_clean_start_warning:
+        calendar_warning = (
+            f"{calendar_warning}; {operational_exit_clean_start_warning}"
+            if calendar_warning
+            else operational_exit_clean_start_warning
+        )
+operational_exit_clean_start_text = (
+    operational_exit_clean_start.isoformat()
+    if operational_exit_clean_start is not None
+    else "none"
+)
+clean_window_status = "dirty" if operational_exit_loss_rows else "clean"
+clean_window_progress_start = (
+    operational_exit_clean_start if operational_exit_loss_rows else proof_start
+)
+clean_window_progress_start_text = (
+    clean_window_progress_start.isoformat()
+    if clean_window_progress_start is not None
+    else "none"
+)
+clean_window_trade_pnl_rows = [
+    (trade, trade_pnl)
+    for trade, trade_pnl in trade_pnl_rows
+    if clean_window_progress_start is not None
+    and (exit_session := trade_exit_session_date(trade)) is not None
+    and exit_session >= clean_window_progress_start
+]
+clean_window_unscored_current_session_trade_pnl_rows = [
+    (trade, trade_pnl)
+    for trade, trade_pnl in unscored_current_session_trade_pnl_rows
+    if clean_window_progress_start is not None
+    and (exit_session := trade_exit_session_date(trade)) is not None
+    and exit_session >= clean_window_progress_start
+]
+clean_window_trade_count = len(clean_window_trade_pnl_rows)
+clean_window_pnl = sum(
+    trade_pnl for _, trade_pnl in clean_window_trade_pnl_rows
+)
+clean_window_unscored_current_session_trade_count = len(
+    clean_window_unscored_current_session_trade_pnl_rows
+)
+clean_window_unscored_current_session_pnl = sum(
+    trade_pnl
+    for _, trade_pnl in clean_window_unscored_current_session_trade_pnl_rows
+)
+clean_window_sealed_trade_count = (
+    clean_window_trade_count + clean_window_unscored_current_session_trade_count
+)
+clean_window_sealed_pnl = (
+    clean_window_pnl + clean_window_unscored_current_session_pnl
+)
+clean_window_sealed_trade_pnl_rows = (
+    clean_window_trade_pnl_rows
+    + clean_window_unscored_current_session_trade_pnl_rows
+)
+clean_window_summary = summarize_trade_pnl_rows(clean_window_trade_pnl_rows)
+clean_window_sealed_summary = summarize_trade_pnl_rows(
+    clean_window_sealed_trade_pnl_rows
+)
+
+base_summary = summarize_trade_pnl_rows(trade_pnl_rows)
+base_sealed_summary = summarize_trade_pnl_rows(
+    trade_pnl_rows + unscored_current_session_trade_pnl_rows
+)
+
+
+def robustness_blockers_for_summary(
+    summary: dict,
+    *,
+    require_strategy_diversification: bool,
+) -> list[str]:
+    summary_blockers = []
+    if int(summary["trade_count"]) < scale_min_trades:
+        summary_blockers.append("sample_trades")
+    if (
+        require_strategy_diversification
+        and len(approved_replay_active_strategy_names) < scale_min_strategies
+    ):
+        summary_blockers.append("strategy_diversification")
+    if unapproved_active_strategy_names:
+        summary_blockers.append("unapproved_strategy")
+    if active_replay_unsupported_strategy_names:
+        summary_blockers.append("replay_unsupported_strategy")
+    if int(summary["active_days"]) < scale_min_active_days:
+        summary_blockers.append("active_days")
+    if (
+        summary["single_win_pnl_share"] is not None
+        and float(summary["single_win_pnl_share"]) > scale_max_single_win_pnl_share
+    ):
+        summary_blockers.append("profit_concentration")
+    if (
+        summary["profit_factor"] is not None
+        and float(summary["profit_factor"]) < scale_min_profit_factor
+    ):
+        summary_blockers.append("profit_factor")
+    if (
+        int(summary["losses"]) > 0
+        and float(summary["eod_loss_share"]) > scale_max_eod_loss_share
+    ):
+        summary_blockers.append("eod_loss_share")
+    if (
+        int(summary["losses"]) > 0
+        and float(summary["operational_exit_loss_share"])
+        > scale_max_operational_exit_loss_share
+    ):
+        summary_blockers.append("operational_exit_loss_share")
+    return summary_blockers
+
+
+proof_blockers = robustness_blockers_for_summary(
+    base_summary,
+    require_strategy_diversification=False,
+)
+sealed_proof_blockers = robustness_blockers_for_summary(
+    base_sealed_summary,
+    require_strategy_diversification=False,
+)
+clean_window_blockers = robustness_blockers_for_summary(
+    clean_window_summary,
+    require_strategy_diversification=False,
+)
+clean_window_sealed_blockers = robustness_blockers_for_summary(
+    clean_window_sealed_summary,
+    require_strategy_diversification=False,
+)
+scale_blockers = []
+if trade_count < scale_min_trades:
+    scale_blockers.append("sample_trades")
+if len(approved_replay_active_strategy_names) < scale_min_strategies:
+    scale_blockers.append("strategy_diversification")
+if unapproved_active_strategy_names:
+    scale_blockers.append("unapproved_strategy")
+if active_replay_unsupported_strategy_names:
+    scale_blockers.append("replay_unsupported_strategy")
+if active_trade_day_count < scale_min_active_days:
+    scale_blockers.append("active_days")
+if (
+    single_win_pnl_share is not None
+    and single_win_pnl_share > scale_max_single_win_pnl_share
+):
+    scale_blockers.append("profit_concentration")
+if profit_factor is not None and profit_factor < scale_min_profit_factor:
+    scale_blockers.append("profit_factor")
+if losses and eod_loss_share > scale_max_eod_loss_share:
+    scale_blockers.append("eod_loss_share")
+if (
+    losses
+    and operational_exit_loss_share > scale_max_operational_exit_loss_share
+):
+    scale_blockers.append("operational_exit_loss_share")
+entry_order_fill_rate = (
+    entry_order_filled_count / entry_order_count if entry_order_count else None
+)
+posture_entry_fill_rate = (
+    posture_entry_order_filled_count / posture_entry_order_count
+    if posture_entry_order_count
+    else None
+)
+accepted_to_fill_rate = (
+    entry_order_filled_count / decision_accepted if decision_accepted else None
+)
+capacity_reject_rate = (
+    decision_capacity_rejected / decision_signal_fired
+    if decision_signal_fired
+    else None
+)
+entry_order_fill_rate_text = (
+    f"{entry_order_fill_rate:.2f}" if entry_order_fill_rate is not None else "none"
+)
+posture_entry_fill_rate_text = (
+    f"{posture_entry_fill_rate:.2f}" if posture_entry_fill_rate is not None else "none"
+)
+accepted_to_fill_rate_text = (
+    f"{accepted_to_fill_rate:.2f}" if accepted_to_fill_rate is not None else "none"
+)
+capacity_reject_rate_text = (
+    f"{capacity_reject_rate:.2f}" if capacity_reject_rate is not None else "none"
+)
+effective_entry_fill_rate = (
+    posture_entry_fill_rate
+    if posture_entry_fill_rate is not None
+    else entry_order_fill_rate
+)
+effective_entry_fill_rate_source = (
+    "current_posture"
+    if posture_entry_fill_rate is not None
+    else "raw"
+)
+effective_entry_fill_rate_text = (
+    f"{effective_entry_fill_rate:.2f}"
+    if effective_entry_fill_rate is not None
+    else "none"
+)
+execution_quality_status = "ok"
+execution_quality_warnings = []
+if (
+    effective_entry_fill_rate is not None
+    and effective_entry_fill_rate < execution_min_entry_fill_rate
+):
+    execution_quality_status = "needs_work"
+    execution_quality_warnings.append("entry_fill_rate")
+    scale_blockers.append("entry_fill_rate")
+    proof_blockers.append("entry_fill_rate")
+    sealed_proof_blockers.append("entry_fill_rate")
+    clean_window_blockers.append("entry_fill_rate")
+    clean_window_sealed_blockers.append("entry_fill_rate")
+elif (
+    entry_order_fill_rate is not None
+    and entry_order_fill_rate < execution_min_entry_fill_rate
+    and posture_entry_fill_rate is not None
+):
+    execution_quality_warnings.append("raw_entry_fill_rate")
+if (
+    capacity_reject_rate is not None
+    and capacity_reject_rate > execution_max_capacity_reject_rate
+):
+    execution_quality_status = "needs_work"
+    execution_quality_warnings.append("capacity_rejections")
+    scale_blockers.append("capacity_rejections")
+    proof_blockers.append("capacity_rejections")
+    sealed_proof_blockers.append("capacity_rejections")
+    clean_window_blockers.append("capacity_rejections")
+    clean_window_sealed_blockers.append("capacity_rejections")
+strategy_diversification_status = (
+    "ok"
+    if (
+        len(approved_replay_active_strategy_names) >= scale_min_strategies
+        and not unapproved_active_strategy_names
+        and not active_replay_unsupported_strategy_names
+    )
+    else "blocked"
+)
+strategy_diversification_gap = max(
+    0,
+    scale_min_strategies - len(approved_replay_active_strategy_names),
+)
+strategy_diversification_candidate_status = (
+    "met"
+    if strategy_diversification_status == "ok"
+    else (
+        "unapproved_active_strategy"
+        if unapproved_active_strategy_names
+        else (
+            "replay_unsupported_active_strategy"
+            if active_replay_unsupported_strategy_names
+            else (
+                "approved_stock_candidate_disabled"
+                if approved_disabled_stock_candidate_names
+                else (
+                    "approved_option_candidate_replay_unavailable"
+                    if approved_disabled_option_candidate_names
+                    else "no_approved_stock_strategy"
+                )
+            )
+        )
+    )
+)
+proof_robustness_status = "ready" if not proof_blockers else "blocked"
+sealed_proof_robustness_status = (
+    "ready" if not sealed_proof_blockers else "blocked"
+)
+clean_window_robustness_status = (
+    "ready" if not clean_window_blockers else "blocked"
+)
+clean_window_sealed_robustness_status = (
+    "ready" if not clean_window_sealed_blockers else "blocked"
+)
+scale_status = "ready" if not scale_blockers else "blocked"
 latest_supervisor_started_text = (
     latest_supervisor_started_at.isoformat()
     if latest_supervisor_started_at is not None
@@ -1328,6 +2387,17 @@ def readiness_row_has_decision_dry_run(row) -> bool:
     )
 
 
+def readiness_row_has_expected_decision_dry_run_strategies(row) -> bool:
+    if len(row) < 19:
+        return False
+    strategy_names = parse_name_list(row[17] or "")
+    strategy_count = parse_int_or_none(row[18] or "")
+    return (
+        strategy_names == expected_readiness_decision_dry_run_strategy_names
+        and strategy_count == len(expected_readiness_decision_dry_run_strategy_names)
+    )
+
+
 readiness_audit_check_status = "missing"
 readiness_audit_created_at = None
 readiness_audit_age_minutes = None
@@ -1398,7 +2468,21 @@ readiness_decision_dry_run_max_accepted = ""
 readiness_decision_dry_run_max_entry_intents = ""
 readiness_decision_dry_run_reject_stages = ""
 readiness_decision_dry_run_reject_reasons = ""
-readiness_decision_dry_run_row = readiness_audit_row
+readiness_decision_dry_run_strategies = ""
+readiness_decision_dry_run_strategy_count = ""
+readiness_decision_dry_run_row = next(
+    (
+        row
+        for row in readiness_audit_rows
+        if row[0] == "passed"
+        and readiness_row_has_decision_dry_run(row)
+        and readiness_row_is_current(row)
+        and readiness_row_has_expected_decision_dry_run_strategies(row)
+    ),
+    None,
+)
+if readiness_decision_dry_run_row is None:
+    readiness_decision_dry_run_row = readiness_audit_row
 if not (
     readiness_decision_dry_run_row
     and readiness_row_has_decision_dry_run(readiness_decision_dry_run_row)
@@ -1444,6 +2528,17 @@ if readiness_decision_dry_run_row and len(readiness_decision_dry_run_row) >= 10:
         readiness_decision_dry_run_reject_reasons = (
             readiness_decision_dry_run_row[16] or ""
         )
+readiness_decision_dry_run_strategies_row = readiness_decision_dry_run_row
+if (
+    readiness_decision_dry_run_strategies_row
+    and len(readiness_decision_dry_run_strategies_row) >= 19
+):
+    readiness_decision_dry_run_strategies = (
+        readiness_decision_dry_run_strategies_row[17] or ""
+    )
+    readiness_decision_dry_run_strategy_count = (
+        readiness_decision_dry_run_strategies_row[18] or ""
+    )
 readiness_decision_dry_run_active_value = parse_int_or_none(
     readiness_decision_dry_run_active
 )
@@ -1538,6 +2633,28 @@ elif (
     <= 0
 ):
     readiness_decision_dry_run_status = "entry_intents_under_minimum"
+readiness_decision_dry_run_strategy_count_value = parse_int_or_none(
+    readiness_decision_dry_run_strategy_count
+)
+readiness_decision_dry_run_strategy_names = parse_name_list(
+    readiness_decision_dry_run_strategies
+)
+readiness_decision_dry_run_strategies_status = "ok"
+if not readiness_decision_dry_run_strategies:
+    readiness_decision_dry_run_strategies_status = "missing"
+elif not readiness_decision_dry_run_strategy_names:
+    readiness_decision_dry_run_strategies_status = "invalid"
+elif readiness_decision_dry_run_strategy_count_value is None:
+    readiness_decision_dry_run_strategies_status = "invalid"
+elif (
+    readiness_decision_dry_run_strategy_names
+    != expected_readiness_decision_dry_run_strategy_names
+):
+    readiness_decision_dry_run_strategies_status = "strategy_set_mismatch"
+elif readiness_decision_dry_run_strategy_count_value != len(
+    expected_readiness_decision_dry_run_strategy_names
+):
+    readiness_decision_dry_run_strategies_status = "strategy_count_mismatch"
 activity_due = False
 activity_due_after = "none"
 activity_required_since = None
@@ -1683,13 +2800,53 @@ if post_close_target_session is not None:
                 session_guard_acceptable and profit_probe_status == "passed"
             )
 proof_not_started = proof_end < proof_start
-profitable_enough = trade_count >= min_trades and pnl >= min_pnl
-sealed_profitable_enough = sealed_trade_count >= min_trades and sealed_pnl >= min_pnl
+base_profitable_enough = trade_count >= min_trades and pnl >= min_pnl
+base_sealed_profitable_enough = sealed_trade_count >= min_trades and sealed_pnl >= min_pnl
+proof_quality_ready = proof_robustness_status == "ready"
+clean_window_base_profitable_enough = (
+    clean_window_status == "dirty"
+    and clean_window_trade_count >= min_trades
+    and clean_window_pnl >= min_pnl
+)
+clean_window_base_sealed_profitable_enough = (
+    clean_window_status == "dirty"
+    and clean_window_sealed_trade_count >= min_trades
+    and clean_window_sealed_pnl >= min_pnl
+)
+clean_window_quality_ready = clean_window_robustness_status == "ready"
+clean_window_sealed_quality_ready = clean_window_sealed_robustness_status == "ready"
+base_proof_eligible = base_profitable_enough and proof_quality_ready
+base_sealed_proof_eligible = base_sealed_profitable_enough and proof_quality_ready
+clean_window_proof_eligible = (
+    clean_window_base_profitable_enough and clean_window_quality_ready
+)
+clean_window_sealed_proof_eligible = (
+    clean_window_base_sealed_profitable_enough
+    and clean_window_sealed_quality_ready
+)
+profitable_enough = base_proof_eligible or clean_window_proof_eligible
+sealed_profitable_enough = (
+    base_sealed_proof_eligible or clean_window_sealed_proof_eligible
+)
+proof_basis = (
+    "base"
+    if base_proof_eligible
+    else "clean_window"
+    if clean_window_proof_eligible
+    else "pending"
+)
+sealed_proof_basis = (
+    "base"
+    if base_sealed_proof_eligible
+    else "clean_window"
+    if clean_window_sealed_proof_eligible
+    else "pending"
+)
 if proof_not_started:
     proof_status = "pending"
 elif profitable_enough and post_close_pass_evidence_ready:
     proof_status = "passed"
-elif profitable_enough:
+elif base_profitable_enough or clean_window_base_profitable_enough:
     proof_status = "pending"
 elif trade_count >= min_trades:
     proof_status = "pending"
@@ -1705,7 +2862,19 @@ proof_window = (
         ")"
     )
 )
-strategy_status = "ok" if strategy_name in active_strategy_names else "disabled"
+proof_strategy_missing_active_names = [
+    name for name in proof_strategy_names if name not in active_strategy_names
+]
+proof_strategy_unapproved_names = [
+    name for name in proof_strategy_names if name not in approved_strategy_name_set
+]
+strategy_status = (
+    "ok"
+    if not proof_strategy_missing_active_names and not proof_strategy_unapproved_names
+    else "unapproved"
+    if proof_strategy_unapproved_names
+    else "disabled"
+)
 watchlist_status = (
     "ok"
     if active_watchlist_symbols >= min_watchlist_symbols
@@ -1751,16 +2920,19 @@ posture_status = (
         settings.market_data_feed.value == "iex"
         and int(settings.daily_sma_period) == 20
         and int(settings.breakout_lookback_bars) == 20
-        and int(settings.relative_volume_lookback_bars) == 20
+        and int(settings.relative_volume_lookback_bars) == 10
         and abs(float(settings.relative_volume_threshold) - 2.0) < 1e-9
         and int(settings.entry_timeframe_minutes) == 15
+        and int(settings.entry_order_active_bars) == 1
         and abs(float(settings.risk_per_trade_pct) - 0.01) < 1e-9
         and abs(float(settings.max_position_pct) - 0.05) < 1e-9
-        and int(settings.max_open_positions) == 4
+        and int(settings.max_open_positions) == 1
         and abs(float(settings.max_portfolio_exposure_pct) - 0.30) < 1e-9
         and abs(float(settings.daily_loss_limit_pct) - 0.01) < 1e-9
         and abs(float(settings.stop_limit_buffer_pct) - 0.0005) < 1e-9
         and abs(float(settings.entry_stop_price_buffer) - 0.02) < 1e-9
+        and abs(float(settings.entry_min_close_to_entry_pct) - (-0.01)) < 1e-9
+        and abs(float(settings.entry_max_close_to_entry_pct) - 1.0) < 1e-9
         and int(settings.atr_period) == 20
         and abs(float(settings.atr_stop_multiplier) - 1.0) < 1e-9
         and abs(float(settings.trailing_stop_atr_multiplier) - 1.0) < 1e-9
@@ -1789,6 +2961,15 @@ posture_status = (
         and not bool(settings.extended_hours_enabled)
         and not bool(settings.enable_trend_filter_exit)
         and not bool(settings.enable_vwap_breakdown_exit)
+        and not bool(settings.enable_no_follow_through_exit)
+        and int(settings.no_follow_through_exit_minutes) == 0
+        and abs(float(settings.no_follow_through_min_favorable_pct) - 0.0025) < 1e-9
+        and bool(settings.enable_giveback_exit)
+        and abs(float(settings.giveback_exit_min_favorable_pct) - 0.0025) < 1e-9
+        and abs(float(settings.giveback_exit_max_return_pct) - 0.0) < 1e-9
+        and not bool(settings.enable_early_loss_exit)
+        and int(settings.early_loss_exit_minutes) == 0
+        and abs(float(settings.early_loss_exit_return_pct) - 0.01) < 1e-9
         and abs(float(settings.per_symbol_loss_limit_pct) - 0.0) < 1e-9
         and abs(float(settings.min_position_notional) - 0.0) < 1e-9
         and abs(float(settings.max_stop_pct) - 0.05) < 1e-9
@@ -1827,6 +3008,14 @@ if readiness_audit_status in {"missing", "failed", "skipped", "stale", "stale_by
     blockers.append(f"readiness_audit_{readiness_audit_status}")
 elif readiness_audit_status == "ok" and readiness_decision_dry_run_status != "ok":
     blockers.append(f"readiness_decision_dry_run_{readiness_decision_dry_run_status}")
+elif (
+    readiness_audit_status == "ok"
+    and readiness_decision_dry_run_strategies_status != "ok"
+):
+    blockers.append(
+        "readiness_decision_dry_run_strategies_"
+        f"{readiness_decision_dry_run_strategies_status}"
+    )
 if activity_audit_status in {"missing", "failed", "skipped", "stale"} or (
     activity_due and activity_audit_status == "pending"
 ):
@@ -1876,6 +3065,53 @@ local_position_symbol_set = parse_symbol_set(local_open_position_symbols)
 local_active_order_symbol_set = parse_symbol_set(local_active_order_symbols)
 broker_position_symbol_set = parse_symbol_set(broker_open_position_symbols)
 broker_order_symbol_set = parse_symbol_set(broker_open_order_symbols)
+exposure_protection_issues = []
+if broker_exposure_warning:
+    exposure_protection_issues.append("broker_exposure_unknown")
+if local_active_entry_orders > 0:
+    exposure_protection_issues.append("active_entry_orders")
+if local_open_option_positions > 0:
+    exposure_protection_issues.append("local_option_positions")
+if local_active_option_orders > 0:
+    exposure_protection_issues.append("local_option_orders")
+if local_open_positions > 0:
+    if local_active_stop_orders < local_open_positions:
+        exposure_protection_issues.append("local_stop_orders_below_positions")
+    if local_active_orders != local_active_stop_orders:
+        exposure_protection_issues.append("local_active_orders_not_all_stops")
+    if local_position_symbol_set != local_active_order_symbol_set:
+        exposure_protection_issues.append("local_symbol_mismatch")
+    if not broker_exposure_warning:
+        if (broker_open_positions or 0) != local_open_positions:
+            exposure_protection_issues.append("broker_position_count_mismatch")
+        if (broker_open_orders or 0) != local_active_stop_orders:
+            exposure_protection_issues.append("broker_order_count_mismatch")
+        if local_position_symbol_set != broker_position_symbol_set:
+            exposure_protection_issues.append("broker_position_symbol_mismatch")
+        if local_position_symbol_set != broker_order_symbol_set:
+            exposure_protection_issues.append("broker_order_symbol_mismatch")
+        if broker_account_status != "ok":
+            exposure_protection_issues.append("broker_account_blocked")
+elif local_active_orders > 0 or (broker_open_orders or 0) > 0:
+    exposure_protection_issues.append("active_orders_without_local_positions")
+elif not broker_exposure_warning and (broker_open_positions or 0) > 0:
+    exposure_protection_issues.append("broker_positions_without_local_positions")
+exposure_protection_status = (
+    "flat"
+    if (
+        local_open_positions == 0
+        and local_active_orders == 0
+        and local_open_option_positions == 0
+        and local_active_option_orders == 0
+        and not broker_exposure_warning
+        and (broker_open_positions or 0) == 0
+        and (broker_open_orders or 0) == 0
+    )
+    else "protected" if not exposure_protection_issues else "needs_attention"
+)
+exposure_protection_issue_text = (
+    ",".join(exposure_protection_issues) if exposure_protection_issues else "none"
+)
 max_loss_per_trade = float(settings.max_loss_per_trade_dollars or 0.0)
 open_stock_exposure_count = max(local_open_positions, broker_open_positions or 0)
 projected_risk_lock_pnl = pnl - (max_loss_per_trade * open_stock_exposure_count)
@@ -1948,14 +3184,36 @@ if not proof_not_started and unpaired_filled_exit_count > 0:
     warnings.append("unpaired_filled_exits")
 
 readiness_status = "blocked" if blockers else "ready"
+evidence_blockers = clean_window_blockers if clean_window_status == "dirty" else proof_blockers
+sealed_evidence_blockers = (
+    clean_window_sealed_blockers if clean_window_status == "dirty" else sealed_proof_blockers
+)
 if proof_status == "passed":
     proof_reason = "profit_proven"
 elif proof_not_started:
     proof_reason = "awaiting_completed_proof_session"
 elif profitable_enough and not post_close_pass_evidence_ready:
     proof_reason = "awaiting_post_close_audit"
-elif sealed_profitable_enough and latest_completed_session != current_market_date:
+elif base_profitable_enough and not proof_quality_ready:
+    proof_reason = "awaiting_robustness_evidence"
+elif base_sealed_profitable_enough and latest_completed_session != current_market_date:
     proof_reason = "awaiting_completed_proof_session"
+elif base_sealed_profitable_enough and not proof_quality_ready:
+    proof_reason = "awaiting_robustness_evidence"
+elif clean_window_base_profitable_enough and not clean_window_quality_ready:
+    proof_reason = "awaiting_clean_window_robustness"
+elif (
+    clean_window_base_sealed_profitable_enough
+    and latest_completed_session != current_market_date
+):
+    proof_reason = "awaiting_completed_proof_session"
+elif (
+    clean_window_base_sealed_profitable_enough
+    and not clean_window_sealed_quality_ready
+):
+    proof_reason = "awaiting_clean_window_robustness"
+elif clean_window_status == "dirty" and clean_window_trade_count < min_trades:
+    proof_reason = "awaiting_clean_window_evidence"
 elif trade_count < min_trades:
     proof_reason = "awaiting_min_trades"
 else:
@@ -1967,6 +3225,11 @@ print(
     f"proof={proof_status} "
     f"reason={proof_reason} "
     f"blockers={','.join(blockers) if blockers else 'none'} "
+    f"evidence_blockers={','.join(evidence_blockers) if evidence_blockers else 'none'} "
+    f"sealed_evidence_blockers={','.join(sealed_evidence_blockers) if sealed_evidence_blockers else 'none'} "
+    f"overall_blockers={','.join(scale_blockers) if scale_blockers else 'none'} "
+    f"clean_window_blockers={','.join(clean_window_blockers) if clean_window_blockers else 'none'} "
+    f"sealed_clean_window_blockers={','.join(clean_window_sealed_blockers) if clean_window_sealed_blockers else 'none'} "
     f"warnings={','.join(warnings) if warnings else 'none'}"
 )
 
@@ -2028,6 +3291,14 @@ print(
     f"reject_reasons={readiness_decision_dry_run_reject_reasons or 'none'}"
 )
 print(
+    "paper proof readiness decision dry run strategies: "
+    f"status={readiness_decision_dry_run_strategies_status} "
+    f"strategies={readiness_decision_dry_run_strategies or 'none'} "
+    f"expected={format_name_list(expected_readiness_decision_dry_run_strategy_names)} "
+    f"count={readiness_decision_dry_run_strategy_count or 'none'} "
+    f"expected_count={len(expected_readiness_decision_dry_run_strategy_names)}"
+)
+print(
     "paper proof activity audit: "
     f"status={activity_audit_status} "
     f"target_session={activity_target_session.isoformat() if activity_target_session else 'none'} "
@@ -2049,7 +3320,48 @@ print(
 print(f"paper proof active strategies: {active_strategies or 'none'}")
 print(
     "paper proof strategy status: "
-    f"status={strategy_status} target={strategy_name} active=[{active_strategies or ''}]"
+    f"status={strategy_status} "
+    f"target={strategy_name} "
+    f"strategies={proof_strategy_csv} "
+    f"approved={str(strategy_name in approved_strategy_name_set).lower()} "
+    f"approved_filter={str(not proof_strategy_unapproved_names).lower()} "
+    f"active_filter={str(not proof_strategy_missing_active_names).lower()} "
+    f"missing_active={format_name_list(proof_strategy_missing_active_names)} "
+    f"unapproved={format_name_list(proof_strategy_unapproved_names)} "
+    f"active=[{active_strategies or ''}]"
+)
+print(
+    "paper proof strategy diversification: "
+    f"status={strategy_diversification_status} "
+    f"active={len(active_strategy_names)} "
+    f"required={scale_min_strategies} "
+    f"approved_active={len(approved_active_strategy_names)} "
+    f"approved_replay_active={len(approved_replay_active_strategy_names)} "
+    f"approved_required={scale_min_strategies} "
+    f"gap={strategy_diversification_gap} "
+    f"candidate_status={strategy_diversification_candidate_status} "
+    f"active_names={active_strategies or 'none'} "
+    f"approved_names={approved_active_strategies or 'none'} "
+    f"approved_replay_names={approved_replay_active_strategies or 'none'} "
+    f"unapproved_active={unapproved_active_strategies or 'none'} "
+    f"replay_unsupported_active={active_replay_unsupported_strategies or 'none'} "
+    f"approved_allowlist={approved_strategy_allowlist or 'none'} "
+    f"disabled_candidates={len(disabled_strategy_names)} "
+    f"disabled_candidate_names={disabled_strategies or 'none'} "
+    f"replay_supported_active={len(active_replay_supported_strategy_names)} "
+    f"replay_supported_disabled_candidates={len(disabled_replay_supported_strategy_names)} "
+    f"replay_supported_disabled_candidate_names={format_name_list(disabled_replay_supported_strategy_names)} "
+    f"replay_unsupported_disabled_candidates={len(disabled_replay_unsupported_strategy_names)} "
+    f"replay_unsupported_disabled_candidate_names={format_name_list(disabled_replay_unsupported_strategy_names)} "
+    f"stock_active={len(active_stock_strategy_names)} "
+    f"option_active={len(active_option_strategy_names)} "
+    f"option_replay_status={option_replay_status} "
+    f"stock_disabled_candidates={len(disabled_stock_strategy_names)} "
+    f"stock_disabled_candidate_names={format_name_list(disabled_stock_strategy_names)} "
+    f"option_gated_disabled_candidates={len(option_gated_disabled_strategy_names)} "
+    f"option_gated_disabled_candidate_names={format_name_list(option_gated_disabled_strategy_names)} "
+    f"approved_disabled_stock_candidates={format_name_list(approved_disabled_stock_candidate_names)} "
+    f"approved_disabled_option_candidates={format_name_list(approved_disabled_option_candidate_names)}"
 )
 print(
     "paper proof watchlist: "
@@ -2090,6 +3402,7 @@ print(
     f"relative_volume_lookback_bars={settings.relative_volume_lookback_bars} "
     f"relative_volume_threshold={settings.relative_volume_threshold:g} "
     f"entry_timeframe_minutes={settings.entry_timeframe_minutes} "
+    f"entry_order_active_bars={settings.entry_order_active_bars} "
     f"risk_per_trade_pct={settings.risk_per_trade_pct:g} "
     f"max_position_pct={settings.max_position_pct:g} "
     f"max_open_positions={settings.max_open_positions} "
@@ -2097,6 +3410,8 @@ print(
     f"daily_loss_limit_pct={settings.daily_loss_limit_pct:g} "
     f"stop_limit_buffer_pct={settings.stop_limit_buffer_pct:g} "
     f"entry_stop_price_buffer={settings.entry_stop_price_buffer:g} "
+    f"entry_min_close_to_entry_pct={settings.entry_min_close_to_entry_pct:g} "
+    f"entry_max_close_to_entry_pct={settings.entry_max_close_to_entry_pct:g} "
     f"atr_period={settings.atr_period} "
     f"atr_stop_multiplier={settings.atr_stop_multiplier:g} "
     f"trailing_stop_atr_multiplier={settings.trailing_stop_atr_multiplier:g} "
@@ -2125,6 +3440,15 @@ print(
     f"profit_target_r={settings.profit_target_r:g} "
     f"trend_filter_exit={str(settings.enable_trend_filter_exit).lower()} "
     f"vwap_breakdown_exit={str(settings.enable_vwap_breakdown_exit).lower()} "
+    f"no_follow_through_exit={str(settings.enable_no_follow_through_exit).lower()} "
+    f"no_follow_through_exit_minutes={settings.no_follow_through_exit_minutes} "
+    f"no_follow_through_min_favorable_pct={settings.no_follow_through_min_favorable_pct:g} "
+    f"giveback_exit={str(settings.enable_giveback_exit).lower()} "
+    f"giveback_exit_min_favorable_pct={settings.giveback_exit_min_favorable_pct:g} "
+    f"giveback_exit_max_return_pct={settings.giveback_exit_max_return_pct:g} "
+    f"early_loss_exit={str(settings.enable_early_loss_exit).lower()} "
+    f"early_loss_exit_minutes={settings.early_loss_exit_minutes} "
+    f"early_loss_exit_return_pct={settings.early_loss_exit_return_pct:g} "
     f"per_symbol_loss_limit_pct={settings.per_symbol_loss_limit_pct:g} "
     f"min_position_notional={settings.min_position_notional:g} "
     f"max_stop_pct={settings.max_stop_pct:g} "
@@ -2141,6 +3465,17 @@ print(
     f"active_orders={local_active_orders} "
     f"position_symbols={local_open_position_symbols or 'none'} "
     f"active_order_symbols={local_active_order_symbols or 'none'}"
+)
+print(
+    "paper proof exposure protection: "
+    f"status={exposure_protection_status} "
+    f"issues={exposure_protection_issue_text} "
+    f"local_positions={local_open_positions} "
+    f"local_stop_orders={local_active_stop_orders} "
+    f"local_entry_orders={local_active_entry_orders} "
+    f"broker_positions={broker_open_positions if broker_open_positions is not None else 'unknown'} "
+    f"broker_orders={broker_open_orders if broker_open_orders is not None else 'unknown'} "
+    f"symbols={local_open_position_symbols or 'none'}"
 )
 print(
     "paper proof option exposure: "
@@ -2190,13 +3525,116 @@ else:
 print(
     "paper proof progress: "
     f"status={proof_status} "
+    f"strategies={proof_strategy_csv} "
     f"closed_trades={trade_count} "
     f"required_trades={min_trades} "
     f"pnl={pnl:.2f} "
     f"required_pnl={min_pnl:.2f} "
+    f"basis={proof_basis} "
+    f"sealed_basis={sealed_proof_basis} "
     f"window={proof_window} "
     f"first_exit_session={first_exit_session or 'none'} "
     f"latest_exit_session={latest_exit_session or 'none'}"
+)
+print(
+    "paper proof robustness: "
+    f"scale_status={scale_status} "
+    f"blockers={','.join(scale_blockers) if scale_blockers else 'none'} "
+    f"trades={trade_count} "
+    f"required_trades={scale_min_trades} "
+    f"enabled_strategies={len(active_strategy_names)} "
+    f"approved_enabled_strategies={len(approved_active_strategy_names)} "
+    f"approved_replay_enabled_strategies={len(approved_replay_active_strategy_names)} "
+    f"required_strategies={scale_min_strategies} "
+    f"active_days={active_trade_day_count} "
+    f"required_active_days={scale_min_active_days} "
+    f"profit_factor={profit_factor_text} "
+    f"required_profit_factor={scale_min_profit_factor:.2f} "
+    f"single_win_pnl_share={single_win_pnl_share_text} "
+    f"max_single_win_pnl_share={scale_max_single_win_pnl_share:.2f} "
+    f"eod_losses={eod_loss_count} "
+    f"eod_loss_share={eod_loss_share_text} "
+    f"eod_loss_symbols={eod_loss_symbols} "
+    f"max_eod_loss_share={scale_max_eod_loss_share:.2f} "
+    f"operational_exit_losses={operational_exit_loss_count} "
+    f"operational_exit_loss_share={operational_exit_loss_share_text} "
+    f"operational_exit_loss_symbols={operational_exit_loss_symbols} "
+    f"operational_exit_loss_reasons={operational_exit_loss_reasons} "
+    f"max_operational_exit_loss_share={scale_max_operational_exit_loss_share:.2f}"
+)
+print(
+    "paper proof clean window: "
+    f"status={clean_window_status} "
+    f"latest_operational_exit_loss={latest_operational_exit_loss_text} "
+    f"clean_start_candidate={operational_exit_clean_start_text} "
+    f"progress_start={clean_window_progress_start_text} "
+    f"proof_eligible={str(clean_window_proof_eligible).lower()} "
+    f"sealed_proof_eligible={str(clean_window_sealed_proof_eligible).lower()} "
+    f"scoreable_trades={clean_window_trade_count} "
+    f"scoreable_pnl={clean_window_pnl:.2f} "
+    f"unscored_current_session_trades={clean_window_unscored_current_session_trade_count} "
+    f"unscored_current_session_pnl={clean_window_unscored_current_session_pnl:.2f} "
+    f"sealed_trades={clean_window_sealed_trade_count} "
+    f"sealed_pnl={clean_window_sealed_pnl:.2f}"
+)
+print(
+    "paper proof clean window robustness: "
+    f"status={clean_window_robustness_status} "
+    f"blockers={','.join(clean_window_blockers) if clean_window_blockers else 'none'} "
+    f"trades={clean_window_summary['trade_count']} "
+    f"active_days={clean_window_summary['active_days']} "
+    f"profit_factor={clean_window_summary['profit_factor_text']} "
+    f"single_win_pnl_share={clean_window_summary['single_win_pnl_share_text']} "
+    f"eod_losses={clean_window_summary['eod_loss_count']} "
+    f"eod_loss_share={clean_window_summary['eod_loss_share_text']} "
+    f"eod_loss_symbols={clean_window_summary['eod_loss_symbols']} "
+    f"max_eod_loss_share={scale_max_eod_loss_share:.2f} "
+    f"operational_exit_losses={clean_window_summary['operational_exit_loss_count']} "
+    f"operational_exit_loss_share={clean_window_summary['operational_exit_loss_share_text']} "
+    f"operational_exit_loss_symbols={clean_window_summary['operational_exit_loss_symbols']} "
+    f"sealed_status={clean_window_sealed_robustness_status} "
+    f"sealed_blockers={','.join(clean_window_sealed_blockers) if clean_window_sealed_blockers else 'none'} "
+    f"sealed_trades={clean_window_sealed_summary['trade_count']} "
+    f"sealed_active_days={clean_window_sealed_summary['active_days']} "
+    f"sealed_profit_factor={clean_window_sealed_summary['profit_factor_text']} "
+    f"sealed_single_win_pnl_share={clean_window_sealed_summary['single_win_pnl_share_text']} "
+    f"sealed_eod_losses={clean_window_sealed_summary['eod_loss_count']} "
+    f"sealed_eod_loss_share={clean_window_sealed_summary['eod_loss_share_text']} "
+    f"sealed_eod_loss_symbols={clean_window_sealed_summary['eod_loss_symbols']} "
+    f"sealed_operational_exit_losses={clean_window_sealed_summary['operational_exit_loss_count']} "
+    f"sealed_operational_exit_loss_share={clean_window_sealed_summary['operational_exit_loss_share_text']} "
+    f"sealed_operational_exit_loss_symbols={clean_window_sealed_summary['operational_exit_loss_symbols']}"
+)
+print(
+    "paper proof execution quality: "
+    f"status={execution_quality_status} "
+    f"warnings={','.join(execution_quality_warnings) if execution_quality_warnings else 'none'} "
+    f"evaluated={decision_evaluated} "
+    f"signals={decision_signal_fired} "
+    f"accepted={decision_accepted} "
+    f"capacity_rejected={decision_capacity_rejected} "
+    f"capacity_reject_rate={capacity_reject_rate_text} "
+    f"max_capacity_reject_rate={execution_max_capacity_reject_rate:.2f} "
+    f"entry_quality_rejected={decision_entry_quality_rejected} "
+    f"vwap_rejected={decision_vwap_rejected} "
+    f"sizing_rejected={decision_sizing_rejected} "
+    f"entry_orders={entry_order_count} "
+    f"filled={entry_order_filled_count} "
+    f"canceled={entry_order_canceled_count} "
+    f"expired={entry_order_expired_count} "
+    f"rejected={entry_order_rejected_count} "
+    f"active={entry_order_active_count} "
+    f"entry_fill_rate={entry_order_fill_rate_text} "
+    f"min_entry_fill_rate={execution_min_entry_fill_rate:.2f} "
+    f"current_posture_entry_orders={posture_entry_order_count} "
+    f"current_posture_filled={posture_entry_order_filled_count} "
+    f"current_posture_entry_fill_rate={posture_entry_fill_rate_text} "
+    f"current_posture_would_reject={posture_entry_quality_would_reject_count} "
+    f"effective_entry_fill_rate={effective_entry_fill_rate_text} "
+    f"effective_entry_fill_rate_source={effective_entry_fill_rate_source} "
+    f"accepted_to_fill_rate={accepted_to_fill_rate_text} "
+    f"filled_symbols={entry_order_filled_symbols} "
+    f"current_posture_filled_symbols={posture_entry_order_filled_symbols}"
 )
 print(
     "paper proof sealed current-session progress: "
@@ -2211,6 +3649,7 @@ print(
 )
 print(
     "paper proof scoring: "
+    f"strategies={proof_strategy_csv} "
     f"scoreable_closed_trades={trade_count} "
     f"unpaired_filled_exits={unpaired_filled_exit_count} "
     f"unpaired_symbols={unpaired_filled_exit_symbols or 'none'}"

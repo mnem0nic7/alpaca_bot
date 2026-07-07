@@ -179,6 +179,7 @@ def _apply_trade_update_locked(
             "order_updated": False,
             "unmatched": True,
         }, [], []
+    timestamp = _not_before(timestamp, matched_order.created_at)
 
     if _is_stale_fill_update(matched_order, normalized):
         try:
@@ -966,6 +967,20 @@ def _resolve_now(
     if callable(now):
         return now()
     return fallback.astimezone(timezone.utc) if fallback.tzinfo else fallback.replace(tzinfo=timezone.utc)
+
+
+def _not_before(timestamp: datetime, floor: datetime) -> datetime:
+    timestamp_utc = (
+        timestamp.astimezone(timezone.utc)
+        if timestamp.tzinfo
+        else timestamp.replace(tzinfo=timezone.utc)
+    )
+    floor_utc = (
+        floor.astimezone(timezone.utc)
+        if floor.tzinfo
+        else floor.replace(tzinfo=timezone.utc)
+    )
+    return floor_utc if timestamp_utc < floor_utc else timestamp_utc
 
 
 def _optional_str(value: Any) -> str | None:

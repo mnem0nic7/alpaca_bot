@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -93,6 +94,87 @@ def test_fetch_file_is_loadable_by_replay_runner(tmp_path):
     assert len(scenario.intraday_bars) == 20
 
 
+def test_fetch_embeds_regime_daily_bars_when_available(tmp_path):
+    regime_bars = [_make_bar("SPY", _TS, 500.0 + i) for i in range(5)]
+    adapter = FakeAdapter(
+        daily={"AAPL": _DAILY_BARS, "SPY": regime_bars},
+        intraday={"AAPL": _INTRADAY_BARS},
+    )
+    settings = _make_settings()
+    fetcher = BackfillFetcher(adapter, settings)
+    fetcher.fetch_and_save(symbols=["AAPL"], days=252, output_dir=tmp_path)
+
+    scenario = ReplayRunner.load_scenario(tmp_path / "AAPL_252d.json")
+
+    assert scenario.regime_daily_bars is not None
+    assert [bar.symbol for bar in scenario.regime_daily_bars] == ["SPY"] * 5
+
+
+def test_fetch_embeds_market_context_daily_bars_when_available(tmp_path):
+    vix_bars = [_make_bar("VIXY", _TS, 20.0 + i) for i in range(5)]
+    xlk_bars = [_make_bar("XLK", _TS, 200.0 + i) for i in range(5)]
+    adapter = FakeAdapter(
+        daily={"AAPL": _DAILY_BARS, "VIXY": vix_bars, "XLK": xlk_bars},
+        intraday={"AAPL": _INTRADAY_BARS},
+    )
+    settings = _make_settings(sector_etf_symbols=("XLK", "XLF"))
+    fetcher = BackfillFetcher(adapter, settings)
+    fetcher.fetch_and_save(symbols=["AAPL"], days=252, output_dir=tmp_path)
+
+    scenario = ReplayRunner.load_scenario(tmp_path / "AAPL_252d.json")
+
+    assert scenario.vix_daily_bars is not None
+    assert [bar.symbol for bar in scenario.vix_daily_bars] == ["VIXY"] * 5
+    assert scenario.sector_daily_bars_by_etf is not None
+    assert set(scenario.sector_daily_bars_by_etf) == {"XLK"}
+    assert [bar.symbol for bar in scenario.sector_daily_bars_by_etf["XLK"]] == [
+        "XLK"
+    ] * 5
+
+
+def test_context_only_enriches_existing_scenarios_without_replacing_bars(tmp_path):
+    regime_bars = [_make_bar("SPY", _TS, 500.0 + i) for i in range(5)]
+    vix_bars = [_make_bar("VIXY", _TS, 20.0 + i) for i in range(5)]
+    xlk_bars = [_make_bar("XLK", _TS, 200.0 + i) for i in range(5)]
+    adapter = FakeAdapter(
+        daily={"SPY": regime_bars, "VIXY": vix_bars, "XLK": xlk_bars},
+        intraday={},
+    )
+    settings = _make_settings(sector_etf_symbols=("XLK", "XLF"))
+    original_payload = {
+        "name": "AAPL_252d",
+        "symbol": "AAPL",
+        "starting_equity": 12345.0,
+        "daily_bars": [_make_bar("AAPL", _TS, 150.0).__dict__],
+        "intraday_bars": [_make_bar("AAPL", _TS, 151.0).__dict__],
+    }
+    for symbol in ("AAPL", "MSFT"):
+        payload = dict(original_payload, name=f"{symbol}_252d", symbol=symbol)
+        (tmp_path / f"{symbol}_252d.json").write_text(
+            json.dumps(payload, default=str)
+        )
+    fetcher = BackfillFetcher(adapter, settings)
+
+    results = fetcher.enrich_existing_scenarios_with_context(
+        output_dir=tmp_path,
+        days=252,
+    )
+
+    assert [path.name for path, *_ in results] == [
+        "AAPL_252d.json",
+        "MSFT_252d.json",
+    ]
+    scenario = ReplayRunner.load_scenario(tmp_path / "AAPL_252d.json")
+    assert [bar.symbol for bar in scenario.daily_bars] == ["AAPL"]
+    assert [bar.symbol for bar in scenario.intraday_bars] == ["AAPL"]
+    assert scenario.regime_daily_bars is not None
+    assert [bar.symbol for bar in scenario.regime_daily_bars] == ["SPY"] * 5
+    assert scenario.vix_daily_bars is not None
+    assert [bar.symbol for bar in scenario.vix_daily_bars] == ["VIXY"] * 5
+    assert scenario.sector_daily_bars_by_etf is not None
+    assert set(scenario.sector_daily_bars_by_etf) == {"XLK"}
+
+
 def test_fetch_skips_symbol_with_no_bars(tmp_path):
     adapter = FakeAdapter(daily={}, intraday={})
     settings = _make_settings()
@@ -129,3 +211,19 @@ def test_fetch_returns_bar_counts(tmp_path):
     )
     assert n_intraday == 20
     assert n_daily == 5
+
+
+def test_fetch_replaces_existing_scenario_atomically_without_tmp_leak(tmp_path):
+    target = tmp_path / "AAPL_10d.json"
+    target.write_text("old complete scenario")
+    target.chmod(0o644)
+    adapter = FakeAdapter(daily={"AAPL": _DAILY_BARS}, intraday={"AAPL": _INTRADAY_BARS})
+    settings = _make_settings()
+    fetcher = BackfillFetcher(adapter, settings)
+
+    fetcher.fetch_and_save(symbols=["AAPL"], days=10, output_dir=tmp_path)
+
+    scenario = ReplayRunner.load_scenario(target)
+    assert scenario.symbol == "AAPL"
+    assert target.stat().st_mode & 0o777 == 0o644
+    assert not list(tmp_path.glob(".AAPL_10d.json.*.tmp"))

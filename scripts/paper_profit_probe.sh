@@ -26,11 +26,13 @@ restore_env_overrides() {
 
 capture_env_overrides \
   PROFIT_PROBE_STRATEGY \
+  PROFIT_PROBE_STRATEGIES \
   PROFIT_PROBE_MIN_TRADES \
   PROFIT_PROBE_MIN_PNL \
   PROFIT_PROBE_START_DATE \
   PROFIT_PROBE_FAIL_ON_DIAGNOSTICS \
-  PROFIT_PROBE_DATE
+  PROFIT_PROBE_DATE \
+  PAPER_SCALE_MIN_TRADES
 
 cd "$(dirname "$0")/.."
 
@@ -46,10 +48,12 @@ set +a
 restore_env_overrides
 
 PROFIT_PROBE_STRATEGY="${PROFIT_PROBE_STRATEGY:-bull_flag}"
-PROFIT_PROBE_MIN_TRADES="${PROFIT_PROBE_MIN_TRADES:-10}"
+PROFIT_PROBE_STRATEGIES="${PROFIT_PROBE_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PROFIT_PROBE_STRATEGY}}"
+PROFIT_PROBE_MIN_TRADES="${PROFIT_PROBE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}"
 PROFIT_PROBE_MIN_PNL="${PROFIT_PROBE_MIN_PNL:-0.01}"
-PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-06-30}"
+PROFIT_PROBE_START_DATE="${PROFIT_PROBE_START_DATE:-2026-07-07}"
 PROFIT_PROBE_FAIL_ON_DIAGNOSTICS="${PROFIT_PROBE_FAIL_ON_DIAGNOSTICS:-true}"
+PAPER_SCALE_MIN_TRADES="${PAPER_SCALE_MIN_TRADES:-30}"
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
@@ -65,6 +69,54 @@ if [[ ! "$PROFIT_PROBE_STRATEGY" =~ ^[A-Za-z0-9_:-]+$ ]]; then
   echo "PROFIT_PROBE_STRATEGY contains unsupported characters" >&2
   exit 1
 fi
+
+profit_probe_strategy_names=()
+profit_probe_strategy_csv=""
+
+add_profit_probe_strategy() {
+  local raw="$1"
+  local name
+  local existing
+
+  name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+  if [[ -z "$name" ]]; then
+    return
+  fi
+  if [[ ! "$name" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+    echo "PROFIT_PROBE_STRATEGIES contains unsupported strategy: $name" >&2
+    exit 1
+  fi
+  for existing in "${profit_probe_strategy_names[@]}"; do
+    if [[ "$existing" == "$name" ]]; then
+      return
+    fi
+  done
+  profit_probe_strategy_names+=("$name")
+}
+
+build_profit_probe_strategies() {
+  local csv="$1"
+  local raw
+  local -a raw_names
+
+  profit_probe_strategy_names=()
+  add_profit_probe_strategy "$PROFIT_PROBE_STRATEGY"
+  IFS=',' read -r -a raw_names <<< "$csv"
+  for raw in "${raw_names[@]}"; do
+    add_profit_probe_strategy "$raw"
+  done
+  if [[ "${#profit_probe_strategy_names[@]}" -eq 0 ]]; then
+    echo "PROFIT_PROBE_STRATEGIES must contain at least one strategy" >&2
+    exit 1
+  fi
+  profit_probe_strategy_csv="$(
+    IFS=,
+    printf '%s' "${profit_probe_strategy_names[*]}"
+  )"
+}
+
+build_profit_probe_strategies "$PROFIT_PROBE_STRATEGIES"
+
 if [[ ! "$PROFIT_PROBE_START_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   echo "PROFIT_PROBE_START_DATE must use YYYY-MM-DD" >&2
   exit 1
@@ -73,6 +125,14 @@ if [[ ! "$PROFIT_PROBE_MIN_TRADES" =~ ^[0-9]+$ ]] \
   || [[ "$PROFIT_PROBE_MIN_TRADES" -lt 1 ]]; then
   echo "PROFIT_PROBE_MIN_TRADES must be a positive integer" >&2
   exit 1
+fi
+if [[ ! "$PAPER_SCALE_MIN_TRADES" =~ ^[0-9]+$ ]] \
+  || [[ "$PAPER_SCALE_MIN_TRADES" -lt 1 ]]; then
+  echo "PAPER_SCALE_MIN_TRADES must be a positive integer" >&2
+  exit 1
+fi
+if (( 10#$PROFIT_PROBE_MIN_TRADES < 10#$PAPER_SCALE_MIN_TRADES )); then
+  PROFIT_PROBE_MIN_TRADES="$PAPER_SCALE_MIN_TRADES"
 fi
 if [[ ! "$PROFIT_PROBE_MIN_PNL" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
   echo "PROFIT_PROBE_MIN_PNL must be a number" >&2
@@ -154,14 +214,14 @@ if [[ ! "$PROFIT_PROBE_DATE" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
   exit 1
 fi
 
-echo "scheduled check context: session_date=$PROFIT_PROBE_DATE proof_start=$PROFIT_PROBE_START_DATE strategy=$PROFIT_PROBE_STRATEGY min_trades=$PROFIT_PROBE_MIN_TRADES min_pnl=$PROFIT_PROBE_MIN_PNL"
+echo "scheduled check context: session_date=$PROFIT_PROBE_DATE proof_start=$PROFIT_PROBE_START_DATE strategy=$PROFIT_PROBE_STRATEGY strategies=$profit_probe_strategy_csv min_trades=$PROFIT_PROBE_MIN_TRADES min_pnl=$PROFIT_PROBE_MIN_PNL"
 
 if [[ "$PROFIT_PROBE_DATE" < "$PROFIT_PROBE_START_DATE" ]]; then
   echo \
     "paper profit probe pending: latest completed session $PROFIT_PROBE_DATE is before proof start $PROFIT_PROBE_START_DATE"
-  if ! BROKER_FLAT_CONTEXT="${PROFIT_PROBE_STRATEGY} paper proof pending ${PROFIT_PROBE_START_DATE}" \
+  if ! BROKER_FLAT_CONTEXT="${profit_probe_strategy_csv} paper proof pending ${PROFIT_PROBE_START_DATE}" \
     ./scripts/broker_flat_check.sh "$ENV_FILE"; then
-    reason="${PROFIT_PROBE_STRATEGY} paper proof pending ${PROFIT_PROBE_START_DATE}: broker exposure remains before proof start"
+    reason="${profit_probe_strategy_csv} paper proof pending ${PROFIT_PROBE_START_DATE}: broker exposure remains before proof start"
     if ! "${compose[@]}" run -T --rm admin \
       close-only \
       --mode "${TRADING_MODE:-paper}" \
@@ -181,7 +241,7 @@ session_eval_args=(
   --end-date "$PROFIT_PROBE_DATE" \
   --mode "${TRADING_MODE:-paper}" \
   --strategy-version "$STRATEGY_VERSION" \
-  --strategy "$PROFIT_PROBE_STRATEGY" \
+  --strategies "$profit_probe_strategy_csv" \
   --fail-on-open-positions \
   --require-min-trades "$PROFIT_PROBE_MIN_TRADES" \
   --fail-below-pnl "$PROFIT_PROBE_MIN_PNL" \
@@ -196,7 +256,7 @@ fi
 rc=$?
 
 broker_flat_failed=false
-if ! BROKER_FLAT_CONTEXT="${PROFIT_PROBE_STRATEGY} paper proof ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}" \
+if ! BROKER_FLAT_CONTEXT="${profit_probe_strategy_csv} paper proof ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}" \
   ./scripts/broker_flat_check.sh "$ENV_FILE"; then
   broker_flat_failed=true
   rc=44
@@ -222,13 +282,13 @@ fi
 if [[ "$rc" -eq 44 || "$rc" -eq 46 ]]; then
   case "$rc" in
     44)
-      reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: open positions remain after close"
+      reason="${profit_probe_strategy_csv} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: open positions remain after close"
       if [[ "$broker_flat_failed" == "true" ]]; then
-        reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: broker exposure remains after close"
+        reason="${profit_probe_strategy_csv} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: broker exposure remains after close"
       fi
       ;;
     46)
-      reason="${PROFIT_PROBE_STRATEGY} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: operational diagnostics contain proof-blocking issues"
+      reason="${profit_probe_strategy_csv} paper proof failed ${PROFIT_PROBE_START_DATE}..${PROFIT_PROBE_DATE}: operational diagnostics contain proof-blocking issues"
       ;;
   esac
 

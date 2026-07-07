@@ -492,6 +492,7 @@ def test_toggle_endpoint_enables_disabled_strategy() -> None:
         saved_flags=saved_flags,
         appended_events=appended_events,
         initial_flag=disabled_flag,
+        settings_overrides={"PAPER_APPROVED_STRATEGIES": "breakout"},
     )
 
     response = client.post(
@@ -501,6 +502,71 @@ def test_toggle_endpoint_enables_disabled_strategy() -> None:
 
     assert response.status_code == 303
     assert saved_flags[0].enabled is True
+    assert appended_events[0].payload["paper_approved"] is True
+    assert appended_events[0].payload["allow_unapproved"] is False
+
+
+def test_toggle_endpoint_rejects_enabling_unapproved_paper_strategy() -> None:
+    now = datetime.now(timezone.utc)
+    saved_flags: list[StrategyFlag] = []
+    appended_events: list[AuditEvent] = []
+    disabled_flag = StrategyFlag(
+        strategy_name="breakout",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        enabled=False,
+        updated_at=now,
+    )
+    client = _make_toggle_app(
+        saved_flags=saved_flags,
+        appended_events=appended_events,
+        initial_flag=disabled_flag,
+        settings_overrides={"PAPER_APPROVED_STRATEGIES": "bull_flag"},
+    )
+
+    response = client.post(
+        "/strategies/breakout/toggle",
+        data={"_csrf_token": _csrf_token(client, "toggle")},
+    )
+
+    assert response.status_code == 400
+    assert "PAPER_APPROVED_STRATEGIES" in response.text
+    assert saved_flags == []
+    assert appended_events == []
+
+
+def test_toggle_endpoint_rejects_enabling_option_strategy_during_paper_proof() -> None:
+    now = datetime.now(timezone.utc)
+    saved_flags: list[StrategyFlag] = []
+    appended_events: list[AuditEvent] = []
+    disabled_flag = StrategyFlag(
+        strategy_name="breakout_calls",
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        enabled=False,
+        updated_at=now,
+    )
+    client = _make_toggle_app(
+        saved_flags=saved_flags,
+        appended_events=appended_events,
+        initial_flag=disabled_flag,
+        settings_overrides={
+            "PAPER_APPROVED_STRATEGIES": "bull_flag,breakout_calls",
+            "PAPER_PROOF_FREEZE": "true",
+            "ENABLE_OPTIONS_TRADING": "true",
+        },
+    )
+
+    response = client.post(
+        "/strategies/breakout_calls/toggle",
+        data={"_csrf_token": _csrf_token(client, "toggle")},
+    )
+
+    assert response.status_code == 400
+    assert "PAPER_PROOF_FREEZE=true" in response.text
+    assert "replay-supported" in response.text
+    assert saved_flags == []
+    assert appended_events == []
 
 
 def test_toggle_endpoint_returns_404_for_unknown_strategy() -> None:

@@ -10,11 +10,15 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from alpaca_bot.config import Settings
+from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.notifications import Notifier
 from alpaca_bot.notifications.factory import build_notifier
 import re
 
+from alpaca_bot.strategy_approval import (
+    is_paper_strategy_approved,
+    strategy_enable_rejection_reason,
+)
 from alpaca_bot.storage import (
     AuditEvent,
     AuditEventStore,
@@ -588,6 +592,17 @@ def create_app(
                 strategy_version=app_settings.strategy_version,
             )
             new_enabled = not (current_flag.enabled if current_flag is not None else True)
+            rejection = strategy_enable_rejection_reason(
+                settings=app_settings,
+                strategy_name=strategy_name,
+                trading_mode=app_settings.trading_mode,
+                enabled=new_enabled,
+            )
+            if rejection is not None:
+                return HTMLResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content=rejection,
+                )
             flag_store.save(
                 StrategyFlag(
                     strategy_name=strategy_name,
@@ -598,14 +613,20 @@ def create_app(
                 ),
                 commit=False,
             )
+            payload = {
+                "strategy_name": strategy_name,
+                "enabled": new_enabled,
+                "operator": operator or "web",
+            }
+            if app_settings.trading_mode is TradingMode.PAPER and new_enabled:
+                payload["paper_approved"] = is_paper_strategy_approved(
+                    app_settings, strategy_name
+                )
+                payload["allow_unapproved"] = False
             audit_store.append(
                 AuditEvent(
                     event_type="strategy_flag_changed",
-                    payload={
-                        "strategy_name": strategy_name,
-                        "enabled": new_enabled,
-                        "operator": operator or "web",
-                    },
+                    payload=payload,
                     created_at=now,
                 ),
                 commit=False,

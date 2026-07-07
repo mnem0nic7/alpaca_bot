@@ -2628,6 +2628,7 @@ class DecisionLogStore:
                       AND reject_stage IS DISTINCT FROM 'pre_filter'
                       AND reject_stage IS DISTINCT FROM 'stale_data'
                       AND reject_stage IS DISTINCT FROM 'vwap_filter'
+                      AND reject_stage IS DISTINCT FROM 'entry_quality'
                 ), 0) AS passed_entry_filter,
                 COALESCE(SUM(w) FILTER (
                     WHERE decision NOT IN (
@@ -2637,6 +2638,7 @@ class DecisionLogStore:
                       AND reject_stage IS DISTINCT FROM 'pre_filter'
                       AND reject_stage IS DISTINCT FROM 'stale_data'
                       AND reject_stage IS DISTINCT FROM 'vwap_filter'
+                      AND reject_stage IS DISTINCT FROM 'entry_quality'
                       AND reject_stage IS DISTINCT FROM 'sizing'
                 ), 0) AS sized,
                 COALESCE(SUM(w) FILTER (WHERE decision = 'accepted'), 0) AS accepted

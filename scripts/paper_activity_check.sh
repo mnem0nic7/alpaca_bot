@@ -33,7 +33,8 @@ capture_env_overrides \
   PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE \
   PAPER_ACTIVITY_READINESS_RUNNER \
   PAPER_ACTIVITY_READINESS_SCRIPT \
-  PAPER_ACTIVITY_STRATEGY
+  PAPER_ACTIVITY_STRATEGY \
+  PAPER_ACTIVITY_STRATEGIES
 
 cd "$(dirname "$0")/.."
 
@@ -57,6 +58,7 @@ PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE="${PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE:-tr
 PAPER_ACTIVITY_READINESS_RUNNER="${PAPER_ACTIVITY_READINESS_RUNNER:-./scripts/run_locked_check_with_audit.sh}"
 PAPER_ACTIVITY_READINESS_SCRIPT="${PAPER_ACTIVITY_READINESS_SCRIPT:-./scripts/paper_readiness_if_needed.sh}"
 PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
+PAPER_ACTIVITY_STRATEGIES="${PAPER_ACTIVITY_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PAPER_ACTIVITY_STRATEGY}}"
 
 if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
   echo "paper activity check skipped for TRADING_MODE=${TRADING_MODE:-unset}"
@@ -76,10 +78,57 @@ if [[ ! "$PAPER_ACTIVITY_STRATEGY" =~ ^[A-Za-z0-9_:-]+$ ]]; then
   exit 1
 fi
 
+paper_activity_strategy_names=()
+paper_activity_strategy_csv=""
+
+add_paper_activity_strategy() {
+  local raw="$1"
+  local name
+  local existing
+
+  name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+  if [[ -z "$name" ]]; then
+    return
+  fi
+  if [[ ! "$name" =~ ^[A-Za-z0-9_:-]+$ ]]; then
+    echo "PAPER_ACTIVITY_STRATEGIES contains unsupported strategy: $name" >&2
+    exit 1
+  fi
+  for existing in "${paper_activity_strategy_names[@]}"; do
+    if [[ "$existing" == "$name" ]]; then
+      return
+    fi
+  done
+  paper_activity_strategy_names+=("$name")
+}
+
+build_paper_activity_strategies() {
+  local csv="$1"
+  local raw
+  local -a raw_names
+
+  paper_activity_strategy_names=()
+  add_paper_activity_strategy "$PAPER_ACTIVITY_STRATEGY"
+  IFS=',' read -r -a raw_names <<< "$csv"
+  for raw in "${raw_names[@]}"; do
+    add_paper_activity_strategy "$raw"
+  done
+  if [[ "${#paper_activity_strategy_names[@]}" -eq 0 ]]; then
+    echo "PAPER_ACTIVITY_STRATEGIES must contain at least one strategy" >&2
+    exit 1
+  fi
+  paper_activity_strategy_csv="$(
+    IFS=,
+    printf '%s' "${paper_activity_strategy_names[*]}"
+  )"
+}
+
+build_paper_activity_strategies "$PAPER_ACTIVITY_STRATEGIES"
+
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
 emit_scheduled_context() {
-  echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) proof_start=${PROFIT_PROBE_START_DATE:-2026-06-30} strategy=$PAPER_ACTIVITY_STRATEGY"
+  echo "scheduled check context: session_date=$(TZ=America/New_York date +%F) proof_start=${PROFIT_PROBE_START_DATE:-2026-07-07} strategy=$PAPER_ACTIVITY_STRATEGY strategies=$paper_activity_strategy_csv"
 }
 
 only_readiness_missing_reasons() {
@@ -242,7 +291,7 @@ close_only_on_activity_failure() {
 
   local session_date
   session_date="$(TZ=America/New_York date +%F)"
-  local reason="paper activity failed for session ${session_date}: post-open checks failed for strategy ${PAPER_ACTIVITY_STRATEGY:-unknown}"
+  local reason="paper activity failed for session ${session_date}: post-open checks failed for strategies ${paper_activity_strategy_csv:-${PAPER_ACTIVITY_STRATEGY:-unknown}}"
   if ! "${compose[@]}" run -T --rm admin \
     close-only \
     --mode paper \
@@ -378,13 +427,19 @@ stats="$("${compose[@]}" exec -T postgres psql \
   -tA -F '|' \
   -v trading_mode="${TRADING_MODE:-paper}" \
   -v strategy_version="$STRATEGY_VERSION" \
-  -v paper_activity_strategy="$PAPER_ACTIVITY_STRATEGY" <<SQL
+  -v paper_activity_strategy="$PAPER_ACTIVITY_STRATEGY" \
+  -v paper_activity_strategies="$paper_activity_strategy_csv" <<SQL
 WITH recent AS (
   SELECT event_type, payload, created_at
   FROM audit_events
   WHERE created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
     AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = :'trading_mode')
     AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = :'strategy_version')
+),
+requested_activity_strategies AS (
+  SELECT trim(value) AS strategy_name
+  FROM unnest(string_to_array(:'paper_activity_strategies', ',')) AS raw(value)
+  WHERE trim(value) <> ''
 ),
 recent_decisions AS (
   SELECT cycle_at, symbol, strategy_name, decision, reject_stage, reject_reason
@@ -712,7 +767,9 @@ SELECT
       )
       AND (
         NOT (dispatch_failure.payload ? 'strategy_name')
-        OR dispatch_failure.payload->>'strategy_name' = :'paper_activity_strategy'
+        OR dispatch_failure.payload->>'strategy_name' IN (
+          SELECT strategy_name FROM requested_activity_strategies
+        )
       )
       AND (
         dispatch_failure.event_type <> 'order_dispatch_stop_price_rejected'
@@ -725,7 +782,9 @@ SELECT
                 COALESCE(dispatch_failure.payload->>'symbol', '')
             AND (
               NOT (stop_recovery.payload ? 'strategy_name')
-              OR stop_recovery.payload->>'strategy_name' = :'paper_activity_strategy'
+              OR stop_recovery.payload->>'strategy_name' IN (
+                SELECT strategy_name FROM requested_activity_strategies
+              )
             )
         )
       )
@@ -747,7 +806,9 @@ SELECT
       )
       AND (
         NOT (stream_issue.payload ? 'strategy_name')
-        OR stream_issue.payload->>'strategy_name' = :'paper_activity_strategy'
+        OR stream_issue.payload->>'strategy_name' IN (
+          SELECT strategy_name FROM requested_activity_strategies
+        )
       )
   ), 0)::int,
   COALESCE((
@@ -933,6 +994,273 @@ if [[ "$paper_profit_lock_pause" != "true" && "$paper_proof_risk_lock_pause" != 
     echo "paper activity failed: $PAPER_ACTIVITY_STRATEGY decision_evidence_records=$strategy_evidence_records below $PAPER_ACTIVITY_MIN_DECISION_RECORDS audit_records=${strategy_decision_records:-0} decision_log_records=${strategy_decision_log_records:-0} decision_log_summary=[${strategy_decision_log_summary:-}]" >&2
     exit 1
   fi
+fi
+
+strategy_activity_summary="skipped"
+if [[ "${#paper_activity_strategy_names[@]}" -gt 1 \
+  && "$paper_profit_lock_pause" != "true" \
+  && "$paper_proof_risk_lock_pause" != "true" ]]; then
+  strategy_activity_summary="$("${compose[@]}" exec -T postgres psql \
+    -U "$POSTGRES_USER" \
+    -d "$POSTGRES_DB" \
+    -tA -F '|' \
+    -v trading_mode="${TRADING_MODE:-paper}" \
+    -v strategy_version="$STRATEGY_VERSION" \
+    -v paper_activity_strategies="$paper_activity_strategy_csv" <<SQL
+WITH requested AS (
+  SELECT trim(value) AS strategy_name, ord
+  FROM unnest(string_to_array(:'paper_activity_strategies', ',')) WITH ORDINALITY AS raw(value, ord)
+  WHERE trim(value) <> ''
+),
+recent AS (
+  SELECT event_type, payload, created_at
+  FROM audit_events
+  WHERE created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+    AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = :'trading_mode')
+    AND (NOT (payload ? 'strategy_version') OR payload->>'strategy_version' = :'strategy_version')
+),
+recent_decisions AS (
+  SELECT cycle_at, symbol, strategy_name, decision
+  FROM decision_log
+  WHERE cycle_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+    AND trading_mode = 'paper'
+    AND strategy_version = :'strategy_version'
+),
+latest_supervisor AS (
+  SELECT payload, created_at
+  FROM recent
+  WHERE event_type = 'supervisor_cycle'
+  ORDER BY created_at DESC
+  LIMIT 1
+),
+per_strategy AS (
+  SELECT
+    r.strategy_name,
+    r.ord,
+    COALESCE((
+      SELECT CASE
+        WHEN COALESCE(payload->'blocked_strategy_names', '[]'::jsonb) ? r.strategy_name
+        THEN TRUE ELSE FALSE
+      END
+      FROM latest_supervisor
+    ), FALSE) AS latest_blocked,
+    COALESCE((
+      SELECT array_to_string(ARRAY(
+        SELECT jsonb_array_elements_text(
+          COALESCE(payload->'strategy_entries_disabled_reasons'->r.strategy_name, '[]'::jsonb)
+        )
+      ), ',')
+      FROM latest_supervisor
+    ), '') AS latest_disabled_reasons,
+    COALESCE((
+      SELECT COUNT(*)::int
+      FROM recent events
+      WHERE events.event_type = 'decision_cycle_completed'
+        AND events.payload->>'strategy_name' = r.strategy_name
+    ), 0) AS audit_cycles,
+    COALESCE((
+      SELECT SUM(COALESCE((events.payload->>'decision_record_count')::int, 0))::int
+      FROM recent events
+      WHERE events.event_type = 'decision_cycle_completed'
+        AND events.payload->>'strategy_name' = r.strategy_name
+    ), 0) AS audit_records,
+    COALESCE((
+      SELECT COUNT(DISTINCT d.cycle_at)::int
+      FROM recent_decisions d
+      WHERE d.strategy_name = r.strategy_name
+    ), 0) AS log_cycles,
+    COALESCE((
+      SELECT COUNT(*)::int
+      FROM recent_decisions d
+      WHERE d.strategy_name = r.strategy_name
+    ), 0) AS log_records,
+    COALESCE((
+      SELECT COUNT(*)::int
+      FROM recent_decisions d
+      WHERE d.strategy_name = r.strategy_name
+        AND d.decision = 'accepted'
+    ), 0) AS accepted_decisions,
+    COALESCE((
+      WITH accepted_symbols AS (
+        SELECT DISTINCT symbol
+        FROM recent_decisions d
+        WHERE d.strategy_name = r.strategy_name
+          AND d.decision = 'accepted'
+      ),
+      materialized_symbols AS (
+        SELECT symbol
+        FROM orders
+        WHERE trading_mode = 'paper'
+          AND strategy_version = :'strategy_version'
+          AND strategy_name IS NOT DISTINCT FROM r.strategy_name
+          AND intent_type = 'entry'
+          AND (
+            created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+            OR updated_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
+            OR status IN (
+              'pending_submit',
+              'submitting',
+              'pending_new',
+              'new',
+              'accepted',
+              'accepted_for_bidding',
+              'submitted',
+              'partially_filled',
+              'held',
+              'pending_replace',
+              'pending_cancel',
+              'stopped',
+              'suspended',
+              'done_for_day'
+            )
+          )
+        UNION
+        SELECT symbol
+        FROM positions
+        WHERE trading_mode = 'paper'
+          AND strategy_version = :'strategy_version'
+          AND strategy_name IS NOT DISTINCT FROM r.strategy_name
+      )
+      SELECT COUNT(*)::int
+      FROM (
+        SELECT symbol FROM accepted_symbols
+        EXCEPT
+        SELECT symbol FROM materialized_symbols
+      ) unmaterialized
+    ), 0) AS unmaterialized_accepted,
+    COALESCE((
+      SELECT COUNT(*)::int
+      FROM orders
+      WHERE trading_mode = 'paper'
+        AND strategy_version = :'strategy_version'
+        AND strategy_name IS NOT DISTINCT FROM r.strategy_name
+        AND intent_type = 'entry'
+        AND status = 'pending_submit'
+        AND broker_order_id IS NULL
+        AND created_at <= NOW() - (${PAPER_ACTIVITY_STALE_PENDING_ENTRY_MINUTES} * interval '1 minute')
+    ), 0) AS stale_pending_entries,
+    COALESCE((
+      SELECT COUNT(*)::int
+      FROM positions
+      WHERE trading_mode = 'paper'
+        AND strategy_version = :'strategy_version'
+        AND strategy_name IS NOT DISTINCT FROM r.strategy_name
+    ), 0) AS open_positions,
+    COALESCE((
+      SELECT COUNT(*)::int
+      FROM orders
+      WHERE trading_mode = 'paper'
+        AND strategy_version = :'strategy_version'
+        AND strategy_name IS NOT DISTINCT FROM r.strategy_name
+        AND status IN (
+          'pending_submit',
+          'submitting',
+          'pending_new',
+          'new',
+          'accepted',
+          'accepted_for_bidding',
+          'submitted',
+          'partially_filled',
+          'held',
+          'pending_replace',
+          'pending_cancel',
+          'stopped',
+          'suspended',
+          'done_for_day'
+        )
+    ), 0) AS active_orders
+  FROM requested r
+),
+scored AS (
+  SELECT
+    strategy_name,
+    ord,
+    latest_blocked,
+    latest_disabled_reasons,
+    audit_cycles,
+    audit_records,
+    log_cycles,
+    log_records,
+    GREATEST(audit_cycles, log_cycles) AS evidence_cycles,
+    GREATEST(audit_records, log_records) AS evidence_records,
+    accepted_decisions,
+    unmaterialized_accepted,
+    stale_pending_entries,
+    (open_positions > 0 OR active_orders > 0) AS has_exposure
+  FROM per_strategy
+)
+SELECT
+  COUNT(*)::int,
+  COALESCE(string_agg(strategy_name, ',' ORDER BY ord), ''),
+  COALESCE(string_agg(strategy_name, ',' ORDER BY ord) FILTER (WHERE evidence_cycles = 0), ''),
+  COALESCE(string_agg(strategy_name, ',' ORDER BY ord) FILTER (WHERE log_cycles = 0), ''),
+  COALESCE(string_agg(strategy_name, ',' ORDER BY ord) FILTER (WHERE log_records < ${PAPER_ACTIVITY_MIN_DECISION_RECORDS} AND NOT has_exposure), ''),
+  COALESCE(string_agg(strategy_name, ',' ORDER BY ord) FILTER (WHERE evidence_records < ${PAPER_ACTIVITY_MIN_DECISION_RECORDS} AND NOT has_exposure), ''),
+  COALESCE(string_agg(strategy_name || ':' || COALESCE(NULLIF(latest_disabled_reasons, ''), 'blocked'), ',' ORDER BY ord) FILTER (WHERE latest_blocked), ''),
+  COALESCE(string_agg(strategy_name, ',' ORDER BY ord) FILTER (WHERE unmaterialized_accepted > 0), ''),
+  COALESCE(string_agg(strategy_name, ',' ORDER BY ord) FILTER (WHERE stale_pending_entries > 0), ''),
+  COALESCE(string_agg(
+    strategy_name || ':cycles=' || evidence_cycles::text ||
+    ',records=' || evidence_records::text ||
+    ',log_cycles=' || log_cycles::text ||
+    ',log_records=' || log_records::text ||
+    ',accepted=' || accepted_decisions::text ||
+    ',exposure=' || has_exposure::text,
+    ';' ORDER BY ord
+  ), '')
+FROM scored;
+SQL
+  )"
+
+  IFS='|' read -r activity_strategy_count activity_strategy_names \
+    missing_activity_strategy_cycles missing_activity_strategy_log_cycles \
+    low_activity_strategy_log_records low_activity_strategy_evidence_records \
+    blocked_activity_strategies unmaterialized_activity_strategies \
+    stale_pending_activity_strategies activity_strategy_detail \
+    <<< "$strategy_activity_summary"
+
+  if [[ -z "${activity_strategy_count:-}" ]]; then
+    echo "paper activity failed: approved strategy activity summary missing" >&2
+    exit 1
+  fi
+  if [[ "$activity_strategy_names" != "$paper_activity_strategy_csv" ]]; then
+    echo "paper activity failed: approved strategy activity summary mismatch expected=[$paper_activity_strategy_csv] actual=[$activity_strategy_names]" >&2
+    exit 1
+  fi
+  if [[ -n "${blocked_activity_strategies:-}" ]]; then
+    if ! is_after_configured_flatten_time; then
+      echo "paper activity failed: approved strategy entries blocked [$blocked_activity_strategies]" >&2
+      exit 1
+    fi
+  fi
+  if [[ -n "${missing_activity_strategy_cycles:-}" ]]; then
+    echo "paper activity failed: approved strategies missing decision evidence cycles [$missing_activity_strategy_cycles] detail=[$activity_strategy_detail]" >&2
+    exit 1
+  fi
+  if [[ "${PAPER_ACTIVITY_REQUIRE_DECISION_LOG,,}" == "true" ]]; then
+    if [[ -n "${missing_activity_strategy_log_cycles:-}" ]]; then
+      echo "paper activity failed: approved strategies missing decision_log cycles [$missing_activity_strategy_log_cycles] detail=[$activity_strategy_detail]" >&2
+      exit 1
+    fi
+    if [[ -n "${low_activity_strategy_log_records:-}" ]]; then
+      echo "paper activity failed: approved strategies decision_log records below $PAPER_ACTIVITY_MIN_DECISION_RECORDS [$low_activity_strategy_log_records] detail=[$activity_strategy_detail]" >&2
+      exit 1
+    fi
+  fi
+  if [[ -n "${low_activity_strategy_evidence_records:-}" ]]; then
+    echo "paper activity failed: approved strategies decision evidence records below $PAPER_ACTIVITY_MIN_DECISION_RECORDS [$low_activity_strategy_evidence_records] detail=[$activity_strategy_detail]" >&2
+    exit 1
+  fi
+  if [[ -n "${unmaterialized_activity_strategies:-}" ]]; then
+    echo "paper activity failed: approved strategies have unmaterialized accepted decisions [$unmaterialized_activity_strategies] detail=[$activity_strategy_detail]" >&2
+    exit 1
+  fi
+  if [[ -n "${stale_pending_activity_strategies:-}" ]]; then
+    echo "paper activity failed: approved strategies have stale pending entries [$stale_pending_activity_strategies] detail=[$activity_strategy_detail]" >&2
+    exit 1
+  fi
+
+  echo "paper activity strategies ok: strategies=$activity_strategy_names count=$activity_strategy_count detail=[$activity_strategy_detail]"
 fi
 
 broker_account_status="skipped"

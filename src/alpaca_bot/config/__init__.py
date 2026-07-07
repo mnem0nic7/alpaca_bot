@@ -66,6 +66,13 @@ def _parse_symbols(value: str) -> tuple[str, ...]:
     return symbols
 
 
+def _parse_csv_names(name: str, value: str) -> tuple[str, ...]:
+    names = tuple(item.strip() for item in value.split(",") if item.strip())
+    if not names:
+        raise ValueError(f"{name} must contain at least one name")
+    return names
+
+
 def _get_required(environ: dict[str, str], name: str) -> str:
     try:
         return environ[name]
@@ -96,16 +103,20 @@ class Settings:
     entry_window_start: time
     entry_window_end: time
     flatten_time: time
+    entry_min_close_to_entry_pct: float = -1.0
+    entry_max_close_to_entry_pct: float = 1.0
+    entry_order_active_bars: int = 1
     max_portfolio_exposure_pct: float = 0.30
     notify_slippage_threshold_pct: float = 0.005
     confidence_floor: float = 0.25
     paper_proof_freeze: bool = False
+    paper_approved_strategies: tuple[str, ...] = ("bull_flag", "vwap_cross")
     paper_readiness_max_pass_age_minutes: int = 180
     paper_readiness_min_watchlist_symbols: int = 900
     paper_readiness_decision_dry_run_strategy: str = "bull_flag"
     paper_readiness_decision_dry_run_min_records: int = 900
     paper_readiness_decision_dry_run_min_evaluations: int = 6
-    profit_probe_start_date: date = date(2026, 6, 29)
+    profit_probe_start_date: date = date(2026, 7, 7)
     floor_raise_step: float = 0.10
     drawdown_raise_pct: float = 0.05
     losing_streak_n: int = 3
@@ -159,6 +170,15 @@ class Settings:
     enable_trend_filter_exit: bool = False
     enable_vwap_breakdown_exit: bool = False
     vwap_breakdown_min_bars: int = 1
+    enable_no_follow_through_exit: bool = False
+    no_follow_through_exit_minutes: int = 0
+    no_follow_through_min_favorable_pct: float = 0.0025
+    enable_giveback_exit: bool = False
+    giveback_exit_min_favorable_pct: float = 0.0025
+    giveback_exit_max_return_pct: float = 0.0
+    enable_early_loss_exit: bool = False
+    early_loss_exit_minutes: int = 0
+    early_loss_exit_return_pct: float = 0.01
     viability_daily_bar_max_age_days: int = 5
     viability_min_hold_minutes: int = 0
     per_symbol_loss_limit_pct: float = 0.0
@@ -221,8 +241,12 @@ class Settings:
     @classmethod
     def from_env(cls, environ: dict[str, str] | None = None) -> "Settings":
         values = dict(os.environ if environ is None else environ)
+        trading_mode = TradingMode(_get_required(values, "TRADING_MODE").strip().lower())
+        entry_min_close_to_entry_pct_default = (
+            "-0.01" if trading_mode is TradingMode.PAPER else "-1.0"
+        )
         settings = cls(
-            trading_mode=TradingMode(_get_required(values, "TRADING_MODE").strip().lower()),
+            trading_mode=trading_mode,
             enable_live_trading=_parse_bool(
                 "ENABLE_LIVE_TRADING", values.get("ENABLE_LIVE_TRADING", "false")
             ),
@@ -239,6 +263,7 @@ class Settings:
             ),
             relative_volume_threshold=float(values.get("RELATIVE_VOLUME_THRESHOLD", "1.5")),
             entry_timeframe_minutes=int(values.get("ENTRY_TIMEFRAME_MINUTES", "15")),
+            entry_order_active_bars=int(values.get("ENTRY_ORDER_ACTIVE_BARS", "1")),
             risk_per_trade_pct=float(values.get("RISK_PER_TRADE_PCT", "0.0025")),
             max_position_pct=float(values.get("MAX_POSITION_PCT", "0.015")),
             max_open_positions=int(values.get("MAX_OPEN_POSITIONS", "20")),
@@ -252,6 +277,10 @@ class Settings:
             confidence_floor=float(values.get("CONFIDENCE_FLOOR", "0.25")),
             paper_proof_freeze=_parse_bool(
                 "PAPER_PROOF_FREEZE", values.get("PAPER_PROOF_FREEZE", "false")
+            ),
+            paper_approved_strategies=_parse_csv_names(
+                "PAPER_APPROVED_STRATEGIES",
+                values.get("PAPER_APPROVED_STRATEGIES", "bull_flag,vwap_cross"),
             ),
             paper_readiness_max_pass_age_minutes=int(
                 values.get("PAPER_READINESS_MAX_PASS_AGE_MINUTES", "180")
@@ -271,7 +300,7 @@ class Settings:
             ),
             profit_probe_start_date=_parse_date(
                 "PROFIT_PROBE_START_DATE",
-                values.get("PROFIT_PROBE_START_DATE", "2026-06-30"),
+                values.get("PROFIT_PROBE_START_DATE", "2026-07-07"),
             ),
             floor_raise_step=float(values.get("FLOOR_RAISE_STEP", "0.10")),
             drawdown_raise_pct=float(values.get("DRAWDOWN_RAISE_PCT", "0.05")),
@@ -297,6 +326,15 @@ class Settings:
                 values.get("BREAKOUT_STOP_BUFFER_PCT", "0.001")
             ),
             entry_stop_price_buffer=float(values.get("ENTRY_STOP_PRICE_BUFFER", "0.01")),
+            entry_min_close_to_entry_pct=float(
+                values.get(
+                    "ENTRY_MIN_CLOSE_TO_ENTRY_PCT",
+                    entry_min_close_to_entry_pct_default,
+                )
+            ),
+            entry_max_close_to_entry_pct=float(
+                values.get("ENTRY_MAX_CLOSE_TO_ENTRY_PCT", "1.0")
+            ),
             entry_window_start=_parse_time(
                 "ENTRY_WINDOW_START", values.get("ENTRY_WINDOW_START", "10:00")
             ),
@@ -381,6 +419,36 @@ class Settings:
                 "ENABLE_VWAP_BREAKDOWN_EXIT", values.get("ENABLE_VWAP_BREAKDOWN_EXIT", "false")
             ),
             vwap_breakdown_min_bars=int(values.get("VWAP_BREAKDOWN_MIN_BARS", "1")),
+            enable_no_follow_through_exit=_parse_bool(
+                "ENABLE_NO_FOLLOW_THROUGH_EXIT",
+                values.get("ENABLE_NO_FOLLOW_THROUGH_EXIT", "false"),
+            ),
+            no_follow_through_exit_minutes=int(
+                values.get("NO_FOLLOW_THROUGH_EXIT_MINUTES", "0")
+            ),
+            no_follow_through_min_favorable_pct=float(
+                values.get("NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT", "0.0025")
+            ),
+            enable_giveback_exit=_parse_bool(
+                "ENABLE_GIVEBACK_EXIT",
+                values.get("ENABLE_GIVEBACK_EXIT", "false"),
+            ),
+            giveback_exit_min_favorable_pct=float(
+                values.get("GIVEBACK_EXIT_MIN_FAVORABLE_PCT", "0.0025")
+            ),
+            giveback_exit_max_return_pct=float(
+                values.get("GIVEBACK_EXIT_MAX_RETURN_PCT", "0.0")
+            ),
+            enable_early_loss_exit=_parse_bool(
+                "ENABLE_EARLY_LOSS_EXIT",
+                values.get("ENABLE_EARLY_LOSS_EXIT", "false"),
+            ),
+            early_loss_exit_minutes=int(
+                values.get("EARLY_LOSS_EXIT_MINUTES", "0")
+            ),
+            early_loss_exit_return_pct=float(
+                values.get("EARLY_LOSS_EXIT_RETURN_PCT", "0.01")
+            ),
             viability_daily_bar_max_age_days=int(
                 values.get("VIABILITY_DAILY_BAR_MAX_AGE_DAYS", "5")
             ),
@@ -501,6 +569,11 @@ class Settings:
             )
         if self.notify_slippage_threshold_pct < 0:
             raise ValueError("NOTIFY_SLIPPAGE_THRESHOLD_PCT must be >= 0")
+        if not self.paper_approved_strategies:
+            raise ValueError("PAPER_APPROVED_STRATEGIES must contain at least one name")
+        for name in self.paper_approved_strategies:
+            if any(not (char.isalnum() or char in "_:-") for char in name):
+                raise ValueError("PAPER_APPROVED_STRATEGIES contains unsupported characters")
         _validate_positive_fraction("RISK_PER_TRADE_PCT", self.risk_per_trade_pct)
         _validate_positive_fraction("MAX_POSITION_PCT", self.max_position_pct)
         _validate_positive_fraction("DAILY_LOSS_LIMIT_PCT", self.daily_loss_limit_pct)
@@ -533,6 +606,14 @@ class Settings:
             )
         if self.entry_stop_price_buffer <= 0:
             raise ValueError("ENTRY_STOP_PRICE_BUFFER must be positive")
+        if not -1.0 <= self.entry_min_close_to_entry_pct <= 1.0:
+            raise ValueError("ENTRY_MIN_CLOSE_TO_ENTRY_PCT must be between -1.0 and 1.0")
+        if not -1.0 <= self.entry_max_close_to_entry_pct <= 1.0:
+            raise ValueError("ENTRY_MAX_CLOSE_TO_ENTRY_PCT must be between -1.0 and 1.0")
+        if self.entry_max_close_to_entry_pct < self.entry_min_close_to_entry_pct:
+            raise ValueError(
+                "ENTRY_MAX_CLOSE_TO_ENTRY_PCT must be >= ENTRY_MIN_CLOSE_TO_ENTRY_PCT"
+            )
         if self.daily_sma_period < 2:
             raise ValueError("DAILY_SMA_PERIOD must be at least 2")
         if self.breakout_lookback_bars < 2:
@@ -553,6 +634,10 @@ class Settings:
             raise ValueError("ATR_PERIOD must be at least 2")
         if self.entry_timeframe_minutes < 1:
             raise ValueError("ENTRY_TIMEFRAME_MINUTES must be at least 1")
+        if self.entry_order_active_bars < 1:
+            raise ValueError("ENTRY_ORDER_ACTIVE_BARS must be at least 1")
+        if self.entry_order_active_bars > 4:
+            raise ValueError("ENTRY_ORDER_ACTIVE_BARS must be at most 4")
         if self.atr_stop_multiplier <= 0:
             raise ValueError("ATR_STOP_MULTIPLIER must be positive")
         if self.atr_stop_multiplier > 10.0:
@@ -640,6 +725,45 @@ class Settings:
             or self.failed_breakdown_recapture_buffer_pct >= 1.0
         ):
             raise ValueError("FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT must be > 0 and < 1.0")
+        if self.vwap_breakdown_min_bars < 1:
+            raise ValueError("VWAP_BREAKDOWN_MIN_BARS must be >= 1")
+        if self.no_follow_through_exit_minutes < 0:
+            raise ValueError("NO_FOLLOW_THROUGH_EXIT_MINUTES must be >= 0")
+        if self.enable_no_follow_through_exit and self.no_follow_through_exit_minutes < 1:
+            raise ValueError(
+                "NO_FOLLOW_THROUGH_EXIT_MINUTES must be >= 1 when "
+                "ENABLE_NO_FOLLOW_THROUGH_EXIT=true"
+            )
+        if not 0.0 <= self.no_follow_through_min_favorable_pct < 1.0:
+            raise ValueError(
+                "NO_FOLLOW_THROUGH_MIN_FAVORABLE_PCT must be between 0.0 "
+                "and 1.0 (exclusive)"
+            )
+        if not 0.0 <= self.giveback_exit_min_favorable_pct < 1.0:
+            raise ValueError(
+                "GIVEBACK_EXIT_MIN_FAVORABLE_PCT must be between 0.0 "
+                "and 1.0 (exclusive)"
+            )
+        if not 0.0 <= self.giveback_exit_max_return_pct < 1.0:
+            raise ValueError(
+                "GIVEBACK_EXIT_MAX_RETURN_PCT must be between 0.0 "
+                "and 1.0 (exclusive)"
+            )
+        if self.early_loss_exit_minutes < 0:
+            raise ValueError("EARLY_LOSS_EXIT_MINUTES must be >= 0")
+        if self.enable_early_loss_exit and self.early_loss_exit_minutes < 1:
+            raise ValueError(
+                "EARLY_LOSS_EXIT_MINUTES must be >= 1 when "
+                "ENABLE_EARLY_LOSS_EXIT=true"
+            )
+        if not 0.0 < self.early_loss_exit_return_pct < 1.0:
+            raise ValueError(
+                "EARLY_LOSS_EXIT_RETURN_PCT must be > 0.0 and < 1.0"
+            )
+        if self.viability_daily_bar_max_age_days < 0:
+            raise ValueError("VIABILITY_DAILY_BAR_MAX_AGE_DAYS must be >= 0")
+        if self.viability_min_hold_minutes < 0:
+            raise ValueError("VIABILITY_MIN_HOLD_MINUTES must be >= 0")
         if self.per_symbol_loss_limit_pct < 0:
             raise ValueError("PER_SYMBOL_LOSS_LIMIT_PCT must be >= 0")
         if self.per_symbol_loss_limit_pct >= 1.0:

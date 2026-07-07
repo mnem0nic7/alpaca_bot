@@ -19,9 +19,9 @@ cycle loop that drives entries/exits is layered on in a later task.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType, evaluate_cycle
@@ -42,6 +42,7 @@ from alpaca_bot.replay.report import ReplayTradeRecord
 from alpaca_bot.risk.sizing import calculate_position_size
 from alpaca_bot.strategy import STRATEGY_REGISTRY, StrategySignalEvaluator
 from alpaca_bot.strategy.breakout import session_day
+from alpaca_bot.strategy.market_context import compute_market_context
 
 
 @dataclass
@@ -102,10 +103,22 @@ class PortfolioReplayRunner:
         self.strategy_name = strategy_name
         self._lanes: dict[str, _Lane] = {}
         self._daily_slice_cache: dict[tuple[str, date], Sequence[Bar]] = {}
+        self._regime_daily: list[Bar] = []
+        self._regime_daily_all_closes_positive = True
+        self._regime_slice_cache: dict[date, Sequence[Bar]] = {}
+        self._vix_daily: list[Bar] = []
+        self._sector_daily_by_etf: dict[str, list[Bar]] = {}
+        self._market_context_cache: dict[date, object] = {}
 
     def _index_scenarios(self, scenarios: list[ReplayScenario]) -> None:
         self._lanes = {}
         self._daily_slice_cache = {}
+        self._regime_daily = []
+        self._regime_daily_all_closes_positive = True
+        self._regime_slice_cache = {}
+        self._vix_daily = []
+        self._sector_daily_by_etf = {}
+        self._market_context_cache = {}
         for sc in scenarios:
             if sc.symbol in self._lanes:
                 raise ValueError(
@@ -120,6 +133,33 @@ class PortfolioReplayRunner:
                 daily=daily,
                 daily_all_closes_positive=all(b.close > 0 for b in daily),
             )
+        regime_symbol = self.settings.regime_symbol.upper()
+        if regime_symbol in self._lanes:
+            self._regime_daily = self._lanes[regime_symbol].daily
+        else:
+            for sc in scenarios:
+                if sc.regime_daily_bars:
+                    self._regime_daily = _sorted_bars(sc.regime_daily_bars)
+                    break
+        self._regime_daily_all_closes_positive = all(
+            b.close > 0 for b in self._regime_daily
+        )
+        vix_symbol = self.settings.vix_proxy_symbol.upper()
+        if vix_symbol in self._lanes:
+            self._vix_daily = self._lanes[vix_symbol].daily
+        else:
+            for sc in scenarios:
+                if sc.vix_daily_bars:
+                    self._vix_daily = _sorted_bars(sc.vix_daily_bars)
+                    break
+        for etf in self.settings.sector_etf_symbols:
+            etf_name = etf.upper()
+            if etf_name in self._lanes:
+                self._sector_daily_by_etf[etf_name] = self._lanes[etf_name].daily
+        for sc in scenarios:
+            for etf, bars in (sc.sector_daily_bars_by_etf or {}).items():
+                etf_name = etf.upper()
+                self._sector_daily_by_etf.setdefault(etf_name, _sorted_bars(bars))
 
     def _build_timeline(self, scenarios: list[ReplayScenario]) -> list[datetime]:
         stamps: set[datetime] = set()
@@ -137,6 +177,37 @@ class PortfolioReplayRunner:
         # Alpaca intraday bars are start-stamped. The live supervisor only
         # evaluates a bar after timestamp + timeframe has elapsed.
         return bar.timestamp + timedelta(minutes=self.settings.entry_timeframe_minutes)
+
+    def _last_entry_order_active_timestamp(
+        self,
+        lane: _Lane,
+        first_active_index: int,
+    ) -> datetime | None:
+        last_active_index = min(
+            len(lane.intraday) - 1,
+            first_active_index + self.settings.entry_order_active_bars - 1,
+        )
+        first_active = lane.intraday[first_active_index]
+        first_active_utc = (
+            first_active.timestamp.replace(tzinfo=timezone.utc)
+            if first_active.timestamp.tzinfo is None
+            else first_active.timestamp.astimezone(timezone.utc)
+        )
+        first_active_local = first_active_utc.astimezone(self.settings.market_timezone)
+        flatten_at = datetime.combine(
+            first_active_local.date(),
+            self.settings.flatten_time,
+            tzinfo=self.settings.market_timezone,
+        )
+        for index in range(last_active_index, first_active_index - 1, -1):
+            bar_utc = (
+                lane.intraday[index].timestamp.replace(tzinfo=timezone.utc)
+                if lane.intraday[index].timestamp.tzinfo is None
+                else lane.intraday[index].timestamp.astimezone(timezone.utc)
+            )
+            if bar_utc.astimezone(self.settings.market_timezone) < flatten_at:
+                return lane.intraday[index].timestamp
+        return None
 
     def _daily_slice_for(self, symbol: str, now: datetime) -> Sequence[Bar]:
         lane = self._lanes[symbol]
@@ -156,6 +227,57 @@ class PortfolioReplayRunner:
         self._daily_slice_cache[cache_key] = daily_slice
         return daily_slice
 
+    def _regime_slice_for(self, now: datetime) -> Sequence[Bar] | None:
+        if not self._regime_daily:
+            return None
+        day = session_day(now, self.settings)
+        cached = self._regime_slice_cache.get(day)
+        if cached is not None:
+            return cached
+        tz = self.settings.market_timezone
+        prefix_length = 0
+        for bar in self._regime_daily:
+            if bar.timestamp.astimezone(tz).date() >= day:
+                break
+            prefix_length += 1
+        prefix_type = (
+            _KnownCleanBarPrefix
+            if self._regime_daily_all_closes_positive
+            else _BarPrefix
+        )
+        regime_slice: Sequence[Bar] = prefix_type(self._regime_daily, prefix_length)
+        self._regime_slice_cache[day] = regime_slice
+        return regime_slice
+
+    def _daily_context_slice_for(self, bars: list[Bar], now: datetime) -> list[Bar]:
+        day = session_day(now, self.settings)
+        tz = self.settings.market_timezone
+        prefix_length = 0
+        for bar in bars:
+            if bar.timestamp.astimezone(tz).date() >= day:
+                break
+            prefix_length += 1
+        return bars[:prefix_length]
+
+    def _market_context_for(self, now: datetime):
+        if not self._vix_daily and not self._sector_daily_by_etf:
+            return None
+        day = session_day(now, self.settings)
+        cached = self._market_context_cache.get(day)
+        if cached is not None:
+            return cached
+        context = compute_market_context(
+            as_of=now,
+            vix_bars=self._daily_context_slice_for(self._vix_daily, now),
+            sector_bars_by_etf={
+                etf: self._daily_context_slice_for(bars, now)
+                for etf, bars in self._sector_daily_by_etf.items()
+            },
+            settings=self.settings,
+        )
+        self._market_context_cache[day] = context
+        return context
+
     # --- main loop -------------------------------------------------------
 
     def run(
@@ -165,14 +287,36 @@ class PortfolioReplayRunner:
         on_progress: Callable[[str], None] | None = None,
         progress_label: str | None = None,
     ) -> list[ReplayTradeRecord]:
+        return self._run_strategy_sequence(
+            scenarios,
+            ((self.strategy_name, self.signal_evaluator),),
+            on_progress=on_progress,
+            progress_label=progress_label,
+        )
+
+    def _run_strategy_sequence(
+        self,
+        scenarios,
+        strategy_sequence: Sequence[tuple[str, StrategySignalEvaluator | None]],
+        *,
+        strategy_equity_scales: Mapping[str, float] | None = None,
+        on_progress: Callable[[str], None] | None = None,
+        progress_label: str | None = None,
+    ) -> list[ReplayTradeRecord]:
         self._index_scenarios(scenarios)
         timeline = self._build_timeline(scenarios)
         equity = float(getattr(scenarios[0], "starting_equity", 100000.0)) if scenarios else 100000.0
 
         trades: list[ReplayTradeRecord] = []
-        traded_symbols: set[tuple[str, date]] = set()
+        traded_symbols_by_strategy: dict[str, set[tuple[str, date]]] = {
+            strategy_name: set()
+            for strategy_name, _evaluator in strategy_sequence
+        }
         progress_every = max(1, len(timeline) // 20) if on_progress else 0
-        label = progress_label or self.strategy_name
+        label = progress_label or "+".join(
+            strategy_name for strategy_name, _evaluator in strategy_sequence
+        )
+        equity_scales = dict(strategy_equity_scales or {})
 
         for timeline_index, now in enumerate(timeline, start=1):
             fresh: list[str] = []
@@ -189,8 +333,25 @@ class PortfolioReplayRunner:
             for sym in fresh:
                 lane = self._lanes[sym]
                 bar = lane.intraday[lane.cursor]
-                equity = self._resolve_order(lane, bar, equity, traded_symbols)
-                closed, equity = self._resolve_exits(lane, bar, equity, traded_symbols)
+                equity = self._resolve_order(
+                    lane,
+                    bar,
+                    equity,
+                    traded_symbols_by_strategy.setdefault(
+                        lane.working_order.strategy_name
+                        if lane.working_order is not None
+                        else self.strategy_name,
+                        set(),
+                    ),
+                )
+                trade_set = (
+                    traded_symbols_by_strategy.setdefault(
+                        lane.position.strategy_name, set()
+                    )
+                    if lane.position is not None
+                    else traded_symbols_by_strategy.setdefault(self.strategy_name, set())
+                )
+                closed, equity = self._resolve_exits(lane, bar, equity, trade_set)
                 trades.extend(closed)
 
             if not fresh:
@@ -210,60 +371,91 @@ class PortfolioReplayRunner:
                 for s in eligible
             }
             daily_by_symbol = {s: self._daily_slice_for(s, now) for s in eligible}
-            open_positions = [l.position for l in self._lanes.values() if l.position is not None]
-            working_order_symbols = {
-                s for s, l in self._lanes.items() if l.working_order is not None
-            }
-
-            cycle = evaluate_cycle(
-                settings=self.settings,
-                now=now,
-                equity=equity,
-                intraday_bars_by_symbol=intraday_by_symbol,
-                daily_bars_by_symbol=daily_by_symbol,
-                open_positions=open_positions,
-                working_order_symbols=working_order_symbols,
-                traded_symbols_today=traded_symbols,
-                entries_disabled=False,
-                signal_evaluator=self.signal_evaluator,
-                symbols=tuple(sorted(eligible)),
-            )
-
-            # 3) Route intents to lanes.
-            #
-            # The engine sees *all* open positions (stale lanes included, line
-            # building `open_positions` above) and its EOD-flatten path emits an
-            # EXIT for any open position regardless of whether that symbol has a
-            # bar this tick (engine.py EOD-flatten loop emits EXIT with no bars).
-            # A stale lane (open position, no fresh bar this tick) must NOT be
-            # acted on here: routing its EXIT to `lane.intraday[lane.cursor]`
-            # would flatten it at a PAST bar's close — a mispriced phantom trade
-            # that the single-symbol runner never produces (it manages a position
-            # only on that symbol's own bars). Defer every stale lane's intents to
-            # its own next fresh bar, where the engine re-emits EOD-flatten EXIT at
-            # the correct bar. UPDATE_STOP/trailing/viability EXIT already require
-            # bars inside the engine, so only the bars-free EOD-flatten EXIT can
-            # leak to a stale lane — this guard closes that single path.
             fresh_set = set(fresh)
-            for intent in cycle.intents:
-                lane = self._lanes.get(intent.symbol)
-                if lane is None:
-                    continue
-                if intent.intent_type == CycleIntentType.EXIT:
-                    if intent.symbol not in fresh_set:
+            for strategy_name, evaluator in strategy_sequence:
+                open_positions = [
+                    l.position
+                    for l in self._lanes.values()
+                    if l.position is not None
+                ]
+                strategy_positions = [
+                    p for p in open_positions
+                    if p.strategy_name == strategy_name
+                ]
+                working_order_symbols = {
+                    s for s, l in self._lanes.items() if l.working_order is not None
+                }
+                global_position_symbols = {p.symbol for p in open_positions}
+                strategy_position_symbols = {p.symbol for p in strategy_positions}
+                strategy_working_symbols = set(working_order_symbols)
+                strategy_working_symbols |= (
+                    global_position_symbols - strategy_position_symbols
+                )
+                global_occupied_slots = len(
+                    global_position_symbols | working_order_symbols
+                )
+
+                cycle = evaluate_cycle(
+                    settings=self.settings,
+                    now=now,
+                    equity=equity * equity_scales.get(strategy_name, 1.0),
+                    intraday_bars_by_symbol=intraday_by_symbol,
+                    daily_bars_by_symbol=daily_by_symbol,
+                    open_positions=strategy_positions,
+                    working_order_symbols=strategy_working_symbols,
+                    traded_symbols_today=traded_symbols_by_strategy.setdefault(
+                        strategy_name, set()
+                    ),
+                    entries_disabled=False,
+                    signal_evaluator=evaluator,
+                    strategy_name=strategy_name,
+                    global_open_count=global_occupied_slots,
+                    symbols=tuple(sorted(eligible)),
+                    regime_bars=(
+                        self._regime_slice_for(now)
+                        if self.settings.enable_regime_filter
+                        else None
+                    ),
+                    market_context=(
+                        self._market_context_for(now)
+                        if (
+                            self.settings.enable_vix_filter
+                            or self.settings.enable_sector_filter
+                        )
+                        else None
+                    ),
+                )
+
+                # Route intents to lanes. The stale-lane guard mirrors the
+                # single-strategy path: bars-free EOD flatten intents wait for
+                # that symbol's own next fresh bar, where pricing is correct.
+                for intent in cycle.intents:
+                    lane = self._lanes.get(intent.symbol)
+                    if lane is None:
                         continue
-                    closed, equity = self._eod_exit(lane, lane.intraday[lane.cursor], equity, traded_symbols)
-                    if closed is not None:
-                        trades.append(closed)
-                elif intent.intent_type == CycleIntentType.UPDATE_STOP:
-                    if intent.symbol not in fresh_set:
-                        continue
-                    if lane.position is not None and intent.stop_price is not None:
-                        if intent.stop_price > lane.position.stop_price:
-                            lane.position.stop_price = intent.stop_price
-                            lane.position.trailing_active = True
-                elif intent.intent_type == CycleIntentType.ENTRY:
-                    self._place_order(lane, intent)
+                    if intent.intent_type == CycleIntentType.EXIT:
+                        if intent.symbol not in fresh_set:
+                            continue
+                        closed, equity = self._eod_exit(
+                            lane,
+                            lane.intraday[lane.cursor],
+                            equity,
+                            traded_symbols_by_strategy.setdefault(
+                                strategy_name, set()
+                            ),
+                            reason=intent.reason or "eod_flatten",
+                        )
+                        if closed is not None:
+                            trades.append(closed)
+                    elif intent.intent_type == CycleIntentType.UPDATE_STOP:
+                        if intent.symbol not in fresh_set:
+                            continue
+                        if lane.position is not None and intent.stop_price is not None:
+                            if intent.stop_price > lane.position.stop_price:
+                                lane.position.stop_price = intent.stop_price
+                                lane.position.trailing_active = True
+                    elif intent.intent_type == CycleIntentType.ENTRY:
+                        self._place_order(lane, intent)
 
             if (
                 on_progress is not None
@@ -285,16 +477,21 @@ class PortfolioReplayRunner:
         nxt = lane.cursor + 1
         if nxt >= len(lane.intraday):
             return
+        expires_at = self._last_entry_order_active_timestamp(lane, nxt)
+        if expires_at is None:
+            return
         lane.working_order = WorkingEntryOrder(
             symbol=intent.symbol,
             signal_timestamp=intent.timestamp,
             active_bar_timestamp=lane.intraday[nxt].timestamp,
+            expires_at_timestamp=expires_at,
             stop_price=intent.stop_price,
             limit_price=intent.limit_price,
             initial_stop_price=intent.initial_stop_price,
             entry_level=0.0,
             relative_volume=0.0,
             quantity=intent.quantity,
+            strategy_name=intent.strategy_name or self.strategy_name,
         )
 
     def _resolve_order(
@@ -305,16 +502,24 @@ class PortfolioReplayRunner:
         traded_symbols: set[tuple[str, date]],
     ) -> float:
         order = lane.working_order
-        if order is None or bar.timestamp != order.active_bar_timestamp:
+        if order is None or bar.timestamp < order.active_bar_timestamp:
             return equity
-        raw = simulate_buy_stop_limit_fill(
-            bar=bar, stop_price=order.stop_price, limit_price=order.limit_price
-        )
-        if raw is None:
+        if bar.timestamp > order.last_active_bar_timestamp:
             traded_symbols.add(
                 (order.symbol, session_day(order.signal_timestamp, self.settings))
             )
             lane.working_order = None
+            return equity
+        raw = simulate_buy_stop_limit_fill(
+            bar=bar, stop_price=order.stop_price, limit_price=order.limit_price
+        )
+        if raw is None and bar.timestamp >= order.last_active_bar_timestamp:
+            traded_symbols.add(
+                (order.symbol, session_day(order.signal_timestamp, self.settings))
+            )
+            lane.working_order = None
+            return equity
+        if raw is None:
             return equity
         fill = entry_fill_price(
             raw_fill=raw, limit_price=order.limit_price,
@@ -331,6 +536,7 @@ class PortfolioReplayRunner:
             quantity=qty, entry_level=order.entry_level,
             initial_stop_price=order.initial_stop_price,
             stop_price=order.initial_stop_price, highest_price=fill,
+            strategy_name=order.strategy_name,
         )
         lane.working_order = None
         return equity
@@ -364,13 +570,14 @@ class PortfolioReplayRunner:
                 lane.position = None
         return closed, equity
 
-    def _eod_exit(self, lane, bar, equity, traded_symbols):
+    def _eod_exit(self, lane, bar, equity, traded_symbols, *, reason="eod_flatten"):
         pos = lane.position
         if pos is None:
             return None, equity
         px = eod_exit_price(bar=bar, bps=self.settings.replay_slippage_bps)
         equity += (px - pos.entry_price) * pos.quantity
-        rec = self._record(pos, bar, px, "eod")
+        exit_reason = "eod" if reason == "eod_flatten" else reason
+        rec = self._record(pos, bar, px, exit_reason)
         traded_symbols.add((pos.symbol, session_day(bar.timestamp, self.settings)))
         lane.position = None
         return rec, equity
@@ -386,6 +593,41 @@ class PortfolioReplayRunner:
             quantity=qty, entry_time=pos.entry_timestamp,
             exit_time=bar.timestamp, exit_reason=reason, pnl=pnl,
             return_pct=(exit_price - pos.entry_price) / pos.entry_price,
+        )
+
+
+class PortfolioBasketReplayRunner(PortfolioReplayRunner):
+    def __init__(
+        self,
+        settings: Settings,
+        strategies: Sequence[tuple[str, StrategySignalEvaluator]],
+        *,
+        strategy_equity_scales: Mapping[str, float] | None = None,
+    ):
+        if not strategies:
+            raise ValueError("PortfolioBasketReplayRunner requires at least one strategy")
+        first_name, first_evaluator = strategies[0]
+        super().__init__(
+            settings,
+            signal_evaluator=first_evaluator,
+            strategy_name=first_name,
+        )
+        self.strategies = tuple(strategies)
+        self.strategy_equity_scales = dict(strategy_equity_scales or {})
+
+    def run(
+        self,
+        scenarios,
+        *,
+        on_progress: Callable[[str], None] | None = None,
+        progress_label: str | None = None,
+    ) -> list[ReplayTradeRecord]:
+        return self._run_strategy_sequence(
+            scenarios,
+            self.strategies,
+            strategy_equity_scales=self.strategy_equity_scales,
+            on_progress=on_progress,
+            progress_label=progress_label,
         )
 
 
@@ -407,6 +649,37 @@ def portfolio_pooled_trades(
         list(scenarios),
         on_progress=on_progress,
         progress_label=f"{strategy_name} {settings.replay_slippage_bps:g}bps",
+    )
+
+
+def portfolio_basket_pooled_trades(
+    scenarios: Sequence[ReplayScenario],
+    settings: Settings,
+    strategy_names: Sequence[str],
+    *,
+    strategy_equity_scales: Mapping[str, float] | None = None,
+    on_progress: Callable[[str], None] | None = None,
+) -> list[ReplayTradeRecord]:
+    """Replay several enabled strategies against one shared-equity portfolio."""
+    if not strategy_names:
+        raise ValueError("portfolio basket requires at least one strategy")
+    strategies: list[tuple[str, StrategySignalEvaluator]] = []
+    for name in strategy_names:
+        try:
+            evaluator = STRATEGY_REGISTRY[name]
+        except KeyError as exc:
+            raise ValueError(f"unknown strategy for portfolio basket: {name}") from exc
+        strategies.append((name, evaluator))
+    runner = PortfolioBasketReplayRunner(
+        settings,
+        strategies,
+        strategy_equity_scales=strategy_equity_scales,
+    )
+    label = "+".join(strategy_names)
+    return runner.run(
+        list(scenarios),
+        on_progress=on_progress,
+        progress_label=f"{label} {settings.replay_slippage_bps:g}bps",
     )
 
 

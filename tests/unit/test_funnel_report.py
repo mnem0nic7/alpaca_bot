@@ -79,6 +79,20 @@ def test_funnel_by_strategy_weights_aggregate_capacity_rows() -> None:
     assert "COUNT(*)" not in sql
 
 
+def test_funnel_by_strategy_treats_entry_quality_as_entry_filter() -> None:
+    conn = _FakeConn(_make_rows())
+    store = DecisionLogStore(conn)
+    store.funnel_by_strategy(
+        start_date=date(2026, 5, 1),
+        end_date=date(2026, 5, 7),
+        trading_mode="paper",
+    )
+    sql = conn.executed_sql[0]
+
+    assert "reject_stage IS DISTINCT FROM 'entry_quality'" in sql
+    assert sql.count("reject_stage IS DISTINCT FROM 'entry_quality'") == 2
+
+
 def test_funnel_by_strategy_empty_result() -> None:
     conn = _FakeConn([])
     store = DecisionLogStore(conn)

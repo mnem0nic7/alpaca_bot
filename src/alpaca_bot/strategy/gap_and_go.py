@@ -12,6 +12,19 @@ from alpaca_bot.strategy.breakout import (
 )
 
 
+def _is_first_observed_bar_of_session(
+    intraday_bars: Sequence[Bar],
+    *,
+    signal_index: int,
+    settings: Settings,
+) -> bool:
+    if signal_index <= 0:
+        return True
+    today = session_day(intraday_bars[signal_index].timestamp, settings)
+    previous_day = session_day(intraday_bars[signal_index - 1].timestamp, settings)
+    return previous_day != today
+
+
 def evaluate_gap_and_go_signal(
     *,
     symbol: str,
@@ -31,15 +44,12 @@ def evaluate_gap_and_go_signal(
     if not daily_trend_filter_passes(daily_bars, settings):
         return None
 
-    today = session_day(signal_bar.timestamp, settings)
-    today_bars = [
-        b for b in intraday_bars[: signal_index + 1]
-        if session_day(b.timestamp, settings) == today
-    ]
-
     # Only fire on the first bar of today's session
-    if len(today_bars) != 1:
+    if not _is_first_observed_bar_of_session(
+        intraday_bars, signal_index=signal_index, settings=settings
+    ):
         return None
+    today = session_day(signal_bar.timestamp, settings)
 
     prior_daily = [b for b in daily_bars if b.timestamp.astimezone(settings.market_timezone).date() < today]
     if not prior_daily:

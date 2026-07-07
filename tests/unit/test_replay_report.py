@@ -52,8 +52,20 @@ def _stop_exit(exit_price: float = 148.0, t: datetime = _T1) -> ReplayEvent:
     return ReplayEvent(event_type=IntentType.STOP_HIT, symbol="AAPL", timestamp=t, details={"exit_price": exit_price})
 
 
-def _eod_exit(exit_price: float = 155.0, t: datetime = _T2) -> ReplayEvent:
-    return ReplayEvent(event_type=IntentType.EOD_EXIT, symbol="AAPL", timestamp=t, details={"exit_price": exit_price})
+def _eod_exit(
+    exit_price: float = 155.0,
+    t: datetime = _T2,
+    reason: str | None = None,
+) -> ReplayEvent:
+    details = {"exit_price": exit_price}
+    if reason is not None:
+        details["reason"] = reason
+    return ReplayEvent(
+        event_type=IntentType.EOD_EXIT,
+        symbol="AAPL",
+        timestamp=t,
+        details=details,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +124,35 @@ def test_eod_fill_trade_pnl_correct() -> None:
     trade = report.trades[0]
     assert trade.pnl == pytest.approx((155.0 - 150.0) * 10)
     assert trade.exit_reason == "eod"
+
+
+def test_eod_event_preserves_non_eod_exit_reason() -> None:
+    result = _make_result(
+        [
+            _fill(entry_price=150.0, quantity=10),
+            _eod_exit(exit_price=149.0, reason="viability_vwap_breakdown"),
+        ]
+    )
+
+    report = build_backtest_report(result)
+
+    assert report.total_trades == 1
+    assert report.trades[0].exit_reason == "viability_vwap_breakdown"
+    assert report.eod_losses == 0
+
+
+def test_eod_flatten_reason_still_reports_as_eod() -> None:
+    result = _make_result(
+        [
+            _fill(entry_price=150.0, quantity=10),
+            _eod_exit(exit_price=149.0, reason="eod_flatten"),
+        ]
+    )
+
+    report = build_backtest_report(result)
+
+    assert report.trades[0].exit_reason == "eod"
+    assert report.eod_losses == 1
 
 
 def test_single_winner_win_rate_is_one() -> None:
