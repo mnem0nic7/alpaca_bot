@@ -1172,3 +1172,31 @@ change `PAPER_APPROVED_STRATEGIES`. A smoke run on 2026-07-07 with
 `SECOND_STRATEGY_CANDIDATES=ema_pullback` and `SECOND_STRATEGY_SAMPLE_SIZE=4`
 completed successfully and produced `no-evidence`, which verifies the tool
 wiring without weakening the promotion standard.
+
+### 2026-07-07 bounded refresh
+
+The wrapper was then run across all currently disabled stock candidates using a
+bounded 20-scenario sample, the current K=1/giveback posture, 2 bps/side
+slippage, `$68,991.94` starting equity, and seed
+`second-strategy-refresh-20260707T1930`. Output directory:
+`/tmp/alpaca-second-strategy-scan-20260707T1930Z`.
+
+Result:
+
+| candidate | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict |
+|---|---:|---:|---:|---:|---|---:|---:|---|
+| `orb` | 206 | 1.34 | 94.37 | 0.4581 | [-0.1903, 1.1620] | 0.0925 | 32.90 | `no-evidence` |
+| `momentum` | 153 | 1.40 | 87.93 | 0.5747 | [-0.2854, 1.5469] | 0.1065 | 23.71 | `no-evidence` |
+| `vwap_reversion` | 27 | 2.44 | 47.99 | 1.7774 | [-0.5823, 4.8183] | 0.0765 | 0.77 | `no-evidence` |
+| `bb_squeeze` | 67 | 1.16 | 12.90 | 0.1925 | [-0.5989, 1.0136] | 0.3190 | 5.37 | `no-evidence` |
+| `ema_pullback` | 138 | 0.94 | -9.96 | -0.0722 | [-0.6478, 0.4985] | 0.5930 | 20.59 | `no-evidence` |
+| `breakout` | 73 | 1.38 | 37.21 | 0.5097 | [-0.7720, 2.2740] | 0.2855 | 9.15 | `no-evidence` |
+| `failed_breakdown` | 43 | 1.16 | 9.66 | 0.2245 | [-0.8753, 1.3671] | 0.3595 | 3.65 | `no-evidence` |
+| `vwap_cross` | 131 | 0.83 | -34.08 | -0.2602 | [-1.0186, 0.5840] | 0.7275 | 22.54 | `no-evidence` |
+| `gap_and_go` | 22 | 1.07 | 2.22 | 0.1011 | [-1.3687, 1.7972] | 0.4600 | 0.12 | `no-evidence` |
+| `high_watermark` | 22 | 1.07 | 2.22 | 0.1011 | [-1.3687, 1.7972] | 0.4600 | 0.12 | `no-evidence` |
+
+Conclusion: no candidate earned a `positive-edge` prefilter row. `orb`,
+`momentum`, and `vwap_reversion` are the strongest rejected rows by confidence
+lower bound, but all still cross zero. Keep `PAPER_APPROVED_STRATEGIES` at
+`bull_flag`.

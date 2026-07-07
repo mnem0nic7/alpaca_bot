@@ -154,7 +154,7 @@ for raw in status_path.read_text().splitlines():
 def sort_key(item):
     candidate, status, _report, _stderr, audit_row = item
     if status != "passed" or audit_row is None:
-        return (3, float("-inf"), candidate)
+        return (3, 0.0, candidate)
     verdict_rank = {
         "positive-edge": 0,
         "no-evidence": 1,
@@ -162,7 +162,8 @@ def sort_key(item):
         "negative-edge": 2,
     }.get(audit_row.get("verdict"), 2)
     ci_low = audit_row.get("ci_low")
-    return (verdict_rank, float(ci_low) if ci_low is not None else float("-inf"), candidate)
+    ci_rank = -(float(ci_low) if ci_low is not None else float("-inf"))
+    return (verdict_rank, ci_rank, candidate)
 
 
 lines = [
@@ -187,11 +188,7 @@ for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
         if audit_row["ci_low"] is None or audit_row["ci_high"] is None
         else f"[{fmt(audit_row['ci_low'], '.4f')}, {fmt(audit_row['ci_high'], '.4f')}]"
     )
-    p_mean_le_zero = (
-        None
-        if audit_row["p_positive"] is None
-        else 1.0 - float(audit_row["p_positive"])
-    )
+    p_mean_le_zero = audit_row["p_positive"]
     lines.append(
         "| "
         f"`{candidate}` | `passed` | {audit_row['trades']} | "

@@ -269,6 +269,9 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "stock_disabled_candidate_names" in script
     assert "python3 -m alpaca_bot.replay.cli portfolio-basket-audit" in script
     assert '--confidence-scale "$candidate=$CANDIDATE_SCALE"' in script
+    assert "ci_rank = -" in script
+    assert 'p_mean_le_zero = audit_row["p_positive"]' in script
+    assert "1.0 - float(audit_row" not in script
     assert "PAPER_APPROVED_STRATEGIES" in script
     assert "is not approval to change" in script
 
