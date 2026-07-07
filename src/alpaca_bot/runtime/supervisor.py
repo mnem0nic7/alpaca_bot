@@ -75,6 +75,7 @@ from alpaca_bot.storage.models import OptionOrderRecord
 
 
 STREAM_HEARTBEAT_TIMEOUT_SECONDS = 300
+STREAM_HEARTBEAT_RESTART_INTERVAL_SECONDS = 1800
 STREAM_STOP_TIMEOUT_SECONDS = 1.0
 ACTIVE_ENTRY_STATUSES = (
     "pending_submit",
@@ -245,6 +246,7 @@ class RuntimeSupervisor:
         self._stream_restart_attempts: int = 0
         self._next_stream_restart_at: datetime | None = None
         self._last_stream_event_at: datetime | None = None
+        self._last_stream_heartbeat_restart_at: datetime | None = None
         self._stream_heartbeat_alerted: bool = False
         self._consecutive_cycle_failures: int = 0
         # Keyed by session_date (ET); populated on the first cycle of each day.
@@ -1463,10 +1465,9 @@ class RuntimeSupervisor:
                         and (self._stream_attached or self._stream_factory is not None)
                     ):
                         self._restart_stream_thread(timestamp=timestamp, reason="thread_missing")
-                    # Heartbeat staleness guard. A quiet market can produce no
-                    # trade updates for stretches, but once we have already
-                    # observed stream events this watchdog should actively
-                    # refresh the connection instead of only alerting.
+                    # Heartbeat staleness guard. Trade updates are event-driven, so
+                    # quiet periods can be normal; restart occasionally after stale
+                    # evidence, while avoiding five-minute reconnect churn.
                     _stream_thread_alive = (
                         self._stream_thread is not None and self._stream_thread.is_alive()
                     )
@@ -1476,6 +1477,15 @@ class RuntimeSupervisor:
                         and (timestamp - self._last_stream_event_at)
                         > timedelta(seconds=STREAM_HEARTBEAT_TIMEOUT_SECONDS)
                     ):
+                        heartbeat_restart_due = (
+                            self._last_stream_heartbeat_restart_at is None
+                            or (
+                                timestamp - self._last_stream_heartbeat_restart_at
+                            )
+                            >= timedelta(
+                                seconds=STREAM_HEARTBEAT_RESTART_INTERVAL_SECONDS
+                            )
+                        )
                         if not self._stream_heartbeat_alerted:
                             self._stream_heartbeat_alerted = True
                             logger.critical(
@@ -1505,6 +1515,8 @@ class RuntimeSupervisor:
                                     )
                                 except Exception:
                                     logger.exception("Notifier failed to send heartbeat stale alert")
+                        if heartbeat_restart_due:
+                            self._last_stream_heartbeat_restart_at = timestamp
                             self._restart_stream_thread(
                                 timestamp=timestamp,
                                 reason="heartbeat_stale",
@@ -3171,8 +3183,9 @@ class RuntimeSupervisor:
         )
         self._next_stream_restart_at = timestamp + timedelta(seconds=backoff_seconds)
         self._start_stream_thread(now=lambda: timestamp)
-        self._last_stream_event_at = timestamp
-        self._stream_heartbeat_alerted = False
+        if reason != "heartbeat_stale":
+            self._last_stream_event_at = timestamp
+            self._stream_heartbeat_alerted = False
         self._append_audit(
             AuditEvent(
                 event_type="trade_update_stream_restarted",
