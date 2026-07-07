@@ -2091,6 +2091,11 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
         '"maintenance_drained_symbols": '
         '"proof_current_execution_maintenance_drained_symbols"'
     ) in script
+    assert '"short_window_drained": "proof_current_execution_short_window_drained"' in script
+    assert (
+        '"short_window_drained_symbols": '
+        '"proof_current_execution_short_window_drained_symbols"'
+    ) in script
     assert '"short_window": "proof_current_execution_short_window"' in script
     assert (
         '"min_remaining_active_minutes": '
@@ -5789,11 +5794,16 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "posture_entry_fill_rate = (" in script
     assert "posture_entry_order_filled_count / posture_entry_order_count" in script
     assert "accepted_for_fill_count = max(" in script
-    assert "decision_accepted - entry_order_maintenance_drained_count" in script
+    assert (
+        "decision_accepted\n"
+        "    - entry_order_maintenance_drained_count\n"
+        "    - entry_order_short_window_drained_count"
+    ) in script
     assert "current_session_accepted_for_fill_count = max(" in script
     assert (
         "current_session_decision_accepted\n"
-        "    - current_session_entry_order_maintenance_drained_count"
+        "    - current_session_entry_order_maintenance_drained_count\n"
+        "    - current_session_entry_order_short_window_drained_count"
     ) in script
     assert "current_session_settled_accepted_for_fill_count = max(" in script
     assert (
@@ -5807,12 +5817,15 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "decision_capacity_rejected / decision_signal_fired" in script
     assert "COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'" in script
     assert "COALESCE(a.payload->>'reason', '') NOT LIKE 'deploy maintenance%%'" in script
+    assert "COALESCE(a.payload->>'reason', '') = 'short active dispatch window'" in script
+    assert "short_window_drained" in script
     assert ") AS strategy_expired" in script
     assert "AND NOT strategy_expired" in script
     assert "AND (strategy_expired OR status = 'expired')" in script
     assert ") AS expired_symbols" in script
     assert ") AS active_symbols" in script
     assert ") AS maintenance_drained_symbols" in script
+    assert ") AS short_window_drained_symbols" in script
     assert "entry_order_windows AS" in script
     assert "remaining_active_minutes" in script
     assert "AS short_window_entries" in script
@@ -6228,6 +6241,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "max_capacity_reject_rate={execution_max_capacity_reject_rate:.2f}" in script
     assert "entry_quality_rejected={decision_entry_quality_rejected}" in script
     assert "maintenance_drained={entry_order_maintenance_drained_count}" in script
+    assert "short_window_drained={entry_order_short_window_drained_count}" in script
     assert "entry_fill_rate={entry_order_fill_rate_text}" in script
     assert "current_posture_entry_fill_rate={posture_entry_fill_rate_text}" in script
     assert "current_posture_would_reject={posture_entry_quality_would_reject_count}" in script
@@ -6250,6 +6264,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "maintenance_drained={current_session_entry_order_maintenance_drained_count}"
         in script
     )
+    assert (
+        "short_window_drained="
+        "{current_session_entry_order_short_window_drained_count}"
+    ) in script
     assert "settled_entry_fill_rate={current_session_settled_entry_fill_rate_text}" in script
     assert "accepted_to_fill_rate={current_session_accepted_to_fill_rate_text}" in script
     assert "filled_symbols={current_session_entry_order_filled_symbols}" in script
@@ -6258,6 +6276,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert (
         "maintenance_drained_symbols="
         "{current_session_entry_order_maintenance_drained_symbols}"
+    ) in script
+    assert (
+        "short_window_drained_symbols="
+        "{current_session_entry_order_short_window_drained_symbols}"
     ) in script
     assert "short_window={current_session_entry_order_short_window_count}" in script
     assert (

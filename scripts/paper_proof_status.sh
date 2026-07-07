@@ -1508,6 +1508,7 @@ try:
         entry_order_rejected_count = 0
         entry_order_active_count = 0
         entry_order_maintenance_drained_count = 0
+        entry_order_short_window_drained_count = 0
         entry_order_filled_symbols = "none"
         posture_entry_order_count = 0
         posture_entry_order_filled_count = 0
@@ -1524,12 +1525,14 @@ try:
         current_session_entry_order_rejected_count = 0
         current_session_entry_order_active_count = 0
         current_session_entry_order_maintenance_drained_count = 0
+        current_session_entry_order_short_window_drained_count = 0
         current_session_entry_order_settled_count = 0
         current_session_entry_order_settled_filled_count = 0
         current_session_entry_order_filled_symbols = "none"
         current_session_entry_order_expired_symbols = "none"
         current_session_entry_order_active_symbols = "none"
         current_session_entry_order_maintenance_drained_symbols = "none"
+        current_session_entry_order_short_window_drained_symbols = "none"
         current_session_entry_order_short_window_count = 0
         current_session_entry_order_min_remaining_active_minutes = None
         current_session_entry_order_short_window_symbols = "none"
@@ -1602,7 +1605,15 @@ try:
                       FROM audit_events a
                       WHERE a.event_type = 'entry_order_expired_next_bar'
                         AND a.payload->>'client_order_id' = o.client_order_id
+                        AND COALESCE(a.payload->>'reason', '') = 'short active dispatch window'
+                    ) AS short_window_drained,
+                    EXISTS (
+                      SELECT 1
+                      FROM audit_events a
+                      WHERE a.event_type = 'entry_order_expired_next_bar'
+                        AND a.payload->>'client_order_id' = o.client_order_id
                         AND COALESCE(a.payload->>'reason', '') NOT LIKE 'deploy maintenance%%'
+                        AND COALESCE(a.payload->>'reason', '') <> 'short active dispatch window'
                     ) AS strategy_expired
                   FROM orders o
                   WHERE o.trading_mode = %s
@@ -1613,25 +1624,33 @@ try:
                     AND DATE(COALESCE(o.signal_timestamp, o.created_at) AT TIME ZONE %s) <= %s
                 )
                 SELECT
-                  COUNT(*) FILTER (WHERE NOT maintenance_drained)::int AS entry_orders,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained AND NOT short_window_drained
+                  )::int AS entry_orders,
                   COUNT(*) FILTER (
                     WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
                       AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
                   )::int AS filled_entries,
                   COUNT(*) FILTER (
                     WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
                       AND NOT strategy_expired
                       AND status = 'canceled'
                   )::int AS canceled_entries,
                   COUNT(*) FILTER (
                     WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
                       AND (strategy_expired OR status = 'expired')
                   )::int AS expired_entries,
                   COUNT(*) FILTER (
-                    WHERE NOT maintenance_drained AND status IN ('rejected', 'error')
+                    WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
+                      AND status IN ('rejected', 'error')
                   )::int AS rejected_entries,
                   COUNT(*) FILTER (
                     WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
                       AND status IN (
                       'pending_submit',
                       'submitting',
@@ -1651,9 +1670,12 @@ try:
                   )::int AS active_entries,
                   COUNT(*) FILTER (WHERE maintenance_drained)::int
                     AS maintenance_drained_entries,
+                  COUNT(*) FILTER (WHERE short_window_drained)::int
+                    AS short_window_drained_entries,
                   COALESCE(
                     string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
                       WHERE NOT maintenance_drained
+                        AND NOT short_window_drained
                         AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
                     ),
                     'none'
@@ -1681,7 +1703,10 @@ try:
                 entry_order_maintenance_drained_count = int(
                     execution_quality_row[6] or 0
                 )
-                entry_order_filled_symbols = execution_quality_row[7] or "none"
+                entry_order_short_window_drained_count = int(
+                    execution_quality_row[7] or 0
+                )
+                entry_order_filled_symbols = execution_quality_row[8] or "none"
 
             if (
                 settings.entry_min_close_to_entry_pct > -1.0
@@ -1848,7 +1873,15 @@ try:
                       FROM audit_events a
                       WHERE a.event_type = 'entry_order_expired_next_bar'
                         AND a.payload->>'client_order_id' = o.client_order_id
+                        AND COALESCE(a.payload->>'reason', '') = 'short active dispatch window'
+                    ) AS short_window_drained,
+                    EXISTS (
+                      SELECT 1
+                      FROM audit_events a
+                      WHERE a.event_type = 'entry_order_expired_next_bar'
+                        AND a.payload->>'client_order_id' = o.client_order_id
                         AND COALESCE(a.payload->>'reason', '') NOT LIKE 'deploy maintenance%%'
+                        AND COALESCE(a.payload->>'reason', '') <> 'short active dispatch window'
                     ) AS strategy_expired
                   FROM orders o
                   WHERE o.trading_mode = %s
@@ -1869,31 +1902,43 @@ try:
                   FROM entry_orders
                 )
                 SELECT
-                  COUNT(*) FILTER (WHERE NOT maintenance_drained)::int AS entry_orders,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained AND NOT short_window_drained
+                  )::int AS entry_orders,
                   COUNT(*) FILTER (
                     WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
                       AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
                   )::int AS filled_entries,
                   COUNT(*) FILTER (
                     WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
                       AND NOT strategy_expired
                       AND status = 'canceled'
                   )::int AS canceled_entries,
                   COUNT(*) FILTER (
                     WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
                       AND (strategy_expired OR status = 'expired')
                   )::int AS expired_entries,
                   COUNT(*) FILTER (
-                    WHERE NOT maintenance_drained AND status IN ('rejected', 'error')
+                    WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
+                      AND status IN ('rejected', 'error')
                   )::int AS rejected_entries,
                   COUNT(*) FILTER (
-                    WHERE NOT maintenance_drained AND status = ANY(%s)
+                    WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
+                      AND status = ANY(%s)
                   )::int AS active_entries,
                   COUNT(*) FILTER (
-                    WHERE NOT maintenance_drained AND status <> ALL(%s)
+                    WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
+                      AND status <> ALL(%s)
                   )::int AS settled_entries,
                   COUNT(*) FILTER (
                     WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
                       AND status <> ALL(%s)
                       AND (
                         status = 'filled'
@@ -1902,9 +1947,12 @@ try:
                   )::int AS settled_filled_entries,
                   COUNT(*) FILTER (WHERE maintenance_drained)::int
                     AS maintenance_drained_entries,
+                  COUNT(*) FILTER (WHERE short_window_drained)::int
+                    AS short_window_drained_entries,
                   COALESCE(
                     string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
                       WHERE NOT maintenance_drained
+                        AND NOT short_window_drained
                         AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
                     ),
                     'none'
@@ -1912,13 +1960,16 @@ try:
                   COALESCE(
                     string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
                       WHERE NOT maintenance_drained
+                        AND NOT short_window_drained
                         AND (strategy_expired OR status = 'expired')
                     ),
                     'none'
                   ) AS expired_symbols,
                   COALESCE(
                     string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
-                      WHERE NOT maintenance_drained AND status = ANY(%s)
+                      WHERE NOT maintenance_drained
+                        AND NOT short_window_drained
+                        AND status = ANY(%s)
                     ),
                     'none'
                   ) AS active_symbols,
@@ -1928,6 +1979,12 @@ try:
                     ),
                     'none'
                   ) AS maintenance_drained_symbols,
+                  COALESCE(
+                    string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                      WHERE short_window_drained
+                    ),
+                    'none'
+                  ) AS short_window_drained_symbols,
                   COUNT(*) FILTER (
                     WHERE NOT maintenance_drained
                       AND remaining_active_minutes IS NOT NULL
@@ -2000,27 +2057,33 @@ try:
                 current_session_entry_order_maintenance_drained_count = int(
                     current_session_execution_row[8] or 0
                 )
-                current_session_entry_order_filled_symbols = (
-                    current_session_execution_row[9] or "none"
+                current_session_entry_order_short_window_drained_count = int(
+                    current_session_execution_row[9] or 0
                 )
-                current_session_entry_order_expired_symbols = (
+                current_session_entry_order_filled_symbols = (
                     current_session_execution_row[10] or "none"
                 )
-                current_session_entry_order_active_symbols = (
+                current_session_entry_order_expired_symbols = (
                     current_session_execution_row[11] or "none"
                 )
-                current_session_entry_order_maintenance_drained_symbols = (
+                current_session_entry_order_active_symbols = (
                     current_session_execution_row[12] or "none"
                 )
-                current_session_entry_order_short_window_count = int(
-                    current_session_execution_row[13] or 0
+                current_session_entry_order_maintenance_drained_symbols = (
+                    current_session_execution_row[13] or "none"
                 )
-                if current_session_execution_row[14] is not None:
+                current_session_entry_order_short_window_drained_symbols = (
+                    current_session_execution_row[14] or "none"
+                )
+                current_session_entry_order_short_window_count = int(
+                    current_session_execution_row[15] or 0
+                )
+                if current_session_execution_row[16] is not None:
                     current_session_entry_order_min_remaining_active_minutes = float(
-                        current_session_execution_row[14]
+                        current_session_execution_row[16]
                     )
                 current_session_entry_order_short_window_symbols = (
-                    current_session_execution_row[15] or "none"
+                    current_session_execution_row[17] or "none"
                 )
 
         unpaired_filled_exit_count = 0
@@ -2516,7 +2579,9 @@ posture_entry_fill_rate = (
     else None
 )
 accepted_for_fill_count = max(
-    decision_accepted - entry_order_maintenance_drained_count,
+    decision_accepted
+    - entry_order_maintenance_drained_count
+    - entry_order_short_window_drained_count,
     0,
 )
 accepted_to_fill_rate = (
@@ -2542,7 +2607,8 @@ current_session_settled_entry_fill_rate = (
 )
 current_session_accepted_for_fill_count = max(
     current_session_decision_accepted
-    - current_session_entry_order_maintenance_drained_count,
+    - current_session_entry_order_maintenance_drained_count
+    - current_session_entry_order_short_window_drained_count,
     0,
 )
 current_session_settled_accepted_for_fill_count = max(
@@ -4067,6 +4133,7 @@ print(
     f"rejected={entry_order_rejected_count} "
     f"active={entry_order_active_count} "
     f"maintenance_drained={entry_order_maintenance_drained_count} "
+    f"short_window_drained={entry_order_short_window_drained_count} "
     f"entry_fill_rate={entry_order_fill_rate_text} "
     f"min_entry_fill_rate={execution_min_entry_fill_rate:.2f} "
     f"current_posture_entry_orders={posture_entry_order_count} "
@@ -4101,6 +4168,7 @@ print(
     f"rejected={current_session_entry_order_rejected_count} "
     f"active={current_session_entry_order_active_count} "
     f"maintenance_drained={current_session_entry_order_maintenance_drained_count} "
+    f"short_window_drained={current_session_entry_order_short_window_drained_count} "
     f"settled_entry_fill_rate={current_session_settled_entry_fill_rate_text} "
     f"entry_fill_rate={current_session_entry_order_fill_rate_text} "
     f"min_entry_fill_rate={execution_min_entry_fill_rate:.2f} "
@@ -4109,6 +4177,7 @@ print(
     f"expired_symbols={current_session_entry_order_expired_symbols} "
     f"active_symbols={current_session_entry_order_active_symbols} "
     f"maintenance_drained_symbols={current_session_entry_order_maintenance_drained_symbols} "
+    f"short_window_drained_symbols={current_session_entry_order_short_window_drained_symbols} "
     f"short_window={current_session_entry_order_short_window_count} "
     f"min_remaining_active_minutes={current_session_entry_order_min_remaining_active_minutes_text} "
     f"short_window_symbols={current_session_entry_order_short_window_symbols}"
