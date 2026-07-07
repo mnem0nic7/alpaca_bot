@@ -9,6 +9,7 @@ from alpaca_bot.domain.models import OptionContract
 from alpaca_bot.replay.option_snapshots import (
     OptionChainSnapshot,
     OptionChainSnapshotLedger,
+    PointInTimeOptionChains,
     append_option_chain_snapshot,
     load_option_chain_snapshot_ledger,
 )
@@ -100,6 +101,28 @@ def test_ledger_returns_latest_chain_at_or_before_timestamp():
     assert after[0].ask == pytest.approx(1.55)
 
 
+def test_ledger_returns_snapshot_symbols_at_or_before_timestamp():
+    first = OptionChainSnapshot(
+        cycle_at=datetime(2026, 7, 7, 14, 30, tzinfo=timezone.utc),
+        chains_by_symbol={"ACHR": (_contract(ask=1.35),)},
+    )
+    second = OptionChainSnapshot(
+        cycle_at=datetime(2026, 7, 7, 14, 45, tzinfo=timezone.utc),
+        chains_by_symbol={"ACHR": (_contract(ask=1.55),), "METC": ()},
+    )
+    ledger = OptionChainSnapshotLedger((first, second))
+
+    assert ledger.symbols_at_or_before(
+        as_of=datetime(2026, 7, 7, 14, 29, tzinfo=timezone.utc),
+    ) == ()
+    assert ledger.symbols_at_or_before(
+        as_of=datetime(2026, 7, 7, 14, 40, tzinfo=timezone.utc),
+    ) == ("ACHR",)
+    assert ledger.symbols_at_or_before(
+        as_of=datetime(2026, 7, 7, 14, 50, tzinfo=timezone.utc),
+    ) == ("ACHR", "METC")
+
+
 def test_ledger_returns_latest_contract_mark_at_or_before_timestamp():
     first = OptionChainSnapshot(
         cycle_at=datetime(2026, 7, 7, 14, 30, tzinfo=timezone.utc),
@@ -122,6 +145,46 @@ def test_ledger_returns_latest_contract_mark_at_or_before_timestamp():
         occ_symbol="MISSING260717C00010000",
         as_of=datetime(2026, 7, 7, 14, 50, tzinfo=timezone.utc),
     ) is None
+
+
+def test_point_in_time_option_chains_requires_as_of_before_use():
+    mapping = PointInTimeOptionChains(
+        OptionChainSnapshotLedger(
+            (
+                OptionChainSnapshot(
+                    cycle_at=datetime(2026, 7, 7, 14, 30, tzinfo=timezone.utc),
+                    chains_by_symbol={"ACHR": (_contract(),)},
+                ),
+            )
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="as_of must be set"):
+        mapping.get("ACHR", ())
+
+
+def test_point_in_time_option_chains_matches_factory_mapping_contract():
+    first = OptionChainSnapshot(
+        cycle_at=datetime(2026, 7, 7, 14, 30, tzinfo=timezone.utc),
+        chains_by_symbol={"ACHR": (_contract(ask=1.35),)},
+    )
+    second = OptionChainSnapshot(
+        cycle_at=datetime(2026, 7, 7, 14, 45, tzinfo=timezone.utc),
+        chains_by_symbol={"ACHR": (_contract(ask=1.55),), "METC": ()},
+    )
+    mapping = PointInTimeOptionChains(OptionChainSnapshotLedger((first, second)))
+
+    mapping.set_as_of(datetime(2026, 7, 7, 14, 40, tzinfo=timezone.utc))
+    assert list(mapping) == ["ACHR"]
+    assert len(mapping) == 1
+    assert mapping.get("achr", ())[0].ask == pytest.approx(1.35)
+    assert mapping.get("METC", ()) == ()
+
+    mapping.set_as_of(datetime(2026, 7, 7, 14, 50, tzinfo=timezone.utc))
+    assert list(mapping) == ["ACHR", "METC"]
+    assert len(mapping) == 2
+    assert mapping.get("ACHR", ())[0].ask == pytest.approx(1.55)
+    assert mapping.get("METC", ()) == ()
 
 
 def test_load_option_chain_snapshot_reports_file_and_line_for_bad_rows(tmp_path):

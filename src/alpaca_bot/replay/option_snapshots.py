@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from datetime import datetime, timezone
@@ -41,6 +41,12 @@ class OptionChainSnapshotLedger:
                 return snapshot.chains_by_symbol.get(symbol_key, ())
         return ()
 
+    def symbols_at_or_before(self, *, as_of: datetime) -> tuple[str, ...]:
+        snapshot = self.snapshot_at_or_before(as_of=as_of)
+        if snapshot is None:
+            return ()
+        return tuple(snapshot.chains_by_symbol)
+
     def contract_at_or_before(
         self,
         *,
@@ -57,6 +63,40 @@ class OptionChainSnapshotLedger:
                     if contract.occ_symbol.upper() == occ_key:
                         return contract
         return None
+
+    def snapshot_at_or_before(self, *, as_of: datetime) -> OptionChainSnapshot | None:
+        as_of_utc = _normalize_utc(as_of)
+        for snapshot in reversed(self.snapshots):
+            if snapshot.cycle_at <= as_of_utc:
+                return snapshot
+        return None
+
+
+@dataclass
+class PointInTimeOptionChains(Mapping[str, tuple[OptionContract, ...]]):
+    ledger: OptionChainSnapshotLedger
+    as_of: datetime | None = None
+
+    def set_as_of(self, as_of: datetime) -> None:
+        self.as_of = _normalize_utc(as_of)
+
+    def __getitem__(self, symbol: str) -> tuple[OptionContract, ...]:
+        as_of = self._require_as_of()
+        symbol_key = symbol.upper()
+        if symbol_key not in self.ledger.symbols_at_or_before(as_of=as_of):
+            raise KeyError(symbol)
+        return self.ledger.chain_at_or_before(symbol=symbol_key, as_of=as_of)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.ledger.symbols_at_or_before(as_of=self._require_as_of()))
+
+    def __len__(self) -> int:
+        return len(self.ledger.symbols_at_or_before(as_of=self._require_as_of()))
+
+    def _require_as_of(self) -> datetime:
+        if self.as_of is None:
+            raise RuntimeError("PointInTimeOptionChains.as_of must be set before use")
+        return self.as_of
 
 
 def append_option_chain_snapshot(
