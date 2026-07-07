@@ -1274,3 +1274,48 @@ replay. Long positions still tighten stops upward, while future short-equity
 replays tighten buy-stops downward. This does not approve or enable any
 bear/option strategy, but it removes a known stop-tracking trap before short-side
 diversification evidence can be trusted.
+
+### 2026-07-07 fillable-ranking K=1 refresh
+
+After live candidate selection was changed to prefer stop-limit entries that are
+still fillable from the signal-bar close under scarce capacity, the disabled
+stock basket universe was rerun under the live proof posture:
+
+```bash
+SECOND_STRATEGY_SAMPLE_SIZE=80 \
+SECOND_STRATEGY_SAMPLE_SEED=second-strategy-fillable-rank-refresh-20260707 \
+SECOND_STRATEGY_OUTPUT_DIR=/tmp/alpaca-second-strategy-fillable-rank-refresh-20260707 \
+scripts/second_strategy_basket_scan.sh
+```
+
+Run assumptions:
+
+- scenario directory: `/var/lib/alpaca-bot/nightly/scenarios`
+- base strategy: `bull_flag`
+- sample size: `80`
+- sample seed: `second-strategy-fillable-rank-refresh-20260707`
+- slippage: `2.0` bps/side
+- max open positions: `1`
+- candidate confidence scale: `0.25`
+- starting equity: `68991.94`
+
+Result:
+
+| candidate | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict |
+|---|---:|---:|---:|---:|---|---:|---:|---|
+| `momentum` | 316 | 1.16 | 75.35 | 0.2384 | [-0.3017, 0.8011] | 0.1875 | 51.96 | `no-evidence` |
+| `ema_pullback` | 287 | 1.15 | 59.66 | 0.2079 | [-0.3775, 0.8365] | 0.2590 | 60.29 | `no-evidence` |
+| `orb` | 390 | 1.03 | 18.70 | 0.0479 | [-0.4706, 0.5800] | 0.4500 | 56.95 | `no-evidence` |
+| `bb_squeeze` | 174 | 1.22 | 58.54 | 0.3364 | [-0.5258, 1.2614] | 0.2385 | 44.21 | `no-evidence` |
+| `vwap_cross` | 270 | 1.03 | 12.94 | 0.0479 | [-0.5616, 0.7559] | 0.4340 | 64.03 | `no-evidence` |
+| `breakout` | 200 | 1.09 | 27.28 | 0.1364 | [-0.6557, 1.0372] | 0.4040 | 38.46 | `no-evidence` |
+| `failed_breakdown` | 112 | 1.12 | 24.65 | 0.2201 | [-1.0619, 1.7114] | 0.3975 | 22.91 | `no-evidence` |
+| `high_watermark` | 47 | 1.48 | 44.12 | 0.9388 | [-1.4497, 4.2205] | 0.2775 | 11.64 | `no-evidence` |
+| `vwap_reversion` | 55 | 1.18 | 20.06 | 0.3648 | [-1.6614, 3.1546] | 0.4140 | 12.48 | `no-evidence` |
+| `gap_and_go` | 45 | 1.38 | 34.60 | 0.7688 | [-1.7625, 3.9145] | 0.3550 | 11.14 | `no-evidence` |
+
+Conclusion: the fillable-first ranking improved several K=1 basket rows, but
+no disabled stock strategy produced a positive-edge prefilter row. `momentum`
+and `ema_pullback` are the closest current research leads by CI lower bound,
+but both still cross zero. Do not change `PAPER_APPROVED_STRATEGIES`; it
+remains `bull_flag`.
