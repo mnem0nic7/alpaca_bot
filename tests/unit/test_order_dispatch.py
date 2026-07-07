@@ -225,7 +225,12 @@ def test_dispatch_pending_orders_submits_entry_and_stop_orders_and_persists_upda
     runtime = SimpleNamespace(order_store=order_store, audit_event_store=audit_store, connection=FakeConnection())
     broker = RecordingBroker()
 
-    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+    report = dispatch_pending_orders(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        now=now,
+    )
 
     assert order_store.find_pending_submit_calls == [(TradingMode.PAPER, "v1-breakout")]
     assert broker.entry_calls == [
@@ -570,7 +575,7 @@ def test_dispatch_records_error_status_on_broker_failure() -> None:
 def test_dispatch_marks_duplicate_entry_client_order_id_non_fatal() -> None:
     _, dispatch_pending_orders = load_order_dispatch_api()
     settings = make_settings()
-    now = datetime(2026, 6, 29, 16, 25, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 29, 16, 20, tzinfo=timezone.utc)
     entry_order = OrderRecord(
         client_order_id="bull_flag:v1-breakout:2026-06-29:CRWD:entry:2026-06-29T16:00:00+00:00",
         symbol="CRWD",
@@ -802,6 +807,54 @@ def test_dispatch_expires_pending_entry_after_next_bar_window() -> None:
     assert order_store.saved[0].client_order_id == stale_entry.client_order_id
     assert audit_store.appended[0].event_type == "entry_order_expired_next_bar"
     assert audit_store.appended[0].symbol == "AAPL"
+    assert report["submitted_count"] == 0
+
+
+def test_dispatch_expires_pending_entry_with_too_little_active_window_left() -> None:
+    """A late pending entry should not be submitted for only a few active minutes."""
+    _, dispatch_pending_orders = load_order_dispatch_api()
+    settings = make_settings()
+    signal_ts = datetime(2026, 4, 25, 14, 0, tzinfo=timezone.utc)
+    now = signal_ts + timedelta(minutes=27)
+    late_entry = OrderRecord(
+        client_order_id="paper:v1-breakout:AAPL:entry:short-window",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=10,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        created_at=signal_ts + timedelta(minutes=26),
+        updated_at=signal_ts + timedelta(minutes=26),
+        stop_price=101.0,
+        limit_price=101.5,
+        initial_stop_price=99.5,
+        signal_timestamp=signal_ts,
+    )
+    order_store = RecordingOrderStore([late_entry])
+    audit_store = RecordingAuditEventStore()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=audit_store,
+        connection=FakeConnection(),
+    )
+    broker = RecordingBroker()
+
+    report = dispatch_pending_orders(settings=settings, runtime=runtime, broker=broker, now=now)
+
+    assert broker.entry_calls == []
+    assert len(order_store.saved) == 1
+    assert order_store.saved[0].status == "expired"
+    assert order_store.saved[0].client_order_id == late_entry.client_order_id
+    assert audit_store.appended[0].event_type == "entry_order_expired_next_bar"
+    assert audit_store.appended[0].payload["reason"] == "short active dispatch window"
+    assert audit_store.appended[0].payload["remaining_active_seconds"] == pytest.approx(
+        180.0
+    )
+    assert audit_store.appended[0].payload["min_remaining_active_seconds"] == pytest.approx(
+        450.0
+    )
     assert report["submitted_count"] == 0
 
 

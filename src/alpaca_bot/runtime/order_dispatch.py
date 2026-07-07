@@ -358,6 +358,76 @@ def dispatch_pending_orders(
                             pass
                         raise
                 continue
+            remaining_active_window = expiry_at - timestamp_utc
+            min_remaining_active_window = timedelta(
+                minutes=(
+                    settings.entry_timeframe_minutes
+                    * settings.entry_order_active_bars
+                    * 0.5
+                )
+            )
+            if remaining_active_window < min_remaining_active_window:
+                logger.warning(
+                    "order_dispatch: expiring short-window entry order for %s "
+                    "(remaining active window %.1fs, minimum %.1fs)",
+                    order.symbol,
+                    remaining_active_window.total_seconds(),
+                    min_remaining_active_window.total_seconds(),
+                )
+                with lock_ctx:
+                    try:
+                        runtime.order_store.save(
+                            OrderRecord(
+                                client_order_id=order.client_order_id,
+                                symbol=order.symbol,
+                                side=order.side,
+                                intent_type=order.intent_type,
+                                status="expired",
+                                quantity=order.quantity,
+                                trading_mode=order.trading_mode,
+                                strategy_version=order.strategy_version,
+                                strategy_name=order.strategy_name,
+                                created_at=order.created_at,
+                                updated_at=timestamp,
+                                stop_price=order.stop_price,
+                                limit_price=order.limit_price,
+                                initial_stop_price=order.initial_stop_price,
+                                broker_order_id=order.broker_order_id,
+                                signal_timestamp=order.signal_timestamp,
+                            ),
+                            commit=False,
+                        )
+                        runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="entry_order_expired_next_bar",
+                                symbol=order.symbol,
+                                payload={
+                                    "client_order_id": order.client_order_id,
+                                    "broker_order_id": order.broker_order_id,
+                                    "reason": "short active dispatch window",
+                                    "signal_timestamp": sig_ts.isoformat(),
+                                    "age_seconds": age.total_seconds(),
+                                    "max_age_seconds": max_age.total_seconds(),
+                                    "remaining_active_seconds": (
+                                        remaining_active_window.total_seconds()
+                                    ),
+                                    "min_remaining_active_seconds": (
+                                        min_remaining_active_window.total_seconds()
+                                    ),
+                                    "timestamp": timestamp.isoformat(),
+                                },
+                                created_at=timestamp,
+                            ),
+                            commit=False,
+                        )
+                        runtime.connection.commit()
+                    except Exception:
+                        try:
+                            runtime.connection.rollback()
+                        except Exception:
+                            pass
+                        raise
+                continue
         # Expire pending stop orders from a prior trading day — they correspond to
         # positions that should have been flattened at EOD.  Submitting them now
         # would create a naked short against a position that no longer exists.
