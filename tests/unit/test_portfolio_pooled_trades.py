@@ -30,7 +30,7 @@ def _utc(h, mi):
 
 def _scn(symbol):
     intraday = [
-        _bar(symbol, _utc(14, 30), o=100, h=106, l=99, c=105, v=5000),
+        _bar(symbol, _utc(14, 30), o=100, h=106, l=99, c=100.5, v=5000),
         _bar(symbol, _utc(14, 45), o=100.5, h=107, l=100, c=106, v=5000),
         _bar(symbol, _utc(15, 0), o=106, h=108, l=80, c=107, v=5000),
     ]

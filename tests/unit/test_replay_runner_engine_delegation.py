@@ -273,7 +273,7 @@ def test_runner_emits_stop_hit_when_bar_low_crosses_stop_price() -> None:
             open=109.8,
             high=111.0,
             low=109.7,
-            close=110.8,
+            close=110.05,
             volume=2000,
         )
     )

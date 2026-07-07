@@ -299,7 +299,7 @@ def test_single_shared_equity_pool_not_per_symbol():
 
     def mk(symbol):
         intraday = [
-            _bar(symbol, t0, o=100, h=106, l=99, c=105, v=5000),
+            _bar(symbol, t0, o=100, h=106, l=99, c=100.5, v=5000),
             _bar(symbol, t1, o=100.5, h=107, l=100, c=106, v=5000),   # fills at 100.5
             _bar(symbol, t2, o=106, h=108, l=80, c=107, v=5000),       # stop hit (low 80)
         ]

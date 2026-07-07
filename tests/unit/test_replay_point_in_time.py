@@ -191,7 +191,7 @@ def _breakout_day(symbol: str, day_start_utc: datetime) -> list[Bar]:
     breakout_ts = t0 + timedelta(minutes=15 * 20)  # 15:00 ET, inside entry window
     bars.append(
         Bar(symbol=symbol, timestamp=breakout_ts,
-            open=100.4, high=102.0, low=100.3, close=101.8, volume=2_500_000)
+            open=100.4, high=102.0, low=100.3, close=100.55, volume=2_500_000)
     )
     bars.append(  # execution bar: opens above stop 100.51, below limit 100.61
         Bar(symbol=symbol, timestamp=breakout_ts + timedelta(minutes=15),

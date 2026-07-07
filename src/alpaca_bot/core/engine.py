@@ -1145,6 +1145,44 @@ def evaluate_cycle(
                         ))
                         continue
 
+                if (
+                    signal.option_contract is None
+                    and signal.limit_price > 0
+                    and signal.signal_bar.close > signal.limit_price
+                ):
+                    close_to_limit_pct = round(
+                        (signal.signal_bar.close / signal.limit_price) - 1,
+                        6,
+                    )
+                    _decision_records.append(DecisionRecord(
+                        cycle_at=now,
+                        symbol=symbol,
+                        strategy_name=strategy_name,
+                        trading_mode=_tm,
+                        strategy_version=_sv,
+                        decision="rejected",
+                        reject_stage="entry_quality",
+                        reject_reason="close_above_limit_price",
+                        entry_level=signal.entry_level,
+                        signal_bar_close=signal.signal_bar.close,
+                        relative_volume=signal.relative_volume,
+                        atr=None,
+                        stop_price=signal.stop_price,
+                        limit_price=signal.limit_price,
+                        initial_stop_price=signal.initial_stop_price,
+                        quantity=None,
+                        risk_per_share=None,
+                        equity=equity,
+                        filter_results={
+                            "close_to_limit_pct": close_to_limit_pct,
+                            "max_close_to_limit_pct": 0.0,
+                        },
+                        vix_close=_ctx_vix_close,
+                        vix_above_sma=_ctx_vix_above_sma,
+                        sector_passing_pct=_ctx_sector_passing_pct,
+                    ))
+                    continue
+
                 # VWAP entry filter: reject when signal bar close < session VWAP.
                 # Fail-open: None VWAP (empty bars) never blocks.
                 if settings.enable_vwap_entry_filter:
@@ -1290,13 +1328,9 @@ def evaluate_cycle(
                         signal.signal_bar.close,
                         signal.relative_volume,
                     )
-                    # Live orders are submitted after the signal bar closes; when
-                    # capacity is scarce, prefer candidates whose stop-limit is
-                    # still reachable from that close.
-                    is_immediately_fillable = signal.signal_bar.close <= signal.limit_price
                     entry_candidates.append(
                         (
-                            1 if is_immediately_fillable else 0,
+                            1,
                             round((signal.signal_bar.close / signal.entry_level) - 1, 6),
                             round(signal.relative_volume, 6),
                             CycleIntent(

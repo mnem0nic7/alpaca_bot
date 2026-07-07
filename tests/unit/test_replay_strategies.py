@@ -201,7 +201,7 @@ def test_high_watermark_happy_path_produces_entry_filled() -> None:
     """Signal fires when price exceeds 5-day high watermark; execution bar fills."""
     settings = make_settings()
     # completed_bars[-5:] = Jan 9–13, each high=102.0 → historical_high=102.0
-    # signal bar: high=103.5 and close=103.0 both exceed 102.0  ✓
+    # signal bar: high=103.5 and close=102.05 both exceed 102.0  ✓
     # relative_volume = 2000/1000 = 2.0 > 1.5  ✓
     # stop_price = round(102.0 + 0.01, 2) = 102.01 (anchored at historical_high)
     # execution bar open=102.01 == stop_price → fill at 102.01  ✓
@@ -211,7 +211,7 @@ def test_high_watermark_happy_path_produces_entry_filled() -> None:
         _bar("TSLA", 15, 30, open_=100.4,  high=100.9,  low=100.2,  close=100.6, volume=1000),
         _bar("TSLA", 15, 45, open_=100.6,  high=101.2,  low=100.4,  close=101.0, volume=1000),
         _bar("TSLA", 16, 0,  open_=101.0,  high=101.5,  low=100.8,  close=101.2, volume=1000),
-        _bar("TSLA", 16, 15, open_=102.0,  high=103.5,  low=101.8,  close=103.0, volume=2000),
+        _bar("TSLA", 16, 15, open_=102.0,  high=103.5,  low=101.8,  close=102.05, volume=2000),
         _bar("TSLA", 16, 30, open_=102.01, high=104.0,  low=101.5,  close=103.5, volume=1500),
     ]
     scenario = ReplayScenario(

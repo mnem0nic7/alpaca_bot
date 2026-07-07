@@ -90,7 +90,7 @@ def make_breakout_intraday_bars(symbol: str = "AAPL") -> list[Bar]:
             open=109.8,
             high=111.0,
             low=109.7,
-            close=110.8,
+            close=110.05,
             volume=2000,
         )
     )
@@ -287,7 +287,7 @@ def test_evaluate_cycle_allows_signal_at_maximum_close_to_entry_level() -> None:
             entry_level=100.0,
             relative_volume=2.0,
             stop_price=100.0,
-            limit_price=100.1,
+            limit_price=100.6,
             initial_stop_price=98.0,
         ),
     )
@@ -305,7 +305,54 @@ def test_evaluate_cycle_allows_signal_at_maximum_close_to_entry_level() -> None:
     }
 
 
-def test_evaluate_cycle_prefers_fillable_entry_candidate_when_capacity_limited() -> None:
+def test_evaluate_cycle_rejects_equity_signal_close_above_limit_price() -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    signal_bar = Bar(
+        symbol="AAPL",
+        timestamp=datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc),
+        open=100.8,
+        high=102.0,
+        low=100.6,
+        close=101.0,
+        volume=5_000,
+    )
+
+    result = evaluate_cycle(
+        settings=make_settings(),
+        now=signal_bar.timestamp,
+        equity=100000.0,
+        intraday_bars_by_symbol={"AAPL": [signal_bar]},
+        daily_bars_by_symbol={"AAPL": make_daily_bars()},
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=lambda **kwargs: EntrySignal(
+            symbol="AAPL",
+            signal_bar=kwargs["intraday_bars"][kwargs["signal_index"]],
+            entry_level=100.0,
+            relative_volume=2.0,
+            stop_price=100.0,
+            limit_price=100.1,
+            initial_stop_price=98.0,
+        ),
+    )
+
+    assert all(intent.intent_type is not CycleIntentType.ENTRY for intent in result.intents)
+    rejections = [
+        record
+        for record in result.decision_records
+        if record.reject_stage == "entry_quality"
+        and record.reject_reason == "close_above_limit_price"
+    ]
+    assert len(rejections) == 1
+    assert rejections[0].filter_results == {
+        "close_to_limit_pct": 0.008991,
+        "max_close_to_limit_pct": 0.0,
+    }
+
+
+def test_evaluate_cycle_rejects_unfillable_entry_candidate_before_capacity() -> None:
     CycleIntentType, evaluate_cycle = load_engine_api()
     now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
 
@@ -379,11 +426,14 @@ def test_evaluate_cycle_prefers_fillable_entry_candidate_when_capacity_limited()
     accepted_records = [
         record for record in result.decision_records if record.decision == "accepted"
     ]
-    capacity_records = [
-        record for record in result.decision_records if record.reject_stage == "capacity"
+    entry_quality_records = [
+        record
+        for record in result.decision_records
+        if record.reject_stage == "entry_quality"
+        and record.reject_reason == "close_above_limit_price"
     ]
     assert [record.symbol for record in accepted_records] == ["MSFT"]
-    assert [record.symbol for record in capacity_records] == ["AAPL"]
+    assert [record.symbol for record in entry_quality_records] == ["AAPL"]
 
 
 def test_evaluate_cycle_allows_entry_when_next_bar_starts_before_flatten() -> None:

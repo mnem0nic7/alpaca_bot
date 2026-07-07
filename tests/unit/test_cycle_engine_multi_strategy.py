@@ -127,7 +127,7 @@ def test_run_cycle_writes_order_with_strategy_name():
             entry_level=100.0,
             relative_volume=3.0,
             stop_price=99.5,
-            limit_price=99.6,
+            limit_price=104.1,
             initial_stop_price=98.0,
         )
 

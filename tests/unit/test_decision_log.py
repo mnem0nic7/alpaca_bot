@@ -415,7 +415,7 @@ def test_evaluate_cycle_accepted_entry_emits_accepted_record() -> None:
             entry_level=150.0,
             relative_volume=2.5,
             stop_price=148.0,
-            limit_price=151.0,
+            limit_price=155.1,
             initial_stop_price=148.0,
         )
 
@@ -438,7 +438,7 @@ def test_evaluate_cycle_accepted_entry_emits_accepted_record() -> None:
     assert rec.symbol == "AAPL"
     assert rec.entry_level == 150.0
     assert rec.relative_volume == 2.5
-    assert rec.limit_price == 151.0
+    assert rec.limit_price == 155.1
     assert rec.quantity is not None and rec.quantity > 0
 
 
