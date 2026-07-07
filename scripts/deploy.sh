@@ -11,6 +11,9 @@ DEPLOY_READINESS_REFRESH_RETRIES="${DEPLOY_READINESS_REFRESH_RETRIES:-10}"
 DEPLOY_READINESS_REFRESH_RETRY_SECONDS="${DEPLOY_READINESS_REFRESH_RETRY_SECONDS:-20}"
 DEPLOY_PREFLIGHT_EXPOSURE_RETRIES="${DEPLOY_PREFLIGHT_EXPOSURE_RETRIES:-1}"
 DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS="${DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS:-30}"
+DEPLOY_DRAIN_PAPER_ENTRIES="${DEPLOY_DRAIN_PAPER_ENTRIES:-true}"
+DEPLOY_MAINTENANCE_REASON="${DEPLOY_MAINTENANCE_REASON:-deploy maintenance drain}"
+deploy_resume_after_drain=false
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file: $ENV_FILE" >&2
@@ -157,6 +160,13 @@ load_deploy_ops_expected_trading_status() {
       printf 'close_only\n'
       return
     fi
+  fi
+  if [[ "$status_line" == *"status=close_only"* \
+    && "$status_line" == *"kill_switch=false"* \
+    && "$status_line" == *"reason=${DEPLOY_MAINTENANCE_REASON}"* ]]; then
+    echo "deploy ops check accepting paper deploy maintenance drain: $status_line" >&2
+    printf 'close_only\n'
+    return
   fi
 
   printf 'enabled\n'
@@ -331,6 +341,57 @@ deploy_paper_exposure_safe() {
     || "$exposure_line" == *" status=protected issues=none "* ]]
 }
 
+start_deploy_paper_drain() {
+  local status_line
+
+  if [[ "${DEPLOY_DRAIN_PAPER_ENTRIES,,}" != "true" ]]; then
+    return 0
+  fi
+
+  status_line="$(load_deploy_trading_status_line)"
+  if [[ "$status_line" == *"status=enabled"* \
+    && "$status_line" == *"kill_switch=false"* ]]; then
+    "${compose[@]}" run -T --rm admin close-only \
+      --mode "${TRADING_MODE}" \
+      --strategy-version "${STRATEGY_VERSION}" \
+      --reason "$DEPLOY_MAINTENANCE_REASON" \
+      >/dev/null
+    deploy_resume_after_drain=true
+    echo "deploy set paper trading close-only for maintenance drain" >&2
+    return 0
+  fi
+
+  echo "deploy leaving existing trading status unchanged before drain: $status_line" >&2
+}
+
+finish_deploy_paper_drain() {
+  if [[ "$deploy_resume_after_drain" != "true" ]]; then
+    return 0
+  fi
+
+  "${compose[@]}" run -T --rm admin resume \
+    --mode "${TRADING_MODE}" \
+    --strategy-version "${STRATEGY_VERSION}" \
+    --reason "deploy maintenance complete" \
+    >/dev/null
+  deploy_resume_after_drain=false
+  echo "deploy resumed paper trading after maintenance drain" >&2
+}
+
+restore_deploy_paper_drain_on_exit() {
+  if [[ "$deploy_resume_after_drain" != "true" ]]; then
+    return 0
+  fi
+
+  "${compose[@]}" run -T --rm admin resume \
+    --mode "${TRADING_MODE}" \
+    --strategy-version "${STRATEGY_VERSION}" \
+    --reason "deploy maintenance aborted" \
+    >/dev/null 2>&1 || true
+  deploy_resume_after_drain=false
+  echo "deploy restored paper trading after aborted maintenance drain" >&2
+}
+
 verify_deploy_preflight_paper_exposure() {
   local attempt
   local exposure_line
@@ -458,6 +519,13 @@ case "${DEPLOY_REQUIRE_DECISION_DRY_RUN,,}" in
     exit 1
     ;;
 esac
+case "${DEPLOY_DRAIN_PAPER_ENTRIES,,}" in
+  true|false) ;;
+  *)
+    echo "DEPLOY_DRAIN_PAPER_ENTRIES must be true or false" >&2
+    exit 1
+    ;;
+esac
 if [[ ! "$DEPLOY_DECISION_DRY_RUN_STRATEGY" =~ ^[A-Za-z0-9_:-]+$ ]]; then
   echo "DEPLOY_DECISION_DRY_RUN_STRATEGY contains unsupported characters" >&2
   exit 1
@@ -502,6 +570,8 @@ if [[ ! "$DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+trap restore_deploy_paper_drain_on_exit EXIT
+
 "${compose[@]}" build supervisor web migrate admin
 "${compose[@]}" up -d postgres
 "${compose[@]}" run --rm migrate
@@ -509,12 +579,15 @@ fi
 
 if credentials_ready; then
   if paper_proof_enabled; then
+    start_deploy_paper_drain
     verify_deploy_preflight_paper_exposure
   fi
   remove_supervisor_container
   "${compose[@]}" up -d --force-recreate supervisor
   run_deploy_ops_check
   if paper_proof_enabled; then
+    finish_deploy_paper_drain
+    run_deploy_ops_check
     refresh_paper_readiness
   fi
 else

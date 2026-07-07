@@ -227,6 +227,11 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
         'DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS="${DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS:-30}"'
         in deploy_text
     )
+    assert 'DEPLOY_DRAIN_PAPER_ENTRIES="${DEPLOY_DRAIN_PAPER_ENTRIES:-true}"' in deploy_text
+    assert (
+        'DEPLOY_MAINTENANCE_REASON="${DEPLOY_MAINTENANCE_REASON:-deploy maintenance drain}"'
+        in deploy_text
+    )
     assert "DEPLOY_READINESS_REFRESH_RETRIES must be a positive integer" in deploy_text
     assert (
         "DEPLOY_READINESS_REFRESH_RETRY_SECONDS must be a non-negative integer"
@@ -237,6 +242,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
         "DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS must be a non-negative integer"
         in deploy_text
     )
+    assert "DEPLOY_DRAIN_PAPER_ENTRIES must be true or false" in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_STRATEGY="${DEPLOY_DECISION_DRY_RUN_STRATEGY:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}}"' in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_STRATEGIES="${DEPLOY_DECISION_DRY_RUN_STRATEGIES:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$DEPLOY_DECISION_DRY_RUN_STRATEGY}}}"' in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_MIN_RECORDS="${DEPLOY_DECISION_DRY_RUN_MIN_RECORDS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}}"' in deploy_text
@@ -300,7 +306,14 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "deploy_paper_proof_status_ready()" in deploy_text
     assert "deploy_accepts_protected_paper_exposure()" in deploy_text
     assert "deploy_paper_exposure_safe()" in deploy_text
+    assert "start_deploy_paper_drain()" in deploy_text
+    assert "finish_deploy_paper_drain()" in deploy_text
+    assert "restore_deploy_paper_drain_on_exit()" in deploy_text
     assert "verify_deploy_preflight_paper_exposure()" in deploy_text
+    assert "deploy ops check accepting paper deploy maintenance drain" in deploy_text
+    assert "deploy set paper trading close-only for maintenance drain" in deploy_text
+    assert "deploy resumed paper trading after maintenance drain" in deploy_text
+    assert "deploy restored paper trading after aborted maintenance drain" in deploy_text
     assert "deploy preflight failed: paper exposure is not flat or protected" in deploy_text
     assert "deploy preflight waiting for paper exposure to become flat/protected" in deploy_text
     assert "deploy accepting protected paper exposure after deploy" in deploy_text
@@ -322,9 +335,33 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert deploy_text.count("verify_paper_proof_ready") >= 3
     assert (
         "if paper_proof_enabled; then\n"
+        "    start_deploy_paper_drain\n"
         "    verify_deploy_preflight_paper_exposure\n"
         "  fi\n"
         "  remove_supervisor_container"
+    ) in deploy_text
+    assert (
+        "if paper_proof_enabled; then\n"
+        "    finish_deploy_paper_drain\n"
+        "    run_deploy_ops_check\n"
+        "    refresh_paper_readiness\n"
+        "  fi"
+    ) in deploy_text
+    assert (
+        "trap restore_deploy_paper_drain_on_exit EXIT"
+    ) in deploy_text
+    assert (
+        "run_deploy_ops_check\n"
+        "  if paper_proof_enabled; then\n"
+        "    finish_deploy_paper_drain"
+    ) in deploy_text
+    assert (
+        "finish_deploy_paper_drain\n"
+        "    run_deploy_ops_check"
+    ) in deploy_text
+    assert (
+        "start_deploy_paper_drain\n"
+        "    verify_deploy_preflight_paper_exposure\n"
     ) in deploy_text
     assert deploy_text.index("verify_paper_decision_dry_run") < deploy_text.rindex("verify_paper_proof_ready")
     assert "${proof_summary:-missing summary}" in deploy_text
@@ -379,6 +416,37 @@ def _run_deploy_exposure_safe(tmp_path: Path, proof_output: str) -> str:
     return result.stdout
 
 
+def _run_deploy_expected_trading_status(tmp_path: Path, status_line: str) -> str:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("")
+    env = os.environ.copy()
+    env.update(
+        {
+            "ENV_FILE": str(env_file),
+            "STATUS_LINE": status_line,
+            "TRADING_MODE": "paper",
+            "PAPER_PROOF_FREEZE": "true",
+        }
+    )
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                'DEPLOY_SH_SOURCE_ONLY=true source scripts/deploy.sh "$ENV_FILE"; '
+                'load_deploy_trading_status_line() { printf "%s\\n" "$STATUS_LINE"; }; '
+                "load_deploy_ops_expected_trading_status"
+            ),
+        ],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.strip()
+
+
 def test_deploy_accepts_protected_paper_exposure_after_restart(tmp_path: Path) -> None:
     proof_output = "\n".join(
         [
@@ -407,6 +475,15 @@ def test_deploy_rejects_unprotected_paper_exposure_after_restart(tmp_path: Path)
 
     assert _run_deploy_proof_status_ready(tmp_path, proof_output) == "blocked"
     assert _run_deploy_exposure_safe(tmp_path, proof_output) == "blocked"
+
+
+def test_deploy_ops_check_accepts_maintenance_drain_status(tmp_path: Path) -> None:
+    status_line = (
+        "mode=paper strategy=v1-breakout status=close_only kill_switch=false "
+        "reason=deploy maintenance drain updated_at=2026-07-07T17:30:00+00:00"
+    )
+
+    assert _run_deploy_expected_trading_status(tmp_path, status_line) == "close_only"
 
 
 def test_deploy_preflight_rejects_active_entry_orders(tmp_path: Path) -> None:
