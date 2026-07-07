@@ -356,6 +356,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
 from alpaca_bot.config import Settings, TradingMode
+from alpaca_bot.domain import CAPACITY_SENTINEL_SYMBOL
 from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
 from alpaca_bot.storage.db import connect_postgres
 from alpaca_bot.storage.repositories import OrderStore
@@ -1561,7 +1562,8 @@ try:
                 SELECT
                   COALESCE(SUM(w), 0)::int AS evaluated,
                   COALESCE(SUM(w) FILTER (
-                    WHERE decision NOT IN (
+                    WHERE symbol <> %s
+                      AND decision NOT IN (
                       'skipped_existing_position',
                       'skipped_already_traded',
                       'skipped_no_signal'
@@ -1570,12 +1572,16 @@ try:
                       AND reject_stage IS DISTINCT FROM 'stale_data'
                   ), 0)::int AS signal_fired,
                   COALESCE(SUM(w) FILTER (WHERE decision = 'accepted'), 0)::int AS accepted,
-                  COALESCE(SUM(w) FILTER (WHERE reject_stage = 'capacity'), 0)::int AS capacity_rejected,
+                  COALESCE(SUM(w) FILTER (
+                    WHERE reject_stage = 'capacity'
+                      AND symbol <> %s
+                  ), 0)::int AS capacity_rejected,
                   COALESCE(SUM(w) FILTER (WHERE reject_stage = 'entry_quality'), 0)::int AS entry_quality_rejected,
                   COALESCE(SUM(w) FILTER (WHERE reject_stage = 'vwap_filter'), 0)::int AS vwap_rejected,
                   COALESCE(SUM(w) FILTER (WHERE reject_stage = 'sizing'), 0)::int AS sizing_rejected
                 FROM (
                   SELECT
+                    symbol,
                     decision,
                     reject_stage,
                     COALESCE((filter_results->>'blocked_symbol_count')::int, 1) AS w
@@ -1588,6 +1594,8 @@ try:
                 ) weighted
                 """,
                 (
+                    CAPACITY_SENTINEL_SYMBOL,
+                    CAPACITY_SENTINEL_SYMBOL,
                     trading_mode.value,
                     strategy_version,
                     proof_strategy_names,
@@ -1830,7 +1838,8 @@ try:
                 SELECT
                   COALESCE(SUM(w), 0)::int AS evaluated,
                   COALESCE(SUM(w) FILTER (
-                    WHERE decision NOT IN (
+                    WHERE symbol <> %s
+                      AND decision NOT IN (
                       'skipped_existing_position',
                       'skipped_already_traded',
                       'skipped_no_signal'
@@ -1839,9 +1848,13 @@ try:
                       AND reject_stage IS DISTINCT FROM 'stale_data'
                   ), 0)::int AS signal_fired,
                   COALESCE(SUM(w) FILTER (WHERE decision = 'accepted'), 0)::int AS accepted,
-                  COALESCE(SUM(w) FILTER (WHERE reject_stage = 'capacity'), 0)::int AS capacity_rejected
+                  COALESCE(SUM(w) FILTER (
+                    WHERE reject_stage = 'capacity'
+                      AND symbol <> %s
+                  ), 0)::int AS capacity_rejected
                 FROM (
                   SELECT
+                    symbol,
                     decision,
                     reject_stage,
                     COALESCE((filter_results->>'blocked_symbol_count')::int, 1) AS w
@@ -1853,6 +1866,8 @@ try:
                 ) weighted
                 """,
                 (
+                    CAPACITY_SENTINEL_SYMBOL,
+                    CAPACITY_SENTINEL_SYMBOL,
                     trading_mode.value,
                     strategy_version,
                     proof_strategy_names,
@@ -2117,7 +2132,8 @@ try:
                     SELECT
                       COALESCE(SUM(w), 0)::int AS evaluated,
                       COALESCE(SUM(w) FILTER (
-                        WHERE decision NOT IN (
+                        WHERE symbol <> %s
+                          AND decision NOT IN (
                           'skipped_existing_position',
                           'skipped_already_traded',
                           'skipped_no_signal'
@@ -2126,9 +2142,13 @@ try:
                           AND reject_stage IS DISTINCT FROM 'stale_data'
                       ), 0)::int AS signal_fired,
                       COALESCE(SUM(w) FILTER (WHERE decision = 'accepted'), 0)::int AS accepted,
-                      COALESCE(SUM(w) FILTER (WHERE reject_stage = 'capacity'), 0)::int AS capacity_rejected
+                      COALESCE(SUM(w) FILTER (
+                        WHERE reject_stage = 'capacity'
+                          AND symbol <> %s
+                      ), 0)::int AS capacity_rejected
                     FROM (
                       SELECT
+                        symbol,
                         decision,
                         reject_stage,
                         COALESCE((filter_results->>'blocked_symbol_count')::int, 1) AS w
@@ -2141,6 +2161,8 @@ try:
                     ) weighted
                     """,
                     (
+                        CAPACITY_SENTINEL_SYMBOL,
+                        CAPACITY_SENTINEL_SYMBOL,
                         trading_mode.value,
                         strategy_version,
                         proof_strategy_names,

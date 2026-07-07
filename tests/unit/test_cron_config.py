@@ -6432,6 +6432,25 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "latest_market_date" not in script
 
 
+def test_paper_proof_status_execution_quality_excludes_capacity_sentinel() -> None:
+    script = Path("scripts/paper_proof_status.sh").read_text()
+
+    assert "from alpaca_bot.domain import CAPACITY_SENTINEL_SYMBOL" in script
+    assert "symbol <> %s" in script
+    assert script.count("CAPACITY_SENTINEL_SYMBOL,") >= 6
+    assert script.count("COALESCE(SUM(w) FILTER (\n                    WHERE symbol <> %s") >= 2
+    assert (
+        "COALESCE(SUM(w) FILTER (\n"
+        "                    WHERE reject_stage = 'capacity'\n"
+        "                      AND symbol <> %s"
+    ) in script
+    assert (
+        "COALESCE(SUM(w) FILTER (\n"
+        "                        WHERE reject_stage = 'capacity'\n"
+        "                          AND symbol <> %s"
+    ) in script
+
+
 def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     script = Path("scripts/paper_decision_dry_run.sh").read_text()
 
