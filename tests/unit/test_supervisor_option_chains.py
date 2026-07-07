@@ -142,8 +142,8 @@ def test_option_chain_fetch_uses_option_chain_symbols_not_full_watchlist():
     assert "SLS" not in adapter.fetched, "SLS not in OPTION_CHAIN_SYMBOLS — must not be fetched"
 
 
-def test_option_chain_fetch_skipped_when_options_trading_disabled():
-    """Stock-only paper proof must not fetch option chains even if an adapter is injected."""
+def test_option_chain_fetch_skipped_when_options_trading_disabled_without_snapshots():
+    """Stock-only paper proof must not fetch option chains by default."""
     audit_store = RecordingAuditStore()
     adapter = RecordingOptionChainAdapter()
     supervisor = _make_supervisor(
@@ -158,6 +158,51 @@ def test_option_chain_fetch_skipped_when_options_trading_disabled():
         e for e in audit_store.events
         if e.event_type == "option_chains_fetched"
     ]
+
+
+def test_option_chain_snapshot_records_when_options_trading_disabled(tmp_path):
+    """Snapshot-only observation must not require option trading to be enabled."""
+    audit_store = RecordingAuditStore()
+    contract = OptionContract(
+        occ_symbol="ACHR260717C00010000",
+        underlying="ACHR",
+        option_type="call",
+        strike=10.0,
+        expiry=date(2026, 7, 17),
+        bid=1.2,
+        ask=1.35,
+        delta=0.52,
+        open_interest=240,
+    )
+    adapter = RecordingOptionChainAdapter(
+        chains_by_symbol={"ACHR": [contract]},
+    )
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        audit_store=audit_store,
+        extra_env={
+            "ENABLE_OPTIONS_TRADING": "false",
+            "OPTION_CHAIN_SYMBOLS": "ACHR,METC",
+            "OPTION_CHAIN_SNAPSHOT_DIR": str(tmp_path),
+        },
+    )
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert set(adapter.fetched) == {"ACHR", "METC"}
+    assert [
+        e for e in audit_store.events
+        if e.event_type == "option_chains_fetched"
+    ]
+    assert [
+        e for e in audit_store.events
+        if e.event_type == "option_chain_snapshot_recorded"
+    ]
+    assert not [
+        e for e in audit_store.events
+        if e.event_type == "option_entry_intent_created"
+    ]
+    assert sorted(tmp_path.glob("option-chain-snapshots-*.jsonl"))
 
 
 def test_option_chain_fetch_symbol_not_in_bars_is_skipped():

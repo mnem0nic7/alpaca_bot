@@ -790,14 +790,56 @@ def test_runtime_supervisor_from_settings_wires_option_adapters_when_enabled(mon
 
     monkeypatch.setattr(module, "bootstrap_runtime", lambda s: runtime)
     monkeypatch.setattr(module.AlpacaBroker, "from_settings", lambda s: broker)
-    monkeypatch.setattr(module.AlpacaMarketDataAdapter, "from_settings", lambda s: market_data)
-    monkeypatch.setattr(module.AlpacaTradingStreamAdapter, "from_settings", lambda s: stream)
+    monkeypatch.setattr(
+        module.AlpacaMarketDataAdapter,
+        "from_settings",
+        lambda s: market_data,
+    )
+    monkeypatch.setattr(
+        module.AlpacaTradingStreamAdapter,
+        "from_settings",
+        lambda s: stream,
+    )
     monkeypatch.setattr(module.AlpacaOptionChainAdapter, "from_settings", lambda s: fake_chain_adapter)
 
     supervisor = RuntimeSupervisor.from_settings(settings)
 
     assert supervisor._option_chain_adapter is fake_chain_adapter
     assert supervisor._option_broker is broker
+
+
+def test_runtime_supervisor_from_settings_wires_snapshot_only_option_chain_adapter(
+    monkeypatch,
+) -> None:
+    """Observation snapshots fetch chains without enabling option order routing."""
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings(
+        {
+            "ENABLE_OPTIONS_TRADING": "false",
+            "OPTION_CHAIN_SYMBOLS": "AAPL,MSFT",
+            "OPTION_CHAIN_SNAPSHOT_DIR": "/data/option-chain-snapshots",
+        }
+    )
+    runtime = make_runtime_context(settings)
+    broker = FakeBroker()
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    stream = FakeStream()
+    fake_chain_adapter = object()
+
+    monkeypatch.setattr(module, "bootstrap_runtime", lambda s: runtime)
+    monkeypatch.setattr(module.AlpacaBroker, "from_settings", lambda s: broker)
+    monkeypatch.setattr(module.AlpacaMarketDataAdapter, "from_settings", lambda s: market_data)
+    monkeypatch.setattr(module.AlpacaTradingStreamAdapter, "from_settings", lambda s: stream)
+    monkeypatch.setattr(
+        module.AlpacaOptionChainAdapter,
+        "from_settings",
+        lambda s: fake_chain_adapter,
+    )
+
+    supervisor = RuntimeSupervisor.from_settings(settings)
+
+    assert supervisor._option_chain_adapter is fake_chain_adapter
+    assert supervisor._option_broker is None
 
 
 def test_runtime_supervisor_startup_runs_reconciliation_syncs_positions_and_attaches_stream(

@@ -299,14 +299,23 @@ class RuntimeSupervisor:
         runtime.settings = settings
         option_chain_adapter = None
         option_broker = None
-        if settings.enable_options_trading:
+        option_snapshot_observation_enabled = bool(
+            settings.option_chain_snapshot_dir and settings.option_chain_symbols
+        )
+        if settings.enable_options_trading or option_snapshot_observation_enabled:
             option_chain_adapter = AlpacaOptionChainAdapter.from_settings(settings)
+        if settings.enable_options_trading:
             option_broker = broker
             if not settings.option_chain_symbols:
                 logger.warning(
                     "ENABLE_OPTIONS_TRADING=true but OPTION_CHAIN_SYMBOLS is empty"
                     " — option strategies will be disabled this session"
                 )
+        elif settings.option_chain_snapshot_dir and not settings.option_chain_symbols:
+            logger.warning(
+                "OPTION_CHAIN_SNAPSHOT_DIR is configured but OPTION_CHAIN_SYMBOLS is empty"
+                " — option-chain snapshots will be empty"
+            )
         return cls(
             settings=settings,
             runtime=runtime,
@@ -965,12 +974,23 @@ class RuntimeSupervisor:
         # Resolve registered strategies (breakout, etc.)
         active_strategies = list(self._resolve_active_strategies())
 
-        # Fetch option chains and append option strategies when adapter is configured.
+        # Fetch option chains when options are tradable or observation snapshots
+        # are configured. Option strategies themselves remain gated by
+        # ENABLE_OPTIONS_TRADING below.
         # breakout_calls is NOT in STRATEGY_REGISTRY — it is a factory that closes over chains.
         option_chains_by_symbol: dict = {}
         option_order_store = getattr(self.runtime, "option_order_store", None)
         self._check_option_strategy_circuit_breakers(session_date=session_date, now=timestamp)
-        if self.settings.enable_options_trading and self._option_chain_adapter is not None:
+        option_chain_observation_enabled = bool(self.settings.option_chain_snapshot_dir)
+        should_fetch_option_chains = (
+            (
+                self.settings.enable_options_trading
+                or option_chain_observation_enabled
+            )
+            and self._option_chain_adapter is not None
+            and bool(self.settings.option_chain_symbols)
+        )
+        if should_fetch_option_chains:
             def _fetch_one(sym: str) -> tuple[str, list]:
                 return sym, self._option_chain_adapter.get_option_chain(sym, self.settings)
 
@@ -993,22 +1013,23 @@ class RuntimeSupervisor:
                 logger.warning("option chain fetch timed out after 45s, using partial results")
             finally:
                 executor.shutdown(wait=False, cancel_futures=True)
-            _flag_store = getattr(self.runtime, "strategy_flag_store", None)
-            _store_lock = getattr(self.runtime, "store_lock", None)
-            with _store_lock if _store_lock is not None else contextlib.nullcontext():
-                for opt_name in OPTION_STRATEGY_NAMES:
-                    if _flag_store is not None:
-                        _flag = _flag_store.load(
-                            strategy_name=opt_name,
-                            trading_mode=self.settings.trading_mode,
-                            strategy_version=self.settings.strategy_version,
+            if self.settings.enable_options_trading:
+                _flag_store = getattr(self.runtime, "strategy_flag_store", None)
+                _store_lock = getattr(self.runtime, "store_lock", None)
+                with _store_lock if _store_lock is not None else contextlib.nullcontext():
+                    for opt_name in OPTION_STRATEGY_NAMES:
+                        if _flag_store is not None:
+                            _flag = _flag_store.load(
+                                strategy_name=opt_name,
+                                trading_mode=self.settings.trading_mode,
+                                strategy_version=self.settings.strategy_version,
+                            )
+                            if _flag is not None and not _flag.enabled:
+                                continue
+                        factory = OPTION_STRATEGY_FACTORIES[opt_name]
+                        active_strategies.append(
+                            (opt_name, factory(option_chains_by_symbol))
                         )
-                        if _flag is not None and not _flag.enabled:
-                            continue
-                    factory = OPTION_STRATEGY_FACTORIES[opt_name]
-                    active_strategies.append(
-                        (opt_name, factory(option_chains_by_symbol))
-                    )
             option_chain_counts = {
                 sym: len(option_chains_by_symbol.get(sym, []))
                 for sym in self.settings.option_chain_symbols
