@@ -685,6 +685,60 @@ def test_paper_readiness_final_retry_reruns_after_supervisor_restart(tmp_path: P
     assert "paper readiness already passed for session 2026-06-29" not in result.stdout
 
 
+def test_paper_readiness_final_retry_disables_flat_gate_after_open_restart(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "STRATEGY_VERSION=v1-breakout",
+            ]
+        )
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'paper_readiness_latest_status=2026-06-29|passed|2026-06-29T13:25:41.000000Z|2026-06-29T16:07:43.000000Z|12\\n'\n"
+        "printf 'paper_readiness_session_state=open\\n'\n"
+    )
+    fake_docker.chmod(0o755)
+    fake_readiness = tmp_path / "paper_readiness_check.sh"
+    fake_readiness.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'fresh readiness ran require_flat=%s\\n' \"${PAPER_READINESS_REQUIRE_FLAT:-unset}\"\n"
+    )
+    fake_readiness.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_readiness_if_needed.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_READINESS_CHECK_SCRIPT": str(fake_readiness),
+            "PAPER_READINESS_REQUIRE_FLAT": "true",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert (
+        "scheduled check context: session_date=2026-06-29 "
+        "proof_start=2026-06-29 reason=stale_after_supervisor_start"
+    ) in result.stdout
+    assert (
+        "paper readiness stale supervisor repair is during market session; "
+        "disabling flat exposure gate"
+    ) in result.stdout
+    assert "fresh readiness ran require_flat=false" in result.stdout
+    assert "paper readiness already passed for session 2026-06-29" not in result.stdout
+
+
 def test_paper_readiness_final_retry_reruns_after_old_pass(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     env_file.write_text(

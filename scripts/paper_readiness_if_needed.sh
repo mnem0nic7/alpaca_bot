@@ -344,18 +344,52 @@ market_timezone = ZoneInfo(settings.market_timezone.key)
 today = datetime.now(market_timezone).date()
 session_date = today
 override = os.environ.get("PAPER_READINESS_SESSION_DATE", "")
+adapter = AlpacaExecutionAdapter.from_settings(settings)
+calendar = adapter.get_market_calendar(
+    start=today,
+    end=today + timedelta(days=10),
+)
 
 if override:
     session_date = date.fromisoformat(override)
 else:
-    calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
-        start=today,
-        end=today + timedelta(days=10),
-    )
     for session in calendar:
         if session.session_date >= today:
             session_date = session.session_date
             break
+
+session_open_at = None
+session_close_at = None
+for session in calendar:
+    if session.session_date == session_date:
+        session_open_at = session.open_at
+        session_close_at = session.close_at
+        break
+if session_open_at is None or session_close_at is None:
+    try:
+        target_calendar = adapter.get_market_calendar(
+            start=session_date,
+            end=session_date,
+        )
+        for session in target_calendar:
+            if session.session_date == session_date:
+                session_open_at = session.open_at
+                session_close_at = session.close_at
+                break
+    except Exception:
+        pass
+
+session_state = "unknown"
+now_market = datetime.now(market_timezone)
+if session_open_at is not None and session_close_at is not None:
+    open_market = session_open_at.astimezone(market_timezone)
+    close_market = session_close_at.astimezone(market_timezone)
+    if now_market < open_market:
+        session_state = "pre_open"
+    elif now_market <= close_market:
+        session_state = "open"
+    else:
+        session_state = "post_close"
 
 conn = connect_postgres(settings.database_url)
 dry_run_row = None
@@ -482,6 +516,7 @@ print(
     f"{session_date.isoformat()}|{status}|{readiness_created_at}|"
     f"{supervisor_started_at}|{readiness_age_minutes}"
 )
+print(f"paper_readiness_session_state={session_state}")
 if expected_dry_run_session:
     print(f"paper_readiness_expected_decision_dry_run_session={expected_dry_run_session}")
 if dry_run_row and dry_run_row[0]:
@@ -537,6 +572,11 @@ latest_readiness="$(
 expected_decision_dry_run_session="$(
   printf '%s\n' "$latest_readiness_output" \
     | sed -n 's/^paper_readiness_expected_decision_dry_run_session=//p' \
+    | tail -n 1
+)"
+readiness_session_state="$(
+  printf '%s\n' "$latest_readiness_output" \
+    | sed -n 's/^paper_readiness_session_state=//p' \
     | tail -n 1
 )"
 latest_decision_dry_run_line="$(
@@ -607,6 +647,10 @@ if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "pa
   proof_start="${PROFIT_PROBE_START_DATE:-2026-07-07}"
   echo "scheduled check context: session_date=$session_date proof_start=$proof_start reason=stale_after_supervisor_start"
   echo "paper readiness prior pass is older than latest supervisor start; rerunning final check"
+  if [[ "$readiness_session_state" == "open" && "${PAPER_READINESS_REQUIRE_FLAT:-true}" != "false" ]]; then
+    export PAPER_READINESS_REQUIRE_FLAT=false
+    echo "paper readiness stale supervisor repair is during market session; disabling flat exposure gate"
+  fi
 fi
 
 if [[ "$session_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ && "$latest_status" == "passed" && "$readiness_is_current" == "true" && "$readiness_is_recent" == "false" ]]; then

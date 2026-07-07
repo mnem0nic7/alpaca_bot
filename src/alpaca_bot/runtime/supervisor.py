@@ -1464,8 +1464,9 @@ class RuntimeSupervisor:
                     ):
                         self._restart_stream_thread(timestamp=timestamp, reason="thread_missing")
                     # Heartbeat staleness guard. A quiet market can produce no
-                    # trade updates for long stretches, so this alerts only;
-                    # dead/exited stream threads are restarted by the watchdog above.
+                    # trade updates for stretches, but once we have already
+                    # observed stream events this watchdog should actively
+                    # refresh the connection instead of only alerting.
                     _stream_thread_alive = (
                         self._stream_thread is not None and self._stream_thread.is_alive()
                     )
@@ -1504,6 +1505,10 @@ class RuntimeSupervisor:
                                     )
                                 except Exception:
                                     logger.exception("Notifier failed to send heartbeat stale alert")
+                            self._restart_stream_thread(
+                                timestamp=timestamp,
+                                reason="heartbeat_stale",
+                            )
                     else:
                         self._stream_heartbeat_alerted = False
 
