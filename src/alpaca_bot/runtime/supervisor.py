@@ -3039,12 +3039,20 @@ class RuntimeSupervisor:
                 stream.run()
             except Exception as exc:
                 failure_at = _resolve_now(now)
+                is_current_thread = self._stream_thread is current_thread
                 with _stream_lock_ctx:
                     try:
                         self.runtime.audit_event_store.append(
                             AuditEvent(
-                                event_type="trade_update_stream_failed",
-                                payload={"error": str(exc)},
+                                event_type=(
+                                    "trade_update_stream_failed"
+                                    if is_current_thread
+                                    else "abandoned_trade_update_stream_failed"
+                                ),
+                                payload={
+                                    "error": str(exc),
+                                    "current_thread": is_current_thread,
+                                },
                                 created_at=failure_at,
                             )
                         )
@@ -3062,12 +3070,20 @@ class RuntimeSupervisor:
                             pass
             else:
                 stopped_at = _resolve_now(now)
+                is_current_thread = self._stream_thread is current_thread
                 with _stream_lock_ctx:
                     try:
                         self.runtime.audit_event_store.append(
                             AuditEvent(
-                                event_type="trade_update_stream_stopped",
-                                payload={"reason": "stream_exited"},
+                                event_type=(
+                                    "trade_update_stream_stopped"
+                                    if is_current_thread
+                                    else "abandoned_trade_update_stream_stopped"
+                                ),
+                                payload={
+                                    "reason": "stream_exited",
+                                    "current_thread": is_current_thread,
+                                },
                                 created_at=stopped_at,
                             )
                         )

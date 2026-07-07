@@ -4975,6 +4975,19 @@ def test_stream_restart_replaces_stream_when_stop_does_not_join(monkeypatch) -> 
         stale_stream.release.set()
         stale_thread.join(timeout=1.0)
         assert supervisor._stream_thread is replacement_thread
+        current_stop_events = [
+            event
+            for event in runtime.audit_event_store.appended
+            if event.event_type == "trade_update_stream_stopped"
+        ]
+        abandoned_stop_events = [
+            event
+            for event in runtime.audit_event_store.appended
+            if event.event_type == "abandoned_trade_update_stream_stopped"
+        ]
+        assert current_stop_events == []
+        assert abandoned_stop_events
+        assert abandoned_stop_events[-1].payload["current_thread"] is False
     finally:
         stale_stream.release.set()
         replacement_stream.stop()
