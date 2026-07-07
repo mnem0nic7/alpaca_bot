@@ -1319,3 +1319,48 @@ no disabled stock strategy produced a positive-edge prefilter row. `momentum`
 and `ema_pullback` are the closest current research leads by CI lower bound,
 but both still cross zero. Do not change `PAPER_APPROVED_STRATEGIES`; it
 remains `bull_flag`.
+
+### 2026-07-07 hard-fillability K=1 refresh
+
+After the engine began rejecting equity stop-limit signals whose signal-bar
+close was already above the limit price, the disabled stock basket universe was
+rerun under the same live proof posture:
+
+```bash
+SECOND_STRATEGY_SAMPLE_SIZE=80 \
+SECOND_STRATEGY_SAMPLE_SEED=second-strategy-hard-fillability-refresh-20260707 \
+SECOND_STRATEGY_OUTPUT_DIR=/tmp/alpaca-second-strategy-hard-fillability-refresh-20260707 \
+scripts/second_strategy_basket_scan.sh
+```
+
+Run assumptions:
+
+- scenario directory: `/var/lib/alpaca-bot/nightly/scenarios`
+- base strategy: `bull_flag`
+- sample size: `80`
+- sample seed: `second-strategy-hard-fillability-refresh-20260707`
+- slippage: `2.0` bps/side
+- max open positions: `1`
+- candidate confidence scale: `0.25`
+- starting equity: `68991.94`
+
+Result:
+
+| candidate | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict |
+|---|---:|---:|---:|---:|---|---:|---:|---|
+| `ema_pullback` | 313 | 1.21 | 83.84 | 0.2678 | [-0.2143, 0.7245] | 0.1300 | 60.12 | `no-evidence` |
+| `vwap_cross` | 283 | 1.19 | 87.18 | 0.3081 | [-0.3170, 0.9266] | 0.1515 | 31.18 | `no-evidence` |
+| `failed_breakdown` | 122 | 1.38 | 65.30 | 0.5353 | [-0.3724, 1.4198] | 0.1290 | 13.68 | `no-evidence` |
+| `orb` | 487 | 1.02 | 15.90 | 0.0326 | [-0.5150, 0.5689] | 0.4550 | 72.08 | `no-evidence` |
+| `bb_squeeze` | 190 | 1.10 | 30.06 | 0.1582 | [-0.5671, 0.9017] | 0.3340 | 25.49 | `no-evidence` |
+| `breakout` | 181 | 1.08 | 24.47 | 0.1352 | [-0.6391, 0.9048] | 0.3765 | 35.72 | `no-evidence` |
+| `momentum` | 372 | 0.91 | -58.71 | -0.1578 | [-0.7357, 0.4518] | 0.7120 | 62.24 | `no-evidence` |
+| `high_watermark` | 51 | 1.33 | 35.13 | 0.6888 | [-1.1534, 2.5061] | 0.2390 | 7.57 | `no-evidence` |
+| `gap_and_go` | 50 | 1.30 | 31.70 | 0.6339 | [-1.3274, 2.3465] | 0.2675 | 7.48 | `no-evidence` |
+| `vwap_reversion` | 72 | 0.98 | -4.64 | -0.0644 | [-1.8285, 1.7928] | 0.5190 | 14.47 | `no-evidence` |
+
+Conclusion: the hard-fillability gate did not produce a positive-edge
+prefilter row. `ema_pullback`, `vwap_cross`, and `failed_breakdown` are the
+closest rejected rows by lower-bound confidence, but all still cross zero.
+Do not change `PAPER_APPROVED_STRATEGIES`; it remains `bull_flag`. Do not
+re-enable `vwap_cross`.
