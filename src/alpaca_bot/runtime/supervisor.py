@@ -3012,12 +3012,14 @@ class RuntimeSupervisor:
         if self.stream is None or self._stream_thread is not None:
             return
         stream = self.stream
+        started_at = _resolve_now(now)
+        self._last_stream_heartbeat_restart_at = started_at
 
         def runner() -> None:
             current_thread = threading.current_thread()
             _stream_lock = getattr(self.runtime, "store_lock", None)
             _stream_lock_ctx = _stream_lock if _stream_lock is not None else contextlib.nullcontext()
-            timestamp = _resolve_now(now)
+            timestamp = started_at
             with _stream_lock_ctx:
                 try:
                     self.runtime.audit_event_store.append(

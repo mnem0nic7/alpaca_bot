@@ -4899,6 +4899,71 @@ def test_stream_heartbeat_restart_is_rate_limited_during_quiet_window(
     alive_thread.join(timeout=1.0)
 
 
+def test_stream_start_rate_limits_initial_heartbeat_restart(monkeypatch) -> None:
+    module, RuntimeSupervisor, _ = load_supervisor_api()
+    settings = make_settings()
+    runtime = make_runtime_context(settings)
+    stream = FakeStream(block_until_stop=True)
+    replacement_stream = FakeStream(block_until_stop=True)
+
+    def stream_factory(resolved_settings: Settings) -> FakeStream:
+        assert resolved_settings is settings
+        return replacement_stream
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(market_is_open=True),
+        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
+        stream=stream,
+        stream_factory=stream_factory,
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
+
+    started_at = datetime(2026, 4, 30, 14, 30, tzinfo=timezone.utc)
+    supervisor._start_stream_thread(now=lambda: started_at)
+    assert stream.run_started.wait(timeout=1.0)
+    assert supervisor._last_stream_heartbeat_restart_at == started_at
+
+    event_at = started_at + timedelta(seconds=60)
+    supervisor._last_stream_event_at = event_at
+    check_at = event_at + timedelta(seconds=310)
+
+    def fake_run_cycle_once(**kwargs):
+        return SimpleNamespace(
+            entries_disabled=False,
+            cycle_result=None,
+            dispatch_report=None,
+            account_equity=0.0,
+        )
+
+    monkeypatch.setattr(supervisor, "run_cycle_once", fake_run_cycle_once)
+
+    supervisor.run_forever(
+        max_iterations=1,
+        sleep_fn=lambda _: None,
+        cycle_now=lambda: check_at,
+    )
+
+    stale_events = [
+        event
+        for event in runtime.audit_event_store.appended
+        if event.event_type == "stream_heartbeat_stale"
+    ]
+    restart_events = [
+        event
+        for event in runtime.audit_event_store.appended
+        if event.event_type == "trade_update_stream_restarted"
+    ]
+    assert len(stale_events) == 1
+    assert restart_events == []
+    assert not replacement_stream.run_started.is_set()
+    assert supervisor._last_stream_heartbeat_restart_at == started_at
+    assert supervisor._stream_heartbeat_alerted is True
+
+
 def test_stream_restart_replaces_stream_when_stop_does_not_join(monkeypatch) -> None:
     module, RuntimeSupervisor, _ = load_supervisor_api()
     monkeypatch.setattr(module, "STREAM_STOP_TIMEOUT_SECONDS", 0.01)
