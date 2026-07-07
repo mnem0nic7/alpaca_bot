@@ -402,3 +402,24 @@ sample positive. Paper proof was therefore promoted to:
 No-follow-through and early-loss exits remain disabled. See
 `docs/strategy-audit/2026-07-06-bull-flag-eod-loss-mitigation.md` for the
 proof-horizon sweep tables.
+
+## Post-Supervisor Execution Slice
+
+The whole-day current-session execution diagnostic still includes earlier
+2026-07-07 activity from before the latest deployed runtime posture and can
+therefore keep reporting stale fill-rate, capacity, and short-window warnings.
+`paper_proof_status.sh` now prints a separate
+`paper proof post-supervisor execution` line, bounded by the latest
+`supervisor_started` audit event, and `run_check_with_audit.sh` persists those
+fields on scheduled proof checks.
+
+Live verification after the 2026-07-07 19:08:57 UTC supervisor restart:
+
+| slice | status | warnings | evaluated | signals | accepted | capacity rejected | entry orders | short windows |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| whole current session | `needs_work` | `settled_entry_fill_rate,capacity_rejections,short_entry_windows` | 24,188 | 2,038 | 14 | 1,961 | 12 | 1 |
+| post-supervisor | `ok` | `none` | 2,760 | 5 | 0 | 0 | 0 | 0 |
+
+Conclusion: keep the whole-day warning for forensics, but use the
+post-supervisor slice to verify whether the currently deployed runtime repeats
+the execution-quality problem. At this check it did not.

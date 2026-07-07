@@ -2038,6 +2038,10 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'AUDIT_PROOF_SCORING_LINE="$proof_scoring_line"' in script
     assert 'AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"' in script
     assert 'AUDIT_PROOF_CURRENT_EXECUTION_LINE="$proof_current_execution_line"' in script
+    assert (
+        'AUDIT_PROOF_POST_SUPERVISOR_EXECUTION_LINE="'
+        '$proof_post_supervisor_execution_line"'
+    ) in script
     assert 'AUDIT_DECISION_DRY_RUN_LINE="$decision_dry_run_line"' in script
     assert 'AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE="$decision_dry_run_strategies_line"' in script
     assert "-e AUDIT_CHECK_NAME" in script
@@ -2050,6 +2054,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "-e AUDIT_PROOF_SCORING_LINE" in script
     assert "-e AUDIT_PROOF_SCENARIOS_LINE" in script
     assert "-e AUDIT_PROOF_CURRENT_EXECUTION_LINE" in script
+    assert "-e AUDIT_PROOF_POST_SUPERVISOR_EXECUTION_LINE" in script
     assert "-e AUDIT_DECISION_DRY_RUN_LINE" in script
     assert "-e AUDIT_DECISION_DRY_RUN_STRATEGIES_LINE" in script
     assert 'output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"' in script
@@ -2059,6 +2064,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'proof_scoring_line="$(grep -E' in script
     assert 'proof_scenarios_line="$(grep -E' in script
     assert 'proof_current_execution_line="$(grep -E' in script
+    assert 'proof_post_supervisor_execution_line="$(grep -E' in script
     assert 'decision_dry_run_line="$(grep -E' in script
     assert 'decision_dry_run_strategies_line="$(grep -E' in script
     assert "scheduled check context: " in script
@@ -2071,6 +2077,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "PROOF_SCORING_FIELDS" in script
     assert "PROOF_SCENARIOS_FIELDS" in script
     assert "PROOF_CURRENT_EXECUTION_FIELDS" in script
+    assert "PROOF_POST_SUPERVISOR_EXECUTION_FIELDS" in script
     assert 'PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")' in script
     assert '"readiness": "proof_readiness"' in script
     assert '"proof": "proof_status"' in script
@@ -2122,6 +2129,24 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
         '"short_window_symbols": '
         '"proof_current_execution_short_window_symbols"'
     ) in script
+    assert (
+        '"since": "proof_post_supervisor_execution_since"'
+        in script
+    )
+    assert (
+        '"status": "proof_post_supervisor_execution_status"'
+        in script
+    )
+    assert (
+        '"settled_accepted_for_fill": (\n'
+        '        "proof_post_supervisor_execution_settled_accepted_for_fill"'
+        in script
+    )
+    assert (
+        "PROOF_POST_SUPERVISOR_EXECUTION_PREFIX = "
+        '"paper proof post-supervisor execution: "'
+        in script
+    )
     assert "DECISION_DRY_RUN_FIELDS" in script
     assert "DECISION_DRY_RUN_STRATEGIES_FIELDS" in script
     assert '"decision_records": "decision_dry_run_records"' in script
@@ -5827,6 +5852,18 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "current_session_accepted_for_fill_count "
         "- current_session_entry_order_active_count"
     ) in script
+    assert "post_supervisor_execution_since = None" in script
+    assert "post_supervisor_accepted_for_fill_count = max(" in script
+    assert (
+        "post_supervisor_decision_accepted\n"
+        "    - post_supervisor_entry_order_maintenance_drained_count\n"
+        "    - post_supervisor_entry_order_short_window_drained_count"
+    ) in script
+    assert "post_supervisor_settled_accepted_for_fill_count = max(" in script
+    assert (
+        "post_supervisor_accepted_for_fill_count\n"
+        "    - post_supervisor_entry_order_active_count"
+    ) in script
     assert "o.created_at = d.cycle_at" in script
     assert "close_to_entry_pct >= %s" in script
     assert "accepted_to_fill_rate = (" in script
@@ -5856,6 +5893,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "execution_quality_warnings.append(\"raw_entry_fill_rate\")" in script
     assert "execution_quality_warnings.append(\"capacity_rejections\")" in script
     assert "current_session_execution_warnings.append(\"short_entry_windows\")" in script
+    assert "post_supervisor_execution_status" in script
+    assert "post_supervisor_execution_warnings.append(\"short_entry_windows\")" in script
+    assert "cycle_at >= %s" in script
+    assert "AND o.created_at >= %s" in script
     assert "scale_blockers.append(\"capacity_rejections\")" in script
     assert "exposure_protection_issues = []" in script
     assert "exposure_protection_status" in script
@@ -6304,6 +6345,19 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "{current_session_entry_order_min_remaining_active_minutes_text}"
     ) in script
     assert "short_window_symbols={current_session_entry_order_short_window_symbols}" in script
+    assert "paper proof post-supervisor execution:" in script
+    assert "since={post_supervisor_execution_since_text}" in script
+    assert "status={post_supervisor_execution_status}" in script
+    assert (
+        "warnings={','.join(post_supervisor_execution_warnings) "
+        "if post_supervisor_execution_warnings else 'none'}"
+    ) in script
+    assert (
+        "settled_accepted_for_fill="
+        "{post_supervisor_settled_accepted_for_fill_count}"
+    ) in script
+    assert "accepted_to_fill_rate={post_supervisor_accepted_to_fill_rate_text}" in script
+    assert "short_window={post_supervisor_entry_order_short_window_count}" in script
     assert "settled_entry_fill_rate" in script
     assert "paper proof scoring:" in script
     assert "scoreable_closed_trades={trade_count}" in script

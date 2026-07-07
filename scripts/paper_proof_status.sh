@@ -1536,6 +1536,25 @@ try:
         current_session_entry_order_short_window_count = 0
         current_session_entry_order_min_remaining_active_minutes = None
         current_session_entry_order_short_window_symbols = "none"
+        post_supervisor_execution_since = None
+        post_supervisor_decision_evaluated = 0
+        post_supervisor_decision_signal_fired = 0
+        post_supervisor_decision_accepted = 0
+        post_supervisor_decision_capacity_rejected = 0
+        post_supervisor_entry_order_count = 0
+        post_supervisor_entry_order_filled_count = 0
+        post_supervisor_entry_order_expired_count = 0
+        post_supervisor_entry_order_active_count = 0
+        post_supervisor_entry_order_maintenance_drained_count = 0
+        post_supervisor_entry_order_short_window_drained_count = 0
+        post_supervisor_entry_order_settled_count = 0
+        post_supervisor_entry_order_settled_filled_count = 0
+        post_supervisor_entry_order_filled_symbols = "none"
+        post_supervisor_entry_order_expired_symbols = "none"
+        post_supervisor_entry_order_active_symbols = "none"
+        post_supervisor_entry_order_short_window_count = 0
+        post_supervisor_entry_order_min_remaining_active_minutes = None
+        post_supervisor_entry_order_short_window_symbols = "none"
         if proof_end >= proof_start:
             cur.execute(
                 """
@@ -2086,6 +2105,262 @@ try:
                     current_session_execution_row[17] or "none"
                 )
 
+            if (
+                latest_supervisor_started_at is not None
+                and latest_supervisor_started_at.astimezone(
+                    settings.market_timezone
+                ).date() == current_market_date
+            ):
+                post_supervisor_execution_since = latest_supervisor_started_at
+                cur.execute(
+                    """
+                    SELECT
+                      COALESCE(SUM(w), 0)::int AS evaluated,
+                      COALESCE(SUM(w) FILTER (
+                        WHERE decision NOT IN (
+                          'skipped_existing_position',
+                          'skipped_already_traded',
+                          'skipped_no_signal'
+                        )
+                          AND reject_stage IS DISTINCT FROM 'pre_filter'
+                          AND reject_stage IS DISTINCT FROM 'stale_data'
+                      ), 0)::int AS signal_fired,
+                      COALESCE(SUM(w) FILTER (WHERE decision = 'accepted'), 0)::int AS accepted,
+                      COALESCE(SUM(w) FILTER (WHERE reject_stage = 'capacity'), 0)::int AS capacity_rejected
+                    FROM (
+                      SELECT
+                        decision,
+                        reject_stage,
+                        COALESCE((filter_results->>'blocked_symbol_count')::int, 1) AS w
+                      FROM decision_log
+                      WHERE trading_mode = %s
+                        AND strategy_version = %s
+                        AND strategy_name = ANY(%s)
+                        AND DATE(cycle_at AT TIME ZONE %s) = %s
+                        AND cycle_at >= %s
+                    ) weighted
+                    """,
+                    (
+                        trading_mode.value,
+                        strategy_version,
+                        proof_strategy_names,
+                        market_timezone,
+                        current_market_date,
+                        post_supervisor_execution_since,
+                    ),
+                )
+                post_supervisor_decision_row = cur.fetchone()
+                if post_supervisor_decision_row:
+                    post_supervisor_decision_evaluated = int(
+                        post_supervisor_decision_row[0] or 0
+                    )
+                    post_supervisor_decision_signal_fired = int(
+                        post_supervisor_decision_row[1] or 0
+                    )
+                    post_supervisor_decision_accepted = int(
+                        post_supervisor_decision_row[2] or 0
+                    )
+                    post_supervisor_decision_capacity_rejected = int(
+                        post_supervisor_decision_row[3] or 0
+                    )
+
+                cur.execute(
+                    """
+                    WITH entry_orders AS (
+                      SELECT
+                        o.*,
+                        EXISTS (
+                          SELECT 1
+                          FROM audit_events a
+                          WHERE a.event_type = 'entry_order_expired_next_bar'
+                            AND a.payload->>'client_order_id' = o.client_order_id
+                            AND COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'
+                        ) AS maintenance_drained,
+                        EXISTS (
+                          SELECT 1
+                          FROM audit_events a
+                          WHERE a.event_type = 'entry_order_expired_next_bar'
+                            AND a.payload->>'client_order_id' = o.client_order_id
+                            AND COALESCE(a.payload->>'reason', '') = 'short active dispatch window'
+                        ) AS short_window_drained,
+                        EXISTS (
+                          SELECT 1
+                          FROM audit_events a
+                          WHERE a.event_type = 'entry_order_expired_next_bar'
+                            AND a.payload->>'client_order_id' = o.client_order_id
+                            AND COALESCE(a.payload->>'reason', '') NOT LIKE 'deploy maintenance%%'
+                            AND COALESCE(a.payload->>'reason', '') <> 'short active dispatch window'
+                        ) AS strategy_expired
+                      FROM orders o
+                      WHERE o.trading_mode = %s
+                        AND o.strategy_version = %s
+                        AND o.strategy_name = ANY(%s)
+                        AND o.intent_type = 'entry'
+                        AND DATE(COALESCE(o.signal_timestamp, o.created_at) AT TIME ZONE %s) = %s
+                        AND o.created_at >= %s
+                    ),
+                    entry_order_windows AS (
+                      SELECT
+                        entry_orders.*,
+                        CASE
+                          WHEN signal_timestamp IS NULL THEN NULL
+                          ELSE EXTRACT(EPOCH FROM (
+                            (signal_timestamp + (%s * interval '1 minute')) - created_at
+                          )) / 60.0
+                        END AS remaining_active_minutes
+                      FROM entry_orders
+                    )
+                    SELECT
+                      COUNT(*) FILTER (
+                        WHERE NOT maintenance_drained AND NOT short_window_drained
+                      )::int AS entry_orders,
+                      COUNT(*) FILTER (
+                        WHERE NOT maintenance_drained
+                          AND NOT short_window_drained
+                          AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
+                      )::int AS filled_entries,
+                      COUNT(*) FILTER (
+                        WHERE NOT maintenance_drained
+                          AND NOT short_window_drained
+                          AND (strategy_expired OR status = 'expired')
+                      )::int AS expired_entries,
+                      COUNT(*) FILTER (
+                        WHERE NOT maintenance_drained
+                          AND NOT short_window_drained
+                          AND status = ANY(%s)
+                      )::int AS active_entries,
+                      COUNT(*) FILTER (
+                        WHERE NOT maintenance_drained
+                          AND NOT short_window_drained
+                          AND status <> ALL(%s)
+                      )::int AS settled_entries,
+                      COUNT(*) FILTER (
+                        WHERE NOT maintenance_drained
+                          AND NOT short_window_drained
+                          AND status <> ALL(%s)
+                          AND (
+                            status = 'filled'
+                            OR COALESCE(filled_quantity, 0) > 0
+                          )
+                      )::int AS settled_filled_entries,
+                      COUNT(*) FILTER (WHERE maintenance_drained)::int
+                        AS maintenance_drained_entries,
+                      COUNT(*) FILTER (WHERE short_window_drained)::int
+                        AS short_window_drained_entries,
+                      COALESCE(
+                        string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                          WHERE NOT maintenance_drained
+                            AND NOT short_window_drained
+                            AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
+                        ),
+                        'none'
+                      ) AS filled_symbols,
+                      COALESCE(
+                        string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                          WHERE NOT maintenance_drained
+                            AND NOT short_window_drained
+                            AND (strategy_expired OR status = 'expired')
+                        ),
+                        'none'
+                      ) AS expired_symbols,
+                      COALESCE(
+                        string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                          WHERE NOT maintenance_drained
+                            AND NOT short_window_drained
+                            AND status = ANY(%s)
+                        ),
+                        'none'
+                      ) AS active_symbols,
+                      COUNT(*) FILTER (
+                        WHERE NOT maintenance_drained
+                          AND remaining_active_minutes IS NOT NULL
+                          AND remaining_active_minutes < %s
+                      )::int AS short_window_entries,
+                      ROUND((MIN(remaining_active_minutes) FILTER (
+                        WHERE NOT maintenance_drained
+                          AND remaining_active_minutes IS NOT NULL
+                          AND remaining_active_minutes < %s
+                      ))::numeric, 1) AS min_remaining_active_minutes,
+                      COALESCE(
+                        string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                          WHERE NOT maintenance_drained
+                            AND remaining_active_minutes IS NOT NULL
+                            AND remaining_active_minutes < %s
+                        ),
+                        'none'
+                      ) AS short_window_symbols
+                    FROM entry_order_windows
+                    """,
+                    (
+                        trading_mode.value,
+                        strategy_version,
+                        proof_strategy_names,
+                        market_timezone,
+                        current_market_date,
+                        post_supervisor_execution_since,
+                        settings.entry_timeframe_minutes
+                        * (settings.entry_order_active_bars + 1),
+                        list(ACTIVE_ORDER_STATUSES),
+                        list(ACTIVE_ORDER_STATUSES),
+                        list(ACTIVE_ORDER_STATUSES),
+                        list(ACTIVE_ORDER_STATUSES),
+                        settings.entry_timeframe_minutes
+                        * settings.entry_order_active_bars
+                        * 0.5,
+                        settings.entry_timeframe_minutes
+                        * settings.entry_order_active_bars
+                        * 0.5,
+                        settings.entry_timeframe_minutes
+                        * settings.entry_order_active_bars
+                        * 0.5,
+                    ),
+                )
+                post_supervisor_execution_row = cur.fetchone()
+                if post_supervisor_execution_row:
+                    post_supervisor_entry_order_count = int(
+                        post_supervisor_execution_row[0] or 0
+                    )
+                    post_supervisor_entry_order_filled_count = int(
+                        post_supervisor_execution_row[1] or 0
+                    )
+                    post_supervisor_entry_order_expired_count = int(
+                        post_supervisor_execution_row[2] or 0
+                    )
+                    post_supervisor_entry_order_active_count = int(
+                        post_supervisor_execution_row[3] or 0
+                    )
+                    post_supervisor_entry_order_settled_count = int(
+                        post_supervisor_execution_row[4] or 0
+                    )
+                    post_supervisor_entry_order_settled_filled_count = int(
+                        post_supervisor_execution_row[5] or 0
+                    )
+                    post_supervisor_entry_order_maintenance_drained_count = int(
+                        post_supervisor_execution_row[6] or 0
+                    )
+                    post_supervisor_entry_order_short_window_drained_count = int(
+                        post_supervisor_execution_row[7] or 0
+                    )
+                    post_supervisor_entry_order_filled_symbols = (
+                        post_supervisor_execution_row[8] or "none"
+                    )
+                    post_supervisor_entry_order_expired_symbols = (
+                        post_supervisor_execution_row[9] or "none"
+                    )
+                    post_supervisor_entry_order_active_symbols = (
+                        post_supervisor_execution_row[10] or "none"
+                    )
+                    post_supervisor_entry_order_short_window_count = int(
+                        post_supervisor_execution_row[11] or 0
+                    )
+                    if post_supervisor_execution_row[12] is not None:
+                        post_supervisor_entry_order_min_remaining_active_minutes = float(
+                            post_supervisor_execution_row[12]
+                        )
+                    post_supervisor_entry_order_short_window_symbols = (
+                        post_supervisor_execution_row[13] or "none"
+                    )
+
         unpaired_filled_exit_count = 0
         unpaired_filled_exit_symbols = "none"
         if proof_end >= proof_start:
@@ -2627,6 +2902,40 @@ current_session_capacity_reject_rate = (
     if current_session_decision_signal_fired
     else None
 )
+post_supervisor_entry_order_fill_rate = (
+    post_supervisor_entry_order_filled_count / post_supervisor_entry_order_count
+    if post_supervisor_entry_order_count
+    else None
+)
+post_supervisor_settled_entry_fill_rate = (
+    post_supervisor_entry_order_settled_filled_count
+    / post_supervisor_entry_order_settled_count
+    if post_supervisor_entry_order_settled_count
+    else None
+)
+post_supervisor_accepted_for_fill_count = max(
+    post_supervisor_decision_accepted
+    - post_supervisor_entry_order_maintenance_drained_count
+    - post_supervisor_entry_order_short_window_drained_count,
+    0,
+)
+post_supervisor_settled_accepted_for_fill_count = max(
+    post_supervisor_accepted_for_fill_count
+    - post_supervisor_entry_order_active_count,
+    0,
+)
+post_supervisor_accepted_to_fill_rate = (
+    post_supervisor_entry_order_filled_count
+    / post_supervisor_settled_accepted_for_fill_count
+    if post_supervisor_settled_accepted_for_fill_count
+    else None
+)
+post_supervisor_capacity_reject_rate = (
+    post_supervisor_decision_capacity_rejected
+    / post_supervisor_decision_signal_fired
+    if post_supervisor_decision_signal_fired
+    else None
+)
 entry_order_fill_rate_text = (
     f"{entry_order_fill_rate:.2f}" if entry_order_fill_rate is not None else "none"
 )
@@ -2662,6 +2971,36 @@ current_session_capacity_reject_rate_text = (
 current_session_entry_order_min_remaining_active_minutes_text = (
     f"{current_session_entry_order_min_remaining_active_minutes:.1f}"
     if current_session_entry_order_min_remaining_active_minutes is not None
+    else "none"
+)
+post_supervisor_entry_order_fill_rate_text = (
+    f"{post_supervisor_entry_order_fill_rate:.2f}"
+    if post_supervisor_entry_order_fill_rate is not None
+    else "none"
+)
+post_supervisor_settled_entry_fill_rate_text = (
+    f"{post_supervisor_settled_entry_fill_rate:.2f}"
+    if post_supervisor_settled_entry_fill_rate is not None
+    else "none"
+)
+post_supervisor_accepted_to_fill_rate_text = (
+    f"{post_supervisor_accepted_to_fill_rate:.2f}"
+    if post_supervisor_accepted_to_fill_rate is not None
+    else "none"
+)
+post_supervisor_capacity_reject_rate_text = (
+    f"{post_supervisor_capacity_reject_rate:.2f}"
+    if post_supervisor_capacity_reject_rate is not None
+    else "none"
+)
+post_supervisor_entry_order_min_remaining_active_minutes_text = (
+    f"{post_supervisor_entry_order_min_remaining_active_minutes:.1f}"
+    if post_supervisor_entry_order_min_remaining_active_minutes is not None
+    else "none"
+)
+post_supervisor_execution_since_text = (
+    post_supervisor_execution_since.isoformat()
+    if post_supervisor_execution_since is not None
     else "none"
 )
 effective_entry_fill_rate = (
@@ -2736,6 +3075,38 @@ if (
 if current_session_entry_order_short_window_count > 0:
     current_session_execution_status = "needs_work"
     current_session_execution_warnings.append("short_entry_windows")
+post_supervisor_execution_status = (
+    "not_started" if current_market_date < proof_start else "observing"
+)
+post_supervisor_execution_warnings = []
+if current_market_date >= proof_start and post_supervisor_execution_since is None:
+    post_supervisor_execution_status = "no_supervisor_boundary"
+elif (
+    post_supervisor_decision_signal_fired > 0
+    or post_supervisor_entry_order_count > 0
+):
+    post_supervisor_execution_status = "ok"
+if (
+    post_supervisor_settled_entry_fill_rate is not None
+    and post_supervisor_settled_entry_fill_rate < execution_min_entry_fill_rate
+):
+    post_supervisor_execution_status = "needs_work"
+    post_supervisor_execution_warnings.append("settled_entry_fill_rate")
+elif (
+    post_supervisor_entry_order_fill_rate is not None
+    and post_supervisor_entry_order_fill_rate < execution_min_entry_fill_rate
+    and post_supervisor_settled_entry_fill_rate is not None
+):
+    post_supervisor_execution_warnings.append("raw_entry_fill_rate")
+if (
+    post_supervisor_capacity_reject_rate is not None
+    and post_supervisor_capacity_reject_rate > execution_max_capacity_reject_rate
+):
+    post_supervisor_execution_status = "needs_work"
+    post_supervisor_execution_warnings.append("capacity_rejections")
+if post_supervisor_entry_order_short_window_count > 0:
+    post_supervisor_execution_status = "needs_work"
+    post_supervisor_execution_warnings.append("short_entry_windows")
 strategy_diversification_status = (
     "ok"
     if (
@@ -4181,6 +4552,39 @@ print(
     f"short_window={current_session_entry_order_short_window_count} "
     f"min_remaining_active_minutes={current_session_entry_order_min_remaining_active_minutes_text} "
     f"short_window_symbols={current_session_entry_order_short_window_symbols}"
+)
+print(
+    "paper proof post-supervisor execution: "
+    f"session={current_market_date.isoformat()} "
+    f"since={post_supervisor_execution_since_text} "
+    f"status={post_supervisor_execution_status} "
+    f"warnings={','.join(post_supervisor_execution_warnings) if post_supervisor_execution_warnings else 'none'} "
+    f"evaluated={post_supervisor_decision_evaluated} "
+    f"signals={post_supervisor_decision_signal_fired} "
+    f"accepted={post_supervisor_decision_accepted} "
+    f"accepted_for_fill={post_supervisor_accepted_for_fill_count} "
+    f"settled_accepted_for_fill={post_supervisor_settled_accepted_for_fill_count} "
+    f"capacity_rejected={post_supervisor_decision_capacity_rejected} "
+    f"capacity_reject_rate={post_supervisor_capacity_reject_rate_text} "
+    f"max_capacity_reject_rate={execution_max_capacity_reject_rate:.2f} "
+    f"entry_orders={post_supervisor_entry_order_count} "
+    f"settled={post_supervisor_entry_order_settled_count} "
+    f"settled_filled={post_supervisor_entry_order_settled_filled_count} "
+    f"filled={post_supervisor_entry_order_filled_count} "
+    f"expired={post_supervisor_entry_order_expired_count} "
+    f"active={post_supervisor_entry_order_active_count} "
+    f"maintenance_drained={post_supervisor_entry_order_maintenance_drained_count} "
+    f"short_window_drained={post_supervisor_entry_order_short_window_drained_count} "
+    f"settled_entry_fill_rate={post_supervisor_settled_entry_fill_rate_text} "
+    f"entry_fill_rate={post_supervisor_entry_order_fill_rate_text} "
+    f"min_entry_fill_rate={execution_min_entry_fill_rate:.2f} "
+    f"accepted_to_fill_rate={post_supervisor_accepted_to_fill_rate_text} "
+    f"filled_symbols={post_supervisor_entry_order_filled_symbols} "
+    f"expired_symbols={post_supervisor_entry_order_expired_symbols} "
+    f"active_symbols={post_supervisor_entry_order_active_symbols} "
+    f"short_window={post_supervisor_entry_order_short_window_count} "
+    f"min_remaining_active_minutes={post_supervisor_entry_order_min_remaining_active_minutes_text} "
+    f"short_window_symbols={post_supervisor_entry_order_short_window_symbols}"
 )
 print(
     "paper proof sealed current-session progress: "
