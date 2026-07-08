@@ -145,8 +145,63 @@ option_snapshot_path_has_files() {
   [[ -n "$(find "$path" -maxdepth 1 -type f -name 'option-chain-snapshots-*.jsonl' -size +0c -print -quit)" ]]
 }
 
+option_snapshot_contract_count() {
+  local path="$1"
+  python3 - "$path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+latest_path = None
+try:
+    if path.is_file():
+        if path.stat().st_size > 0:
+            latest_path = path
+    elif path.is_dir():
+        files = []
+        for file_path in path.glob("option-chain-snapshots-*.jsonl"):
+            if not file_path.is_file():
+                continue
+            stat = file_path.stat()
+            if stat.st_size > 0:
+                files.append((stat.st_mtime, file_path))
+        if files:
+            latest_path = max(files, key=lambda item: item[0])[1]
+except OSError:
+    print(0)
+    raise SystemExit(0)
+
+total_contracts = 0
+if latest_path is not None:
+    try:
+        with latest_path.open(encoding="utf-8") as snapshot_file:
+            for raw_line in snapshot_file:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                payload = json.loads(line)
+                chains_by_symbol = payload.get("chains_by_symbol")
+                if not isinstance(chains_by_symbol, dict):
+                    continue
+                total_contracts += sum(
+                    len(contracts)
+                    for contracts in chains_by_symbol.values()
+                    if isinstance(contracts, list)
+                )
+    except (OSError, json.JSONDecodeError):
+        total_contracts = 0
+print(total_contracts)
+PY
+}
+
+OPTION_SNAPSHOT_CONTRACTS=0
+if [[ -n "$OPTION_CHAIN_SNAPSHOTS" ]] && option_snapshot_path_has_files "$OPTION_CHAIN_SNAPSHOTS"; then
+  OPTION_SNAPSHOT_CONTRACTS="$(option_snapshot_contract_count "$OPTION_CHAIN_SNAPSHOTS")"
+fi
+
 if [[ "$INCLUDE_OPTION_CANDIDATES" == "auto" ]]; then
-  if [[ -n "$OPTION_CHAIN_SNAPSHOTS" ]] && option_snapshot_path_has_files "$OPTION_CHAIN_SNAPSHOTS"; then
+  if [[ "$OPTION_SNAPSHOT_CONTRACTS" =~ ^[0-9]+$ && "$OPTION_SNAPSHOT_CONTRACTS" -gt 0 ]]; then
     INCLUDE_OPTION_CANDIDATES=true
   else
     INCLUDE_OPTION_CANDIDATES=false
@@ -201,6 +256,7 @@ mapfile -t option_candidates < <(read_name_list "$option_candidate_csv")
 if [[ "$INCLUDE_OPTION_CANDIDATES" == "true" ]]; then
   [[ -n "$OPTION_CHAIN_SNAPSHOTS" ]] || fail "SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS or OPTION_CHAIN_SNAPSHOT_DIR is required when option candidates are included"
   option_snapshot_path_has_files "$OPTION_CHAIN_SNAPSHOTS" || fail "option-chain snapshot path is empty or missing: $OPTION_CHAIN_SNAPSHOTS"
+  [[ "$OPTION_SNAPSHOT_CONTRACTS" =~ ^[0-9]+$ && "$OPTION_SNAPSHOT_CONTRACTS" -gt 0 ]] || fail "option-chain snapshot path has no replayable contracts: $OPTION_CHAIN_SNAPSHOTS"
 fi
 
 mapfile -t excluded_candidates < <(read_name_list "$EXCLUDE_CANDIDATES")
@@ -295,7 +351,7 @@ status_parts_dir="$OUTPUT_DIR/status_parts"
 mkdir -p "$status_parts_dir"
 
 echo "second strategy basket scan: output_dir=$OUTPUT_DIR"
-echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
+echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
 
 failed_count=0
 run_prefilter_job() {

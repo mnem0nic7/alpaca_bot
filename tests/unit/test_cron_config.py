@@ -300,6 +300,10 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'prefilter_skipped=true' in script
     assert 'option_candidate_csv="${SECOND_STRATEGY_OPTION_CANDIDATES:-}"' in script
     assert "option-chain snapshot path is empty or missing" in script
+    assert "option_snapshot_contract_count" in script
+    assert "OPTION_SNAPSHOT_CONTRACTS" in script
+    assert "option-chain snapshot path has no replayable contracts" in script
+    assert "option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS" in script
     assert 'LATEST_LINK="$OUTPUT_ROOT/latest"' in script
     assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script
     assert 'VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"' in script
