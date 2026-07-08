@@ -323,10 +323,16 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert "SECOND_STRATEGY_SETUP_OUTPUT_ROOT" in script
     assert "SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy" in script
     assert "/setup_knobs" in script
+    assert "SECOND_STRATEGY_SETUP_VARIANT_MODE" in script
+    assert "SECOND_STRATEGY_SETUP_MAX_VARIANTS" in script
     assert "SECOND_STRATEGY_SETUP_VARIANT_LABELS" in script
     assert "SECOND_STRATEGY_SETUP_VALIDATE_POSITIVES" in script
     assert "SECOND_STRATEGY_SETUP_MAX_VALIDATION_CANDIDATES" in script
     assert "second-strategy-setup-knob-independent-validation" in script
+    assert "from alpaca_bot.tuning.sweep import STRATEGY_GRIDS" in script
+    assert "SECOND_STRATEGY_SETUP_VARIANT_MODE must be one of: curated, grid" in script
+    assert '"variant_mode": variant_mode' in script
+    assert '"max_variants": int(max_variants)' in script
     assert "python3 -m alpaca_bot.replay.cli portfolio-basket-audit" in script
     assert '--confidence-scale "$candidate=$CANDIDATE_SCALE"' in script
     assert 'env "${override_env_args[@]}" "${cmd[@]}"' in script

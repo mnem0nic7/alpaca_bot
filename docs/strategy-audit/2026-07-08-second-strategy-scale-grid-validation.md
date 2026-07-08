@@ -147,6 +147,12 @@ to change live paper parameters or `PAPER_APPROVED_STRATEGIES`.
 By default it writes under
 `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs`.
 
+For broader research, `SECOND_STRATEGY_SETUP_VARIANT_MODE=grid` expands the
+existing `STRATEGY_GRIDS` cartesian combinations for the selected disabled
+stock candidates. This remains read-only evidence tooling; use
+`SECOND_STRATEGY_SETUP_CANDIDATES` and `SECOND_STRATEGY_SETUP_MAX_VARIANTS` to
+bound focused scans.
+
 ## 2026-07-08 Setup-Knob Scan Result
 
 A full setup-knob scan completed under the shared second-strategy evidence root:
@@ -166,3 +172,24 @@ promotion, and no strategy or live paper parameter was changed.
 | `bb_squeeze` | `AN_bb_squeeze_threshold` | `BB_SQUEEZE_THRESHOLD_PCT=0.05` | 213 | 1.09 | 30.33 | [-0.5570, 0.8521] | `no-evidence` |
 | `momentum` | `U_prior_high_lookback` | `PRIOR_DAY_HIGH_LOOKBACK_BARS=2` | 286 | 1.04 | 17.20 | [-0.5759, 0.7398] | `no-evidence` |
 | `breakout` | `X_breakout_lookback` | `BREAKOUT_LOOKBACK_BARS=10` | 205 | 0.54 | -211.23 | [-1.6708, -0.3623] | `negative-edge` |
+
+## 2026-07-08 EMA Grid Follow-Up
+
+An exploratory `ema_pullback` grid pass found seed-sensitive prefilter leads
+around `EMA_PERIOD=7` and `RELATIVE_VOLUME_THRESHOLD=1.5`. The top three labels
+were rerun with a fresh prefilter seed:
+
+- artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T050456Z/summary.md` and `validation/summary.md`
+- variants: `grid_004`, `grid_005`, `grid_006`
+- result: `positive_edge_prefilter_rows=0`, validation variants `0`,
+  `promotion_approved=false`
+
+| lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---:|---:|---:|---|---|
+| `grid_006` | `EMA_PERIOD=7,RELATIVE_VOLUME_THRESHOLD=1.5,ATR_STOP_MULTIPLIER=2.0` | 404 | 1.18 | 80.89 | [-0.1672, 0.5736] | `no-evidence` |
+| `grid_005` | `EMA_PERIOD=7,RELATIVE_VOLUME_THRESHOLD=1.5,ATR_STOP_MULTIPLIER=1.5` | 405 | 1.18 | 83.19 | [-0.1681, 0.6007] | `no-evidence` |
+| `grid_004` | `EMA_PERIOD=7,RELATIVE_VOLUME_THRESHOLD=1.5,ATR_STOP_MULTIPLIER=1.0` | 408 | 1.16 | 82.26 | [-0.2028, 0.6076] | `no-evidence` |
+
+Conclusion: the EMA grid leads did not reproduce under a fresh prefilter seed.
+No validation candidate was available, and `PAPER_APPROVED_STRATEGIES` remains
+`bull_flag`.

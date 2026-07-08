@@ -74,7 +74,9 @@ OUTPUT_ROOT="${SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-${SECOND_STRATEGY_OUTPUT_ROOT:
 OUTPUT_DIR="${SECOND_STRATEGY_SETUP_OUTPUT_DIR:-$OUTPUT_ROOT/$(date -u +%Y%m%dT%H%M%SZ)}"
 LATEST_LINK="${SECOND_STRATEGY_SETUP_LATEST_LINK:-}"
 EXCLUDE_CANDIDATES="${SECOND_STRATEGY_SETUP_EXCLUDE_CANDIDATES:-${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}}"
+VARIANT_MODE="${SECOND_STRATEGY_SETUP_VARIANT_MODE:-curated}"
 VARIANT_LABELS="${SECOND_STRATEGY_SETUP_VARIANT_LABELS:-}"
+MAX_VARIANTS="${SECOND_STRATEGY_SETUP_MAX_VARIANTS:-0}"
 VALIDATE_POSITIVES="${SECOND_STRATEGY_SETUP_VALIDATE_POSITIVES:-true}"
 MAX_VALIDATION_CANDIDATES="${SECOND_STRATEGY_SETUP_MAX_VALIDATION_CANDIDATES:-0}"
 SCAN_JOBS="${SECOND_STRATEGY_SETUP_SCAN_JOBS:-${SECOND_STRATEGY_SCAN_JOBS:-2}}"
@@ -86,7 +88,7 @@ VALIDATION_LATEST_LINK="${SECOND_STRATEGY_SETUP_VALIDATION_LATEST_LINK:-}"
 [[ -d "$SCENARIO_DIR" ]] || fail "missing scenario dir: $SCENARIO_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-python3 - "$CANDIDATE_SCALE" "$MAX_VALIDATION_CANDIDATES" "$SCAN_JOBS" <<'PY' || fail "invalid setup scan numeric setting"
+python3 - "$CANDIDATE_SCALE" "$MAX_VALIDATION_CANDIDATES" "$SCAN_JOBS" "$MAX_VARIANTS" <<'PY' || fail "invalid setup scan numeric setting"
 from __future__ import annotations
 
 import sys
@@ -109,6 +111,12 @@ except ValueError as exc:
     raise SystemExit(f"scan jobs must be an integer: {sys.argv[3]}") from exc
 if jobs < 1:
     raise SystemExit(f"scan jobs must be at least 1: {sys.argv[3]}")
+try:
+    max_variants = int(sys.argv[4])
+except ValueError as exc:
+    raise SystemExit(f"max variants must be an integer: {sys.argv[4]}") from exc
+if max_variants < 0:
+    raise SystemExit(f"max variants must be non-negative: {sys.argv[4]}")
 PY
 
 proof_output="$OUTPUT_DIR/proof_status.txt"
@@ -143,9 +151,10 @@ if [[ -z "$starting_equity" ]]; then
 fi
 
 variants_file="$OUTPUT_DIR/variants.tsv"
-python3 - "$variants_file" "$candidate_csv" "$EXCLUDE_CANDIDATES" "$VARIANT_LABELS" <<'PY'
+python3 - "$variants_file" "$candidate_csv" "$EXCLUDE_CANDIDATES" "$VARIANT_LABELS" "$VARIANT_MODE" "$MAX_VARIANTS" <<'PY'
 from __future__ import annotations
 
+import itertools
 import re
 import sys
 from pathlib import Path
@@ -169,6 +178,8 @@ def parse_names(raw: str) -> list[str]:
 candidate_names = set(parse_names(sys.argv[2]))
 excluded_names = set(parse_names(sys.argv[3]))
 label_filter = set(parse_names(sys.argv[4]))
+variant_mode = sys.argv[5].strip().lower()
+max_variants = int(sys.argv[6])
 protected_env_names = {
     "ENTRY_ORDER_ACTIVE_BARS",
     "ENTRY_MIN_CLOSE_TO_ENTRY_PCT",
@@ -193,19 +204,59 @@ default_variants = [
     ("bb_squeeze", "AO_bb_squeeze_min_bars", "BB_SQUEEZE_MIN_BARS=3"),
 ]
 
-lines: list[str] = []
-for candidate, label, overrides in default_variants:
-    if candidate not in candidate_names or candidate in excluded_names:
-        continue
-    if label_filter and label not in label_filter:
-        continue
+
+def validate_overrides(overrides: str) -> None:
     for assignment in overrides.split(","):
         name, _, value = assignment.partition("=")
         if not name or not value:
             raise SystemExit(f"invalid setup override assignment: {assignment}")
         if name in protected_env_names:
             raise SystemExit(f"protected paper proof parameter cannot be varied: {name}")
+
+
+def curated_variants() -> list[tuple[str, str, str]]:
+    return default_variants
+
+
+def grid_variants() -> list[tuple[str, str, str]]:
+    from alpaca_bot.tuning.sweep import STRATEGY_GRIDS
+
+    rows: list[tuple[str, str, str]] = []
+    for candidate in sorted(candidate_names):
+        if candidate in excluded_names:
+            continue
+        grid = STRATEGY_GRIDS.get(candidate)
+        if not grid:
+            continue
+        keys = [key for key in grid if key not in protected_env_names]
+        if not keys:
+            continue
+        values = [grid[key] for key in keys]
+        for index, combo in enumerate(itertools.product(*values), start=1):
+            assignments = [f"{key}={value}" for key, value in zip(keys, combo)]
+            rows.append((candidate, f"grid_{index:03d}", ",".join(assignments)))
+    return rows
+
+
+if variant_mode == "curated":
+    variant_rows = curated_variants()
+elif variant_mode == "grid":
+    variant_rows = grid_variants()
+else:
+    raise SystemExit(
+        "SECOND_STRATEGY_SETUP_VARIANT_MODE must be one of: curated, grid"
+    )
+
+lines: list[str] = []
+for candidate, label, overrides in variant_rows:
+    if candidate not in candidate_names or candidate in excluded_names:
+        continue
+    if label_filter and label not in label_filter:
+        continue
+    validate_overrides(overrides)
     lines.append(f"{candidate}\t{label}\t{overrides}")
+    if max_variants and len(lines) >= max_variants:
+        break
 
 output_path.write_text("\n".join(lines) + ("\n" if lines else ""))
 PY
@@ -221,7 +272,7 @@ status_parts_dir="$OUTPUT_DIR/status_parts"
 mkdir -p "$status_parts_dir"
 
 echo "second strategy setup-knob scan: output_dir=$OUTPUT_DIR"
-echo "second strategy setup-knob scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scale=$CANDIDATE_SCALE scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} variants=$variant_count excluded_candidates=$EXCLUDE_CANDIDATES labels=${VARIANT_LABELS:-all}"
+echo "second strategy setup-knob scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scale=$CANDIDATE_SCALE scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} variant_mode=$VARIANT_MODE variants=$variant_count max_variants=$MAX_VARIANTS excluded_candidates=$EXCLUDE_CANDIDATES labels=${VARIANT_LABELS:-all}"
 
 failed_count=0
 run_prefilter_job() {
@@ -296,7 +347,7 @@ python3 - "$status_file" "$summary_file" "$summary_json_file" \
   "$SCENARIO_DIR" "$BASE_STRATEGY" "$SAMPLE_SIZE" "$SAMPLE_SEED" \
   "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "$CANDIDATE_SCALE" \
   "${starting_equity:-scenario_default}" "$EXCLUDE_CANDIDATES" "$SCAN_JOBS" \
-  "$variant_count" <<'PY'
+  "$variant_count" "$VARIANT_MODE" "$MAX_VARIANTS" <<'PY'
 from __future__ import annotations
 
 import json
@@ -317,6 +368,8 @@ starting_equity = sys.argv[11]
 excluded_candidates = sys.argv[12]
 scan_jobs = sys.argv[13]
 variant_count = sys.argv[14]
+variant_mode = sys.argv[15]
+max_variants = sys.argv[16]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -373,6 +426,8 @@ lines = [
     f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
+    f"- variant_mode: `{variant_mode}`",
+    f"- max_variants: `{max_variants}`",
     f"- variants: `{variant_count}`",
     "",
     "| candidate | lever | overrides | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
@@ -458,6 +513,8 @@ summary_json_path.write_text(
             "scan_jobs": scan_jobs,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
+            "variant_mode": variant_mode,
+            "max_variants": int(max_variants),
             "variant_count": int(variant_count),
             "positive_edge_prefilter_rows": positive_edges,
             "rows": json_rows,
