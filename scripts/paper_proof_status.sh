@@ -5081,6 +5081,7 @@ print(
     f"env_file={safe_status_value(proof_status_env_file)} "
     f"approval_marker={safe_status_value(second_strategy_evidence['promotion_approval_marker'])} "
     f"approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']} "
+    f"validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])} "
     f"validation_summary_sha256={safe_status_value(second_strategy_evidence['validation_summary_sha256'])} "
     f"candidate_scale={safe_status_value(second_strategy_evidence['promotion_candidate_scale'])} "
     f"candidate_trades={safe_status_value(second_strategy_evidence['promotion_candidate_trades'])} "

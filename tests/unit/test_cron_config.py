@@ -6735,6 +6735,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "script=./scripts/promote_validated_strategy.sh" in script
     assert "approval_marker={safe_status_value(second_strategy_evidence['promotion_approval_marker'])}" in script
     assert "approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']}" in script
+    assert "validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])}" in script
     assert "candidate_ci_low={format_optional_float(second_strategy_evidence['promotion_candidate_ci_low'], 4)}" in script
     assert "PROOF_STATUS_ENV_FILE" in script
     assert "validation_verdicts={second_strategy_evidence['validation_verdicts']}" in script
