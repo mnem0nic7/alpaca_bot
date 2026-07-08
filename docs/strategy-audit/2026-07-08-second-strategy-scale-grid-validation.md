@@ -472,11 +472,34 @@ Conclusion: the `gap_and_go` prefilter positives did not validate
 independently. No setup variant is approved for paper promotion, and
 `gap_and_go` remains unapproved.
 
+## 2026-07-08 Breakout Full Grid
+
+The full `breakout` grid tested lookback bars `15`, `20`, `25`, and `30`
+across relative-volume thresholds `1.3`, `1.5`, `1.8`, and `2.0` and daily
+SMA periods `10`, `20`, and `30`:
+
+- artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T105011Z/summary.md` and `validation/summary.md`
+- variants: `grid_001` through `grid_048`
+- result: `positive_edge_prefilter_rows=0`, validation variants `0`,
+  `promotion_approved=false`
+
+| lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---:|---:|---:|---|---|
+| `grid_027` | `BREAKOUT_LOOKBACK_BARS=25,RELATIVE_VOLUME_THRESHOLD=1.3,DAILY_SMA_PERIOD=30` | 220 | 1.08 | 24.75 | [-0.4435, 0.6828] | `no-evidence` |
+| `grid_015` | `BREAKOUT_LOOKBACK_BARS=20,RELATIVE_VOLUME_THRESHOLD=1.3,DAILY_SMA_PERIOD=30` | 235 | 1.02 | 7.42 | [-0.5426, 0.6091] | `no-evidence` |
+| `grid_038` | `BREAKOUT_LOOKBACK_BARS=30,RELATIVE_VOLUME_THRESHOLD=1.3,DAILY_SMA_PERIOD=20` | 226 | 0.97 | -8.88 | [-0.5979, 0.5468] | `no-evidence` |
+| `grid_003` | `BREAKOUT_LOOKBACK_BARS=15,RELATIVE_VOLUME_THRESHOLD=1.3,DAILY_SMA_PERIOD=30` | 268 | 0.94 | -25.62 | [-0.6174, 0.4304] | `no-evidence` |
+| `grid_039` | `BREAKOUT_LOOKBACK_BARS=30,RELATIVE_VOLUME_THRESHOLD=1.3,DAILY_SMA_PERIOD=30` | 218 | 0.97 | -10.35 | [-0.6397, 0.5283] | `no-evidence` |
+
+Conclusion: the full `breakout` setup grid did not produce a positive
+prefilter survivor under the fresh full-grid seed. No validation candidate was
+available, and `breakout` remains unapproved.
+
 ## Proof Visibility
 
 `paper_proof_status.sh` now prints a separate `paper proof second strategy setup
 evidence` line from `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs`.
 This keeps the latest setup/grid search result visible beside the broad basket
 scan result. On 2026-07-08 it reported fresh setup evidence with
-`candidate_status=no_positive_validation_edge`, `prefilter_positive_rows=4`,
+`candidate_status=no_positive_prefilter_edge`, `prefilter_positive_rows=0`,
 `validation_positive_rows=0`, and `promotion_approved=false`.
