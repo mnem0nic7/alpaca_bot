@@ -117,3 +117,30 @@ The proof status now reports
 
 Conclusion: the strategy diversification blocker remains real. Do not promote
 or enable a second strategy from this scan.
+
+## Setup-Knob Search Automation
+
+The default basket scanner only retests registered stock strategy families at
+different confidence scales. A separate read-only wrapper now covers the
+strategy-specific setup knobs that were previously checked through one-off
+commands:
+
+```bash
+scripts/second_strategy_setup_knob_scan.sh /etc/alpaca_bot/alpaca-bot.env
+```
+
+The wrapper runs `bull_flag + candidate` basket audits with temporary env
+overrides such as `EMA_PERIOD=7`, `ORB_OPENING_BARS=3`,
+`HIGH_WATERMARK_LOOKBACK_DAYS=126`, `VWAP_DIP_THRESHOLD_PCT=0.02`,
+`GAP_THRESHOLD_PCT=0.01`, `GAP_VOLUME_THRESHOLD=1.5`, the Bollinger squeeze
+knobs, `FAILED_BREAKDOWN_VOLUME_RATIO=2.5`,
+`FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT=0.002`, and
+`PRIOR_DAY_HIGH_LOOKBACK_BARS=2`.
+
+The wrapper refuses to vary the protected paper-proof execution parameters:
+`ENTRY_ORDER_ACTIVE_BARS`, `ENTRY_MIN_CLOSE_TO_ENTRY_PCT`,
+`STOP_LIMIT_BUFFER_PCT`, and `ENTRY_STOP_PRICE_BUFFER`.
+
+Like the scale scanner, this is evidence tooling only. A positive prefilter row
+is just a setup-variant survivor for independent validation; it is not approval
+to change live paper parameters or `PAPER_APPROVED_STRATEGIES`.

@@ -312,6 +312,57 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "is not approval to change" in script
 
 
+def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
+    script_path = Path("scripts/second_strategy_setup_knob_scan.sh")
+    script = script_path.read_text()
+
+    syntax_check = subprocess.run(["bash", "-n", str(script_path)], check=False)
+    assert syntax_check.returncode == 0
+    assert './scripts/paper_proof_status.sh "$ENV_FILE"' in script
+    assert "stock_disabled_candidate_names" in script
+    assert "SECOND_STRATEGY_SETUP_OUTPUT_ROOT" in script
+    assert "/var/lib/alpaca-bot/nightly/second_strategy_setup" in script
+    assert "SECOND_STRATEGY_SETUP_VARIANT_LABELS" in script
+    assert "SECOND_STRATEGY_SETUP_VALIDATE_POSITIVES" in script
+    assert "SECOND_STRATEGY_SETUP_MAX_VALIDATION_CANDIDATES" in script
+    assert "second-strategy-setup-knob-independent-validation" in script
+    assert "python3 -m alpaca_bot.replay.cli portfolio-basket-audit" in script
+    assert '--confidence-scale "$candidate=$CANDIDATE_SCALE"' in script
+    assert 'env "${override_env_args[@]}" "${cmd[@]}"' in script
+    assert "SECOND_STRATEGY_SETUP_CANDIDATES" in script
+    assert "SECOND_STRATEGY_SETUP_EXCLUDE_CANDIDATES" in script
+    assert "EXCLUDE_CANDIDATES" in script
+    assert "vwap_cross" in script
+    assert "PROTECTED" not in script
+    assert "protected paper proof parameter cannot be varied" in script
+    assert "ENTRY_ORDER_ACTIVE_BARS" in script
+    assert "ENTRY_MIN_CLOSE_TO_ENTRY_PCT" in script
+    assert "STOP_LIMIT_BUFFER_PCT" in script
+    assert "ENTRY_STOP_PRICE_BUFFER" in script
+    assert "EMA_PERIOD=7" in script
+    assert "BREAKOUT_LOOKBACK_BARS=10" in script
+    assert "ORB_OPENING_BARS=3" in script
+    assert "HIGH_WATERMARK_LOOKBACK_DAYS=126" in script
+    assert "VWAP_DIP_THRESHOLD_PCT=0.02" in script
+    assert "GAP_THRESHOLD_PCT=0.01" in script
+    assert "GAP_VOLUME_THRESHOLD=1.5" in script
+    assert "BB_PERIOD=10" in script
+    assert "BB_STD_DEV=1.5" in script
+    assert "BB_SQUEEZE_THRESHOLD_PCT=0.05" in script
+    assert "BB_SQUEEZE_MIN_BARS=3" in script
+    assert "FAILED_BREAKDOWN_VOLUME_RATIO=2.5" in script
+    assert "FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT=0.002" in script
+    assert "PRIOR_DAY_HIGH_LOOKBACK_BARS=2" in script
+    assert "positive setup-knob prefilter row is only a survivor" in script
+    assert "not approval to change PAPER_APPROVED_STRATEGIES" in script
+    assert "promotion_approved" in script
+    assert "wait -n" in script
+    assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script
+    assert 'ln -sfn "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"' in script
+    assert "close-only" not in script
+    assert "alpaca-bot-session-eval" not in script
+
+
 def test_paper_readiness_final_retry_does_not_rerun_after_pass(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     env_file.write_text(
