@@ -3929,6 +3929,43 @@ if readiness_audit_rows:
         )
 
 
+def scheduled_check_created_at_text(created_at) -> str:
+    if created_at is None:
+        return ""
+    created_utc = created_at
+    if created_utc.tzinfo is None:
+        created_utc = created_utc.replace(tzinfo=timezone.utc)
+    else:
+        created_utc = created_utc.astimezone(timezone.utc)
+    return created_utc.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+if readiness_audit_row and readiness_audit_row[0] == "passed":
+    effective_readiness_scheduled_check = (
+        "paper_readiness",
+        "passed",
+        "0",
+        readiness_target_session.isoformat(),
+        proof_start.isoformat(),
+        scheduled_check_created_at_text(readiness_audit_row[1]),
+    )
+    replaced_readiness_scheduled_check = False
+    effective_scheduled_checks = []
+    for scheduled_check in scheduled_checks:
+        if scheduled_check[0] == "paper_readiness":
+            effective_scheduled_checks.append(effective_readiness_scheduled_check)
+            replaced_readiness_scheduled_check = True
+        else:
+            effective_scheduled_checks.append(scheduled_check)
+    if not replaced_readiness_scheduled_check:
+        effective_scheduled_checks.append(effective_readiness_scheduled_check)
+        effective_scheduled_checks = sorted(
+            effective_scheduled_checks,
+            key=lambda row: row[0],
+        )
+    scheduled_checks = effective_scheduled_checks
+
+
 def readiness_row_age_minutes(row) -> int | None:
     created_at = row[1]
     if created_at is None:

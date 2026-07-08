@@ -5952,6 +5952,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS must be a positive integer" in script
     assert "latest_readiness_reason.startswith(\"lock_busy\")" in script
     assert "(row for row in readiness_audit_rows if row[0] == \"passed\")" in script
+    assert "def scheduled_check_created_at_text" in script
+    assert "effective_readiness_scheduled_check = (" in script
+    assert "replaced_readiness_scheduled_check = False" in script
+    assert "if scheduled_check[0] == \"paper_readiness\":" in script
+    assert "scheduled_checks = effective_scheduled_checks" in script
     assert "def readiness_row_has_decision_dry_run" in script
     assert "def readiness_row_has_expected_decision_dry_run_strategies" in script
     assert "def readiness_row_is_current" in script
