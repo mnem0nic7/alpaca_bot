@@ -206,6 +206,8 @@ services:
       postgres:
         condition: service_healthy
     environment: *alpaca_bot_env
+    volumes:
+      - /var/lib/alpaca-bot/option-chain-snapshots:/data/option-chain-snapshots
     profiles: ["ops"]
 
   # Run on-demand: docker compose --env-file /etc/alpaca_bot/alpaca-bot.env -f deploy/compose.yaml run --rm nightly

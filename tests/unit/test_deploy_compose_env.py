@@ -155,6 +155,13 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "/var/lib/alpaca-bot/option-chain-snapshots:/data/option-chain-snapshots"
         in compose_text
     )
+    admin_block = compose_text[
+        compose_text.index("  admin:\n") : compose_text.index("  # Run on-demand:")
+    ]
+    assert (
+        "/var/lib/alpaca-bot/option-chain-snapshots:/data/option-chain-snapshots"
+        in admin_block
+    )
     assert "ENABLE_REGIME_FILTER: ${ENABLE_REGIME_FILTER:-false}" in compose_text
     assert "ENABLE_NEWS_FILTER: ${ENABLE_NEWS_FILTER:-false}" in compose_text
     assert "ENABLE_SPREAD_FILTER: ${ENABLE_SPREAD_FILTER:-false}" in compose_text
