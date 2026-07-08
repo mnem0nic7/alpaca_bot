@@ -266,6 +266,27 @@ Conclusion: the `BB_PERIOD=25` prefilter positives were seed-sensitive and did
 not validate independently. The full `bb_squeeze` setup grid has no promotion
 candidate, and `bb_squeeze` remains unapproved.
 
+## 2026-07-08 Momentum Lookback-1 Grid
+
+The first `momentum` grid slice tested `PRIOR_DAY_HIGH_LOOKBACK_BARS=1` across
+relative-volume thresholds `1.3`, `1.5`, `1.8`, and `2.0` and ATR stop
+multipliers `1.0`, `1.5`, and `2.0`:
+
+- artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T062528Z/summary.md` and `validation/summary.md`
+- variants: `grid_001` through `grid_012`
+- result: `positive_edge_prefilter_rows=0`, validation variants `0`,
+  `promotion_approved=false`
+
+| lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---:|---:|---:|---|---|
+| `grid_009` | `PRIOR_DAY_HIGH_LOOKBACK_BARS=1,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=2.0` | 379 | 1.03 | 17.77 | [-0.4185, 0.5509] | `no-evidence` |
+| `grid_007` | `PRIOR_DAY_HIGH_LOOKBACK_BARS=1,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=1.0` | 390 | 1.08 | 50.11 | [-0.4343, 0.7085] | `no-evidence` |
+| `grid_008` | `PRIOR_DAY_HIGH_LOOKBACK_BARS=1,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=1.5` | 380 | 1.00 | 2.53 | [-0.4682, 0.5008] | `no-evidence` |
+
+Conclusion: the `PRIOR_DAY_HIGH_LOOKBACK_BARS=1` momentum slice did not produce
+a positive prefilter survivor. No validation candidate was available, and
+`momentum` remains unapproved.
+
 ## Proof Visibility
 
 `paper_proof_status.sh` now prints a separate `paper proof second strategy setup
