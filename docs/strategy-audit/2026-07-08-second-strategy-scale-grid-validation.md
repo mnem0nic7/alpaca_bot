@@ -439,11 +439,44 @@ Conclusion: the `high_watermark` prefilter survivor did not validate
 independently. No setup variant is approved for paper promotion, and
 `high_watermark` remains unapproved.
 
+## 2026-07-08 Gap And Go Full Grid
+
+The full `gap_and_go` grid tested gap thresholds `0.01`, `0.015`, `0.02`, and
+`0.025` across gap-volume thresholds `1.5`, `2.0`, and `2.5` and ATR stop
+multipliers `1.0`, `1.5`, and `2.0`:
+
+- artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T102418Z/summary.md` and `validation/summary.md`
+- variants: `grid_001` through `grid_036`
+- prefilter result: `positive_edge_prefilter_rows=4`
+- validation result: `positive_edge_validation_rows=0`,
+  `promotion_approved=false`
+
+Prefilter survivors:
+
+| lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---:|---:|---:|---|---|
+| `grid_002` | `GAP_THRESHOLD_PCT=0.01,GAP_VOLUME_THRESHOLD=1.5,ATR_STOP_MULTIPLIER=1.5` | 51 | 2.30 | 62.36 | [0.0546, 2.4642] | `positive-edge` |
+| `grid_011` | `GAP_THRESHOLD_PCT=0.015,GAP_VOLUME_THRESHOLD=1.5,ATR_STOP_MULTIPLIER=1.5` | 51 | 2.30 | 62.36 | [0.0546, 2.4642] | `positive-edge` |
+| `grid_003` | `GAP_THRESHOLD_PCT=0.01,GAP_VOLUME_THRESHOLD=1.5,ATR_STOP_MULTIPLIER=2.0` | 51 | 2.30 | 62.03 | [0.0400, 2.4578] | `positive-edge` |
+| `grid_012` | `GAP_THRESHOLD_PCT=0.015,GAP_VOLUME_THRESHOLD=1.5,ATR_STOP_MULTIPLIER=2.0` | 51 | 2.30 | 62.03 | [0.0400, 2.4578] | `positive-edge` |
+
+Independent validation of the top three:
+
+| lever | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---:|---:|---:|---|---|
+| `grid_012` | 99 | 1.22 | 27.96 | [-0.5272, 1.0758] | `no-evidence` |
+| `grid_002` | 100 | 1.17 | 23.17 | [-0.5630, 1.0377] | `no-evidence` |
+| `grid_011` | 100 | 1.17 | 23.17 | [-0.5630, 1.0377] | `no-evidence` |
+
+Conclusion: the `gap_and_go` prefilter positives did not validate
+independently. No setup variant is approved for paper promotion, and
+`gap_and_go` remains unapproved.
+
 ## Proof Visibility
 
 `paper_proof_status.sh` now prints a separate `paper proof second strategy setup
 evidence` line from `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs`.
 This keeps the latest setup/grid search result visible beside the broad basket
 scan result. On 2026-07-08 it reported fresh setup evidence with
-`candidate_status=no_positive_validation_edge`, `prefilter_positive_rows=1`,
+`candidate_status=no_positive_validation_edge`, `prefilter_positive_rows=4`,
 `validation_positive_rows=0`, and `promotion_approved=false`.
