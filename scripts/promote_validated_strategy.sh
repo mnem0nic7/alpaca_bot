@@ -280,9 +280,14 @@ append_csv_name() {
 update_env_value() {
   local key="$1"
   local value="$2"
+  local env_dir
+  local env_name
   local tmp
-  tmp="$(mktemp)"
-  awk -v key="$key" -v value="$value" '
+  env_dir="$(dirname "$ENV_FILE")"
+  env_name="$(basename "$ENV_FILE")"
+  tmp="$(mktemp "$env_dir/.${env_name}.${key}.XXXXXX")"
+  chmod --reference="$ENV_FILE" "$tmp" 2>/dev/null || true
+  if ! awk -v key="$key" -v value="$value" '
     BEGIN { updated = 0 }
     $0 ~ "^[[:space:]]*" key "[[:space:]]*=" && updated == 0 {
       print key "=" value
@@ -295,9 +300,11 @@ update_env_value() {
         print key "=" value
       }
     }
-  ' "$ENV_FILE" > "$tmp"
-  cat "$tmp" > "$ENV_FILE"
-  rm -f "$tmp"
+  ' "$ENV_FILE" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  mv "$tmp" "$ENV_FILE"
 }
 
 write_approval_marker() {
