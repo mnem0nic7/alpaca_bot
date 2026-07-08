@@ -720,6 +720,30 @@ def best_promotion_candidate_from_rows(rows: object) -> dict[str, object] | None
     return sorted(candidates, reverse=True)[0][3]
 
 
+def approval_marker_status(
+    payload: dict | None,
+    error: str | None,
+    *,
+    evidence_status: str,
+    validation_positive_families: list[str],
+) -> tuple[str, str]:
+    if error == "missing":
+        return "missing", "none"
+    if error is not None or payload is None:
+        return "invalid", "none"
+    strategy = str(payload.get("strategy") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_:-]+", strategy):
+        return "invalid_strategy", "none"
+    confirmation = str(payload.get("confirmation") or "").strip()
+    if confirmation != f"approve-{strategy}-paper-promotion":
+        return "confirmation_mismatch", strategy
+    if evidence_status != "ok":
+        return f"evidence_{evidence_status}", strategy
+    if strategy not in validation_positive_families:
+        return "latest_validation_missing_positive_edge", strategy
+    return "approved", strategy
+
+
 def load_second_strategy_evidence(
     *,
     output_root: Path,
@@ -729,8 +753,10 @@ def load_second_strategy_evidence(
 ) -> dict[str, object]:
     prefilter_summary_path = output_root / "latest" / "summary.json"
     validation_summary_path = output_root / "latest_validation" / "summary.json"
+    approval_marker_path = output_root / "promotion_approval.json"
     prefilter_payload, prefilter_error = load_json_payload(prefilter_summary_path)
     validation_payload, validation_error = load_json_payload(validation_summary_path)
+    approval_payload, approval_error = load_json_payload(approval_marker_path)
 
     prefilter_rows = prefilter_payload.get("rows", []) if prefilter_payload else []
     validation_rows = validation_payload.get("rows", []) if validation_payload else []
@@ -794,7 +820,7 @@ def load_second_strategy_evidence(
         evidence_status = "ok"
         detail = "fresh"
 
-    promotion_approved = bool(
+    scan_promotion_approved = bool(
         validation_payload.get("promotion_approved") if validation_payload else False
     )
     validation_positive_rows = int(
@@ -808,6 +834,18 @@ def load_second_strategy_evidence(
         else 0
     )
     promotion_candidate = best_promotion_candidate_from_rows(validation_rows)
+    approval_status, approval_strategy = approval_marker_status(
+        approval_payload,
+        approval_error,
+        evidence_status=evidence_status,
+        validation_positive_families=validation_positive_families,
+    )
+    promotion_approved = scan_promotion_approved or approval_status == "approved"
+    promotion_approved_source = (
+        "scan_summary"
+        if scan_promotion_approved
+        else ("approval_marker" if approval_status == "approved" else "none")
+    )
     promotion_action_status = "none"
     if promotion_approved and validation_positive_rows > 0:
         promotion_action_status = "approved"
@@ -852,6 +890,10 @@ def load_second_strategy_evidence(
         "validation_positive_rows": validation_positive_rows,
         "validation_positive_families": validation_positive_families,
         "promotion_approved": promotion_approved,
+        "promotion_approved_source": promotion_approved_source,
+        "promotion_approval_marker": str(approval_marker_path),
+        "promotion_approval_marker_status": approval_status,
+        "promotion_approval_marker_strategy": approval_strategy,
         "promotion_action_status": promotion_action_status,
         "promotion_candidate": (
             str(promotion_candidate.get("candidate"))
@@ -4861,6 +4903,9 @@ print(
     f"validation_positive_rows={second_strategy_evidence['validation_positive_rows']} "
     f"validation_positive_family_names={format_name_list(second_strategy_evidence['validation_positive_families'])} "
     f"promotion_approved={str(second_strategy_evidence['promotion_approved']).lower()} "
+    f"promotion_approved_source={second_strategy_evidence['promotion_approved_source']} "
+    f"promotion_approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']} "
+    f"promotion_approval_marker_strategy={safe_status_value(second_strategy_evidence['promotion_approval_marker_strategy'])} "
     f"max_validation_candidates={safe_status_value(second_strategy_evidence['max_validation_candidates'])} "
     f"validation_verdicts={second_strategy_evidence['validation_verdicts']}"
 )
@@ -4877,6 +4922,8 @@ print(
     f"confirmation={promotion_confirmation} "
     f"script=./scripts/promote_validated_strategy.sh "
     f"env_file={safe_status_value(proof_status_env_file)} "
+    f"approval_marker={safe_status_value(second_strategy_evidence['promotion_approval_marker'])} "
+    f"approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']} "
     f"candidate_scale={safe_status_value(second_strategy_evidence['promotion_candidate_scale'])} "
     f"candidate_trades={safe_status_value(second_strategy_evidence['promotion_candidate_trades'])} "
     f"candidate_total_pnl={format_optional_float(second_strategy_evidence['promotion_candidate_total_pnl'], 2)} "

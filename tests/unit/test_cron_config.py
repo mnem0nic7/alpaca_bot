@@ -6670,10 +6670,15 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "prefilter_positive_rows={second_strategy_evidence['prefilter_positive_rows']}" in script
     assert "missing_validation_families=" in script
     assert "promotion_approved={str(second_strategy_evidence['promotion_approved']).lower()}" in script
+    assert "promotion_approved_source={second_strategy_evidence['promotion_approved_source']}" in script
+    assert "promotion_approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']}" in script
+    assert "promotion_approval_marker_strategy={safe_status_value(second_strategy_evidence['promotion_approval_marker_strategy'])}" in script
     assert "promotion_action_status" in script
     assert "paper proof second strategy promotion action:" in script
     assert "confirmation={promotion_confirmation}" in script
     assert "script=./scripts/promote_validated_strategy.sh" in script
+    assert "approval_marker={safe_status_value(second_strategy_evidence['promotion_approval_marker'])}" in script
+    assert "approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']}" in script
     assert "candidate_ci_low={format_optional_float(second_strategy_evidence['promotion_candidate_ci_low'], 4)}" in script
     assert "PROOF_STATUS_ENV_FILE" in script
     assert "validation_verdicts={second_strategy_evidence['validation_verdicts']}" in script

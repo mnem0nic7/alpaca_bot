@@ -178,6 +178,11 @@ def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_pa
         tmp_path / "docker_calls"
     ).read_text()
     assert (tmp_path / "deploy_calls").read_text().strip() == str(env_file)
+    approval_marker = json.loads((evidence_root / "promotion_approval.json").read_text())
+    assert approval_marker["strategy"] == "ema_pullback"
+    assert approval_marker["confirmation"] == "approve-ema_pullback-paper-promotion"
+    assert approval_marker["candidate_trades"] == 291
+    assert approval_marker["candidate_ci_low"] == 0.0007
 
 
 def test_promote_validated_strategy_rolls_back_when_deploy_fails(tmp_path: Path) -> None:
@@ -198,6 +203,7 @@ def test_promote_validated_strategy_rolls_back_when_deploy_fails(tmp_path: Path)
     assert result.returncode == 1
     assert "deploy failed; rolling back env allowlist and strategy flag" in result.stderr
     assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
+    assert not (evidence_root / "promotion_approval.json").exists()
     docker_calls = (tmp_path / "docker_calls").read_text()
     assert "enable-strategy ema_pullback --mode paper --strategy-version v1-breakout" in docker_calls
     assert "disable-strategy ema_pullback --mode paper --strategy-version v1-breakout" in docker_calls

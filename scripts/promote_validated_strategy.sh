@@ -12,6 +12,7 @@ REQUESTED_STRATEGY="${2:-}"
 EVIDENCE_ROOT="${3:-${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}}"
 DEPLOY_SCRIPT="${4:-$ROOT_DIR/scripts/deploy.sh}"
 COMPOSE_FILE="${PROMOTE_VALIDATED_STRATEGY_COMPOSE_FILE:-$ROOT_DIR/deploy/compose.yaml}"
+APPROVAL_MARKER="${PROMOTE_VALIDATED_STRATEGY_APPROVAL_MARKER:-$EVIDENCE_ROOT/promotion_approval.json}"
 MAX_P_MEAN_LE_ZERO="${PROMOTE_VALIDATED_STRATEGY_MAX_P_MEAN_LE_ZERO:-0.05}"
 MIN_CANDIDATE_TRADES="${PROMOTE_VALIDATED_STRATEGY_MIN_CANDIDATE_TRADES:-30}"
 CONFIRMATION="${PROMOTE_VALIDATED_STRATEGY_CONFIRM:-}"
@@ -251,12 +252,70 @@ update_env_value() {
   rm -f "$tmp"
 }
 
+write_approval_marker() {
+  python3 - \
+    "$APPROVAL_MARKER" \
+    "$VALIDATED_STRATEGY" \
+    "$required_confirmation" \
+    "$VALIDATION_SUMMARY" \
+    "$STRATEGY_VERSION" \
+    "$ENV_FILE" \
+    "$VALIDATED_SCALE" \
+    "$VALIDATED_TRADES" \
+    "$VALIDATED_TOTAL_PNL" \
+    "$VALIDATED_CI_LOW" \
+    "$VALIDATED_P_MEAN_LE_ZERO" <<'PY'
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+marker = Path(sys.argv[1])
+payload = {
+    "schema_version": 1,
+    "approved_at": datetime.now(timezone.utc).isoformat(),
+    "strategy": sys.argv[2],
+    "confirmation": sys.argv[3],
+    "validation_summary": sys.argv[4],
+    "strategy_version": sys.argv[5],
+    "env_file": sys.argv[6],
+    "candidate_scale": sys.argv[7],
+    "candidate_trades": int(sys.argv[8]),
+    "candidate_total_pnl": float(sys.argv[9]),
+    "candidate_ci_low": float(sys.argv[10]),
+    "candidate_p_mean_le_zero": float(sys.argv[11]),
+}
+marker.parent.mkdir(parents=True, exist_ok=True)
+with tempfile.NamedTemporaryFile(
+    "w",
+    encoding="utf-8",
+    dir=str(marker.parent),
+    delete=False,
+) as tmp_file:
+    json.dump(payload, tmp_file, indent=2, sort_keys=True)
+    tmp_file.write("\n")
+    tmp_path = tmp_file.name
+os.replace(tmp_path, marker)
+PY
+}
+
 current_approved="$(read_env_value PAPER_APPROVED_STRATEGIES)"
 new_approved="$(append_csv_name "$current_approved" "$VALIDATED_STRATEGY")"
 
 backup_env="$(mktemp)"
 cp "$ENV_FILE" "$backup_env"
+backup_approval_marker="$(mktemp)"
+approval_marker_existed=false
+if [[ -f "$APPROVAL_MARKER" ]]; then
+  cp "$APPROVAL_MARKER" "$backup_approval_marker"
+  approval_marker_existed=true
+fi
 restore_env_on_error=false
+restore_approval_marker_on_error=false
 rollback_strategy_on_error=false
 compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
 cleanup() {
@@ -271,7 +330,16 @@ cleanup() {
   if [[ "$restore_env_on_error" == "true" ]]; then
     cp "$backup_env" "$ENV_FILE"
   fi
+  if [[ "$restore_approval_marker_on_error" == "true" ]]; then
+    if [[ "$approval_marker_existed" == "true" ]]; then
+      mkdir -p "$(dirname "$APPROVAL_MARKER")"
+      cp "$backup_approval_marker" "$APPROVAL_MARKER"
+    else
+      rm -f "$APPROVAL_MARKER"
+    fi
+  fi
   rm -f "$backup_env"
+  rm -f "$backup_approval_marker"
 }
 trap cleanup EXIT
 
@@ -292,11 +360,19 @@ if ! "${compose[@]}" run -T --rm admin \
 fi
 rollback_strategy_on_error=true
 
+if ! write_approval_marker; then
+  echo "$LOG_PREFIX failed to write approval marker; rolling back promotion" >&2
+  exit 1
+fi
+restore_approval_marker_on_error=true
+
 echo "$LOG_PREFIX enabled $VALIDATED_STRATEGY from $VALIDATION_SUMMARY"
 if ! "$DEPLOY_SCRIPT" "$ENV_FILE"; then
   echo "$LOG_PREFIX deploy failed; rolling back env allowlist and strategy flag" >&2
   exit 1
 fi
 restore_env_on_error=false
+restore_approval_marker_on_error=false
 rollback_strategy_on_error=false
+echo "$LOG_PREFIX wrote approval marker: $APPROVAL_MARKER"
 echo "$LOG_PREFIX promotion complete for $VALIDATED_STRATEGY"
