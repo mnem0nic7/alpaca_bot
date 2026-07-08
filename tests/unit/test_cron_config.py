@@ -289,6 +289,9 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'OPTION_CHAIN_SNAPSHOTS="${SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS:-}"' in script
     assert 'OPTION_CHAIN_SNAPSHOTS="${OPTION_CHAIN_SNAPSHOT_DIR:-}"' in script
     assert 'OPTION_CHAIN_SNAPSHOTS="$HOST_OPTION_CHAIN_SNAPSHOT_DIR"' in script
+    assert 'KNOWN_OPTION_CANDIDATES="${SECOND_STRATEGY_KNOWN_OPTION_CANDIDATES:-}"' in script
+    assert "from alpaca_bot.strategy import OPTION_STRATEGY_NAMES" in script
+    assert "known_option_candidates" in script
     assert "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES must be true, false, or auto" in script
     assert 'if [[ "$INCLUDE_OPTION_CANDIDATES" == "auto" ]]; then' in script
     assert 'INCLUDE_OPTION_CANDIDATES=true' in script
@@ -311,6 +314,11 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "option-chain snapshot path has no replayable contracts" in script
     assert "option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS" in script
     assert "option_replay_status=$OPTION_REPLAY_STATUS" in script
+    assert "is_known_option_candidate" in script
+    assert "requested_option_candidates" in script
+    assert "option candidate(s) require supported option replay" in script
+    assert "validation_option_candidates" in script
+    assert "option validation candidate(s) require supported option replay" in script
     assert 'LATEST_LINK="$OUTPUT_ROOT/latest"' in script
     assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script
     assert 'VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"' in script

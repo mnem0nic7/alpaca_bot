@@ -88,6 +88,16 @@ if [[ -z "$OPTION_CHAIN_SNAPSHOTS" ]]; then
     OPTION_CHAIN_SNAPSHOTS="$HOST_OPTION_CHAIN_SNAPSHOT_DIR"
   fi
 fi
+KNOWN_OPTION_CANDIDATES="${SECOND_STRATEGY_KNOWN_OPTION_CANDIDATES:-}"
+if [[ -z "$KNOWN_OPTION_CANDIDATES" ]]; then
+  KNOWN_OPTION_CANDIDATES="$(python3 - <<'PY'
+from alpaca_bot.strategy import OPTION_STRATEGY_NAMES
+
+print(",".join(sorted(OPTION_STRATEGY_NAMES)))
+PY
+)"
+fi
+mapfile -t known_option_candidates < <(read_name_list "$KNOWN_OPTION_CANDIDATES")
 
 case "${INCLUDE_OPTION_CANDIDATES,,}" in
   true|1|yes|y)
@@ -240,15 +250,20 @@ if [[ "$INCLUDE_OPTION_CANDIDATES" == "auto" ]]; then
   fi
 fi
 
-is_option_candidate() {
+is_known_option_candidate() {
   local candidate="$1"
   local option_candidate
-  for option_candidate in "${option_candidates[@]}"; do
+  for option_candidate in "${known_option_candidates[@]}"; do
     if [[ "$candidate" == "$option_candidate" ]]; then
       return 0
     fi
   done
   return 1
+}
+
+is_option_candidate() {
+  local candidate="$1"
+  is_known_option_candidate "$candidate"
 }
 
 option_candidate_csv=""
@@ -284,6 +299,16 @@ else
   fi
 fi
 mapfile -t option_candidates < <(read_name_list "$option_candidate_csv")
+
+requested_option_candidates=()
+for candidate in "${candidates[@]}"; do
+  if is_known_option_candidate "$candidate"; then
+    requested_option_candidates+=("$candidate")
+  fi
+done
+if [[ "$INCLUDE_OPTION_CANDIDATES" != "true" && "${#requested_option_candidates[@]}" -gt 0 ]]; then
+  fail "option candidate(s) require supported option replay: ${requested_option_candidates[*]} option_replay_status=$OPTION_REPLAY_STATUS"
+fi
 
 if [[ "$INCLUDE_OPTION_CANDIDATES" == "true" ]]; then
   [[ -n "$OPTION_CHAIN_SNAPSHOTS" ]] || fail "SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS or OPTION_CHAIN_SNAPSHOT_DIR is required when option candidates are included"
@@ -716,6 +741,17 @@ output_path.write_text(
     )
 )
 PY
+  fi
+
+  validation_option_candidates=()
+  while IFS=$'\t' read -r candidate _candidate_scale; do
+    [[ -n "$candidate" ]] || continue
+    if is_known_option_candidate "$candidate"; then
+      validation_option_candidates+=("$candidate")
+    fi
+  done < "$validation_specs_file"
+  if [[ "$INCLUDE_OPTION_CANDIDATES" != "true" && "${#validation_option_candidates[@]}" -gt 0 ]]; then
+    fail "option validation candidate(s) require supported option replay: ${validation_option_candidates[*]} option_replay_status=$OPTION_REPLAY_STATUS"
   fi
 
   validation_status_file="$VALIDATION_OUTPUT_DIR/status.tsv"
