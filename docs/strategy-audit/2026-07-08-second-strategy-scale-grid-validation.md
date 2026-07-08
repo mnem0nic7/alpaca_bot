@@ -319,11 +319,34 @@ Conclusion: the `PRIOR_DAY_HIGH_LOOKBACK_BARS=2` momentum prefilter positives
 were seed-sensitive and did not validate independently. No `momentum` setup
 variant is approved for paper promotion, and `momentum` remains unapproved.
 
+## 2026-07-08 VWAP Reversion Grid
+
+The `vwap_reversion` grid tested VWAP dip thresholds `0.01`, `0.015`, `0.02`,
+and `0.025` across relative-volume thresholds `1.3`, `1.5`, and `1.8` and ATR
+stop multipliers `1.0`, `1.5`, and `2.0`:
+
+- artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T065318Z/summary.md` and `validation/summary.md`
+- variants: `grid_001` through `grid_036`
+- result: `positive_edge_prefilter_rows=0`, validation variants `0`,
+  `promotion_approved=false`
+
+| lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---:|---:|---:|---|---|
+| `grid_007` | `VWAP_DIP_THRESHOLD_PCT=0.01,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=1.0` | 110 | 1.77 | 149.53 | [-0.0533, 2.9652] | `no-evidence` |
+| `grid_009` | `VWAP_DIP_THRESHOLD_PCT=0.01,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=2.0` | 110 | 1.74 | 136.58 | [-0.1241, 2.8067] | `no-evidence` |
+| `grid_008` | `VWAP_DIP_THRESHOLD_PCT=0.01,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=1.5` | 110 | 1.73 | 136.24 | [-0.1347, 2.7999] | `no-evidence` |
+| `grid_016` | `VWAP_DIP_THRESHOLD_PCT=0.015,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=1.0` | 87 | 1.70 | 115.72 | [-0.3261, 3.2001] | `no-evidence` |
+| `grid_018` | `VWAP_DIP_THRESHOLD_PCT=0.015,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=2.0` | 87 | 1.66 | 102.61 | [-0.4295, 3.0414] | `no-evidence` |
+
+Conclusion: the full `vwap_reversion` setup grid did not produce a positive
+prefilter survivor under the fresh prefilter seed. No validation candidate was
+available, and `vwap_reversion` remains unapproved.
+
 ## Proof Visibility
 
 `paper_proof_status.sh` now prints a separate `paper proof second strategy setup
 evidence` line from `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs`.
 This keeps the latest setup/grid search result visible beside the broad basket
 scan result. On 2026-07-08 it reported fresh setup evidence with
-`candidate_status=no_positive_validation_edge`, `prefilter_positive_rows=9`,
+`candidate_status=no_positive_prefilter_edge`, `prefilter_positive_rows=0`,
 `validation_positive_rows=0`, and `promotion_approved=false`.
