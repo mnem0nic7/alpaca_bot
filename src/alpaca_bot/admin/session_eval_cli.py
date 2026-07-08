@@ -51,6 +51,14 @@ PROFIT_LOCK_PAUSE_DISABLED_REASONS = frozenset({
 PROFIT_LOCK_PAUSE_STRATEGY_DISABLED_REASONS = (
     PROFIT_LOCK_PAUSE_DISABLED_REASONS | {"strategy_session_state_entries_disabled"}
 )
+RECOVERED_ENABLED_DISABLED_REASONS = frozenset({
+    "paper_readiness_check_missing",
+    "trading_status:close_only",
+})
+RECOVERED_ENABLED_STRATEGY_DISABLED_REASONS = (
+    RECOVERED_ENABLED_DISABLED_REASONS
+    | {"entry_cadence_waiting_for_new_bar", "strategy_session_state_entries_disabled"}
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -447,7 +455,9 @@ class SessionDiagnostics:
         and heartbeat-stale event also remain diagnostic output only. Recovered
         disabled-entry and runtime-reconciliation cycles stay visible in the
         report but do not fail the hard guard once the latest supervisor state
-        is clean. Missing cycles, currently disabled entries, unrecovered
+        is clean. Recovered readiness and close-only pauses also stay visible
+        once the current trading status is enabled. Missing cycles, currently
+        disabled entries, unrecovered
         runtime errors, stream failures, unresolved reconciliation issues, open
         exposure, active local orders, and missing decision activity are
         proof-blocking.
@@ -505,6 +515,8 @@ class SessionDiagnostics:
     def proof_blocking_entries_disabled_cycles(self) -> int:
         if self.latest_entries_disabled_is_accepted_close_only_pause:
             return 0
+        if self.latest_entries_disabled_is_recovered_enabled_pause:
+            return 0
         return self.entries_disabled_cycles if self.latest_entries_disabled else 0
 
     @property
@@ -512,6 +524,8 @@ class SessionDiagnostics:
         if not self.latest_strategy_disabled:
             return 0
         if self.latest_strategy_disabled_is_accepted_close_only_pause:
+            return 0
+        if self.latest_strategy_disabled_is_recovered_enabled_pause:
             return 0
         if set(self.latest_strategy_disabled_reasons) <= {
             "strategy_session_state_entries_disabled",
@@ -598,6 +612,16 @@ class SessionDiagnostics:
         )
 
     @property
+    def latest_entries_disabled_is_recovered_enabled_pause(self) -> bool:
+        latest_reasons = set(self.latest_entries_disabled_reasons)
+        return (
+            self.latest_entries_disabled
+            and self.trading_status_value == "enabled"
+            and bool(latest_reasons)
+            and latest_reasons <= RECOVERED_ENABLED_DISABLED_REASONS
+        )
+
+    @property
     def latest_strategy_disabled_is_profit_lock_pause(self) -> bool:
         latest_reasons = set(self.latest_strategy_disabled_reasons)
         return (
@@ -622,6 +646,16 @@ class SessionDiagnostics:
         return (
             self.latest_strategy_disabled_is_profit_lock_pause
             or self.latest_strategy_disabled_is_proof_risk_lock_pause
+        )
+
+    @property
+    def latest_strategy_disabled_is_recovered_enabled_pause(self) -> bool:
+        latest_reasons = set(self.latest_strategy_disabled_reasons)
+        return (
+            self.latest_strategy_disabled
+            and self.trading_status_value == "enabled"
+            and bool(latest_reasons)
+            and latest_reasons <= RECOVERED_ENABLED_STRATEGY_DISABLED_REASONS
         )
 
 

@@ -635,6 +635,62 @@ def test_session_diagnostics_blocks_unrecovered_stream_exit():
     assert diagnostics.has_guard_issues is True
 
 
+def test_session_diagnostics_allows_recovered_enabled_entry_pause():
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    diagnostics = cli_module.SessionDiagnostics(
+        total_supervisor_cycles=3,
+        entries_disabled_cycles=2,
+        latest_entries_disabled=True,
+        latest_entries_disabled_reasons=(
+            "paper_readiness_check_missing",
+            "trading_status:close_only",
+        ),
+        decision_activity=cli_module.DecisionActivityStats(records=120),
+        trading_status_value="enabled",
+    )
+
+    assert diagnostics.proof_blocking_entries_disabled_cycles == 0
+    assert diagnostics.has_guard_issues is False
+
+
+def test_session_diagnostics_blocks_unrecovered_entry_pause_reason():
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    diagnostics = cli_module.SessionDiagnostics(
+        total_supervisor_cycles=3,
+        entries_disabled_cycles=2,
+        latest_entries_disabled=True,
+        latest_entries_disabled_reasons=("runtime_reconciliation_mismatch",),
+        decision_activity=cli_module.DecisionActivityStats(records=120),
+        trading_status_value="enabled",
+    )
+
+    assert diagnostics.proof_blocking_entries_disabled_cycles == 2
+    assert diagnostics.has_guard_issues is True
+
+
+def test_session_diagnostics_allows_recovered_enabled_strategy_pause():
+    import alpaca_bot.admin.session_eval_cli as cli_module
+
+    diagnostics = cli_module.SessionDiagnostics(
+        total_supervisor_cycles=3,
+        strategy_disabled_cycles=2,
+        latest_strategy_disabled=True,
+        latest_strategy_disabled_reasons=(
+            "entry_cadence_waiting_for_new_bar",
+            "paper_readiness_check_missing",
+            "strategy_session_state_entries_disabled",
+            "trading_status:close_only",
+        ),
+        decision_activity=cli_module.DecisionActivityStats(records=120),
+        trading_status_value="enabled",
+    )
+
+    assert diagnostics.proof_blocking_strategy_disabled_cycles == 0
+    assert diagnostics.has_guard_issues is False
+
+
 def test_load_entries_disabled_cycle_stats_parses_colon_reasons(monkeypatch):
     import alpaca_bot.admin.session_eval_cli as cli_module
 
