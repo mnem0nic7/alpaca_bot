@@ -77,6 +77,20 @@ VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"
 VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"
 VALIDATION_OUTPUT_DIR="${SECOND_STRATEGY_VALIDATION_OUTPUT_DIR:-$OUTPUT_DIR/validation}"
 VALIDATION_LATEST_LINK="${SECOND_STRATEGY_VALIDATION_LATEST_LINK:-}"
+INCLUDE_OPTION_CANDIDATES="${SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES:-false}"
+OPTION_CHAIN_SNAPSHOTS="${SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS:-${OPTION_CHAIN_SNAPSHOT_DIR:-}}"
+
+case "${INCLUDE_OPTION_CANDIDATES,,}" in
+  true|1|yes|y)
+    INCLUDE_OPTION_CANDIDATES=true
+    ;;
+  false|0|no|n|"")
+    INCLUDE_OPTION_CANDIDATES=false
+    ;;
+  *)
+    fail "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES must be true or false"
+    ;;
+esac
 
 [[ -d "$SCENARIO_DIR" ]] || fail "missing scenario dir: $SCENARIO_DIR"
 mkdir -p "$OUTPUT_DIR"
@@ -95,14 +109,56 @@ load_proof_status() {
   proof_status_loaded=true
 }
 
+option_snapshot_path_has_files() {
+  local path="$1"
+  if [[ -f "$path" ]]; then
+    [[ -s "$path" ]]
+    return
+  fi
+  [[ -d "$path" ]] || return 1
+  [[ -n "$(find "$path" -maxdepth 1 -type f -name 'option-chain-snapshots-*.jsonl' -size +0c -print -quit)" ]]
+}
+
+is_option_candidate() {
+  local candidate="$1"
+  local option_candidate
+  for option_candidate in "${option_candidates[@]}"; do
+    if [[ "$candidate" == "$option_candidate" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+option_candidate_csv=""
+if [[ "$INCLUDE_OPTION_CANDIDATES" == "true" ]]; then
+  option_candidate_csv="${SECOND_STRATEGY_OPTION_CANDIDATES:-}"
+fi
 if [[ -n "${SECOND_STRATEGY_CANDIDATES:-}" ]]; then
   mapfile -t candidates < <(read_name_list "$SECOND_STRATEGY_CANDIDATES")
+  if [[ "$INCLUDE_OPTION_CANDIDATES" == "true" && -z "$option_candidate_csv" ]]; then
+    load_proof_status "discovering disabled option candidates"
+    diversification_line="$(grep -E '^paper proof strategy diversification: ' "$proof_output" | tail -n 1 || true)"
+    [[ -n "$diversification_line" ]] || fail "proof status did not print strategy diversification details"
+    option_candidate_csv="$(extract_field "$diversification_line" "option_gated_disabled_candidate_names" || true)"
+  fi
 else
-  load_proof_status "discovering disabled stock candidates"
+  load_proof_status "discovering disabled candidate strategies"
   diversification_line="$(grep -E '^paper proof strategy diversification: ' "$proof_output" | tail -n 1 || true)"
   [[ -n "$diversification_line" ]] || fail "proof status did not print strategy diversification details"
   candidate_csv="$(extract_field "$diversification_line" "stock_disabled_candidate_names" || true)"
   mapfile -t candidates < <(read_name_list "$candidate_csv")
+  if [[ "$INCLUDE_OPTION_CANDIDATES" == "true" ]]; then
+    option_candidate_csv="$(extract_field "$diversification_line" "option_gated_disabled_candidate_names" || true)"
+    mapfile -t discovered_option_candidates < <(read_name_list "$option_candidate_csv")
+    candidates+=("${discovered_option_candidates[@]}")
+  fi
+fi
+mapfile -t option_candidates < <(read_name_list "$option_candidate_csv")
+
+if [[ "$INCLUDE_OPTION_CANDIDATES" == "true" ]]; then
+  [[ -n "$OPTION_CHAIN_SNAPSHOTS" ]] || fail "SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS or OPTION_CHAIN_SNAPSHOT_DIR is required when option candidates are included"
+  option_snapshot_path_has_files "$OPTION_CHAIN_SNAPSHOTS" || fail "option-chain snapshot path is empty or missing: $OPTION_CHAIN_SNAPSHOTS"
 fi
 
 mapfile -t excluded_candidates < <(read_name_list "$EXCLUDE_CANDIDATES")
@@ -190,7 +246,7 @@ status_parts_dir="$OUTPUT_DIR/status_parts"
 mkdir -p "$status_parts_dir"
 
 echo "second strategy basket scan: output_dir=$OUTPUT_DIR"
-echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none}"
+echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none}"
 
 failed_count=0
 run_prefilter_job() {
@@ -225,6 +281,9 @@ run_prefilter_job() {
   )
   if [[ -n "$starting_equity" && "$starting_equity" != "none" ]]; then
     cmd+=(--starting-equity "$starting_equity")
+  fi
+  if is_option_candidate "$candidate"; then
+    cmd+=(--option-chain-snapshots "$OPTION_CHAIN_SNAPSHOTS")
   fi
 
   echo "second strategy basket scan: candidate=$candidate scale=$candidate_scale"
@@ -268,7 +327,7 @@ python3 - "$status_file" "$summary_file" "$summary_json_file" \
   "$SCENARIO_DIR" "$BASE_STRATEGY" "$SAMPLE_SIZE" "$SAMPLE_SEED" \
   "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "${candidate_scales[*]}" \
   "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" \
-  "$SCAN_JOBS" <<'PY'
+  "$SCAN_JOBS" "$INCLUDE_OPTION_CANDIDATES" "${OPTION_CHAIN_SNAPSHOTS:-none}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -288,6 +347,8 @@ candidate_scales = sys.argv[10]
 starting_equity = sys.argv[11]
 excluded_candidates = sys.argv[12]
 scan_jobs = sys.argv[13]
+include_option_candidates = sys.argv[14]
+option_chain_snapshots = sys.argv[15]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -344,6 +405,8 @@ lines = [
     f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
+    f"- include_option_candidates: `{include_option_candidates}`",
+    f"- option_chain_snapshots: `{option_chain_snapshots}`",
     "",
     "| candidate | scale | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
     "|---|---:|---|---:|---:|---:|---:|---|---:|---:|---|---|",
@@ -424,6 +487,8 @@ summary_json_path.write_text(
             "scan_jobs": scan_jobs,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
+            "include_option_candidates": include_option_candidates,
+            "option_chain_snapshots": option_chain_snapshots,
             "positive_edge_prefilter_rows": positive_edges,
             "rows": json_rows,
         },
@@ -535,6 +600,9 @@ PY
     if [[ -n "$starting_equity" && "$starting_equity" != "none" ]]; then
       cmd+=(--starting-equity "$starting_equity")
     fi
+    if is_option_candidate "$candidate"; then
+      cmd+=(--option-chain-snapshots "$OPTION_CHAIN_SNAPSHOTS")
+    fi
 
     echo "second strategy basket validation: candidate=$candidate scale=$candidate_scale"
     if "${cmd[@]}" 2> "$stderr_path"; then
@@ -574,7 +642,8 @@ PY
     "$SCENARIO_DIR" "$BASE_STRATEGY" "$VALIDATION_SAMPLE_SIZE" \
     "$VALIDATION_SAMPLE_SEED" "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" \
     "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" \
-    "$MAX_VALIDATION_CANDIDATES" "$SCAN_JOBS" <<'PY'
+    "$MAX_VALIDATION_CANDIDATES" "$SCAN_JOBS" "$INCLUDE_OPTION_CANDIDATES" \
+    "${OPTION_CHAIN_SNAPSHOTS:-none}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -596,6 +665,8 @@ starting_equity = sys.argv[12]
 excluded_candidates = sys.argv[13]
 max_validation_candidates = sys.argv[14]
 scan_jobs = sys.argv[15]
+include_option_candidates = sys.argv[16]
+option_chain_snapshots = sys.argv[17]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -654,6 +725,8 @@ lines = [
     f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
+    f"- include_option_candidates: `{include_option_candidates}`",
+    f"- option_chain_snapshots: `{option_chain_snapshots}`",
     "",
     "| candidate | scale | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
     "|---|---:|---|---:|---:|---:|---:|---|---:|---:|---|---|",
@@ -745,6 +818,8 @@ summary_json_path.write_text(
             "scan_jobs": scan_jobs,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
+            "include_option_candidates": include_option_candidates,
+            "option_chain_snapshots": option_chain_snapshots,
             "positive_edge_validation_rows": validation_positive_edges,
             "promotion_approved": False,
             "conclusion": conclusion,

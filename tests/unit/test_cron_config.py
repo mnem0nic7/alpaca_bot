@@ -282,6 +282,11 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'SCAN_JOBS="${SECOND_STRATEGY_SCAN_JOBS:-2}"' in script
     assert 'VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"' in script
     assert 'VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"' in script
+    assert 'INCLUDE_OPTION_CANDIDATES="${SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES:-false}"' in script
+    assert 'OPTION_CHAIN_SNAPSHOTS="${SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS:-${OPTION_CHAIN_SNAPSHOT_DIR:-}}"' in script
+    assert "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES must be true or false" in script
+    assert 'option_candidate_csv="${SECOND_STRATEGY_OPTION_CANDIDATES:-}"' in script
+    assert "option-chain snapshot path is empty or missing" in script
     assert 'LATEST_LINK="$OUTPUT_ROOT/latest"' in script
     assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script
     assert 'VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"' in script
@@ -294,8 +299,11 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'validation_summary_json_file="$VALIDATION_OUTPUT_DIR/summary.json"' in script
     assert "promotion_approved" in script
     assert "stock_disabled_candidate_names" in script
+    assert "option_gated_disabled_candidate_names" in script
+    assert "is_option_candidate" in script
     assert "python3 -m alpaca_bot.replay.cli portfolio-basket-audit" in script
     assert '--confidence-scale "$candidate=$candidate_scale"' in script
+    assert '--option-chain-snapshots "$OPTION_CHAIN_SNAPSHOTS"' in script
     assert "best_by_candidate" in script
     assert "candidate_scales" in script
     assert "run_prefilter_job" in script
