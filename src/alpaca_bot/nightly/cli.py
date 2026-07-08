@@ -386,6 +386,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "best_strategy": best_strat,
                             "best_score": best_score,
                             "candidate_env_written": env_written,
+                            "proof_guard_enabled": args.proof_guard,
                         },
                         created_at=now,
                     )
@@ -507,7 +508,10 @@ def _select_proof_guarded_candidate(
         signal_evaluator=signal_evaluator,
     )
     if baseline_report is None:
-        print(f"  [{strategy_name}] proof guard: no baseline report — rejecting held candidates")
+        print(
+            f"  [{strategy_name}] proof guard: no baseline report - "
+            f"rejecting {len(held_pairs)} held candidate(s)"
+        )
         return None
     baseline = _proof_guard_metrics(
         scenarios=scenarios,
@@ -518,11 +522,22 @@ def _select_proof_guarded_candidate(
     )
     print(f"  [{strategy_name}] proof guard baseline: {_format_proof_guard_metrics(baseline)}")
 
-    for candidate, oos_score in sorted(
+    ranked_pairs = sorted(
         held_pairs,
         key=lambda p: _viability_key(p[0], p[1]),
         reverse=True,
-    ):
+    )
+    print(
+        f"  [{strategy_name}] proof guard: evaluating {len(ranked_pairs)} "
+        f"held candidate(s) against min_trades={min_trades} min_pnl={min_pnl:.2f}"
+    )
+
+    rejected = 0
+    for index, (candidate, oos_score) in enumerate(ranked_pairs, start=1):
+        print(
+            f"  [{strategy_name}] proof guard checking {index}/{len(ranked_pairs)} "
+            f"params={candidate.params}"
+        )
         candidate_settings = _settings_with_fractionable(
             Settings.from_env({**base_env, **candidate.params}),
             fractionable_symbols=fractionable_symbols,
@@ -533,6 +548,7 @@ def _select_proof_guarded_candidate(
             signal_evaluator=signal_evaluator,
         )
         if candidate_report is None:
+            rejected += 1
             print(
                 f"  [{strategy_name}] proof guard rejected params={candidate.params}: "
                 "no candidate report"
@@ -552,11 +568,16 @@ def _select_proof_guarded_candidate(
                 f"{_format_proof_guard_metrics(metrics)}"
             )
             return candidate, oos_score
+        rejected += 1
         print(
             f"  [{strategy_name}] proof guard rejected params={candidate.params}: "
             + "; ".join(regressions)
             + f" (candidate {_format_proof_guard_metrics(metrics)})"
         )
+    print(
+        f"  [{strategy_name}] proof guard: rejected all {rejected} "
+        f"held candidate(s)"
+    )
     return None
 
 

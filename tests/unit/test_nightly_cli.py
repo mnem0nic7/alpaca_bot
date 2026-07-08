@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 
@@ -735,6 +735,91 @@ def test_proof_guard_forwards_fractionable_symbols(monkeypatch):
     ]
 
 
+def test_proof_guard_logs_progress_and_all_rejected_summary(monkeypatch, capsys):
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    monkeypatch.setenv("PAPER_SCALE_MIN_TRADES", "2")
+    start = datetime(2026, 6, 29, 14, 0, tzinfo=timezone.utc)
+    scenario = SimpleNamespace(
+        intraday_bars=[
+            SimpleNamespace(timestamp=start),
+            SimpleNamespace(timestamp=start + timedelta(days=1)),
+        ]
+    )
+
+    def report_for(pnls: list[float]) -> BacktestReport:
+        trades = tuple(
+            ReplayTradeRecord(
+                symbol="AAPL",
+                entry_price=100.0,
+                exit_price=100.0 + pnl,
+                quantity=1.0,
+                entry_time=start + timedelta(days=index),
+                exit_time=start + timedelta(days=index, hours=1),
+                exit_reason="eod",
+                pnl=pnl,
+                return_pct=pnl / 100.0,
+            )
+            for index, pnl in enumerate(pnls)
+        )
+        winners = sum(1 for pnl in pnls if pnl > 0.0)
+        losers = sum(1 for pnl in pnls if pnl < 0.0)
+        return BacktestReport(
+            trades=trades,
+            total_trades=len(trades),
+            winning_trades=winners,
+            losing_trades=losers,
+            win_rate=winners / len(trades),
+            mean_return_pct=sum(pnl / 100.0 for pnl in pnls) / len(pnls),
+            max_drawdown_pct=None,
+        )
+
+    reports = iter([
+        report_for([10.0, 10.0]),
+        report_for([2.0, 2.0]),
+        report_for([1.0, -3.0]),
+    ])
+    monkeypatch.setattr(module, "_pooled_report", lambda **kw: next(reports))
+
+    first = TuningCandidate(
+        params={"BREAKOUT_LOOKBACK_BARS": "20"},
+        report=None,
+        score=0.5,
+    )
+    second = TuningCandidate(
+        params={"BREAKOUT_LOOKBACK_BARS": "30"},
+        report=None,
+        score=0.4,
+    )
+
+    selected = module._select_proof_guarded_candidate(
+        held_pairs=[(first, 0.4), (second, 0.3)],
+        scenarios=[scenario],
+        base_env=dict(os.environ),
+        signal_evaluator=None,
+        strategy_name="breakout",
+    )
+
+    assert selected is None
+    output = capsys.readouterr().out
+    assert (
+        "  [breakout] proof guard: evaluating 2 held candidate(s) "
+        "against min_trades=2 min_pnl=0.01"
+    ) in output
+    assert (
+        "  [breakout] proof guard checking 1/2 "
+        "params={'BREAKOUT_LOOKBACK_BARS': '20'}"
+    ) in output
+    assert (
+        "  [breakout] proof guard checking 2/2 "
+        "params={'BREAKOUT_LOOKBACK_BARS': '30'}"
+    ) in output
+    assert "  [breakout] proof guard: rejected all 2 held candidate(s)" in output
+
+
 def test_nightly_viability_tiebreak_picks_higher_r(monkeypatch, tmp_path):
     """When two held candidates have equal OOS score, the one with higher R-multiple wins."""
     from alpaca_bot.nightly import cli as module
@@ -1210,6 +1295,7 @@ def test_nightly_cli_writes_audit_event_after_sweep(monkeypatch, tmp_path):
     assert payload["candidates_accepted"] == 1
     assert payload["best_strategy"] == "breakout"
     assert payload["candidate_env_written"] is True
+    assert payload["proof_guard_enabled"] is False
     assert "best_score" in payload
 
 
