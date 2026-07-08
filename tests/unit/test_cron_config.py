@@ -346,7 +346,10 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'f"- sample_seed: `{sample_seed}`"' in script
     assert 'f"- starting_equity: `{starting_equity}`"' in script
     assert 'f"- excluded_candidates: `{excluded_candidates}`"' in script
-    assert "summary_json_path.write_text" in script
+    assert "def write_text_atomic(path: Path, text: str) -> None" in script
+    assert script.count("write_text_atomic(summary_path") == 2
+    assert script.count("write_text_atomic(\n    summary_json_path") == 2
+    assert "tmp_path.replace(path)" in script
     assert 'validation_summary_json_file="$VALIDATION_OUTPUT_DIR/summary.json"' in script
     assert "promotion_approved" in script
     assert "stock_disabled_candidate_names" in script
@@ -364,6 +367,11 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "reusing completed candidate=" in script
     assert "require_fingerprint" in script
     assert script.count("require_fingerprint=true") == 2
+    assert "publish_replay_artifacts" in script
+    assert "discard_replay_artifacts" in script
+    assert ".tmp.$BASHPID" in script
+    assert "--output \"$tmp_report_path\"" in script
+    assert "--jsonl \"$tmp_jsonl_path\"" in script
     assert "diagnostics=trade_attribution_v2" in script
     assert 'fingerprint_path="$status_part.fingerprint"' in script
     assert "write_status_part_fingerprint" in script
@@ -450,6 +458,15 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert "PRIOR_DAY_HIGH_LOOKBACK_BARS=2" in script
     assert "positive setup-knob prefilter row is only a survivor" in script
     assert "not approval to change PAPER_APPROVED_STRATEGIES" in script
+    assert "publish_replay_artifacts" in script
+    assert "discard_replay_artifacts" in script
+    assert ".tmp.$BASHPID" in script
+    assert "--output \"$tmp_report_path\"" in script
+    assert "--jsonl \"$tmp_jsonl_path\"" in script
+    assert "def write_text_atomic(path: Path, text: str) -> None" in script
+    assert script.count("write_text_atomic(summary_path") == 2
+    assert script.count("write_text_atomic(\n    summary_json_path") == 2
+    assert "tmp_path.replace(path)" in script
     assert "independent validation had no variants to run" in script
     assert "promotion_approved" in script
     assert "wait -n" in script

@@ -538,3 +538,8 @@ prefilter summary unless an operator explicitly sets
 `SECOND_STRATEGY_STARTING_EQUITY`. This keeps resume validations tied to the
 same equity baseline as the prefilter artifact instead of drifting with live
 broker equity.
+
+Follow-up: the basket and setup-knob scanners now publish replay reports,
+JSONL, stderr, and summary files through temp-file replacement. In-progress or
+failed reruns should no longer expose zero-byte or partially-written evidence
+artifacts over the last completed result.

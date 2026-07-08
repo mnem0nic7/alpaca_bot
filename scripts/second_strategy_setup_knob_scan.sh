@@ -9,6 +9,31 @@ fail() {
   exit 1
 }
 
+publish_replay_artifacts() {
+  local tmp_report_path="$1"
+  local report_path="$2"
+  local tmp_jsonl_path="$3"
+  local jsonl_path="$4"
+  local tmp_stderr_path="$5"
+  local stderr_path="$6"
+
+  mv -f "$tmp_report_path" "$report_path"
+  mv -f "$tmp_jsonl_path" "$jsonl_path"
+  mv -f "$tmp_stderr_path" "$stderr_path"
+}
+
+discard_replay_artifacts() {
+  local tmp_report_path="$1"
+  local tmp_jsonl_path="$2"
+  local tmp_stderr_path="$3"
+  local stderr_path="$4"
+
+  rm -f "$tmp_report_path" "$tmp_jsonl_path"
+  if [[ -e "$tmp_stderr_path" ]]; then
+    mv -f "$tmp_stderr_path" "$stderr_path"
+  fi
+}
+
 extract_field() {
   local line="$1"
   local key="$2"
@@ -295,6 +320,9 @@ run_prefilter_job() {
   local report_path
   local jsonl_path
   local stderr_path
+  local tmp_report_path
+  local tmp_jsonl_path
+  local tmp_stderr_path
   local status_part
   local -a cmd
   local -a override_env_args
@@ -304,6 +332,9 @@ run_prefilter_job() {
   report_path="$OUTPUT_DIR/${safe_name}_basket.md"
   jsonl_path="$OUTPUT_DIR/${safe_name}_basket.jsonl"
   stderr_path="$OUTPUT_DIR/${safe_name}_basket.stderr"
+  tmp_report_path="$report_path.tmp.$BASHPID"
+  tmp_jsonl_path="$jsonl_path.tmp.$BASHPID"
+  tmp_stderr_path="$stderr_path.tmp.$BASHPID"
   status_part="$status_parts_dir/${safe_name}.tsv"
   cmd=(
     python3 -m alpaca_bot.replay.cli portfolio-basket-audit
@@ -315,18 +346,20 @@ run_prefilter_job() {
     --slippage-bps "$SLIPPAGE_BPS"
     --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
     --confidence-scale "$candidate=$CANDIDATE_SCALE"
-    --output "$report_path"
-    --jsonl "$jsonl_path"
+    --output "$tmp_report_path"
+    --jsonl "$tmp_jsonl_path"
   )
   if [[ -n "$starting_equity" && "$starting_equity" != "none" ]]; then
     cmd+=(--starting-equity "$starting_equity")
   fi
 
   echo "second strategy setup-knob scan: candidate=$candidate variant=$variant_label overrides=$env_overrides"
-  if env "${override_env_args[@]}" "${cmd[@]}" 2> "$stderr_path"; then
+  if env "${override_env_args[@]}" "${cmd[@]}" 2> "$tmp_stderr_path"; then
+    publish_replay_artifacts "$tmp_report_path" "$report_path" "$tmp_jsonl_path" "$jsonl_path" "$tmp_stderr_path" "$stderr_path"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$variant_label" "$env_overrides" "$CANDIDATE_SCALE" "passed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
     return 0
   fi
+  discard_replay_artifacts "$tmp_report_path" "$tmp_jsonl_path" "$tmp_stderr_path" "$stderr_path"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$variant_label" "$env_overrides" "$CANDIDATE_SCALE" "failed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
   return 1
 }
@@ -363,6 +396,7 @@ python3 - "$status_file" "$summary_file" "$summary_json_file" \
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -388,6 +422,12 @@ def fmt(value, spec: str = ".2f") -> str:
     if value is None:
         return "n/a"
     return format(float(value), spec)
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    tmp_path.write_text(text)
+    tmp_path.replace(path)
 
 
 rows = []
@@ -518,8 +558,9 @@ lines.extend([
         "PAPER_APPROVED_STRATEGIES or live paper parameters."
     ),
 ])
-summary_path.write_text("\n".join(lines) + "\n")
-summary_json_path.write_text(
+write_text_atomic(summary_path, "\n".join(lines) + "\n")
+write_text_atomic(
+    summary_json_path,
     json.dumps(
         {
             "scenario_dir": scenario_dir,
@@ -619,6 +660,9 @@ PY
     local report_path
     local jsonl_path
     local stderr_path
+    local tmp_report_path
+    local tmp_jsonl_path
+    local tmp_stderr_path
     local status_part
     local -a cmd
     local -a override_env_args
@@ -628,6 +672,9 @@ PY
     report_path="$VALIDATION_OUTPUT_DIR/${safe_name}_validation.md"
     jsonl_path="$VALIDATION_OUTPUT_DIR/${safe_name}_validation.jsonl"
     stderr_path="$VALIDATION_OUTPUT_DIR/${safe_name}_validation.stderr"
+    tmp_report_path="$report_path.tmp.$BASHPID"
+    tmp_jsonl_path="$jsonl_path.tmp.$BASHPID"
+    tmp_stderr_path="$stderr_path.tmp.$BASHPID"
     status_part="$validation_status_parts_dir/${safe_name}.tsv"
     cmd=(
       python3 -m alpaca_bot.replay.cli portfolio-basket-audit
@@ -639,18 +686,20 @@ PY
       --slippage-bps "$SLIPPAGE_BPS"
       --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
       --confidence-scale "$candidate=$candidate_scale"
-      --output "$report_path"
-      --jsonl "$jsonl_path"
+      --output "$tmp_report_path"
+      --jsonl "$tmp_jsonl_path"
     )
     if [[ -n "$starting_equity" && "$starting_equity" != "none" ]]; then
       cmd+=(--starting-equity "$starting_equity")
     fi
 
     echo "second strategy setup-knob validation: candidate=$candidate variant=$variant_label overrides=$env_overrides"
-    if env "${override_env_args[@]}" "${cmd[@]}" 2> "$stderr_path"; then
+    if env "${override_env_args[@]}" "${cmd[@]}" 2> "$tmp_stderr_path"; then
+      publish_replay_artifacts "$tmp_report_path" "$report_path" "$tmp_jsonl_path" "$jsonl_path" "$tmp_stderr_path" "$stderr_path"
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$variant_label" "$env_overrides" "$candidate_scale" "passed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
       return 0
     fi
+    discard_replay_artifacts "$tmp_report_path" "$tmp_jsonl_path" "$tmp_stderr_path" "$stderr_path"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$variant_label" "$env_overrides" "$candidate_scale" "failed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
     return 1
   }
@@ -687,6 +736,7 @@ PY
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -712,6 +762,12 @@ def fmt(value, spec: str = ".2f") -> str:
     if value is None:
         return "n/a"
     return format(float(value), spec)
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    tmp_path.write_text(text)
+    tmp_path.replace(path)
 
 
 rows = []
@@ -853,8 +909,9 @@ else:
     )
 
 lines.extend(["", conclusion])
-summary_path.write_text("\n".join(lines) + "\n")
-summary_json_path.write_text(
+write_text_atomic(summary_path, "\n".join(lines) + "\n")
+write_text_atomic(
+    summary_json_path,
     json.dumps(
         {
             "prefilter_summary_json": str(prefilter_summary_json_path),

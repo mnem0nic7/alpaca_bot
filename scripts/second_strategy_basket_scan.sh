@@ -9,6 +9,31 @@ fail() {
   exit 1
 }
 
+publish_replay_artifacts() {
+  local tmp_report_path="$1"
+  local report_path="$2"
+  local tmp_jsonl_path="$3"
+  local jsonl_path="$4"
+  local tmp_stderr_path="$5"
+  local stderr_path="$6"
+
+  mv -f "$tmp_report_path" "$report_path"
+  mv -f "$tmp_jsonl_path" "$jsonl_path"
+  mv -f "$tmp_stderr_path" "$stderr_path"
+}
+
+discard_replay_artifacts() {
+  local tmp_report_path="$1"
+  local tmp_jsonl_path="$2"
+  local tmp_stderr_path="$3"
+  local stderr_path="$4"
+
+  rm -f "$tmp_report_path" "$tmp_jsonl_path"
+  if [[ -e "$tmp_stderr_path" ]]; then
+    mv -f "$tmp_stderr_path" "$stderr_path"
+  fi
+}
+
 extract_field() {
   local line="$1"
   local key="$2"
@@ -593,6 +618,9 @@ run_prefilter_job() {
   local report_path
   local jsonl_path
   local stderr_path
+  local tmp_report_path
+  local tmp_jsonl_path
+  local tmp_stderr_path
   local status_part
   local require_fingerprint
   local job_fingerprint
@@ -603,6 +631,9 @@ run_prefilter_job() {
   report_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.md"
   jsonl_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.jsonl"
   stderr_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.stderr"
+  tmp_report_path="$report_path.tmp.$BASHPID"
+  tmp_jsonl_path="$jsonl_path.tmp.$BASHPID"
+  tmp_stderr_path="$stderr_path.tmp.$BASHPID"
   status_part="$status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
   require_fingerprint=true
   job_fingerprint="prefilter|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$SAMPLE_SIZE|seed=$SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v2"
@@ -620,8 +651,8 @@ run_prefilter_job() {
     --slippage-bps "$SLIPPAGE_BPS"
     --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
     --confidence-scale "$candidate=$candidate_scale"
-    --output "$report_path"
-    --jsonl "$jsonl_path"
+    --output "$tmp_report_path"
+    --jsonl "$tmp_jsonl_path"
   )
   if [[ -n "$starting_equity" && "$starting_equity" != "none" ]]; then
     cmd+=(--starting-equity "$starting_equity")
@@ -631,11 +662,13 @@ run_prefilter_job() {
   fi
 
   echo "second strategy basket scan: candidate=$candidate scale=$candidate_scale"
-  if "${cmd[@]}" 2> "$stderr_path"; then
+  if "${cmd[@]}" 2> "$tmp_stderr_path"; then
+    publish_replay_artifacts "$tmp_report_path" "$report_path" "$tmp_jsonl_path" "$jsonl_path" "$tmp_stderr_path" "$stderr_path"
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "passed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
     write_status_part_fingerprint "$status_part" "$job_fingerprint"
     return 0
   fi
+  discard_replay_artifacts "$tmp_report_path" "$tmp_jsonl_path" "$tmp_stderr_path" "$stderr_path"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "failed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
   return 1
 }
@@ -679,6 +712,7 @@ else
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -703,6 +737,12 @@ def fmt(value, spec: str = ".2f") -> str:
     if value is None:
         return "n/a"
     return format(float(value), spec)
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    tmp_path.write_text(text)
+    tmp_path.replace(path)
 
 
 def candidate_contribution(audit_row, candidate: str):
@@ -905,8 +945,9 @@ lines.extend([
         "PAPER_APPROVED_STRATEGIES."
     ),
 ])
-summary_path.write_text("\n".join(lines) + "\n")
-summary_json_path.write_text(
+write_text_atomic(summary_path, "\n".join(lines) + "\n")
+write_text_atomic(
+    summary_json_path,
     json.dumps(
         {
             "scenario_dir": scenario_dir,
@@ -1044,6 +1085,9 @@ PY
     local report_path
     local jsonl_path
     local stderr_path
+    local tmp_report_path
+    local tmp_jsonl_path
+    local tmp_stderr_path
     local status_part
     local require_fingerprint
     local job_fingerprint
@@ -1054,6 +1098,9 @@ PY
     report_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.md"
     jsonl_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.jsonl"
     stderr_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.stderr"
+    tmp_report_path="$report_path.tmp.$BASHPID"
+    tmp_jsonl_path="$jsonl_path.tmp.$BASHPID"
+    tmp_stderr_path="$stderr_path.tmp.$BASHPID"
     status_part="$validation_status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
     require_fingerprint=true
     job_fingerprint="validation|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$VALIDATION_SAMPLE_SIZE|seed=$VALIDATION_SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v2"
@@ -1071,8 +1118,8 @@ PY
       --slippage-bps "$SLIPPAGE_BPS"
       --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
       --confidence-scale "$candidate=$candidate_scale"
-      --output "$report_path"
-      --jsonl "$jsonl_path"
+      --output "$tmp_report_path"
+      --jsonl "$tmp_jsonl_path"
     )
     if [[ -n "$starting_equity" && "$starting_equity" != "none" ]]; then
       cmd+=(--starting-equity "$starting_equity")
@@ -1082,11 +1129,13 @@ PY
     fi
 
     echo "second strategy basket validation: candidate=$candidate scale=$candidate_scale"
-    if "${cmd[@]}" 2> "$stderr_path"; then
+    if "${cmd[@]}" 2> "$tmp_stderr_path"; then
+      publish_replay_artifacts "$tmp_report_path" "$report_path" "$tmp_jsonl_path" "$jsonl_path" "$tmp_stderr_path" "$stderr_path"
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "passed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
       write_status_part_fingerprint "$status_part" "$job_fingerprint"
       return 0
     fi
+    discard_replay_artifacts "$tmp_report_path" "$tmp_jsonl_path" "$tmp_stderr_path" "$stderr_path"
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "failed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
     return 1
   }
@@ -1125,6 +1174,7 @@ PY
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -1152,6 +1202,12 @@ def fmt(value, spec: str = ".2f") -> str:
     if value is None:
         return "n/a"
     return format(float(value), spec)
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    tmp_path = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    tmp_path.write_text(text)
+    tmp_path.replace(path)
 
 
 def candidate_contribution(audit_row, candidate: str):
@@ -1366,8 +1422,9 @@ else:
     )
 
 lines.extend(["", conclusion])
-summary_path.write_text("\n".join(lines) + "\n")
-summary_json_path.write_text(
+write_text_atomic(summary_path, "\n".join(lines) + "\n")
+write_text_atomic(
+    summary_json_path,
     json.dumps(
         {
             "prefilter_summary_json": str(prefilter_summary_json_path),
