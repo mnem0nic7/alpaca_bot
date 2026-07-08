@@ -689,6 +689,21 @@ def as_int_or_none(value: object) -> int | None:
         return None
 
 
+def parse_marker_approved_at(value: object) -> datetime | None:
+    raw_value = str(value or "").strip()
+    if not raw_value:
+        return None
+    if raw_value.endswith("Z"):
+        raw_value = raw_value[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw_value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
 def best_promotion_candidate_from_rows(rows: object) -> dict[str, object] | None:
     candidates: list[tuple[float, float, int, dict[str, object]]] = []
     if not isinstance(rows, list):
@@ -730,6 +745,7 @@ def approval_marker_status(
     evidence_status: str,
     strategy_version: str,
     env_file: str,
+    now_utc: datetime,
     validation_summary_path: Path,
     validation_summary_sha256: str | None,
     validation_rows: object,
@@ -741,6 +757,13 @@ def approval_marker_status(
         return "invalid", "none"
     if payload.get("schema_version") != 2:
         return "invalid_schema", "none"
+    if not str(payload.get("approved_at") or "").strip():
+        return "approved_at_missing", "none"
+    approved_at = parse_marker_approved_at(payload.get("approved_at"))
+    if approved_at is None:
+        return "approved_at_invalid", "none"
+    if approved_at > now_utc + timedelta(minutes=5):
+        return "approved_at_in_future", "none"
     strategy = str(payload.get("strategy") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_:-]+", strategy):
         return "invalid_strategy", "none"
@@ -759,6 +782,15 @@ def approval_marker_status(
     expected_summary = str(validation_summary_path.resolve())
     if str(payload.get("validation_summary") or "") != expected_summary:
         return "stale_validation_summary", strategy
+    try:
+        validation_summary_modified_at = datetime.fromtimestamp(
+            validation_summary_path.stat().st_mtime,
+            timezone.utc,
+        )
+    except OSError:
+        return "validation_summary_unreadable", strategy
+    if approved_at < validation_summary_modified_at:
+        return "approved_at_before_validation", strategy
     marker_summary_sha256 = str(payload.get("validation_summary_sha256") or "").strip()
     if not marker_summary_sha256:
         return "validation_summary_sha256_missing", strategy
@@ -932,6 +964,7 @@ def load_second_strategy_evidence(
         evidence_status=evidence_status,
         strategy_version=strategy_version,
         env_file=env_file,
+        now_utc=now_utc,
         validation_summary_path=validation_summary_path,
         validation_summary_sha256=validation_summary_sha256,
         validation_rows=validation_rows,

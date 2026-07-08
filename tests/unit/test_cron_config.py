@@ -6702,6 +6702,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "prefilter_summary_sha256={safe_status_value(second_strategy_setup_evidence['prefilter_summary_sha256'])}" in script
     assert "validation_summary_sha256={safe_status_value(second_strategy_setup_evidence['validation_summary_sha256'])}" in script
     assert "payload.get(\"schema_version\") != 2" in script
+    assert "def parse_marker_approved_at" in script
+    assert "parsed = datetime.fromisoformat(raw_value)" in script
+    assert "return \"approved_at_missing\", \"none\"" in script
+    assert "return \"approved_at_invalid\", \"none\"" in script
+    assert "return \"approved_at_in_future\", \"none\"" in script
+    assert "return \"approved_at_before_validation\", strategy" in script
+    assert "validation_summary_path.stat().st_mtime" in script
     assert "marker_strategy_version = str(payload.get(\"strategy_version\") or \"\").strip()" in script
     assert "return \"strategy_version_missing\", strategy" in script
     assert "return \"strategy_version_mismatch\", strategy" in script

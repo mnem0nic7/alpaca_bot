@@ -4,6 +4,7 @@ import hashlib
 import json
 import stat
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT = Path(__file__).parent.parent.parent / "scripts" / "promote_validated_strategy.sh"
@@ -228,6 +229,9 @@ def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_pa
     summary_path = evidence_root / "latest_validation" / "summary.json"
     summary_sha256 = _summary_sha256(evidence_root)
     assert approval_marker["schema_version"] == 2
+    approved_at = datetime.fromisoformat(approval_marker["approved_at"])
+    assert approved_at.tzinfo is not None
+    assert approved_at.astimezone(timezone.utc) <= datetime.now(timezone.utc)
     assert approval_marker["strategy"] == "ema_pullback"
     assert approval_marker["confirmation"] == _confirmation(evidence_root)
     assert approval_marker["strategy_version"] == "v1-breakout"
