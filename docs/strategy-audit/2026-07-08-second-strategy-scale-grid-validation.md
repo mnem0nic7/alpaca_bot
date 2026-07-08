@@ -532,3 +532,9 @@ sets `promotion_approved=false`. The current proof status therefore reports
 No strategy, paper approval allowlist, or live paper parameter was changed by
 this evidence refresh. Keep `PAPER_APPROVED_STRATEGIES=bull_flag`; no second
 strategy is currently approved for paper promotion.
+
+Follow-up: the basket scanner now inherits `starting_equity` from a supplied
+prefilter summary unless an operator explicitly sets
+`SECOND_STRATEGY_STARTING_EQUITY`. This keeps resume validations tied to the
+same equity baseline as the prefilter artifact instead of drifting with live
+broker equity.

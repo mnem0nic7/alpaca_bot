@@ -273,6 +273,11 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert './scripts/paper_proof_status.sh "$ENV_FILE"' in script
     assert "load_proof_status \"loading live broker equity\"" in script
     assert 'starting_equity="${SECOND_STRATEGY_STARTING_EQUITY:-}"' in script
+    assert "prefilter_summary_starting_equity" in script
+    assert "starting_equity_source=prefilter_summary" in script
+    assert "starting_equity_source=live_broker_equity" in script
+    assert "starting_equity_source=scenario_default" in script
+    assert "starting_equity_source=$starting_equity_source" in script
     assert 'OUTPUT_ROOT="${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}"' in script
     assert 'LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"' in script
     assert 'UPDATE_LATEST_LINKS="${SECOND_STRATEGY_UPDATE_LATEST_LINKS:-true}"' in script

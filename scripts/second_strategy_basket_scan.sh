@@ -248,6 +248,26 @@ print(total_contracts)
 PY
 }
 
+prefilter_summary_starting_equity() {
+  local summary_path="$1"
+  python3 - "$summary_path" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    payload = json.loads(Path(sys.argv[1]).read_text())
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(0)
+value = payload.get("starting_equity")
+if value is None:
+    raise SystemExit(0)
+text = str(value).strip()
+if text and text not in {"none", "scenario_default"}:
+    print(text)
+PY
+}
+
 freeze_option_snapshot_input() {
   local source_path="$1"
   local destination_root="$2"
@@ -497,10 +517,22 @@ if jobs < 1:
 PY
 
 starting_equity="${SECOND_STRATEGY_STARTING_EQUITY:-}"
+starting_equity_source=operator
+if [[ -z "$starting_equity" && -n "$PREFILTER_SUMMARY_JSON" ]]; then
+  starting_equity="$(prefilter_summary_starting_equity "$PREFILTER_SUMMARY_JSON")"
+  if [[ -n "$starting_equity" ]]; then
+    starting_equity_source=prefilter_summary
+  fi
+fi
 if [[ -z "$starting_equity" ]]; then
   load_proof_status "loading live broker equity"
   broker_line="$(grep -E '^paper proof broker account: ' "$proof_output" | tail -n 1 || true)"
   starting_equity="$(extract_field "$broker_line" "equity" || true)"
+  if [[ -n "$starting_equity" ]]; then
+    starting_equity_source=live_broker_equity
+  else
+    starting_equity_source=scenario_default
+  fi
 fi
 
 status_file="$OUTPUT_DIR/status.tsv"
@@ -516,7 +548,7 @@ status_parts_dir="$OUTPUT_DIR/status_parts"
 mkdir -p "$status_parts_dir"
 
 echo "second strategy basket scan: output_dir=$OUTPUT_DIR"
-echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS option_replay_status=$OPTION_REPLAY_STATUS prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
+echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} starting_equity_source=$starting_equity_source excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS option_replay_status=$OPTION_REPLAY_STATUS prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
 
 completed_status_part_is_reusable() {
   local status_part="$1"
