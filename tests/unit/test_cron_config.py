@@ -279,6 +279,7 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'VALIDATE_POSITIVES="${SECOND_STRATEGY_VALIDATE_POSITIVES:-true}"' in script
     assert 'VALIDATION_CANDIDATES="${SECOND_STRATEGY_VALIDATION_CANDIDATES:-}"' in script
     assert 'MAX_VALIDATION_CANDIDATES="${SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES:-6}"' in script
+    assert 'SCAN_JOBS="${SECOND_STRATEGY_SCAN_JOBS:-2}"' in script
     assert 'VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"' in script
     assert 'VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"' in script
     assert 'LATEST_LINK="$OUTPUT_ROOT/latest"' in script
@@ -297,6 +298,12 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert '--confidence-scale "$candidate=$candidate_scale"' in script
     assert "best_by_candidate" in script
     assert "candidate_scales" in script
+    assert "run_prefilter_job" in script
+    assert "wait_for_oldest_job" in script
+    assert "run_validation_job" in script
+    assert "wait_for_oldest_validation_job" in script
+    assert "status_parts" in script
+    assert '"scan_jobs": scan_jobs' in script
     assert "ci_rank = -" in script
     assert 'p_mean_le_zero = audit_row["p_positive"]' in script
     assert "1.0 - float(audit_row" not in script

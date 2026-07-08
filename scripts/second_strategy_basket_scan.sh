@@ -72,6 +72,7 @@ VALIDATE_POSITIVES="${SECOND_STRATEGY_VALIDATE_POSITIVES:-true}"
 VALIDATION_CANDIDATES="${SECOND_STRATEGY_VALIDATION_CANDIDATES:-}"
 DEFAULT_VALIDATION_CANDIDATE_SCALE="${SECOND_STRATEGY_VALIDATION_CANDIDATE_SCALE:-${SECOND_STRATEGY_CANDIDATE_SCALE:-0.25}}"
 MAX_VALIDATION_CANDIDATES="${SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES:-6}"
+SCAN_JOBS="${SECOND_STRATEGY_SCAN_JOBS:-2}"
 VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"
 VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"
 VALIDATION_OUTPUT_DIR="${SECOND_STRATEGY_VALIDATION_OUTPUT_DIR:-$OUTPUT_DIR/validation}"
@@ -161,6 +162,18 @@ except ValueError as exc:
 if cap < 0:
     raise SystemExit(f"max validation candidates must be non-negative: {sys.argv[2]}")
 PY
+python3 - "$SCAN_JOBS" <<'PY' || fail "invalid scan job count"
+from __future__ import annotations
+
+import sys
+
+try:
+    jobs = int(sys.argv[1])
+except ValueError as exc:
+    raise SystemExit(f"scan jobs must be an integer: {sys.argv[1]}") from exc
+if jobs < 1:
+    raise SystemExit(f"scan jobs must be at least 1: {sys.argv[1]}")
+PY
 
 starting_equity="${SECOND_STRATEGY_STARTING_EQUITY:-}"
 if [[ -z "$starting_equity" ]]; then
@@ -172,53 +185,91 @@ fi
 status_file="$OUTPUT_DIR/status.tsv"
 summary_file="$OUTPUT_DIR/summary.md"
 summary_json_file="$OUTPUT_DIR/summary.json"
+status_parts_dir="$OUTPUT_DIR/status_parts"
 : > "$status_file"
+mkdir -p "$status_parts_dir"
 
 echo "second strategy basket scan: output_dir=$OUTPUT_DIR"
-echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none}"
+echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none}"
 
 failed_count=0
+run_prefilter_job() {
+  local candidate="$1"
+  local candidate_scale="$2"
+  local safe_candidate
+  local safe_scale
+  local report_path
+  local jsonl_path
+  local stderr_path
+  local status_part
+  local -a cmd
+
+  safe_candidate="$(printf '%s' "$candidate" | tr -c 'A-Za-z0-9_' '_')"
+  safe_scale="$(printf '%s' "$candidate_scale" | tr -c 'A-Za-z0-9_' '_')"
+  report_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.md"
+  jsonl_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.jsonl"
+  stderr_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.stderr"
+  status_part="$status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
+  cmd=(
+    python3 -m alpaca_bot.replay.cli portfolio-basket-audit
+    --scenario-dir "$SCENARIO_DIR"
+    --strategy "$BASE_STRATEGY"
+    --strategy "$candidate"
+    --sample-size "$SAMPLE_SIZE"
+    --sample-seed "$SAMPLE_SEED"
+    --slippage-bps "$SLIPPAGE_BPS"
+    --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
+    --confidence-scale "$candidate=$candidate_scale"
+    --output "$report_path"
+    --jsonl "$jsonl_path"
+  )
+  if [[ -n "$starting_equity" && "$starting_equity" != "none" ]]; then
+    cmd+=(--starting-equity "$starting_equity")
+  fi
+
+  echo "second strategy basket scan: candidate=$candidate scale=$candidate_scale"
+  if "${cmd[@]}" 2> "$stderr_path"; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "passed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
+    return 0
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "failed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
+  return 1
+}
+
+wait_for_oldest_job() {
+  local pid="${prefilter_pids[0]}"
+  if ! wait "$pid"; then
+    failed_count=$((failed_count + 1))
+  fi
+  prefilter_pids=("${prefilter_pids[@]:1}")
+}
+
+prefilter_pids=()
 for candidate in "${candidates[@]}"; do
   if [[ "$candidate" == "$BASE_STRATEGY" ]]; then
     continue
   fi
   for candidate_scale in "${candidate_scales[@]}"; do
-    safe_candidate="$(printf '%s' "$candidate" | tr -c 'A-Za-z0-9_' '_')"
-    safe_scale="$(printf '%s' "$candidate_scale" | tr -c 'A-Za-z0-9_' '_')"
-    report_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.md"
-    jsonl_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.jsonl"
-    stderr_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.stderr"
-    cmd=(
-      python3 -m alpaca_bot.replay.cli portfolio-basket-audit
-      --scenario-dir "$SCENARIO_DIR"
-      --strategy "$BASE_STRATEGY"
-      --strategy "$candidate"
-      --sample-size "$SAMPLE_SIZE"
-      --sample-seed "$SAMPLE_SEED"
-      --slippage-bps "$SLIPPAGE_BPS"
-      --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
-      --confidence-scale "$candidate=$candidate_scale"
-      --output "$report_path"
-      --jsonl "$jsonl_path"
-    )
-    if [[ -n "$starting_equity" && "$starting_equity" != "none" ]]; then
-      cmd+=(--starting-equity "$starting_equity")
-    fi
-
-    echo "second strategy basket scan: candidate=$candidate scale=$candidate_scale"
-    if "${cmd[@]}" 2> "$stderr_path"; then
-      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "passed" "$report_path" "$jsonl_path" "$stderr_path" >> "$status_file"
-    else
-      failed_count=$((failed_count + 1))
-      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "failed" "$report_path" "$jsonl_path" "$stderr_path" >> "$status_file"
+    run_prefilter_job "$candidate" "$candidate_scale" &
+    prefilter_pids+=("$!")
+    if [[ "${#prefilter_pids[@]}" -ge "$SCAN_JOBS" ]]; then
+      wait_for_oldest_job
     fi
   done
+done
+while [[ "${#prefilter_pids[@]}" -gt 0 ]]; do
+  wait_for_oldest_job
+done
+for status_part in "$status_parts_dir"/*.tsv; do
+  [[ -e "$status_part" ]] || continue
+  cat "$status_part" >> "$status_file"
 done
 
 python3 - "$status_file" "$summary_file" "$summary_json_file" \
   "$SCENARIO_DIR" "$BASE_STRATEGY" "$SAMPLE_SIZE" "$SAMPLE_SEED" \
   "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "${candidate_scales[*]}" \
-  "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" <<'PY'
+  "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" \
+  "$SCAN_JOBS" <<'PY'
 from __future__ import annotations
 
 import json
@@ -237,6 +288,7 @@ max_open_positions = sys.argv[9]
 candidate_scales = sys.argv[10]
 starting_equity = sys.argv[11]
 excluded_candidates = sys.argv[12]
+scan_jobs = sys.argv[13]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -290,6 +342,7 @@ lines = [
     f"- slippage_bps: `{slippage_bps}`",
     f"- max_open_positions: `{max_open_positions}`",
     f"- candidate_scales: `{candidate_scales}`",
+    f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
     "",
@@ -369,6 +422,7 @@ summary_json_path.write_text(
             "slippage_bps": slippage_bps,
             "max_open_positions": max_open_positions,
             "candidate_scales": candidate_scales,
+            "scan_jobs": scan_jobs,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
             "positive_edge_prefilter_rows": positive_edges,
@@ -442,18 +496,30 @@ PY
   validation_status_file="$VALIDATION_OUTPUT_DIR/status.tsv"
   validation_summary_file="$VALIDATION_OUTPUT_DIR/summary.md"
   validation_summary_json_file="$VALIDATION_OUTPUT_DIR/summary.json"
+  validation_status_parts_dir="$VALIDATION_OUTPUT_DIR/status_parts"
   : > "$validation_status_file"
+  mkdir -p "$validation_status_parts_dir"
 
   validation_spec_count="$(wc -l < "$validation_specs_file" | tr -d ' ')"
-  echo "second strategy basket validation: output_dir=$VALIDATION_OUTPUT_DIR candidates=$validation_spec_count sample_size=$VALIDATION_SAMPLE_SIZE sample_seed=$VALIDATION_SAMPLE_SEED"
+  echo "second strategy basket validation: output_dir=$VALIDATION_OUTPUT_DIR candidates=$validation_spec_count sample_size=$VALIDATION_SAMPLE_SIZE sample_seed=$VALIDATION_SAMPLE_SEED scan_jobs=$SCAN_JOBS"
 
-  while IFS=$'\t' read -r candidate candidate_scale; do
-    [[ -n "$candidate" && -n "$candidate_scale" ]] || continue
+  run_validation_job() {
+    local candidate="$1"
+    local candidate_scale="$2"
+    local safe_candidate
+    local safe_scale
+    local report_path
+    local jsonl_path
+    local stderr_path
+    local status_part
+    local -a cmd
+
     safe_candidate="$(printf '%s' "$candidate" | tr -c 'A-Za-z0-9_' '_')"
     safe_scale="$(printf '%s' "$candidate_scale" | tr -c 'A-Za-z0-9_' '_')"
     report_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.md"
     jsonl_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.jsonl"
     stderr_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.stderr"
+    status_part="$validation_status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
     cmd=(
       python3 -m alpaca_bot.replay.cli portfolio-basket-audit
       --scenario-dir "$SCENARIO_DIR"
@@ -473,19 +539,44 @@ PY
 
     echo "second strategy basket validation: candidate=$candidate scale=$candidate_scale"
     if "${cmd[@]}" 2> "$stderr_path"; then
-      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "passed" "$report_path" "$jsonl_path" "$stderr_path" >> "$validation_status_file"
-    else
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "passed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
+      return 0
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "failed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
+    return 1
+  }
+
+  wait_for_oldest_validation_job() {
+    local pid="${validation_pids[0]}"
+    if ! wait "$pid"; then
       validation_failed_count=$((validation_failed_count + 1))
-      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "failed" "$report_path" "$jsonl_path" "$stderr_path" >> "$validation_status_file"
+    fi
+    validation_pids=("${validation_pids[@]:1}")
+  }
+
+  validation_pids=()
+  while IFS=$'\t' read -r candidate candidate_scale; do
+    [[ -n "$candidate" && -n "$candidate_scale" ]] || continue
+    run_validation_job "$candidate" "$candidate_scale" &
+    validation_pids+=("$!")
+    if [[ "${#validation_pids[@]}" -ge "$SCAN_JOBS" ]]; then
+      wait_for_oldest_validation_job
     fi
   done < "$validation_specs_file"
+  while [[ "${#validation_pids[@]}" -gt 0 ]]; do
+    wait_for_oldest_validation_job
+  done
+  for status_part in "$validation_status_parts_dir"/*.tsv; do
+    [[ -e "$status_part" ]] || continue
+    cat "$status_part" >> "$validation_status_file"
+  done
 
   python3 - "$validation_status_file" "$validation_summary_file" \
     "$validation_summary_json_file" "$summary_json_file" "$VALIDATION_OUTPUT_DIR" \
     "$SCENARIO_DIR" "$BASE_STRATEGY" "$VALIDATION_SAMPLE_SIZE" \
     "$VALIDATION_SAMPLE_SEED" "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" \
     "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" \
-    "$MAX_VALIDATION_CANDIDATES" <<'PY'
+    "$MAX_VALIDATION_CANDIDATES" "$SCAN_JOBS" <<'PY'
 from __future__ import annotations
 
 import json
@@ -506,6 +597,7 @@ max_open_positions = sys.argv[11]
 starting_equity = sys.argv[12]
 excluded_candidates = sys.argv[13]
 max_validation_candidates = sys.argv[14]
+scan_jobs = sys.argv[15]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -561,6 +653,7 @@ lines = [
     f"- slippage_bps: `{slippage_bps}`",
     f"- max_open_positions: `{max_open_positions}`",
     f"- max_validation_candidates: `{max_validation_candidates}`",
+    f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
     "",
@@ -651,6 +744,7 @@ summary_json_path.write_text(
             "slippage_bps": slippage_bps,
             "max_open_positions": max_open_positions,
             "max_validation_candidates": max_validation_candidates,
+            "scan_jobs": scan_jobs,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
             "positive_edge_validation_rows": validation_positive_edges,
