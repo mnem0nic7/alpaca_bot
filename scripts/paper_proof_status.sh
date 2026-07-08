@@ -726,6 +726,8 @@ def approval_marker_status(
     error: str | None,
     *,
     evidence_status: str,
+    strategy_version: str,
+    env_file: str,
     validation_summary_path: Path,
     validation_rows: object,
     validation_positive_families: list[str],
@@ -744,6 +746,16 @@ def approval_marker_status(
         return "confirmation_mismatch", strategy
     if evidence_status != "ok":
         return f"evidence_{evidence_status}", strategy
+    marker_strategy_version = str(payload.get("strategy_version") or "").strip()
+    if not marker_strategy_version:
+        return "strategy_version_missing", strategy
+    if marker_strategy_version != strategy_version:
+        return "strategy_version_mismatch", strategy
+    marker_env_file = str(payload.get("env_file") or "").strip()
+    if not marker_env_file:
+        return "env_file_missing", strategy
+    if marker_env_file != env_file:
+        return "env_file_mismatch", strategy
     expected_summary = str(validation_summary_path.resolve())
     if str(payload.get("validation_summary") or "") != expected_summary:
         return "stale_validation_summary", strategy
@@ -808,6 +820,8 @@ def load_second_strategy_evidence(
     output_root: Path,
     now_utc: datetime,
     max_age_hours: int,
+    strategy_version: str,
+    env_file: str,
     require_candidate_attribution: bool = False,
 ) -> dict[str, object]:
     prefilter_summary_path = output_root / "latest" / "summary.json"
@@ -897,6 +911,8 @@ def load_second_strategy_evidence(
         approval_payload,
         approval_error,
         evidence_status=evidence_status,
+        strategy_version=strategy_version,
+        env_file=env_file,
         validation_summary_path=validation_summary_path,
         validation_rows=validation_rows,
         validation_positive_families=validation_positive_families,
@@ -1353,12 +1369,16 @@ second_strategy_evidence = load_second_strategy_evidence(
     output_root=second_strategy_output_root,
     now_utc=now_utc,
     max_age_hours=second_strategy_max_age_hours,
+    strategy_version=strategy_version,
+    env_file=proof_status_env_file,
     require_candidate_attribution=True,
 )
 second_strategy_setup_evidence = load_second_strategy_evidence(
     output_root=second_strategy_setup_output_root,
     now_utc=now_utc,
     max_age_hours=second_strategy_max_age_hours,
+    strategy_version=strategy_version,
+    env_file=proof_status_env_file,
 )
 market_timezone = settings.market_timezone.key
 readiness_due = False

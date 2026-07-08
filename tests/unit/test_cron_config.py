@@ -6678,6 +6678,14 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "scan_promotion_approved or approval_status" not in script
     assert "promotion_approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']}" in script
     assert "promotion_approval_marker_strategy={safe_status_value(second_strategy_evidence['promotion_approval_marker_strategy'])}" in script
+    assert "marker_strategy_version = str(payload.get(\"strategy_version\") or \"\").strip()" in script
+    assert "return \"strategy_version_missing\", strategy" in script
+    assert "return \"strategy_version_mismatch\", strategy" in script
+    assert "marker_env_file = str(payload.get(\"env_file\") or \"\").strip()" in script
+    assert "return \"env_file_missing\", strategy" in script
+    assert "return \"env_file_mismatch\", strategy" in script
+    assert "strategy_version=strategy_version" in script
+    assert "env_file=proof_status_env_file" in script
     assert "stale_validation_summary" in script
     assert "strategy_rows = [" in script
     assert "for row in strategy_rows:" in script

@@ -191,6 +191,8 @@ def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_pa
     approval_marker = json.loads((evidence_root / "promotion_approval.json").read_text())
     assert approval_marker["strategy"] == "ema_pullback"
     assert approval_marker["confirmation"] == "approve-ema_pullback-paper-promotion"
+    assert approval_marker["strategy_version"] == "v1-breakout"
+    assert approval_marker["env_file"] == str(env_file)
     assert approval_marker["validation_summary"] == str(
         (evidence_root / "latest_validation" / "summary.json").resolve()
     )
