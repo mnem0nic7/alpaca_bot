@@ -3683,7 +3683,7 @@ elif (
     and entry_order_fill_rate < execution_min_entry_fill_rate
     and posture_entry_fill_rate is not None
 ):
-    execution_quality_warnings.append("raw_entry_fill_rate")
+    execution_quality_warnings.append("historical_entry_fill_rate")
 if (
     capacity_reject_rate is not None
     and capacity_reject_rate > execution_max_capacity_reject_rate
@@ -3714,7 +3714,7 @@ elif (
     and current_session_entry_order_fill_rate < execution_min_entry_fill_rate
     and current_session_settled_entry_fill_rate is not None
 ):
-    current_session_execution_warnings.append("raw_entry_fill_rate")
+    current_session_execution_warnings.append("unsettled_entry_fill_rate")
 if (
     current_session_capacity_reject_rate is not None
     and current_session_capacity_reject_rate > execution_max_capacity_reject_rate
@@ -3746,7 +3746,7 @@ elif (
     and post_supervisor_entry_order_fill_rate < execution_min_entry_fill_rate
     and post_supervisor_settled_entry_fill_rate is not None
 ):
-    post_supervisor_execution_warnings.append("raw_entry_fill_rate")
+    post_supervisor_execution_warnings.append("unsettled_entry_fill_rate")
 if (
     post_supervisor_capacity_reject_rate is not None
     and post_supervisor_capacity_reject_rate > execution_max_capacity_reject_rate

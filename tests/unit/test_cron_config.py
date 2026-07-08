@@ -6285,7 +6285,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "capacity_reject_rate > execution_max_capacity_reject_rate" in script
     assert "execution_quality_warnings.append(\"entry_fill_rate\")" in script
     assert "scale_blockers.append(\"entry_fill_rate\")" in script
-    assert "execution_quality_warnings.append(\"raw_entry_fill_rate\")" in script
+    assert "execution_quality_warnings.append(\"historical_entry_fill_rate\")" in script
+    assert "current_session_execution_warnings.append(\"unsettled_entry_fill_rate\")" in script
+    assert "post_supervisor_execution_warnings.append(\"unsettled_entry_fill_rate\")" in script
     assert "execution_quality_warnings.append(\"capacity_rejections\")" in script
     assert "current_session_execution_warnings.append(\"short_entry_windows\")" in script
     assert "post_supervisor_execution_status" in script
