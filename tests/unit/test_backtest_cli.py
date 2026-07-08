@@ -845,9 +845,12 @@ def test_portfolio_basket_audit_subcommand_scores_combined_basket(
     tmp_path,
     monkeypatch,
 ) -> None:
+    from datetime import datetime, timezone
+
     from alpaca_bot.replay import cli as replay_cli
     from alpaca_bot.replay.audit import StrategyAuditRow
     from alpaca_bot.replay.cli import main
+    from alpaca_bot.replay.report import ReplayTradeRecord
 
     _set_audit_env(monkeypatch)
     scenario_dir = tmp_path / "scenarios"
@@ -877,11 +880,38 @@ def test_portfolio_basket_audit_subcommand_scores_combined_basket(
         captured["starting_equity"] = [scenario.starting_equity for scenario in scenarios]
         if on_progress is not None:
             on_progress("basket replay complete")
-        return []
+        now = datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc)
+        return [
+            ReplayTradeRecord(
+                symbol="AAA",
+                entry_price=10.0,
+                exit_price=11.0,
+                quantity=1.0,
+                entry_time=now,
+                exit_time=now,
+                exit_reason="eod",
+                pnl=1.0,
+                return_pct=0.1,
+                strategy_name="bull_flag",
+            ),
+            ReplayTradeRecord(
+                symbol="BBB",
+                entry_price=20.0,
+                exit_price=19.0,
+                quantity=1.0,
+                entry_time=now,
+                exit_time=now,
+                exit_reason="eod",
+                pnl=-1.0,
+                return_pct=-0.05,
+                strategy_name="orb",
+            ),
+        ]
 
     def fake_run_audit(*, scenarios, settings, strategies, pooled_trades_fn, **kwargs):
         captured["audit_strategies"] = list(strategies)
-        pooled_trades_fn(scenarios, settings, strategies[0])
+        costed = dataclasses.replace(settings, replay_slippage_bps=2.0)
+        pooled_trades_fn(scenarios, costed, strategies[0])
         return [
             StrategyAuditRow(
                 strategy=strategies[0],
@@ -933,10 +963,30 @@ def test_portfolio_basket_audit_subcommand_scores_combined_basket(
     assert "Basket: `bull_flag+orb`." in text
     assert "Confidence sizing scales: `orb=0.25`." in text
     assert "## K=4" in text
+    assert "| bull_flag | 1 | 1 | 0 | 1.00 | 1.0000 |" in text
+    assert "| orb | 1 | 0 | 1 | -1.00 | -1.0000 |" in text
     assert "positive-edge" in text
     [payload] = [json.loads(line) for line in out_jsonl.read_text().splitlines()]
     assert payload["max_open_positions"] == 4
     assert payload["rows"][0]["strategy"] == "bull_flag+orb"
+    assert payload["trade_diagnostics"]["strategies"] == [
+        {
+            "strategy": "bull_flag",
+            "trades": 1,
+            "winning_trades": 1,
+            "losing_trades": 0,
+            "total_pnl": 1.0,
+            "mean_trade_pnl": 1.0,
+        },
+        {
+            "strategy": "orb",
+            "trades": 1,
+            "winning_trades": 0,
+            "losing_trades": 1,
+            "total_pnl": -1.0,
+            "mean_trade_pnl": -1.0,
+        },
+    ]
 
 
 def test_portfolio_basket_audit_supports_option_snapshot_ledger(

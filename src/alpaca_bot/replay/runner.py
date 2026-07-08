@@ -338,6 +338,7 @@ class ReplayRunner:
                         entry_level=0.0,  # entry_level not carried in CycleIntent
                         relative_volume=0.0,  # relative_volume not carried in CycleIntent
                         quantity=intent.quantity,
+                        strategy_name=intent.strategy_name or self.strategy_name,
                     )
                     events.append(
                         ReplayEvent(
@@ -434,6 +435,7 @@ class ReplayRunner:
             initial_stop_price=order.initial_stop_price,
             stop_price=order.initial_stop_price,
             highest_price=fill_price,
+            strategy_name=order.strategy_name,
         )
         events.append(
             ReplayEvent(
@@ -444,6 +446,7 @@ class ReplayRunner:
                     "entry_price": fill_price,
                     "initial_stop_price": order.initial_stop_price,
                     "quantity": quantity,
+                    "strategy_name": order.strategy_name,
                 },
             )
         )

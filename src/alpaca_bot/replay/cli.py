@@ -1270,14 +1270,16 @@ def _cmd_portfolio_basket_audit(args: argparse.Namespace) -> int:
 
     for k in ks:
         ksettings = dataclasses.replace(settings, max_open_positions=k)
+        trade_diagnostics = None
 
         def basket_pooled_trades_with_progress(scenarios, settings, _label):
+            nonlocal trade_diagnostics
             option_kwargs = (
                 {"option_chain_ledger": option_chain_ledger}
                 if option_chain_ledger is not None
                 else {}
             )
-            return portfolio_basket_pooled_trades(
+            trades = portfolio_basket_pooled_trades(
                 scenarios,
                 settings,
                 basket_names,
@@ -1285,6 +1287,20 @@ def _cmd_portfolio_basket_audit(args: argparse.Namespace) -> int:
                 on_progress=emit_progress,
                 **option_kwargs,
             )
+            if (
+                trade_diagnostics is None
+                and math.isclose(
+                    float(settings.replay_slippage_bps),
+                    float(bps),
+                    rel_tol=0.0,
+                    abs_tol=1e-9,
+                )
+            ):
+                trade_diagnostics = _summarize_replay_trade_attribution(
+                    trades,
+                    strategy_names=basket_names,
+                )
+            return trades
 
         rows = run_audit(
             scenarios=scenarios,
@@ -1297,6 +1313,8 @@ def _cmd_portfolio_basket_audit(args: argparse.Namespace) -> int:
         blocks.append(f"## K={k} (max_open_positions)")
         blocks.append("")
         blocks.append(_format_audit_markdown(rows, slippage_bps=bps))
+        if trade_diagnostics is not None:
+            blocks.append(_format_trade_attribution_markdown(trade_diagnostics))
         if jsonl_path is not None:
             _append_portfolio_audit_jsonl(
                 jsonl_path,
@@ -1304,6 +1322,7 @@ def _cmd_portfolio_basket_audit(args: argparse.Namespace) -> int:
                 slippage_bps=bps,
                 scenarios=len(scenarios),
                 rows=rows,
+                trade_diagnostics=trade_diagnostics,
             )
 
     _write_output("\n".join(blocks), args.output)
@@ -2320,6 +2339,7 @@ def _append_portfolio_audit_jsonl(
     slippage_bps: float,
     scenarios: int,
     rows: list[StrategyAuditRow],
+    trade_diagnostics: dict | None = None,
 ) -> None:
     payload = {
         "max_open_positions": max_open_positions,
@@ -2327,6 +2347,8 @@ def _append_portfolio_audit_jsonl(
         "scenarios": scenarios,
         "rows": [dataclasses.asdict(r) for r in rows],
     }
+    if trade_diagnostics is not None:
+        payload["trade_diagnostics"] = trade_diagnostics
     with path.open("a") as f:
         f.write(json.dumps(payload) + "\n")
         f.flush()
@@ -2425,6 +2447,94 @@ def _format_audit_markdown(rows: list[StrategyAuditRow], *, slippage_bps: float)
             f"| {r.total_pnl:.2f} | {fmt(r.mean_trade_pnl, '.4f')} "
             f"| {fmt(r.annualized_sharpe)} | {ci} | {fmt(r.p_positive, '.4f')} "
             f"| {r.zero_cost_total_pnl:.2f} | {r.cost_drag:.2f} | **{r.verdict}** |"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _summarize_replay_trade_attribution(
+    trades: list[ReplayTradeRecord],
+    *,
+    strategy_names: tuple[str, ...],
+) -> dict:
+    by_strategy: dict[str, dict[str, object]] = {
+        name: {
+            "strategy": name,
+            "trades": 0,
+            "winning_trades": 0,
+            "losing_trades": 0,
+            "total_pnl": 0.0,
+        }
+        for name in strategy_names
+    }
+    symbol_counts: dict[str, int] = {}
+    for trade in trades:
+        strategy = trade.strategy_name or "unknown"
+        row = by_strategy.setdefault(
+            strategy,
+            {
+                "strategy": strategy,
+                "trades": 0,
+                "winning_trades": 0,
+                "losing_trades": 0,
+                "total_pnl": 0.0,
+            },
+        )
+        row["trades"] = int(row["trades"]) + 1
+        row["winning_trades"] = int(row["winning_trades"]) + int(trade.pnl > 0)
+        row["losing_trades"] = int(row["losing_trades"]) + int(trade.pnl < 0)
+        row["total_pnl"] = float(row["total_pnl"]) + float(trade.pnl)
+        symbol_counts[trade.symbol] = symbol_counts.get(trade.symbol, 0) + 1
+
+    strategy_rows = []
+    for name, row in by_strategy.items():
+        trade_count = int(row["trades"])
+        total_pnl = round(float(row["total_pnl"]), 2)
+        strategy_rows.append({
+            "strategy": name,
+            "trades": trade_count,
+            "winning_trades": int(row["winning_trades"]),
+            "losing_trades": int(row["losing_trades"]),
+            "total_pnl": total_pnl,
+            "mean_trade_pnl": (
+                round(total_pnl / trade_count, 4) if trade_count else None
+            ),
+        })
+
+    strategy_order = {name: index for index, name in enumerate(strategy_names)}
+    strategy_rows.sort(
+        key=lambda row: (
+            strategy_order.get(str(row["strategy"]), len(strategy_order)),
+            str(row["strategy"]),
+        )
+    )
+    top_symbols = [
+        {"symbol": symbol, "trades": count}
+        for symbol, count in sorted(
+            symbol_counts.items(),
+            key=lambda item: (-item[1], item[0]),
+        )[:10]
+    ]
+    return {
+        "total_trades": len(trades),
+        "strategies": strategy_rows,
+        "top_symbols": top_symbols,
+    }
+
+
+def _format_trade_attribution_markdown(diagnostics: dict) -> str:
+    lines = [
+        "### Trade attribution",
+        "",
+        "| strategy | trades | wins | losses | total P&L | mean/trade |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for row in diagnostics.get("strategies", []):
+        mean_trade_pnl = row.get("mean_trade_pnl")
+        lines.append(
+            f"| {row['strategy']} | {row['trades']} | "
+            f"{row['winning_trades']} | {row['losing_trades']} | "
+            f"{float(row['total_pnl']):.2f} | "
+            f"{'n/a' if mean_trade_pnl is None else f'{float(mean_trade_pnl):.4f}'} |"
         )
     return "\n".join(lines) + "\n"
 

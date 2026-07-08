@@ -686,6 +686,7 @@ class PortfolioReplayRunner:
             quantity=qty, entry_time=pos.entry_timestamp,
             exit_time=bar.timestamp, exit_reason=reason, pnl=pnl,
             return_pct=(exit_price - pos.entry_price) / pos.entry_price,
+            strategy_name=pos.strategy_name,
         )
 
     def _option_contract_at(

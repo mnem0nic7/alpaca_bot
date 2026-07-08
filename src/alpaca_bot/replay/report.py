@@ -19,6 +19,7 @@ class ReplayTradeRecord:
     exit_reason: str  # "stop", "eod", "profit_target", or strategy exit reason
     pnl: float
     return_pct: float
+    strategy_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -165,6 +166,7 @@ def _extract_trades(events: list[ReplayEvent]) -> list[ReplayTradeRecord]:
                     exit_reason=exit_reason,
                     pnl=pnl,
                     return_pct=return_pct,
+                    strategy_name=fill.details.get("strategy_name"),
                 )
             )
 

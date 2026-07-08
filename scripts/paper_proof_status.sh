@@ -650,11 +650,25 @@ def summarize_validation_verdicts(rows: object, *, limit: int = 10) -> str:
     return ",".join(parts) if parts else "none"
 
 
+def rows_missing_candidate_attribution(rows: object) -> bool:
+    if not isinstance(rows, list):
+        return False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("status") != "passed":
+            continue
+        if "candidate_contribution_status" not in row:
+            return True
+    return False
+
+
 def load_second_strategy_evidence(
     *,
     output_root: Path,
     now_utc: datetime,
     max_age_hours: int,
+    require_candidate_attribution: bool = False,
 ) -> dict[str, object]:
     prefilter_summary_path = output_root / "latest" / "summary.json"
     validation_summary_path = output_root / "latest_validation" / "summary.json"
@@ -690,6 +704,11 @@ def load_second_strategy_evidence(
         and validation_age_hours > max_age_hours
     ):
         stale_parts.append("validation")
+    if require_candidate_attribution:
+        if rows_missing_candidate_attribution(prefilter_rows):
+            stale_parts.append("prefilter_candidate_attribution")
+        if rows_missing_candidate_attribution(validation_rows):
+            stale_parts.append("validation_candidate_attribution")
 
     invalid_parts = [
         name
@@ -1127,6 +1146,7 @@ second_strategy_evidence = load_second_strategy_evidence(
     output_root=second_strategy_output_root,
     now_utc=now_utc,
     max_age_hours=second_strategy_max_age_hours,
+    require_candidate_attribution=True,
 )
 second_strategy_setup_evidence = load_second_strategy_evidence(
     output_root=second_strategy_setup_output_root,
