@@ -573,7 +573,7 @@ run_prefilter_job() {
   stderr_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.stderr"
   status_part="$status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
   require_fingerprint=true
-  job_fingerprint="prefilter|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$SAMPLE_SIZE|seed=$SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v1"
+  job_fingerprint="prefilter|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$SAMPLE_SIZE|seed=$SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v2"
   if completed_status_part_is_reusable "$status_part" "$candidate" "$candidate_scale" "$require_fingerprint" "$job_fingerprint"; then
     echo "second strategy basket scan: reusing completed candidate=$candidate scale=$candidate_scale"
     return 0
@@ -681,8 +681,20 @@ def candidate_contribution(audit_row, candidate: str):
                 "trades": int(row.get("trades") or 0),
                 "total_pnl": row.get("total_pnl"),
                 "mean_trade_pnl": row.get("mean_trade_pnl"),
+                "ci_low": row.get("ci_low"),
+                "ci_high": row.get("ci_high"),
+                "p_mean_le_zero": row.get("p_mean_le_zero"),
+                "verdict": row.get("verdict"),
             }
-    return {"trades": None, "total_pnl": None, "mean_trade_pnl": None}
+    return {
+        "trades": None,
+        "total_pnl": None,
+        "mean_trade_pnl": None,
+        "ci_low": None,
+        "ci_high": None,
+        "p_mean_le_zero": None,
+        "verdict": None,
+    }
 
 
 def contribution_status(contribution) -> str:
@@ -698,15 +710,19 @@ def contribution_status(contribution) -> str:
 
 
 def evidence_verdict(audit_row, candidate: str) -> str:
-    verdict = audit_row.get("verdict")
-    if verdict != "positive-edge":
-        return verdict
-    status = contribution_status(candidate_contribution(audit_row, candidate))
+    basket_verdict = audit_row.get("verdict")
+    contribution = candidate_contribution(audit_row, candidate)
+    status = contribution_status(contribution)
     if status == "no_trades":
         return "no-candidate-trades"
     if status == "non_positive_pnl":
         return "non-positive-candidate-pnl"
-    return verdict
+    candidate_verdict = contribution.get("verdict")
+    if candidate_verdict:
+        return candidate_verdict
+    if basket_verdict == "positive-edge":
+        return "missing-candidate-edge-diagnostics"
+    return basket_verdict
 
 
 rows = []
@@ -741,6 +757,7 @@ def sort_key(item):
         "negative-edge": 2,
         "no-candidate-trades": 2,
         "non-positive-candidate-pnl": 2,
+        "missing-candidate-edge-diagnostics": 2,
     }.get(evidence_verdict(audit_row, candidate), 2)
     ci_low = audit_row.get("ci_low")
     ci_rank = -(float(ci_low) if ci_low is not None else float("-inf"))
@@ -765,8 +782,8 @@ lines = [
     f"- include_option_candidates: `{include_option_candidates}`",
     f"- option_chain_snapshots: `{option_chain_snapshots}`",
     "",
-    "| candidate | scale | status | trades | candidate trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
-    "|---|---:|---|---:|---:|---:|---:|---:|---|---:|---:|---|---|",
+    "| candidate | scale | status | trades | candidate trades | candidate P&L | candidate mean/trade | candidate 95% CI mean/trade | candidate p(mean<=0) | basket total P&L | basket 95% CI mean/trade | basket verdict | verdict | report |",
+    "|---|---:|---|---:|---:|---:|---:|---|---:|---:|---|---|---|---|",
 ]
 
 positive_edges = 0
@@ -783,7 +800,7 @@ for candidate, candidate_scale, status, report, stderr, audit_row in sorted(rows
             }
         )
         lines.append(
-            f"| `{candidate}` | {candidate_scale} | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
+            f"| `{candidate}` | {candidate_scale} | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
         )
         continue
     basket_verdict = audit_row["verdict"]
@@ -796,6 +813,11 @@ for candidate, candidate_scale, status, report, stderr, audit_row in sorted(rows
         "n/a"
         if audit_row["ci_low"] is None or audit_row["ci_high"] is None
         else f"[{fmt(audit_row['ci_low'], '.4f')}, {fmt(audit_row['ci_high'], '.4f')}]"
+    )
+    candidate_ci = (
+        "n/a"
+        if candidate_stats["ci_low"] is None or candidate_stats["ci_high"] is None
+        else f"[{fmt(candidate_stats['ci_low'], '.4f')}, {fmt(candidate_stats['ci_high'], '.4f')}]"
     )
     p_mean_le_zero = audit_row["p_positive"]
     json_rows.append(
@@ -817,6 +839,10 @@ for candidate, candidate_scale, status, report, stderr, audit_row in sorted(rows
             "candidate_trades": candidate_stats["trades"],
             "candidate_total_pnl": candidate_stats["total_pnl"],
             "candidate_mean_trade_pnl": candidate_stats["mean_trade_pnl"],
+            "candidate_ci_low": candidate_stats["ci_low"],
+            "candidate_ci_high": candidate_stats["ci_high"],
+            "candidate_p_mean_le_zero": candidate_stats["p_mean_le_zero"],
+            "candidate_verdict": candidate_stats["verdict"],
             "candidate_contribution_status": candidate_status,
             "trade_diagnostics": audit_row.get("trade_diagnostics"),
             "verdict": verdict,
@@ -826,10 +852,11 @@ for candidate, candidate_scale, status, report, stderr, audit_row in sorted(rows
         "| "
         f"`{candidate}` | {candidate_scale} | `passed` | {audit_row['trades']} | "
         f"{fmt(candidate_stats['trades'], '.0f')} | "
-        f"{fmt(audit_row['profit_factor'])} | {fmt(audit_row['total_pnl'])} | "
-        f"{fmt(audit_row['mean_trade_pnl'], '.4f')} | {ci} | "
-        f"{fmt(p_mean_le_zero, '.4f')} | {fmt(audit_row['cost_drag'])} | "
-        f"`{verdict}` | `{report}` |"
+        f"{fmt(candidate_stats['total_pnl'])} | "
+        f"{fmt(candidate_stats['mean_trade_pnl'], '.4f')} | {candidate_ci} | "
+        f"{fmt(candidate_stats['p_mean_le_zero'], '.4f')} | "
+        f"{fmt(audit_row['total_pnl'])} | {ci} | "
+        f"`{basket_verdict}` | `{verdict}` | `{report}` |"
     )
 
 lines.extend([
@@ -897,9 +924,12 @@ best_by_candidate = {}
 positive_rows = []
 for row in payload.get("rows", []):
     if row.get("status") == "passed" and row.get("verdict") == "positive-edge":
-        ci_low = row.get("ci_low")
-        p_mean_le_zero = row.get("p_mean_le_zero")
-        total_pnl = row.get("total_pnl")
+        ci_low = row.get("candidate_ci_low", row.get("ci_low"))
+        p_mean_le_zero = row.get(
+            "candidate_p_mean_le_zero",
+            row.get("p_mean_le_zero"),
+        )
+        total_pnl = row.get("candidate_total_pnl", row.get("total_pnl"))
         score = (
             float(ci_low) if ci_low is not None else -math.inf,
             -(float(p_mean_le_zero) if p_mean_le_zero is not None else math.inf),
@@ -986,7 +1016,7 @@ PY
     stderr_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.stderr"
     status_part="$validation_status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
     require_fingerprint=true
-    job_fingerprint="validation|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$VALIDATION_SAMPLE_SIZE|seed=$VALIDATION_SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v1"
+    job_fingerprint="validation|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$VALIDATION_SAMPLE_SIZE|seed=$VALIDATION_SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v2"
     if completed_status_part_is_reusable "$status_part" "$candidate" "$candidate_scale" "$require_fingerprint" "$job_fingerprint"; then
       echo "second strategy basket validation: reusing completed candidate=$candidate scale=$candidate_scale"
       return 0
@@ -1092,8 +1122,20 @@ def candidate_contribution(audit_row, candidate: str):
                 "trades": int(row.get("trades") or 0),
                 "total_pnl": row.get("total_pnl"),
                 "mean_trade_pnl": row.get("mean_trade_pnl"),
+                "ci_low": row.get("ci_low"),
+                "ci_high": row.get("ci_high"),
+                "p_mean_le_zero": row.get("p_mean_le_zero"),
+                "verdict": row.get("verdict"),
             }
-    return {"trades": None, "total_pnl": None, "mean_trade_pnl": None}
+    return {
+        "trades": None,
+        "total_pnl": None,
+        "mean_trade_pnl": None,
+        "ci_low": None,
+        "ci_high": None,
+        "p_mean_le_zero": None,
+        "verdict": None,
+    }
 
 
 def contribution_status(contribution) -> str:
@@ -1109,15 +1151,19 @@ def contribution_status(contribution) -> str:
 
 
 def evidence_verdict(audit_row, candidate: str) -> str:
-    verdict = audit_row.get("verdict")
-    if verdict != "positive-edge":
-        return verdict
-    status = contribution_status(candidate_contribution(audit_row, candidate))
+    basket_verdict = audit_row.get("verdict")
+    contribution = candidate_contribution(audit_row, candidate)
+    status = contribution_status(contribution)
     if status == "no_trades":
         return "no-candidate-trades"
     if status == "non_positive_pnl":
         return "non-positive-candidate-pnl"
-    return verdict
+    candidate_verdict = contribution.get("verdict")
+    if candidate_verdict:
+        return candidate_verdict
+    if basket_verdict == "positive-edge":
+        return "missing-candidate-edge-diagnostics"
+    return basket_verdict
 
 
 rows = []
@@ -1152,6 +1198,7 @@ def sort_key(item):
         "negative-edge": 2,
         "no-candidate-trades": 2,
         "non-positive-candidate-pnl": 2,
+        "missing-candidate-edge-diagnostics": 2,
     }.get(evidence_verdict(audit_row, candidate), 2)
     ci_low = audit_row.get("ci_low")
     ci_rank = -(float(ci_low) if ci_low is not None else float("-inf"))
@@ -1179,8 +1226,8 @@ lines = [
     f"- option_chain_snapshots: `{option_chain_snapshots}`",
     f"- validate_all_positive_rows: `{validate_all_positive_rows}`",
     "",
-    "| candidate | scale | status | trades | candidate trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
-    "|---|---:|---|---:|---:|---:|---:|---:|---|---:|---:|---|---|",
+    "| candidate | scale | status | trades | candidate trades | candidate P&L | candidate mean/trade | candidate 95% CI mean/trade | candidate p(mean<=0) | basket total P&L | basket 95% CI mean/trade | basket verdict | verdict | report |",
+    "|---|---:|---|---:|---:|---:|---:|---|---:|---:|---|---|---|---|",
 ]
 
 validation_positive_edges = 0
@@ -1197,7 +1244,7 @@ for candidate, candidate_scale, status, report, stderr, audit_row in sorted(rows
             }
         )
         lines.append(
-            f"| `{candidate}` | {candidate_scale} | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
+            f"| `{candidate}` | {candidate_scale} | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
         )
         continue
     basket_verdict = audit_row["verdict"]
@@ -1210,6 +1257,11 @@ for candidate, candidate_scale, status, report, stderr, audit_row in sorted(rows
         "n/a"
         if audit_row["ci_low"] is None or audit_row["ci_high"] is None
         else f"[{fmt(audit_row['ci_low'], '.4f')}, {fmt(audit_row['ci_high'], '.4f')}]"
+    )
+    candidate_ci = (
+        "n/a"
+        if candidate_stats["ci_low"] is None or candidate_stats["ci_high"] is None
+        else f"[{fmt(candidate_stats['ci_low'], '.4f')}, {fmt(candidate_stats['ci_high'], '.4f')}]"
     )
     p_mean_le_zero = audit_row["p_positive"]
     json_rows.append(
@@ -1232,6 +1284,10 @@ for candidate, candidate_scale, status, report, stderr, audit_row in sorted(rows
             "candidate_trades": candidate_stats["trades"],
             "candidate_total_pnl": candidate_stats["total_pnl"],
             "candidate_mean_trade_pnl": candidate_stats["mean_trade_pnl"],
+            "candidate_ci_low": candidate_stats["ci_low"],
+            "candidate_ci_high": candidate_stats["ci_high"],
+            "candidate_p_mean_le_zero": candidate_stats["p_mean_le_zero"],
+            "candidate_verdict": candidate_stats["verdict"],
             "candidate_contribution_status": candidate_status,
             "trade_diagnostics": audit_row.get("trade_diagnostics"),
             "verdict": verdict,
@@ -1241,14 +1297,15 @@ for candidate, candidate_scale, status, report, stderr, audit_row in sorted(rows
         "| "
         f"`{candidate}` | {candidate_scale} | `passed` | {audit_row['trades']} | "
         f"{fmt(candidate_stats['trades'], '.0f')} | "
-        f"{fmt(audit_row['profit_factor'])} | {fmt(audit_row['total_pnl'])} | "
-        f"{fmt(audit_row['mean_trade_pnl'], '.4f')} | {ci} | "
-        f"{fmt(p_mean_le_zero, '.4f')} | {fmt(audit_row['cost_drag'])} | "
-        f"`{verdict}` | `{report}` |"
+        f"{fmt(candidate_stats['total_pnl'])} | "
+        f"{fmt(candidate_stats['mean_trade_pnl'], '.4f')} | {candidate_ci} | "
+        f"{fmt(candidate_stats['p_mean_le_zero'], '.4f')} | "
+        f"{fmt(audit_row['total_pnl'])} | {ci} | "
+        f"`{basket_verdict}` | `{verdict}` | `{report}` |"
     )
 
 if not rows:
-    lines.append("| `none` | n/a | `skipped` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
+    lines.append("| `none` | n/a | `skipped` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
 
 if validation_positive_edges:
     conclusion = (

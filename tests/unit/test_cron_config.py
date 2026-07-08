@@ -358,6 +358,7 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "reusing completed candidate=" in script
     assert "require_fingerprint" in script
     assert script.count("require_fingerprint=true") == 2
+    assert "diagnostics=trade_attribution_v2" in script
     assert 'fingerprint_path="$status_part.fingerprint"' in script
     assert "write_status_part_fingerprint" in script
     assert "option_contracts=$OPTION_SNAPSHOT_CONTRACTS" in script
@@ -372,6 +373,9 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "status_parts" in script
     assert '"scan_jobs": scan_jobs' in script
     assert "ci_rank = -" in script
+    assert "candidate_ci_low" in script
+    assert "candidate_verdict" in script
+    assert "missing-candidate-edge-diagnostics" in script
     assert 'p_mean_le_zero = audit_row["p_positive"]' in script
     assert "1.0 - float(audit_row" not in script
     assert "PAPER_APPROVED_STRATEGIES" in script
@@ -5713,6 +5717,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PAPER_SCALE_MIN_TRADES \\" in script
     assert "PAPER_APPROVED_STRATEGIES \\" in script
     assert "PROOF_STATUS_APPROVED_STRATEGIES \\" in script
+    assert "candidate_contribution_status" in script
+    assert "candidate_ci_low" in script
+    assert "candidate_verdict" in script
     assert script.index('source "$ENV_FILE"') < script.index(
         'PROOF_STATUS_STRATEGY="${PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"'
     )

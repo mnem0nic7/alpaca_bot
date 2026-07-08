@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from alpaca_bot.config import Settings
-from alpaca_bot.replay.audit import StrategyAuditRow, run_audit
+from alpaca_bot.replay.audit import StrategyAuditRow, classify_verdict, run_audit
 from alpaca_bot.replay.break_even import (
     DEFAULT_SLIPPAGE_LADDER,
     format_break_even_markdown,
@@ -40,6 +40,7 @@ from alpaca_bot.replay.portfolio import (
 from alpaca_bot.replay.option_snapshots import load_option_chain_snapshot_ledger
 from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord
 from alpaca_bot.replay.runner import ReplayRunner
+from alpaca_bot.replay.stats import bootstrap_mean_ci, bootstrap_p_positive
 from alpaca_bot.strategy import OPTION_STRATEGY_FACTORIES, STRATEGY_REGISTRY
 from alpaca_bot.tuning.sweep import DEFAULT_GRID, _parse_grid, run_sweep
 
@@ -2463,6 +2464,7 @@ def _summarize_replay_trade_attribution(
             "winning_trades": 0,
             "losing_trades": 0,
             "total_pnl": 0.0,
+            "pnls": [],
         }
         for name in strategy_names
     }
@@ -2477,18 +2479,23 @@ def _summarize_replay_trade_attribution(
                 "winning_trades": 0,
                 "losing_trades": 0,
                 "total_pnl": 0.0,
+                "pnls": [],
             },
         )
         row["trades"] = int(row["trades"]) + 1
         row["winning_trades"] = int(row["winning_trades"]) + int(trade.pnl > 0)
         row["losing_trades"] = int(row["losing_trades"]) + int(trade.pnl < 0)
         row["total_pnl"] = float(row["total_pnl"]) + float(trade.pnl)
+        row["pnls"].append(float(trade.pnl))
         symbol_counts[trade.symbol] = symbol_counts.get(trade.symbol, 0) + 1
 
     strategy_rows = []
     for name, row in by_strategy.items():
         trade_count = int(row["trades"])
         total_pnl = round(float(row["total_pnl"]), 2)
+        pnls = list(row["pnls"])
+        ci = bootstrap_mean_ci(pnls)
+        p_mean_le_zero = bootstrap_p_positive(pnls)
         strategy_rows.append({
             "strategy": name,
             "trades": trade_count,
@@ -2497,6 +2504,14 @@ def _summarize_replay_trade_attribution(
             "total_pnl": total_pnl,
             "mean_trade_pnl": (
                 round(total_pnl / trade_count, 4) if trade_count else None
+            ),
+            "ci_low": round(ci[0], 4) if ci is not None else None,
+            "ci_high": round(ci[1], 4) if ci is not None else None,
+            "p_mean_le_zero": p_mean_le_zero,
+            "verdict": classify_verdict(
+                trades=trade_count,
+                ci=ci,
+                p_positive=p_mean_le_zero,
             ),
         })
 
@@ -2525,16 +2540,25 @@ def _format_trade_attribution_markdown(diagnostics: dict) -> str:
     lines = [
         "### Trade attribution",
         "",
-        "| strategy | trades | wins | losses | total P&L | mean/trade |",
-        "|---|---:|---:|---:|---:|---:|",
+        "| strategy | trades | wins | losses | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | verdict |",
+        "|---|---:|---:|---:|---:|---:|---|---:|---|",
     ]
     for row in diagnostics.get("strategies", []):
         mean_trade_pnl = row.get("mean_trade_pnl")
+        ci = (
+            "n/a"
+            if row.get("ci_low") is None or row.get("ci_high") is None
+            else f"[{float(row['ci_low']):.4f}, {float(row['ci_high']):.4f}]"
+        )
+        p_mean_le_zero = row.get("p_mean_le_zero")
         lines.append(
             f"| {row['strategy']} | {row['trades']} | "
             f"{row['winning_trades']} | {row['losing_trades']} | "
             f"{float(row['total_pnl']):.2f} | "
-            f"{'n/a' if mean_trade_pnl is None else f'{float(mean_trade_pnl):.4f}'} |"
+            f"{'n/a' if mean_trade_pnl is None else f'{float(mean_trade_pnl):.4f}'} | "
+            f"{ci} | "
+            f"{'n/a' if p_mean_le_zero is None else f'{float(p_mean_le_zero):.4f}'} | "
+            f"{row.get('verdict', 'unknown')} |"
         )
     return "\n".join(lines) + "\n"
 

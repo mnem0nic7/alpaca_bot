@@ -660,6 +660,14 @@ def rows_missing_candidate_attribution(rows: object) -> bool:
             continue
         if "candidate_contribution_status" not in row:
             return True
+        for key in (
+            "candidate_ci_low",
+            "candidate_ci_high",
+            "candidate_p_mean_le_zero",
+            "candidate_verdict",
+        ):
+            if key not in row:
+                return True
     return False
 
 

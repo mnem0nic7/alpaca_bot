@@ -977,6 +977,10 @@ def test_portfolio_basket_audit_subcommand_scores_combined_basket(
             "losing_trades": 0,
             "total_pnl": 1.0,
             "mean_trade_pnl": 1.0,
+            "ci_low": None,
+            "ci_high": None,
+            "p_mean_le_zero": None,
+            "verdict": "insufficient-data",
         },
         {
             "strategy": "orb",
@@ -985,6 +989,10 @@ def test_portfolio_basket_audit_subcommand_scores_combined_basket(
             "losing_trades": 1,
             "total_pnl": -1.0,
             "mean_trade_pnl": -1.0,
+            "ci_low": None,
+            "ci_high": None,
+            "p_mean_le_zero": None,
+            "verdict": "insufficient-data",
         },
     ]
 
