@@ -411,11 +411,39 @@ Conclusion: the full `orb` setup grid did not produce a positive prefilter
 survivor under the fresh full-grid seed. No validation candidate was available,
 and `orb` remains unapproved.
 
+## 2026-07-08 High Watermark Full Grid
+
+The full `high_watermark` grid tested lookbacks `63`, `126`, and `252` days
+across relative-volume thresholds `1.3`, `1.5`, `1.8`, and `2.0` and ATR stop
+multipliers `1.0`, `1.5`, and `2.0`:
+
+- artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T095828Z/summary.md` and `validation/summary.md`
+- variants: `grid_001` through `grid_036`
+- prefilter result: `positive_edge_prefilter_rows=1`
+- validation result: `positive_edge_validation_rows=0`,
+  `promotion_approved=false`
+
+Prefilter survivor:
+
+| lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---:|---:|---:|---|---|
+| `grid_019` | `HIGH_WATERMARK_LOOKBACK_DAYS=126,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=1.0` | 79 | 2.05 | 132.28 | [0.0270, 3.7233] | `positive-edge` |
+
+Independent validation:
+
+| lever | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---:|---:|---:|---|---|
+| `grid_019` | 154 | 1.23 | 52.78 | [-0.3587, 1.1024] | `no-evidence` |
+
+Conclusion: the `high_watermark` prefilter survivor did not validate
+independently. No setup variant is approved for paper promotion, and
+`high_watermark` remains unapproved.
+
 ## Proof Visibility
 
 `paper_proof_status.sh` now prints a separate `paper proof second strategy setup
 evidence` line from `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs`.
 This keeps the latest setup/grid search result visible beside the broad basket
 scan result. On 2026-07-08 it reported fresh setup evidence with
-`candidate_status=no_positive_prefilter_edge`, `prefilter_positive_rows=0`,
+`candidate_status=no_positive_validation_edge`, `prefilter_positive_rows=1`,
 `validation_positive_rows=0`, and `promotion_approved=false`.
