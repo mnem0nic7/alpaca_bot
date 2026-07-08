@@ -236,29 +236,28 @@ run_prefilter_job() {
   return 1
 }
 
-wait_for_oldest_job() {
-  local pid="${prefilter_pids[0]}"
-  if ! wait "$pid"; then
+wait_for_next_prefilter_job() {
+  if ! wait -n; then
     failed_count=$((failed_count + 1))
   fi
-  prefilter_pids=("${prefilter_pids[@]:1}")
+  prefilter_running_jobs=$((prefilter_running_jobs - 1))
 }
 
-prefilter_pids=()
+prefilter_running_jobs=0
 for candidate in "${candidates[@]}"; do
   if [[ "$candidate" == "$BASE_STRATEGY" ]]; then
     continue
   fi
   for candidate_scale in "${candidate_scales[@]}"; do
     run_prefilter_job "$candidate" "$candidate_scale" &
-    prefilter_pids+=("$!")
-    if [[ "${#prefilter_pids[@]}" -ge "$SCAN_JOBS" ]]; then
-      wait_for_oldest_job
+    prefilter_running_jobs=$((prefilter_running_jobs + 1))
+    if [[ "$prefilter_running_jobs" -ge "$SCAN_JOBS" ]]; then
+      wait_for_next_prefilter_job
     fi
   done
 done
-while [[ "${#prefilter_pids[@]}" -gt 0 ]]; do
-  wait_for_oldest_job
+while [[ "$prefilter_running_jobs" -gt 0 ]]; do
+  wait_for_next_prefilter_job
 done
 for status_part in "$status_parts_dir"/*.tsv; do
   [[ -e "$status_part" ]] || continue
@@ -546,25 +545,24 @@ PY
     return 1
   }
 
-  wait_for_oldest_validation_job() {
-    local pid="${validation_pids[0]}"
-    if ! wait "$pid"; then
+  wait_for_next_validation_job() {
+    if ! wait -n; then
       validation_failed_count=$((validation_failed_count + 1))
     fi
-    validation_pids=("${validation_pids[@]:1}")
+    validation_running_jobs=$((validation_running_jobs - 1))
   }
 
-  validation_pids=()
+  validation_running_jobs=0
   while IFS=$'\t' read -r candidate candidate_scale; do
     [[ -n "$candidate" && -n "$candidate_scale" ]] || continue
     run_validation_job "$candidate" "$candidate_scale" &
-    validation_pids+=("$!")
-    if [[ "${#validation_pids[@]}" -ge "$SCAN_JOBS" ]]; then
-      wait_for_oldest_validation_job
+    validation_running_jobs=$((validation_running_jobs + 1))
+    if [[ "$validation_running_jobs" -ge "$SCAN_JOBS" ]]; then
+      wait_for_next_validation_job
     fi
   done < "$validation_specs_file"
-  while [[ "${#validation_pids[@]}" -gt 0 ]]; do
-    wait_for_oldest_validation_job
+  while [[ "$validation_running_jobs" -gt 0 ]]; do
+    wait_for_next_validation_job
   done
   for status_part in "$validation_status_parts_dir"/*.tsv; do
     [[ -e "$status_part" ]] || continue

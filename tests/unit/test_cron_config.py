@@ -299,9 +299,10 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "best_by_candidate" in script
     assert "candidate_scales" in script
     assert "run_prefilter_job" in script
-    assert "wait_for_oldest_job" in script
+    assert "wait_for_next_prefilter_job" in script
     assert "run_validation_job" in script
-    assert "wait_for_oldest_validation_job" in script
+    assert "wait_for_next_validation_job" in script
+    assert "wait -n" in script
     assert "status_parts" in script
     assert '"scan_jobs": scan_jobs' in script
     assert "ci_rank = -" in script
