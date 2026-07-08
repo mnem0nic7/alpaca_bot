@@ -388,6 +388,8 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert "SECOND_STRATEGY_SETUP_OUTPUT_ROOT" in script
     assert "SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy" in script
     assert "/setup_knobs" in script
+    assert 'UPDATE_LATEST_LINKS="${SECOND_STRATEGY_SETUP_UPDATE_LATEST_LINKS:-true}"' in script
+    assert "SECOND_STRATEGY_SETUP_UPDATE_LATEST_LINKS must be true or false" in script
     assert "SECOND_STRATEGY_SETUP_VARIANT_MODE" in script
     assert "SECOND_STRATEGY_SETUP_MAX_VARIANTS" in script
     assert "SECOND_STRATEGY_SETUP_VARIANT_LABELS" in script
@@ -437,6 +439,7 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert "wait -n" in script
     assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script
     assert 'ln -sfn "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"' in script
+    assert '&& "$UPDATE_LATEST_LINKS" == "true"' in script
     assert "close-only" not in script
     assert "alpaca-bot-session-eval" not in script
 

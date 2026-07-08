@@ -73,6 +73,7 @@ CANDIDATE_SCALE="${SECOND_STRATEGY_SETUP_CANDIDATE_SCALE:-${SECOND_STRATEGY_CAND
 OUTPUT_ROOT="${SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}/setup_knobs}"
 OUTPUT_DIR="${SECOND_STRATEGY_SETUP_OUTPUT_DIR:-$OUTPUT_ROOT/$(date -u +%Y%m%dT%H%M%SZ)}"
 LATEST_LINK="${SECOND_STRATEGY_SETUP_LATEST_LINK:-}"
+UPDATE_LATEST_LINKS="${SECOND_STRATEGY_SETUP_UPDATE_LATEST_LINKS:-true}"
 EXCLUDE_CANDIDATES="${SECOND_STRATEGY_SETUP_EXCLUDE_CANDIDATES:-${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}}"
 VARIANT_MODE="${SECOND_STRATEGY_SETUP_VARIANT_MODE:-curated}"
 VARIANT_LABELS="${SECOND_STRATEGY_SETUP_VARIANT_LABELS:-}"
@@ -118,6 +119,17 @@ except ValueError as exc:
 if max_variants < 0:
     raise SystemExit(f"max variants must be non-negative: {sys.argv[4]}")
 PY
+case "${UPDATE_LATEST_LINKS,,}" in
+  true|1|yes|y)
+    UPDATE_LATEST_LINKS=true
+    ;;
+  false|0|no|n|"")
+    UPDATE_LATEST_LINKS=false
+    ;;
+  *)
+    fail "SECOND_STRATEGY_SETUP_UPDATE_LATEST_LINKS must be true or false"
+    ;;
+esac
 
 proof_output="$OUTPUT_DIR/proof_status.txt"
 proof_status_loaded=false
@@ -876,7 +888,7 @@ print(f"validation_summary_json={summary_json_path}")
 print(f"positive_edge_validation_rows={validation_positive_edges}")
 PY
 
-  if [[ -z "$VALIDATION_LATEST_LINK" && -z "${SECOND_STRATEGY_SETUP_OUTPUT_DIR:-}" ]]; then
+  if [[ -z "$VALIDATION_LATEST_LINK" && "$UPDATE_LATEST_LINKS" == "true" ]]; then
     VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"
   fi
   if [[ -n "$VALIDATION_LATEST_LINK" ]]; then
@@ -888,7 +900,7 @@ else
   echo "second strategy setup-knob validation: disabled"
 fi
 
-if [[ -z "$LATEST_LINK" && -z "${SECOND_STRATEGY_SETUP_OUTPUT_DIR:-}" ]]; then
+if [[ -z "$LATEST_LINK" && "$UPDATE_LATEST_LINKS" == "true" ]]; then
   LATEST_LINK="$OUTPUT_ROOT/latest"
 fi
 if [[ -n "$LATEST_LINK" ]]; then
