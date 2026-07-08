@@ -1,7 +1,7 @@
 """Tests for alpaca_bot.runtime.cycle — commit discipline and multi-intent atomicity."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from alpaca_bot.config import Settings, TradingMode
@@ -257,6 +257,56 @@ def test_run_cycle_skips_duplicate_entry_client_order_id_without_overwriting_exi
     assert duplicate_events[0].payload["client_order_id"] == intent.client_order_id
     assert duplicate_events[0].payload["existing_status"] == "canceled"
     assert duplicate_events[0].payload["existing_broker_order_id"] == "broker-crwd-entry"
+    assert connection.commit_count == 1
+
+
+def test_run_cycle_skips_entry_intent_with_too_little_active_window_left() -> None:
+    """Do not queue an entry that dispatch would immediately expire as too late."""
+    from alpaca_bot.runtime.cycle import run_cycle
+    import alpaca_bot.runtime.cycle as cycle_module
+
+    settings = _make_settings()
+    signal_ts = datetime(2026, 4, 27, 19, 15, tzinfo=timezone.utc)  # 15:15 ET
+    now = signal_ts + timedelta(minutes=23)
+    intent = _make_entry_intent("AAPL", signal_ts)
+    order_store = RecordingOrderStore()
+    audit_store = RecordingAuditEventStore()
+    connection = CountingConnection()
+    runtime = SimpleNamespace(
+        order_store=order_store,
+        audit_event_store=audit_store,
+        connection=connection,
+    )
+
+    late_result = CycleResult(as_of=now, intents=[intent])
+    original = cycle_module.evaluate_cycle
+    cycle_module.evaluate_cycle = lambda **_: late_result
+    try:
+        run_cycle(
+            settings=settings,
+            runtime=runtime,
+            now=now,
+            equity=100_000.0,
+            intraday_bars_by_symbol={},
+            daily_bars_by_symbol={},
+            open_positions=[],
+            working_order_symbols=set(),
+            traded_symbols_today=set(),
+            entries_disabled=False,
+        )
+    finally:
+        cycle_module.evaluate_cycle = original
+
+    assert order_store.saved == []
+    skip_events = [
+        event for event in audit_store.appended
+        if event.event_type == "entry_intent_skipped"
+    ]
+    assert len(skip_events) == 1
+    assert skip_events[0].symbol == "AAPL"
+    assert skip_events[0].payload["reason"] == "short_active_window"
+    assert skip_events[0].payload["remaining_active_seconds"] == 420.0
+    assert skip_events[0].payload["min_remaining_active_seconds"] == 450.0
     assert connection.commit_count == 1
 
 

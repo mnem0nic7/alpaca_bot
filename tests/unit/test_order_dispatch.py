@@ -92,6 +92,20 @@ def test_entry_order_expiry_does_not_cap_after_hours_signal_at_regular_flatten()
     ) == after_hours_signal_ts + timedelta(minutes=30)
 
 
+def test_entry_order_remaining_active_window_uses_dispatch_short_window_floor() -> None:
+    module, _ = load_order_dispatch_api()
+    settings = make_settings({"ENTRY_ORDER_ACTIVE_BARS": "1"})
+    signal_ts = datetime(2026, 4, 24, 19, 15, tzinfo=timezone.utc)  # 15:15 ET
+    now = signal_ts + timedelta(minutes=23)
+
+    assert module.entry_order_min_active_window(settings) == timedelta(minutes=7.5)
+    assert module.entry_order_remaining_active_window(
+        settings,
+        signal_ts,
+        now,
+    ) == timedelta(minutes=7)
+
+
 class RecordingOrderStore:
     def __init__(
         self,

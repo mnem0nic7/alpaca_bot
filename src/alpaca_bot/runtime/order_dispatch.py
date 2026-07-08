@@ -69,6 +69,36 @@ def entry_order_expiry_timestamp(
     return min(expiry_utc, flatten_local.astimezone(timezone.utc))
 
 
+def entry_order_min_active_window(settings: Settings) -> timedelta:
+    return timedelta(
+        minutes=(
+            settings.entry_timeframe_minutes
+            * settings.entry_order_active_bars
+            * 0.5
+        )
+    )
+
+
+def entry_order_remaining_active_window(
+    settings: Settings,
+    signal_timestamp: datetime,
+    now: datetime,
+    *,
+    session_type: "SessionType | None" = None,
+) -> timedelta:
+    now_utc = (
+        now.replace(tzinfo=timezone.utc)
+        if now.tzinfo is None
+        else now.astimezone(timezone.utc)
+    )
+    expiry_at = entry_order_expiry_timestamp(
+        settings,
+        signal_timestamp,
+        session_type=session_type,
+    )
+    return expiry_at - now_utc
+
+
 def _is_unrecoverable_stop_error(exc: Exception) -> bool:
     msg = str(exc)
     return any(code in msg for code in _UNRECOVERABLE_STOP_CODES)
@@ -358,14 +388,13 @@ def dispatch_pending_orders(
                             pass
                         raise
                 continue
-            remaining_active_window = expiry_at - timestamp_utc
-            min_remaining_active_window = timedelta(
-                minutes=(
-                    settings.entry_timeframe_minutes
-                    * settings.entry_order_active_bars
-                    * 0.5
-                )
+            remaining_active_window = entry_order_remaining_active_window(
+                settings,
+                sig_ts,
+                timestamp_utc,
+                session_type=session_type,
             )
+            min_remaining_active_window = entry_order_min_active_window(settings)
             if remaining_active_window < min_remaining_active_window:
                 logger.warning(
                     "order_dispatch: expiring short-window entry order for %s "

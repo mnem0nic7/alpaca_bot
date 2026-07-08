@@ -10,6 +10,10 @@ logger = logging.getLogger(__name__)
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleIntentType, CycleResult, evaluate_cycle
 from alpaca_bot.domain import Bar, OpenPosition
+from alpaca_bot.runtime.order_dispatch import (
+    entry_order_min_active_window,
+    entry_order_remaining_active_window,
+)
 from alpaca_bot.storage import AuditEvent, DailySessionState, OrderRecord
 from alpaca_bot.storage.models import OptionOrderRecord
 from alpaca_bot.strategy import StrategySignalEvaluator
@@ -162,6 +166,38 @@ def run_cycle(
                                         if intent.signal_timestamp else None
                                     ),
                                     "cycle_timestamp": now.isoformat(),
+                                },
+                                created_at=now,
+                            ),
+                            commit=False,
+                        )
+                        continue
+                    signal_timestamp = intent.signal_timestamp or now
+                    remaining_active_window = entry_order_remaining_active_window(
+                        settings,
+                        signal_timestamp,
+                        now,
+                        session_type=session_type,
+                    )
+                    min_active_window = entry_order_min_active_window(settings)
+                    if remaining_active_window < min_active_window:
+                        runtime.audit_event_store.append(
+                            AuditEvent(
+                                event_type="entry_intent_skipped",
+                                symbol=intent.symbol,
+                                payload={
+                                    "intent_type": "entry",
+                                    "reason": "short_active_window",
+                                    "client_order_id": client_order_id,
+                                    "strategy_name": intent.strategy_name,
+                                    "signal_timestamp": signal_timestamp.isoformat(),
+                                    "cycle_timestamp": now.isoformat(),
+                                    "remaining_active_seconds": (
+                                        remaining_active_window.total_seconds()
+                                    ),
+                                    "min_remaining_active_seconds": (
+                                        min_active_window.total_seconds()
+                                    ),
                                 },
                                 created_at=now,
                             ),
