@@ -51,6 +51,11 @@ capture_env_overrides \
   PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES \
   PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS \
   PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS \
+  PROOF_STATUS_NIGHTLY_LOCK_FILE \
+  PROOF_STATUS_NIGHTLY_LOG \
+  PROOF_STATUS_SECOND_STRATEGY_LOG \
+  PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES \
+  PROOF_STATUS_NIGHTLY_STALL_MINUTES \
   PROOF_STATUS_SCALE_MIN_TRADES \
   PROOF_STATUS_SCALE_MIN_STRATEGIES \
   PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS \
@@ -95,6 +100,20 @@ PROOF_STATUS_STREAM_START_GRACE_SECONDS="${PROOF_STATUS_STREAM_START_GRACE_SECON
 PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES="${PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES:-${PAPER_READINESS_MAX_PASS_AGE_MINUTES:-180}}"
 PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS="${PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}}"
 PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS="${PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_EVALUATIONS:-6}}"
+PROOF_STATUS_NIGHTLY_LOCK_FILE="${PROOF_STATUS_NIGHTLY_LOCK_FILE:-/var/lock/alpaca-bot-nightly.lock}"
+PROOF_STATUS_NIGHTLY_LOG="${PROOF_STATUS_NIGHTLY_LOG:-/var/log/alpaca-bot-nightly.log}"
+PROOF_STATUS_SECOND_STRATEGY_LOG="${PROOF_STATUS_SECOND_STRATEGY_LOG:-/var/log/alpaca-bot-second-strategy.log}"
+nightly_timeout_for_status="${NIGHTLY_TIMEOUT_SECONDS:-14400}"
+second_strategy_timeout_for_status="${SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS:-7200}"
+if [[ ! "$nightly_timeout_for_status" =~ ^[0-9]+$ ]] || [[ "$nightly_timeout_for_status" -le 0 ]]; then
+  nightly_timeout_for_status=14400
+fi
+if [[ ! "$second_strategy_timeout_for_status" =~ ^[0-9]+$ ]] || [[ "$second_strategy_timeout_for_status" -le 0 ]]; then
+  second_strategy_timeout_for_status=7200
+fi
+default_nightly_max_age_minutes=$(((nightly_timeout_for_status + second_strategy_timeout_for_status + 1800 + 59) / 60))
+PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES="${PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES:-$default_nightly_max_age_minutes}"
+PROOF_STATUS_NIGHTLY_STALL_MINUTES="${PROOF_STATUS_NIGHTLY_STALL_MINUTES:-90}"
 PROOF_STATUS_SCALE_MIN_TRADES="${PROOF_STATUS_SCALE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}"
 PROOF_STATUS_SCALE_MIN_STRATEGIES="${PROOF_STATUS_SCALE_MIN_STRATEGIES:-${PAPER_SCALE_MIN_STRATEGIES:-2}}"
 PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS="${PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS:-${PAPER_SCALE_MIN_ACTIVE_DAYS:-5}}"
@@ -159,6 +178,14 @@ if [[ ! "$PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS" =~ ^[0-9]+$ ]]; then
 fi
 if [[ ! "$PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS" =~ ^[1-9][0-9]*$ ]]; then
   echo "PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS must be a positive integer" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES must be a positive integer" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_NIGHTLY_STALL_MINUTES" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PROOF_STATUS_NIGHTLY_STALL_MINUTES must be a positive integer" >&2
   exit 1
 fi
 if [[ ! "$PROOF_STATUS_APPROVED_STRATEGIES" =~ ^[A-Za-z0-9_.-]+(,[A-Za-z0-9_.-]+)*$ ]]; then
@@ -255,6 +282,108 @@ compact_check_detail() {
   detail="${detail//$'\n'/; }"
   echo "$detail"
 }
+
+compact_status_value() {
+  local value="$1"
+  value="$(printf '%s' "$value" | tr '[:space:]' '_' | tr -cd 'A-Za-z0-9_.,:=@/%+-' | cut -c1-240)"
+  if [[ -z "$value" ]]; then
+    value="none"
+  fi
+  echo "$value"
+}
+
+nightly_status="idle"
+nightly_lock_status="missing"
+nightly_pid="none"
+nightly_source="none"
+nightly_age_minutes="none"
+nightly_log_age_minutes="none"
+nightly_stage="none"
+nightly_detail="none"
+
+probe_nightly_cycle_status() {
+  local process_line=""
+  local age_seconds=""
+  local command_text=""
+  local now_seconds=""
+  local log_mtime_seconds=""
+  local log_age_seconds=""
+  local latest_stage_line=""
+
+  if [[ -e "$PROOF_STATUS_NIGHTLY_LOCK_FILE" ]]; then
+    if flock -n "$PROOF_STATUS_NIGHTLY_LOCK_FILE" true 2>/dev/null; then
+      nightly_lock_status="free"
+    else
+      nightly_lock_status="held"
+    fi
+  fi
+
+  process_line="$(
+    ps -eo pid=,etimes=,args= \
+      | awk '
+        /flock -n .*alpaca-bot-nightly\.lock/ ||
+        /[n]ightly_cycle\.sh/ ||
+        /[a]lpaca-bot-nightly/ ||
+        /[s]econd_strategy_basket_scan\.sh/ ||
+        /docker compose .*run --rm nightly/ {
+          sub(/^[[:space:]]+/, "")
+          print
+          exit
+        }
+      ' || true
+  )"
+  if [[ -n "$process_line" ]]; then
+    read -r nightly_pid age_seconds command_text <<< "$process_line"
+    nightly_source="unknown"
+    if [[ "$command_text" == *"nightly_cycle.sh"* ]]; then
+      nightly_source="script"
+    elif [[ "$command_text" == *"bash -lc"* ]]; then
+      nightly_source="legacy_inline"
+    elif [[ "$command_text" == *"second_strategy_basket_scan.sh"* ]]; then
+      nightly_source="second_strategy"
+    elif [[ "$command_text" == *"alpaca-bot-nightly"* || "$command_text" == *"docker compose"* ]]; then
+      nightly_source="compose"
+    fi
+    if [[ "$age_seconds" =~ ^[0-9]+$ ]]; then
+      nightly_age_minutes=$(((age_seconds + 59) / 60))
+    fi
+    nightly_detail="$(compact_status_value "$command_text")"
+    nightly_status="${nightly_source}_running"
+  elif [[ "$nightly_lock_status" == "held" ]]; then
+    nightly_status="lock_held"
+    nightly_source="unknown"
+  fi
+
+  if [[ -f "$PROOF_STATUS_NIGHTLY_LOG" ]]; then
+    now_seconds="$(date +%s)"
+    log_mtime_seconds="$(stat -c %Y "$PROOF_STATUS_NIGHTLY_LOG" 2>/dev/null || true)"
+    if [[ "$log_mtime_seconds" =~ ^[0-9]+$ ]]; then
+      log_age_seconds=$((now_seconds - log_mtime_seconds))
+      if [[ "$log_age_seconds" -lt 0 ]]; then
+        log_age_seconds=0
+      fi
+      nightly_log_age_minutes=$(((log_age_seconds + 59) / 60))
+    fi
+    latest_stage_line="$(
+      tail -200 "$PROOF_STATUS_NIGHTLY_LOG" 2>/dev/null \
+        | grep -E 'nightly_cycle|proof guard checking|proof guard rejected|combo [0-9]+/[0-9]+|DB run_id|PAPER_PROOF_FREEZE|Params unchanged|second-strategy' \
+        | tail -n 1 \
+        || true
+    )"
+    nightly_stage="$(compact_status_value "$latest_stage_line")"
+  fi
+
+  if [[ "$nightly_status" != "idle" && "$nightly_age_minutes" =~ ^[0-9]+$ ]]; then
+    if (( nightly_age_minutes > PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES )); then
+      nightly_status="${nightly_source}_stale"
+    elif [[ "$nightly_log_age_minutes" =~ ^[0-9]+$ ]] \
+      && (( nightly_log_age_minutes > PROOF_STATUS_NIGHTLY_STALL_MINUTES )); then
+      nightly_status="${nightly_source}_stalled"
+    fi
+  fi
+}
+
+probe_nightly_cycle_status
 
 proof_status_enabled_strategy_args=()
 build_proof_status_enabled_strategy_args() {
@@ -367,6 +496,16 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_END_DATE="$PROOF_STATUS_END_DATE" \
   -e PROOF_STATUS_CRON_HEALTH_STATUS="$cron_health_status" \
   -e PROOF_STATUS_CRON_HEALTH_DETAIL="$cron_health_detail" \
+  -e PROOF_STATUS_NIGHTLY_STATUS="$nightly_status" \
+  -e PROOF_STATUS_NIGHTLY_LOCK_STATUS="$nightly_lock_status" \
+  -e PROOF_STATUS_NIGHTLY_PID="$nightly_pid" \
+  -e PROOF_STATUS_NIGHTLY_SOURCE="$nightly_source" \
+  -e PROOF_STATUS_NIGHTLY_AGE_MINUTES="$nightly_age_minutes" \
+  -e PROOF_STATUS_NIGHTLY_LOG_AGE_MINUTES="$nightly_log_age_minutes" \
+  -e PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES="$PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES" \
+  -e PROOF_STATUS_NIGHTLY_STALL_MINUTES="$PROOF_STATUS_NIGHTLY_STALL_MINUTES" \
+  -e PROOF_STATUS_NIGHTLY_STAGE="$nightly_stage" \
+  -e PROOF_STATUS_NIGHTLY_DETAIL="$nightly_detail" \
   -e PROOF_STATUS_OPS_HEALTH_STATUS="$ops_health_status" \
   -e PROOF_STATUS_OPS_HEALTH_DETAIL="$ops_health_detail" \
   -e PROOF_STATUS_OPS_CLOSE_ONLY_HEALTH_STATUS="$ops_close_only_health_status" \
@@ -1338,6 +1477,22 @@ proof_status_env_file = os.environ.get(
 )
 cron_health_status = os.environ.get("PROOF_STATUS_CRON_HEALTH_STATUS", "unknown")
 cron_health_detail = os.environ.get("PROOF_STATUS_CRON_HEALTH_DETAIL", "").strip()
+nightly_status = os.environ.get("PROOF_STATUS_NIGHTLY_STATUS", "unknown")
+nightly_lock_status = os.environ.get("PROOF_STATUS_NIGHTLY_LOCK_STATUS", "unknown")
+nightly_pid = os.environ.get("PROOF_STATUS_NIGHTLY_PID", "none")
+nightly_source = os.environ.get("PROOF_STATUS_NIGHTLY_SOURCE", "unknown")
+nightly_age_minutes = os.environ.get("PROOF_STATUS_NIGHTLY_AGE_MINUTES", "none")
+nightly_log_age_minutes = os.environ.get(
+    "PROOF_STATUS_NIGHTLY_LOG_AGE_MINUTES", "none"
+)
+nightly_max_age_minutes = os.environ.get(
+    "PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES", "none"
+)
+nightly_stall_minutes = os.environ.get(
+    "PROOF_STATUS_NIGHTLY_STALL_MINUTES", "none"
+)
+nightly_stage = os.environ.get("PROOF_STATUS_NIGHTLY_STAGE", "none")
+nightly_detail = os.environ.get("PROOF_STATUS_NIGHTLY_DETAIL", "none")
 ops_health_status = os.environ.get("PROOF_STATUS_OPS_HEALTH_STATUS", "unknown")
 ops_health_detail = os.environ.get("PROOF_STATUS_OPS_HEALTH_DETAIL", "").strip()
 ops_close_only_health_status = os.environ.get(
@@ -4694,6 +4849,8 @@ if posture_status != "ok":
     blockers.append("posture_drifted")
 if cron_health_status != "ok":
     blockers.append("cron_health_failed")
+if nightly_status.endswith("_stale") or nightly_status.endswith("_stalled"):
+    blockers.append(f"nightly_{nightly_status.rsplit('_', 1)[-1]}")
 if ops_health_status != "ok":
     blockers.append("ops_health_failed")
 if runtime_image_health_status != "ok":
@@ -4884,6 +5041,12 @@ if proof_risk_lock_pause:
 warnings = []
 if calendar_warning:
     warnings.append("calendar_warning")
+if nightly_status.startswith("legacy_inline_"):
+    warnings.append("nightly_legacy_inline")
+if nightly_status.endswith("_stale"):
+    warnings.append("nightly_stale")
+elif nightly_status.endswith("_stalled"):
+    warnings.append("nightly_stalled")
 if profit_lock_pause:
     warnings.append("profit_lock_pause")
 if proof_risk_lock_pause:
@@ -4965,6 +5128,19 @@ print(
     "paper proof automation: "
     f"cron_status={cron_health_status} "
     f"cron_detail={cron_health_detail or 'none'}"
+)
+print(
+    "paper proof nightly automation: "
+    f"status={nightly_status} "
+    f"lock_status={nightly_lock_status} "
+    f"pid={nightly_pid} "
+    f"source={nightly_source} "
+    f"age_minutes={nightly_age_minutes} "
+    f"log_age_minutes={nightly_log_age_minutes} "
+    f"max_age_minutes={nightly_max_age_minutes} "
+    f"stall_minutes={nightly_stall_minutes} "
+    f"stage={nightly_stage or 'none'} "
+    f"detail={nightly_detail or 'none'}"
 )
 print(
     "paper proof runtime: "

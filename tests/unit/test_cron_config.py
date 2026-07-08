@@ -5702,6 +5702,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
         "  printf 'paper proof active strategies: bull_flag\\n'\n"
         "  printf 'paper proof watchlist: status=ok active=980 enabled=986 ignored=6 required_active=900\\n'\n"
         "  printf 'paper proof sizing: status=ok confidence_floor=0.25 manual_baseline=0.25 set_by=operator required_floor=0.25 weight_status=ok active_weights=[bull_flag] stored_weights=[bull_flag] weight_sum=1 target_weight=1.0 target_sharpe=0.0\\n'\n"
+        "  printf 'paper proof nightly automation: status=idle lock_status=missing pid=none source=none age_minutes=none log_age_minutes=none max_age_minutes=390 stall_minutes=90 stage=none detail=none\\n'\n"
         "  printf 'paper proof runtime: ops_status=ok ops_detail=status=ok db=ok trading_mode=paper strategy_version=v1-breakout trading_status=enabled kill_switch_enabled=False enabled_strategies=bull_flag worker_status=fresh image_status=ok image_detail=runtime image health ok: services=web,supervisor files=26\\n'\n"
         "  printf 'paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00 latest_event=trade_update_stream_started:2026-06-29T12:59:59+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00 grace_seconds=120\\n'\n"
         "  printf 'paper proof readiness audit: status=ok target_session=2026-06-29 check_status=passed created_at=2026-06-29T13:20:00+00:00 latest_supervisor_started_at=2026-06-29T13:00:00+00:00\\n'\n"
@@ -5742,6 +5743,7 @@ def test_paper_proof_status_is_read_only(tmp_path: Path) -> None:
     assert "paper proof active strategies: bull_flag" in result.stdout
     assert "paper proof watchlist: status=ok active=980 enabled=986 ignored=6 required_active=900" in result.stdout
     assert "paper proof sizing: status=ok confidence_floor=0.25" in result.stdout
+    assert "paper proof nightly automation: status=idle" in result.stdout
     assert "paper proof runtime: ops_status=ok" in result.stdout
     assert "image_status=ok" in result.stdout
     assert "paper proof stream: status=ok latest_start=2026-06-29T12:59:59+00:00" in result.stdout
@@ -5901,6 +5903,27 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in script
     assert "-e PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS=\"$PROOF_STATUS_DECISION_DRY_RUN_MIN_RECORDS\"" in script
     assert "-e PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS=\"$PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS\"" in script
+    assert "PROOF_STATUS_NIGHTLY_LOCK_FILE" in script
+    assert "PROOF_STATUS_NIGHTLY_LOG" in script
+    assert "PROOF_STATUS_SECOND_STRATEGY_LOG" in script
+    assert "PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES" in script
+    assert "PROOF_STATUS_NIGHTLY_STALL_MINUTES" in script
+    assert "PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES must be a positive integer" in script
+    assert "PROOF_STATUS_NIGHTLY_STALL_MINUTES must be a positive integer" in script
+    assert "probe_nightly_cycle_status" in script
+    assert "compact_status_value" in script
+    assert "flock -n \"$PROOF_STATUS_NIGHTLY_LOCK_FILE\" true" in script
+    assert "/[n]ightly_cycle\\.sh/" in script
+    assert "/[a]lpaca-bot-nightly/" in script
+    assert 'nightly_source="legacy_inline"' in script
+    assert "nightly_status.endswith(\"_stale\")" in script
+    assert "nightly_status.endswith(\"_stalled\")" in script
+    assert "blockers.append(f\"nightly_{nightly_status.rsplit('_', 1)[-1]}\")" in script
+    assert "warnings.append(\"nightly_legacy_inline\")" in script
+    assert "warnings.append(\"nightly_stale\")" in script
+    assert "warnings.append(\"nightly_stalled\")" in script
+    assert "-e PROOF_STATUS_NIGHTLY_STATUS=\"$nightly_status\"" in script
+    assert "-e PROOF_STATUS_NIGHTLY_STAGE=\"$nightly_stage\"" in script
     assert "PROOF_STATUS_SCALE_MIN_TRADES" in script
     assert "PAPER_SCALE_MIN_TRADES:-30" in script
     assert "PROOF_STATUS_SCALE_MIN_STRATEGIES" in script
@@ -5966,6 +5989,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "paper proof automation:" in script
     assert "cron_status={cron_health_status}" in script
     assert "cron_detail={cron_health_detail or 'none'}" in script
+    assert "paper proof nightly automation:" in script
+    assert "status={nightly_status}" in script
+    assert "stage={nightly_stage or 'none'}" in script
     assert "paper proof runtime:" in script
     assert "ops_status={ops_health_status}" in script
     assert "ops_detail={ops_health_detail or 'none'}" in script
