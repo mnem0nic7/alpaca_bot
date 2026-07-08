@@ -22,6 +22,8 @@ No live strategy, paper approval allowlist, or trading parameter was changed.
 /var/lib/alpaca-bot/nightly/second_strategy/20260708T015221Z/summary.json
 /var/lib/alpaca-bot/nightly/second_strategy/20260708T015221Z/validation/summary.md
 /var/lib/alpaca-bot/nightly/second_strategy/20260708T015221Z/validation/summary.json
+/var/lib/alpaca-bot/nightly/second_strategy/20260708T015221Z/validation_extra/orb_scale_0_10_validation.md
+/var/lib/alpaca-bot/nightly/second_strategy/20260708T015221Z/validation_extra/orb_scale_0_10_validation.jsonl
 ```
 
 The scan updated:
@@ -45,19 +47,22 @@ The 80-scenario prefilter found 19 positive-edge rows. Best per candidate:
 | `bb_squeeze` | 0.10 | 175 | 162.43 | [0.1478, 1.9327] | `positive-edge` |
 | `orb` | 0.10 | 452 | 269.17 | [0.0408, 1.1884] | `positive-edge` |
 
-`breakout` and `momentum` did not produce positive-edge rows. `orb` was not
-independently validated in this run because `SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES=6`.
+`breakout` and `momentum` did not produce positive-edge rows.
 
 ## Independent Validation
 
 Validation used 160 scenarios, seed `second-strategy-independent-validation`,
 2 bps/side slippage, K=1, and the same candidate scale selected by the prefilter.
+The scheduled validation cap was still `SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES=6`
+for this run, so `orb` was validated immediately afterward with the same
+independent validation settings.
 
 | candidate | scale | trades | total P&L | 95% CI mean/trade | verdict |
 |---|---:|---:|---:|---|---|
 | `ema_pullback` | 0.50 | 351 | 168.60 | [-0.0807, 1.1487] | `no-evidence` |
 | `failed_breakdown` | 0.10 | 191 | 112.77 | [-0.0909, 1.4134] | `no-evidence` |
 | `bb_squeeze` | 0.10 | 286 | 13.28 | [-0.3402, 0.4296] | `no-evidence` |
+| `orb` | 0.10 | 551 | 98.98 | [-0.2648, 0.6330] | `no-evidence` |
 | `high_watermark` | 0.10 | 68 | -2.41 | [-1.1999, 1.2399] | `no-evidence` |
 | `gap_and_go` | 0.10 | 68 | -6.22 | [-1.3481, 1.2568] | `no-evidence` |
 | `vwap_reversion` | 0.25 | 89 | -23.54 | [-2.0141, 1.6840] | `no-evidence` |
@@ -65,3 +70,7 @@ Validation used 160 scenarios, seed `second-strategy-independent-validation`,
 Conclusion: no candidate from this batch is approved for paper promotion.
 Keep `PAPER_APPROVED_STRATEGIES` at `bull_flag` until a candidate survives
 independent validation.
+
+Follow-up automation change: the scanner default was changed to
+`SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES=0`, which means validate every
+positive prefilter survivor family unless an operator intentionally sets a cap.
