@@ -5741,6 +5741,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "readiness={readiness_status}" in script
     assert "proof={proof_status}" in script
     assert "reason={proof_reason}" in script
+    assert "paper proof blocker gaps:" in script
+    assert "sample_trades_remaining={sample_trades_remaining}" in script
+    assert "active_days_remaining={active_days_remaining}" in script
+    assert "approved_replay_strategy_gap={strategy_diversification_gap}" in script
+    assert "concentration_net_pnl_needed={concentration_net_pnl_needed:.2f}" in script
     assert "blockers={','.join(blockers) if blockers else 'none'}" in script
     assert (
         "evidence_blockers={','.join(evidence_blockers) if evidence_blockers else 'none'}"

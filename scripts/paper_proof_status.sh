@@ -3685,6 +3685,18 @@ strategy_diversification_gap = max(
     0,
     scale_min_strategies - len(approved_replay_active_strategy_names),
 )
+sample_trades_remaining = max(0, scale_min_trades - trade_count)
+active_days_remaining = max(0, scale_min_active_days - active_trade_day_count)
+concentration_net_pnl_needed = 0.0
+if (
+    single_win_pnl_share is not None
+    and single_win_pnl_share > scale_max_single_win_pnl_share
+    and scale_max_single_win_pnl_share > 0.0
+):
+    concentration_net_pnl_needed = max(
+        0.0,
+        (best_winning_trade_pnl / scale_max_single_win_pnl_share) - pnl,
+    )
 if strategy_diversification_status == "ok":
     strategy_diversification_candidate_status = "met"
 elif unapproved_active_strategy_names:
@@ -5069,6 +5081,15 @@ print(
     f"window={proof_window} "
     f"first_exit_session={first_exit_session or 'none'} "
     f"latest_exit_session={latest_exit_session or 'none'}"
+)
+print(
+    "paper proof blocker gaps: "
+    f"sample_trades_remaining={sample_trades_remaining} "
+    f"active_days_remaining={active_days_remaining} "
+    f"approved_replay_strategy_gap={strategy_diversification_gap} "
+    f"concentration_net_pnl_needed={concentration_net_pnl_needed:.2f} "
+    f"single_win_pnl_share={single_win_pnl_share_text} "
+    f"max_single_win_pnl_share={scale_max_single_win_pnl_share:.2f}"
 )
 print(
     "paper proof robustness: "
