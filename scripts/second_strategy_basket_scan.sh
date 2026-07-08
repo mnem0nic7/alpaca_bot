@@ -218,9 +218,22 @@ OPTION_SNAPSHOT_CONTRACTS=0
 if [[ -n "$OPTION_CHAIN_SNAPSHOTS" ]] && option_snapshot_path_has_files "$OPTION_CHAIN_SNAPSHOTS"; then
   OPTION_SNAPSHOT_CONTRACTS="$(option_snapshot_contract_count "$OPTION_CHAIN_SNAPSHOTS")"
 fi
+OPTION_REPLAY_STATUS=not_checked
 
 if [[ "$INCLUDE_OPTION_CANDIDATES" == "auto" ]]; then
-  if [[ "$OPTION_SNAPSHOT_CONTRACTS" =~ ^[0-9]+$ && "$OPTION_SNAPSHOT_CONTRACTS" -gt 0 ]]; then
+  if [[ -n "$OPTION_CHAIN_SNAPSHOTS" ]] && option_snapshot_path_has_files "$OPTION_CHAIN_SNAPSHOTS"; then
+    load_proof_status "checking option snapshot replay support"
+    option_snapshot_line="$(grep -E '^paper proof option snapshots: ' "$proof_output" | tail -n 1 || true)"
+    if [[ -n "$option_snapshot_line" ]]; then
+      OPTION_REPLAY_STATUS="$(extract_field "$option_snapshot_line" "replay_status" || true)"
+      OPTION_REPLAY_STATUS="${OPTION_REPLAY_STATUS:-unknown}"
+    else
+      OPTION_REPLAY_STATUS=missing
+    fi
+  fi
+  if [[ "$OPTION_REPLAY_STATUS" == "supported" \
+    && "$OPTION_SNAPSHOT_CONTRACTS" =~ ^[0-9]+$ \
+    && "$OPTION_SNAPSHOT_CONTRACTS" -gt 0 ]]; then
     INCLUDE_OPTION_CANDIDATES=true
   else
     INCLUDE_OPTION_CANDIDATES=false
@@ -370,7 +383,7 @@ status_parts_dir="$OUTPUT_DIR/status_parts"
 mkdir -p "$status_parts_dir"
 
 echo "second strategy basket scan: output_dir=$OUTPUT_DIR"
-echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
+echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS option_replay_status=$OPTION_REPLAY_STATUS prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
 
 failed_count=0
 run_prefilter_job() {

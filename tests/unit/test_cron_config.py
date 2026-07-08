@@ -303,8 +303,14 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "option_snapshot_contract_count" in script
     assert "OPTION_SNAPSHOT_CONTRACTS" in script
     assert "cycle_at.date() != expected_date" in script
+    assert "OPTION_REPLAY_STATUS=not_checked" in script
+    assert 'load_proof_status "checking option snapshot replay support"' in script
+    assert "paper proof option snapshots:" in script
+    assert 'OPTION_REPLAY_STATUS="$(extract_field "$option_snapshot_line" "replay_status" || true)"' in script
+    assert 'OPTION_REPLAY_STATUS" == "supported' in script
     assert "option-chain snapshot path has no replayable contracts" in script
     assert "option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS" in script
+    assert "option_replay_status=$OPTION_REPLAY_STATUS" in script
     assert 'LATEST_LINK="$OUTPUT_ROOT/latest"' in script
     assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script
     assert 'VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"' in script
