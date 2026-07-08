@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import stat
 import subprocess
@@ -189,13 +190,15 @@ def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_pa
     ).read_text()
     assert (tmp_path / "deploy_calls").read_text().strip() == str(env_file)
     approval_marker = json.loads((evidence_root / "promotion_approval.json").read_text())
+    summary_path = evidence_root / "latest_validation" / "summary.json"
+    summary_sha256 = hashlib.sha256(summary_path.read_bytes()).hexdigest()
+    assert approval_marker["schema_version"] == 2
     assert approval_marker["strategy"] == "ema_pullback"
     assert approval_marker["confirmation"] == "approve-ema_pullback-paper-promotion"
     assert approval_marker["strategy_version"] == "v1-breakout"
     assert approval_marker["env_file"] == str(env_file)
-    assert approval_marker["validation_summary"] == str(
-        (evidence_root / "latest_validation" / "summary.json").resolve()
-    )
+    assert approval_marker["validation_summary"] == str(summary_path.resolve())
+    assert approval_marker["validation_summary_sha256"] == summary_sha256
     assert approval_marker["candidate_trades"] == 291
     assert approval_marker["candidate_ci_low"] == 0.0007
 

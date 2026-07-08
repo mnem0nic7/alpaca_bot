@@ -377,6 +377,7 @@ echo "paper proof evidence status:"
   --entrypoint python admin <<'PY'
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -607,6 +608,13 @@ def load_json_payload(path: Path) -> tuple[dict | None, str | None]:
     return payload, None
 
 
+def sha256_file(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 def file_age_hours(path: Path, *, now_utc: datetime) -> float | None:
     if not path.exists():
         return None
@@ -736,7 +744,7 @@ def approval_marker_status(
         return "missing", "none"
     if error is not None or payload is None:
         return "invalid", "none"
-    if payload.get("schema_version") != 1:
+    if payload.get("schema_version") != 2:
         return "invalid_schema", "none"
     strategy = str(payload.get("strategy") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_:-]+", strategy):
@@ -759,6 +767,14 @@ def approval_marker_status(
     expected_summary = str(validation_summary_path.resolve())
     if str(payload.get("validation_summary") or "") != expected_summary:
         return "stale_validation_summary", strategy
+    marker_summary_sha256 = str(payload.get("validation_summary_sha256") or "").strip()
+    if not marker_summary_sha256:
+        return "validation_summary_sha256_missing", strategy
+    expected_summary_sha256 = sha256_file(validation_summary_path)
+    if expected_summary_sha256 is None:
+        return "validation_summary_unreadable", strategy
+    if marker_summary_sha256 != expected_summary_sha256:
+        return "validation_summary_sha256_mismatch", strategy
     if strategy not in validation_positive_families:
         return "latest_validation_missing_positive_edge", strategy
     strategy_rows = [

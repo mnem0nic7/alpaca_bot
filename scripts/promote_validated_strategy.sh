@@ -58,6 +58,7 @@ validation_env="$(
     "$MIN_CANDIDATE_TRADES" <<'PY'
 from __future__ import annotations
 
+import hashlib
 import json
 import shlex
 import sys
@@ -94,8 +95,9 @@ min_candidate_trades = int(sys.argv[4])
 summary_path = root / "latest_validation" / "summary.json"
 if not summary_path.exists():
     fail(f"validation summary missing: {summary_path}")
+summary_bytes = summary_path.read_bytes()
 try:
-    payload = json.loads(summary_path.read_text())
+    payload = json.loads(summary_bytes)
 except json.JSONDecodeError as exc:
     fail(f"validation summary is not valid JSON: {exc}")
 
@@ -178,6 +180,7 @@ outputs = {
     "VALIDATED_CI_LOW": str(selected["candidate_ci_low"]),
     "VALIDATED_P_MEAN_LE_ZERO": str(selected["candidate_p_mean_le_zero"]),
     "VALIDATION_SUMMARY": str(summary_path.resolve()),
+    "VALIDATION_SUMMARY_SHA256": hashlib.sha256(summary_bytes).hexdigest(),
 }
 for key, value in outputs.items():
     print(f"{key}={shlex.quote(value)}")
@@ -192,6 +195,43 @@ if [[ "$CONFIRMATION" != "$required_confirmation" ]]; then
   echo "$LOG_PREFIX refusing to promote without explicit confirmation" >&2
   echo "$LOG_PREFIX rerun with PROMOTE_VALIDATED_STRATEGY_CONFIRM=$required_confirmation" >&2
   exit 2
+fi
+
+verify_validation_summary_current() {
+  python3 - \
+    "$EVIDENCE_ROOT" \
+    "$VALIDATION_SUMMARY" \
+    "$VALIDATION_SUMMARY_SHA256" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import sys
+from pathlib import Path
+
+
+def fail(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+root = Path(sys.argv[1])
+expected_path = sys.argv[2]
+expected_sha256 = sys.argv[3]
+summary_path = root / "latest_validation" / "summary.json"
+if not summary_path.exists():
+    fail(f"validation summary missing: {summary_path}")
+current_path = str(summary_path.resolve())
+if current_path != expected_path:
+    fail(f"validation summary changed: {current_path} != {expected_path}")
+current_sha256 = hashlib.sha256(summary_path.read_bytes()).hexdigest()
+if current_sha256 != expected_sha256:
+    fail("validation summary hash changed")
+PY
+}
+
+if ! verify_validation_summary_current; then
+  echo "$LOG_PREFIX validation summary changed after evidence validation; aborting promotion" >&2
+  exit 1
 fi
 
 read_env_value() {
@@ -266,6 +306,7 @@ write_approval_marker() {
     "$VALIDATED_STRATEGY" \
     "$required_confirmation" \
     "$VALIDATION_SUMMARY" \
+    "$VALIDATION_SUMMARY_SHA256" \
     "$STRATEGY_VERSION" \
     "$ENV_FILE" \
     "$VALIDATED_SCALE" \
@@ -284,18 +325,19 @@ from pathlib import Path
 
 marker = Path(sys.argv[1])
 payload = {
-    "schema_version": 1,
+    "schema_version": 2,
     "approved_at": datetime.now(timezone.utc).isoformat(),
     "strategy": sys.argv[2],
     "confirmation": sys.argv[3],
     "validation_summary": sys.argv[4],
-    "strategy_version": sys.argv[5],
-    "env_file": sys.argv[6],
-    "candidate_scale": sys.argv[7],
-    "candidate_trades": int(sys.argv[8]),
-    "candidate_total_pnl": float(sys.argv[9]),
-    "candidate_ci_low": float(sys.argv[10]),
-    "candidate_p_mean_le_zero": float(sys.argv[11]),
+    "validation_summary_sha256": sys.argv[5],
+    "strategy_version": sys.argv[6],
+    "env_file": sys.argv[7],
+    "candidate_scale": sys.argv[8],
+    "candidate_trades": int(sys.argv[9]),
+    "candidate_total_pnl": float(sys.argv[10]),
+    "candidate_ci_low": float(sys.argv[11]),
+    "candidate_p_mean_le_zero": float(sys.argv[12]),
 }
 marker.parent.mkdir(parents=True, exist_ok=True)
 with tempfile.NamedTemporaryFile(
