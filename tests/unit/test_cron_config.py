@@ -284,6 +284,8 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'SCAN_JOBS="${SECOND_STRATEGY_SCAN_JOBS:-2}"' in script
     assert 'VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"' in script
     assert 'VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"' in script
+    assert 'RESUME_COMPLETED_JOBS="${SECOND_STRATEGY_RESUME_COMPLETED_JOBS:-true}"' in script
+    assert "SECOND_STRATEGY_RESUME_COMPLETED_JOBS must be true or false" in script
     assert 'INCLUDE_OPTION_CANDIDATES="${SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES:-auto}"' in script
     assert 'HOST_OPTION_CHAIN_SNAPSHOT_DIR="${SECOND_STRATEGY_HOST_OPTION_CHAIN_SNAPSHOT_DIR:-/var/lib/alpaca-bot/option-chain-snapshots}"' in script
     assert 'OPTION_CHAIN_SNAPSHOTS="${SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS:-}"' in script
@@ -342,6 +344,16 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "validate_all_positive_rows" in script
     assert "candidate_scales" in script
     assert "run_prefilter_job" in script
+    assert "completed_status_part_is_reusable" in script
+    assert "reusing completed candidate=" in script
+    assert "require_fingerprint" in script
+    assert 'fingerprint_path="$status_part.fingerprint"' in script
+    assert "write_status_part_fingerprint" in script
+    assert "option_contracts=$OPTION_SNAPSHOT_CONTRACTS" in script
+    assert "job_fingerprint=\"prefilter|" in script
+    assert "job_fingerprint=\"validation|" in script
+    assert '[[ "$status" == "passed" ]]' in script
+    assert '[[ -s "$report" && -s "$jsonl" && -e "$stderr" ]]' in script
     assert "wait_for_next_prefilter_job" in script
     assert "run_validation_job" in script
     assert "wait_for_next_validation_job" in script

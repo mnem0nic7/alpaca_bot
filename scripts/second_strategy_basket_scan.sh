@@ -79,6 +79,7 @@ VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"
 VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"
 VALIDATION_OUTPUT_DIR="${SECOND_STRATEGY_VALIDATION_OUTPUT_DIR:-$OUTPUT_DIR/validation}"
 VALIDATION_LATEST_LINK="${SECOND_STRATEGY_VALIDATION_LATEST_LINK:-}"
+RESUME_COMPLETED_JOBS="${SECOND_STRATEGY_RESUME_COMPLETED_JOBS:-true}"
 INCLUDE_OPTION_CANDIDATES="${SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES:-auto}"
 HOST_OPTION_CHAIN_SNAPSHOT_DIR="${SECOND_STRATEGY_HOST_OPTION_CHAIN_SNAPSHOT_DIR:-/var/lib/alpaca-bot/option-chain-snapshots}"
 OPTION_CHAIN_SNAPSHOTS="${SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS:-}"
@@ -122,6 +123,17 @@ case "${VALIDATE_ALL_POSITIVE_ROWS,,}" in
     ;;
   *)
     fail "SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS must be true or false"
+    ;;
+esac
+case "${RESUME_COMPLETED_JOBS,,}" in
+  true|1|yes|y)
+    RESUME_COMPLETED_JOBS=true
+    ;;
+  false|0|no|n|"")
+    RESUME_COMPLETED_JOBS=false
+    ;;
+  *)
+    fail "SECOND_STRATEGY_RESUME_COMPLETED_JOBS must be true or false"
     ;;
 esac
 
@@ -410,6 +422,40 @@ mkdir -p "$status_parts_dir"
 echo "second strategy basket scan: output_dir=$OUTPUT_DIR"
 echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS option_replay_status=$OPTION_REPLAY_STATUS prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
 
+completed_status_part_is_reusable() {
+  local status_part="$1"
+  local expected_candidate="$2"
+  local expected_scale="$3"
+  local require_fingerprint="${4:-false}"
+  local expected_fingerprint="${5:-}"
+  local candidate
+  local candidate_scale
+  local status
+  local report
+  local jsonl
+  local stderr
+  local extra
+  local fingerprint_path
+
+  [[ "$RESUME_COMPLETED_JOBS" == "true" && -s "$status_part" ]] || return 1
+  IFS=$'\t' read -r candidate candidate_scale status report jsonl stderr extra < "$status_part" || return 1
+  [[ -z "${extra:-}" ]] || return 1
+  [[ "$candidate" == "$expected_candidate" && "$candidate_scale" == "$expected_scale" ]] || return 1
+  [[ "$status" == "passed" ]] || return 1
+  [[ -s "$report" && -s "$jsonl" && -e "$stderr" ]] || return 1
+  if [[ "$require_fingerprint" == "true" ]]; then
+    fingerprint_path="$status_part.fingerprint"
+    [[ -f "$fingerprint_path" ]] || return 1
+    [[ "$(tr -d '\n' < "$fingerprint_path")" == "$expected_fingerprint" ]] || return 1
+  fi
+}
+
+write_status_part_fingerprint() {
+  local status_part="$1"
+  local fingerprint="$2"
+  printf '%s\n' "$fingerprint" > "$status_part.fingerprint"
+}
+
 failed_count=0
 run_prefilter_job() {
   local candidate="$1"
@@ -420,6 +466,8 @@ run_prefilter_job() {
   local jsonl_path
   local stderr_path
   local status_part
+  local require_fingerprint
+  local job_fingerprint
   local -a cmd
 
   safe_candidate="$(printf '%s' "$candidate" | tr -c 'A-Za-z0-9_' '_')"
@@ -428,6 +476,15 @@ run_prefilter_job() {
   jsonl_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.jsonl"
   stderr_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.stderr"
   status_part="$status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
+  require_fingerprint=false
+  if is_option_candidate "$candidate"; then
+    require_fingerprint=true
+  fi
+  job_fingerprint="prefilter|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$SAMPLE_SIZE|seed=$SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_replay=$OPTION_REPLAY_STATUS"
+  if completed_status_part_is_reusable "$status_part" "$candidate" "$candidate_scale" "$require_fingerprint" "$job_fingerprint"; then
+    echo "second strategy basket scan: reusing completed candidate=$candidate scale=$candidate_scale"
+    return 0
+  fi
   cmd=(
     python3 -m alpaca_bot.replay.cli portfolio-basket-audit
     --scenario-dir "$SCENARIO_DIR"
@@ -451,6 +508,7 @@ run_prefilter_job() {
   echo "second strategy basket scan: candidate=$candidate scale=$candidate_scale"
   if "${cmd[@]}" 2> "$stderr_path"; then
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "passed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
+    write_status_part_fingerprint "$status_part" "$job_fingerprint"
     return 0
   fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "failed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
@@ -773,6 +831,8 @@ PY
     local jsonl_path
     local stderr_path
     local status_part
+    local require_fingerprint
+    local job_fingerprint
     local -a cmd
 
     safe_candidate="$(printf '%s' "$candidate" | tr -c 'A-Za-z0-9_' '_')"
@@ -781,6 +841,15 @@ PY
     jsonl_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.jsonl"
     stderr_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.stderr"
     status_part="$validation_status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
+    require_fingerprint=false
+    if is_option_candidate "$candidate"; then
+      require_fingerprint=true
+    fi
+    job_fingerprint="validation|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$VALIDATION_SAMPLE_SIZE|seed=$VALIDATION_SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_replay=$OPTION_REPLAY_STATUS"
+    if completed_status_part_is_reusable "$status_part" "$candidate" "$candidate_scale" "$require_fingerprint" "$job_fingerprint"; then
+      echo "second strategy basket validation: reusing completed candidate=$candidate scale=$candidate_scale"
+      return 0
+    fi
     cmd=(
       python3 -m alpaca_bot.replay.cli portfolio-basket-audit
       --scenario-dir "$SCENARIO_DIR"
@@ -804,6 +873,7 @@ PY
     echo "second strategy basket validation: candidate=$candidate scale=$candidate_scale"
     if "${cmd[@]}" 2> "$stderr_path"; then
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "passed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
+      write_status_part_fingerprint "$status_part" "$job_fingerprint"
       return 0
     fi
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "failed" "$report_path" "$jsonl_path" "$stderr_path" > "$status_part"
