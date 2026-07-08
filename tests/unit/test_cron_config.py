@@ -6673,6 +6673,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "promotion_approved_source={second_strategy_evidence['promotion_approved_source']}" in script
     assert "promotion_approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']}" in script
     assert "promotion_approval_marker_strategy={safe_status_value(second_strategy_evidence['promotion_approval_marker_strategy'])}" in script
+    assert "stale_validation_summary" in script
+    assert "candidate_total_pnl" in script
+    assert 'return f"{key}_mismatch", strategy' in script
+    assert "validation_summary_path.resolve()" in script
     assert "promotion_action_status" in script
     assert "paper proof second strategy promotion action:" in script
     assert "confirmation={promotion_confirmation}" in script

@@ -378,6 +378,7 @@ echo "paper proof evidence status:"
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from datetime import date, datetime, time, timedelta, timezone
@@ -725,12 +726,16 @@ def approval_marker_status(
     error: str | None,
     *,
     evidence_status: str,
+    validation_summary_path: Path,
+    validation_rows: object,
     validation_positive_families: list[str],
 ) -> tuple[str, str]:
     if error == "missing":
         return "missing", "none"
     if error is not None or payload is None:
         return "invalid", "none"
+    if payload.get("schema_version") != 1:
+        return "invalid_schema", "none"
     strategy = str(payload.get("strategy") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_:-]+", strategy):
         return "invalid_strategy", "none"
@@ -739,8 +744,43 @@ def approval_marker_status(
         return "confirmation_mismatch", strategy
     if evidence_status != "ok":
         return f"evidence_{evidence_status}", strategy
+    expected_summary = str(validation_summary_path.resolve())
+    if str(payload.get("validation_summary") or "") != expected_summary:
+        return "stale_validation_summary", strategy
     if strategy not in validation_positive_families:
         return "latest_validation_missing_positive_edge", strategy
+    matching_rows = [
+        row
+        for row in validation_rows
+        if isinstance(row, dict)
+        and str(row.get("candidate") or "").strip() == strategy
+    ] if isinstance(validation_rows, list) else []
+    if not matching_rows:
+        return "latest_validation_missing_row", strategy
+    row = matching_rows[0]
+    expected_values = {
+        "candidate_scale": str(row.get("candidate_scale") or ""),
+        "candidate_trades": as_int_or_none(row.get("candidate_trades")),
+        "candidate_total_pnl": as_float_or_none(row.get("candidate_total_pnl")),
+        "candidate_ci_low": as_float_or_none(row.get("candidate_ci_low")),
+        "candidate_p_mean_le_zero": as_float_or_none(row.get("candidate_p_mean_le_zero")),
+    }
+    marker_values = {
+        "candidate_scale": str(payload.get("candidate_scale") or ""),
+        "candidate_trades": as_int_or_none(payload.get("candidate_trades")),
+        "candidate_total_pnl": as_float_or_none(payload.get("candidate_total_pnl")),
+        "candidate_ci_low": as_float_or_none(payload.get("candidate_ci_low")),
+        "candidate_p_mean_le_zero": as_float_or_none(payload.get("candidate_p_mean_le_zero")),
+    }
+    for key, expected_value in expected_values.items():
+        marker_value = marker_values[key]
+        if expected_value is None or marker_value is None:
+            return f"{key}_missing", strategy
+        if isinstance(expected_value, float):
+            if not math.isclose(marker_value, expected_value, rel_tol=1e-9, abs_tol=1e-9):
+                return f"{key}_mismatch", strategy
+        elif marker_value != expected_value:
+            return f"{key}_mismatch", strategy
     return "approved", strategy
 
 
@@ -838,6 +878,8 @@ def load_second_strategy_evidence(
         approval_payload,
         approval_error,
         evidence_status=evidence_status,
+        validation_summary_path=validation_summary_path,
+        validation_rows=validation_rows,
         validation_positive_families=validation_positive_families,
     )
     promotion_approved = scan_promotion_approved or approval_status == "approved"

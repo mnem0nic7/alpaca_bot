@@ -169,7 +169,7 @@ outputs = {
     "VALIDATED_TOTAL_PNL": str(selected["candidate_total_pnl"]),
     "VALIDATED_CI_LOW": str(selected["candidate_ci_low"]),
     "VALIDATED_P_MEAN_LE_ZERO": str(selected["candidate_p_mean_le_zero"]),
-    "VALIDATION_SUMMARY": str(summary_path),
+    "VALIDATION_SUMMARY": str(summary_path.resolve()),
 }
 for key, value in outputs.items():
     print(f"{key}={shlex.quote(value)}")
