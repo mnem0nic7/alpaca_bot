@@ -10,6 +10,10 @@ fail() {
   exit 1
 }
 
+print_install_repair_hint() {
+  echo "cron health repair: run_as_root=$ROOT_DIR/scripts/install_cron.sh installed_cron=$INSTALLED_CRON expected_cron=$EXPECTED_CRON" >&2
+}
+
 if [[ ! -f "$EXPECTED_CRON" ]]; then
   fail "missing repo cron file: $EXPECTED_CRON"
 fi
@@ -31,6 +35,7 @@ normalize_cron_for_required_drift() {
 if ! cmp -s <(normalize_cron_for_required_drift "$EXPECTED_CRON") <(normalize_cron_for_required_drift "$INSTALLED_CRON"); then
   echo "cron health failed: installed cron differs from repo required schedule" >&2
   diff -u <(normalize_cron_for_required_drift "$EXPECTED_CRON") <(normalize_cron_for_required_drift "$INSTALLED_CRON") >&2 || true
+  print_install_repair_hint
   exit 1
 fi
 
@@ -45,6 +50,7 @@ if [[ "$installed_proof_status_line" != "$expected_proof_status_line" ]]; then
     <(printf '%s\n' "$expected_proof_status_line") \
     <(printf '%s\n' "$installed_proof_status_line") \
     >&2 || true
+  print_install_repair_hint
   exit 1
 fi
 

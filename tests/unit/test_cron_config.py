@@ -205,8 +205,11 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "/var/log/alpaca-bot-proof-status.log" in cron_text
     assert "run_locked_check_with_audit.sh session_guard" in cron_text
     assert 'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"' in install_cron
-    assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" /etc/cron.d/alpaca-bot' in install_cron
-    assert '"$ROOT_DIR/scripts/cron_health_check.sh"' in install_cron
+    assert 'TARGET_CRON="${ALPACA_BOT_CRON_FILE:-/etc/cron.d/alpaca-bot}"' in install_cron
+    assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" "$TARGET_CRON"' in install_cron
+    assert "Cron install failed. Re-run as root" in install_cron
+    assert "Target cron file: $TARGET_CRON" in install_cron
+    assert 'ALPACA_BOT_CRON_FILE="$TARGET_CRON" "$ROOT_DIR/scripts/cron_health_check.sh"' in install_cron
     assert "Runs weekdays on New York wall time" in install_cron
     assert "paper readiness 09:15/09:55/09:58/10:02/10:05/10:10 plus stale-repair checks from 10:15-15:15" in install_cron
     assert "force refresh 12:15/14:25/16:55/17:24" in install_cron
@@ -232,6 +235,9 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert 'exec "$@"' in run_if_ny_time
     assert 'EXPECTED_CRON="$ROOT_DIR/deploy/cron.d/alpaca-bot"' in cron_health
     assert 'INSTALLED_CRON="${ALPACA_BOT_CRON_FILE:-/etc/cron.d/alpaca-bot}"' in cron_health
+    assert "print_install_repair_hint()" in cron_health
+    assert "cron health repair: run_as_root=" in cron_health
+    assert "print_install_repair_hint" in cron_health
     assert "normalize_cron_for_required_drift()" in cron_health
     assert "<paper_proof_status_command>" in cron_health
     assert "installed cron differs from repo required schedule" in cron_health
