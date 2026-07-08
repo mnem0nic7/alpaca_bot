@@ -473,21 +473,58 @@ def format_name_list(names: list[str]) -> str:
     return ",".join(names) if names else "none"
 
 
-def option_snapshot_ledger_has_files(snapshot_dir: str | None) -> bool:
+def option_snapshot_file_session(path: Path) -> str:
+    match = re.fullmatch(
+        r"option-chain-snapshots-(\d{4}-\d{2}-\d{2})\.jsonl",
+        path.name,
+    )
+    return match.group(1) if match else "unknown"
+
+
+def option_snapshot_ledger_summary(snapshot_dir: str | None) -> dict[str, object]:
+    summary: dict[str, object] = {
+        "path": snapshot_dir or "none",
+        "file_count": 0,
+        "latest_file": "none",
+        "latest_session": "none",
+        "latest_modified": "none",
+        "latest_bytes": 0,
+    }
     if not snapshot_dir:
-        return False
+        return summary
     path = Path(snapshot_dir)
     try:
         if path.is_file():
-            return path.stat().st_size > 0
-        if not path.is_dir():
-            return False
-        return any(
-            file_path.is_file() and file_path.stat().st_size > 0
-            for file_path in path.glob("option-chain-snapshots-*.jsonl")
-        )
+            stat = path.stat()
+            files = [(path, stat)] if stat.st_size > 0 else []
+        elif path.is_dir():
+            files = []
+            for file_path in path.glob("option-chain-snapshots-*.jsonl"):
+                if not file_path.is_file():
+                    continue
+                stat = file_path.stat()
+                if stat.st_size > 0:
+                    files.append((file_path, stat))
+        else:
+            files = []
     except OSError:
-        return False
+        return summary
+    if not files:
+        return summary
+    latest_path, latest_stat = max(files, key=lambda item: item[1].st_mtime)
+    summary.update(
+        {
+            "file_count": len(files),
+            "latest_file": latest_path.name,
+            "latest_session": option_snapshot_file_session(latest_path),
+            "latest_modified": datetime.fromtimestamp(
+                latest_stat.st_mtime,
+                timezone.utc,
+            ).isoformat(),
+            "latest_bytes": latest_stat.st_size,
+        }
+    )
+    return summary
 
 
 def format_optional_float(value: float | None, digits: int = 1) -> str:
@@ -1063,6 +1100,33 @@ readiness_due = current_market_datetime.date() > readiness_target_session or (
     current_market_datetime.date() == readiness_target_session
     and current_market_datetime.time() >= readiness_due_time
 )
+option_snapshot_due_time = time(10, 0)
+option_snapshot_target_session = None
+if current_market_date >= proof_start and (
+    next_market_session == current_market_date
+    or latest_completed_session == current_market_date
+):
+    option_snapshot_target_session = current_market_date
+elif latest_completed_session is not None and latest_completed_session >= proof_start:
+    option_snapshot_target_session = latest_completed_session
+option_snapshot_due_after = (
+    f"{option_snapshot_target_session.isoformat()} "
+    f"{option_snapshot_due_time.strftime('%H:%M')} {settings.market_timezone.key}"
+    if option_snapshot_target_session
+    else "none"
+)
+option_snapshot_due = (
+    bool(settings.option_chain_snapshot_dir)
+    and bool(settings.option_chain_symbols)
+    and option_snapshot_target_session is not None
+    and (
+        current_market_datetime.date() > option_snapshot_target_session
+        or (
+            current_market_datetime.date() == option_snapshot_target_session
+            and current_market_datetime.time() >= option_snapshot_due_time
+        )
+    )
+)
 
 conn = connect_postgres(settings.database_url)
 try:
@@ -1110,9 +1174,25 @@ try:
         disabled_option_strategy_names = [
             name for name in disabled_strategy_names if name in option_strategy_name_set
         ]
-        option_snapshot_replay_ready = option_snapshot_ledger_has_files(
+        option_snapshot_summary = option_snapshot_ledger_summary(
             settings.option_chain_snapshot_dir
         )
+        option_snapshot_replay_ready = int(option_snapshot_summary["file_count"]) > 0
+        if not settings.option_chain_snapshot_dir:
+            option_snapshot_status = "unconfigured"
+        elif not settings.option_chain_symbols:
+            option_snapshot_status = "misconfigured"
+        elif not option_snapshot_replay_ready:
+            option_snapshot_status = "missing" if option_snapshot_due else "not_due"
+        elif (
+            option_snapshot_due
+            and option_snapshot_target_session is not None
+            and option_snapshot_summary["latest_session"]
+            != option_snapshot_target_session.isoformat()
+        ):
+            option_snapshot_status = "stale"
+        else:
+            option_snapshot_status = "ok"
         replay_supported_option_strategy_name_set = (
             option_strategy_name_set if option_snapshot_replay_ready else set()
         )
@@ -4541,6 +4621,21 @@ print(
     f"option_gated_disabled_candidate_names={format_name_list(option_gated_disabled_strategy_names)} "
     f"approved_disabled_stock_candidates={format_name_list(approved_disabled_stock_candidate_names)} "
     f"approved_disabled_option_candidates={format_name_list(approved_disabled_option_candidate_names)}"
+)
+print(
+    "paper proof option snapshots: "
+    f"status={option_snapshot_status} "
+    f"replay_status={option_replay_status} "
+    f"due={str(option_snapshot_due).lower()} "
+    f"target_session={option_snapshot_target_session.isoformat() if option_snapshot_target_session else 'none'} "
+    f"due_after={option_snapshot_due_after} "
+    f"path={safe_status_value(option_snapshot_summary['path'])} "
+    f"files={option_snapshot_summary['file_count']} "
+    f"latest_file={safe_status_value(option_snapshot_summary['latest_file'])} "
+    f"latest_session={safe_status_value(option_snapshot_summary['latest_session'])} "
+    f"latest_modified={safe_status_value(option_snapshot_summary['latest_modified'])} "
+    f"latest_bytes={option_snapshot_summary['latest_bytes']} "
+    f"symbols={len(settings.option_chain_symbols)}"
 )
 print(
     "paper proof second strategy evidence: "
