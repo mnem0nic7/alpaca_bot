@@ -139,8 +139,12 @@ def test_promote_validated_strategy_requires_explicit_confirmation(tmp_path: Pat
         tmp_path=tmp_path,
     )
 
+    summary_path = evidence_root / "latest_validation" / "summary.json"
+    summary_sha256 = hashlib.sha256(summary_path.read_bytes()).hexdigest()
     assert result.returncode == 2
     assert "PROMOTE_VALIDATED_STRATEGY_CONFIRM=approve-ema_pullback-paper-promotion" in result.stderr
+    assert f"validation_summary={summary_path.resolve()}" in result.stderr
+    assert f"validation_summary_sha256={summary_sha256}" in result.stderr
     assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
     assert not (tmp_path / "docker_calls").exists()
     assert not (tmp_path / "deploy_calls").exists()

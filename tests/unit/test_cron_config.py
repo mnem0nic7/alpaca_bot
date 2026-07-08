@@ -6694,6 +6694,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "payload = json.loads(raw_bytes)" in script
     assert "hashlib.sha256(raw_bytes).hexdigest()" in script
     assert "validation_summary_sha256=validation_summary_sha256" in script
+    assert "prefilter_payload, prefilter_error, prefilter_summary_sha256" in script
+    assert "\"prefilter_summary_sha256\": prefilter_summary_sha256 or \"none\"" in script
+    assert "\"validation_summary_sha256\": validation_summary_sha256 or \"none\"" in script
+    assert "prefilter_summary_sha256={safe_status_value(second_strategy_evidence['prefilter_summary_sha256'])}" in script
+    assert "validation_summary_sha256={safe_status_value(second_strategy_evidence['validation_summary_sha256'])}" in script
+    assert "prefilter_summary_sha256={safe_status_value(second_strategy_setup_evidence['prefilter_summary_sha256'])}" in script
+    assert "validation_summary_sha256={safe_status_value(second_strategy_setup_evidence['validation_summary_sha256'])}" in script
     assert "payload.get(\"schema_version\") != 2" in script
     assert "marker_strategy_version = str(payload.get(\"strategy_version\") or \"\").strip()" in script
     assert "return \"strategy_version_missing\", strategy" in script

@@ -837,7 +837,7 @@ def load_second_strategy_evidence(
     prefilter_summary_path = output_root / "latest" / "summary.json"
     validation_summary_path = output_root / "latest_validation" / "summary.json"
     approval_marker_path = output_root / "promotion_approval.json"
-    prefilter_payload, prefilter_error, _prefilter_sha256 = load_json_payload(
+    prefilter_payload, prefilter_error, prefilter_summary_sha256 = load_json_payload(
         prefilter_summary_path
     )
     validation_payload, validation_error, validation_summary_sha256 = load_json_payload(
@@ -974,6 +974,8 @@ def load_second_strategy_evidence(
         "root": str(output_root),
         "prefilter_summary": str(prefilter_summary_path),
         "validation_summary": str(validation_summary_path),
+        "prefilter_summary_sha256": prefilter_summary_sha256 or "none",
+        "validation_summary_sha256": validation_summary_sha256 or "none",
         "prefilter_age_hours": prefilter_age_hours,
         "validation_age_hours": validation_age_hours,
         "max_age_hours": max_age_hours,
@@ -5035,6 +5037,8 @@ print(
     f"root={safe_status_value(second_strategy_evidence['root'])} "
     f"prefilter_summary={safe_status_value(second_strategy_evidence['prefilter_summary'])} "
     f"validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])} "
+    f"prefilter_summary_sha256={safe_status_value(second_strategy_evidence['prefilter_summary_sha256'])} "
+    f"validation_summary_sha256={safe_status_value(second_strategy_evidence['validation_summary_sha256'])} "
     f"prefilter_age_hours={format_optional_float(second_strategy_evidence['prefilter_age_hours'])} "
     f"validation_age_hours={format_optional_float(second_strategy_evidence['validation_age_hours'])} "
     f"max_age_hours={second_strategy_evidence['max_age_hours']} "
@@ -5071,6 +5075,7 @@ print(
     f"env_file={safe_status_value(proof_status_env_file)} "
     f"approval_marker={safe_status_value(second_strategy_evidence['promotion_approval_marker'])} "
     f"approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']} "
+    f"validation_summary_sha256={safe_status_value(second_strategy_evidence['validation_summary_sha256'])} "
     f"candidate_scale={safe_status_value(second_strategy_evidence['promotion_candidate_scale'])} "
     f"candidate_trades={safe_status_value(second_strategy_evidence['promotion_candidate_trades'])} "
     f"candidate_total_pnl={format_optional_float(second_strategy_evidence['promotion_candidate_total_pnl'], 2)} "
@@ -5085,6 +5090,8 @@ print(
     f"root={safe_status_value(second_strategy_setup_evidence['root'])} "
     f"prefilter_summary={safe_status_value(second_strategy_setup_evidence['prefilter_summary'])} "
     f"validation_summary={safe_status_value(second_strategy_setup_evidence['validation_summary'])} "
+    f"prefilter_summary_sha256={safe_status_value(second_strategy_setup_evidence['prefilter_summary_sha256'])} "
+    f"validation_summary_sha256={safe_status_value(second_strategy_setup_evidence['validation_summary_sha256'])} "
     f"prefilter_age_hours={format_optional_float(second_strategy_setup_evidence['prefilter_age_hours'])} "
     f"validation_age_hours={format_optional_float(second_strategy_setup_evidence['validation_age_hours'])} "
     f"max_age_hours={second_strategy_setup_evidence['max_age_hours']} "
