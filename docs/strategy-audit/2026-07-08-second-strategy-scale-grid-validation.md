@@ -342,6 +342,29 @@ Conclusion: the full `vwap_reversion` setup grid did not produce a positive
 prefilter survivor under the fresh prefilter seed. No validation candidate was
 available, and `vwap_reversion` remains unapproved.
 
+## 2026-07-08 Failed Breakdown Grid
+
+The `failed_breakdown` grid tested volume ratios `1.5`, `2.0`, `2.5`, and
+`3.0` across recapture buffers `0.001`, `0.002`, and `0.003` and ATR stop
+multipliers `1.0`, `1.5`, and `2.0`:
+
+- artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T071643Z/summary.md` and `validation/summary.md`
+- variants: `grid_001` through `grid_036`
+- result: `positive_edge_prefilter_rows=0`, validation variants `0`,
+  `promotion_approved=false`
+
+| lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---:|---:|---:|---|---|
+| `grid_005` | `FAILED_BREAKDOWN_VOLUME_RATIO=1.5,FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT=0.002,ATR_STOP_MULTIPLIER=1.5` | 122 | 1.43 | 53.97 | [-0.1858, 1.0925] | `no-evidence` |
+| `grid_001` | `FAILED_BREAKDOWN_VOLUME_RATIO=1.5,FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT=0.001,ATR_STOP_MULTIPLIER=1.0` | 159 | 1.34 | 64.72 | [-0.1868, 0.9969] | `no-evidence` |
+| `grid_003` | `FAILED_BREAKDOWN_VOLUME_RATIO=1.5,FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT=0.001,ATR_STOP_MULTIPLIER=2.0` | 155 | 1.34 | 51.71 | [-0.2057, 0.8501] | `no-evidence` |
+| `grid_006` | `FAILED_BREAKDOWN_VOLUME_RATIO=1.5,FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT=0.002,ATR_STOP_MULTIPLIER=2.0` | 122 | 1.40 | 48.72 | [-0.2081, 1.0195] | `no-evidence` |
+| `grid_004` | `FAILED_BREAKDOWN_VOLUME_RATIO=1.5,FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT=0.002,ATR_STOP_MULTIPLIER=1.0` | 124 | 1.42 | 60.82 | [-0.2113, 1.1878] | `no-evidence` |
+
+Conclusion: the full `failed_breakdown` setup grid did not produce a positive
+prefilter survivor under the fresh prefilter seed. No validation candidate was
+available, and `failed_breakdown` remains unapproved.
+
 ## Proof Visibility
 
 `paper_proof_status.sh` now prints a separate `paper proof second strategy setup
