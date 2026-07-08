@@ -217,7 +217,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "docker compose -f deploy/compose.yaml run --rm nightly" not in cron_text
     assert "scripts/second_strategy_basket_scan.sh" in cron_text
     assert "/var/log/alpaca-bot-second-strategy.log" in cron_text
-    assert 'timeout "${SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS:-3600}"' in cron_text
+    assert 'timeout "${SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS:-7200}"' in cron_text
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
     assert "expected HHMM must be a valid 24-hour time" in run_if_ny_time
     assert "date returned invalid HHMM" in run_if_ny_time
@@ -275,13 +275,21 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'OUTPUT_ROOT="${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}"' in script
     assert 'LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"' in script
     assert 'EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"' in script
+    assert 'VALIDATE_POSITIVES="${SECOND_STRATEGY_VALIDATE_POSITIVES:-true}"' in script
+    assert 'VALIDATION_CANDIDATES="${SECOND_STRATEGY_VALIDATION_CANDIDATES:-}"' in script
+    assert 'VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"' in script
+    assert 'VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"' in script
     assert 'LATEST_LINK="$OUTPUT_ROOT/latest"' in script
     assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script
+    assert 'VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"' in script
+    assert 'ln -sfn "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"' in script
     assert "Run metadata:" in script
     assert 'f"- sample_seed: `{sample_seed}`"' in script
     assert 'f"- starting_equity: `{starting_equity}`"' in script
     assert 'f"- excluded_candidates: `{excluded_candidates}`"' in script
     assert "summary_json_path.write_text" in script
+    assert 'validation_summary_json_file="$VALIDATION_OUTPUT_DIR/summary.json"' in script
+    assert "promotion_approved" in script
     assert "stock_disabled_candidate_names" in script
     assert "python3 -m alpaca_bot.replay.cli portfolio-basket-audit" in script
     assert '--confidence-scale "$candidate=$CANDIDATE_SCALE"' in script

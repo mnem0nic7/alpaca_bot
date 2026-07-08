@@ -52,6 +52,12 @@ OUTPUT_ROOT="${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_s
 OUTPUT_DIR="${SECOND_STRATEGY_OUTPUT_DIR:-$OUTPUT_ROOT/$(date -u +%Y%m%dT%H%M%SZ)}"
 LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"
 EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"
+VALIDATE_POSITIVES="${SECOND_STRATEGY_VALIDATE_POSITIVES:-true}"
+VALIDATION_CANDIDATES="${SECOND_STRATEGY_VALIDATION_CANDIDATES:-}"
+VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"
+VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"
+VALIDATION_OUTPUT_DIR="${SECOND_STRATEGY_VALIDATION_OUTPUT_DIR:-$OUTPUT_DIR/validation}"
+VALIDATION_LATEST_LINK="${SECOND_STRATEGY_VALIDATION_LATEST_LINK:-}"
 
 [[ -d "$SCENARIO_DIR" ]] || fail "missing scenario dir: $SCENARIO_DIR"
 mkdir -p "$OUTPUT_DIR"
@@ -323,6 +329,266 @@ print(f"summary_json={summary_json_path}")
 print(f"positive_edge_prefilter_rows={positive_edges}")
 PY
 
+validation_failed_count=0
+if [[ "${VALIDATE_POSITIVES,,}" == "true" ]]; then
+  if [[ -n "$VALIDATION_CANDIDATES" ]]; then
+    mapfile -t validation_candidates < <(read_name_list "$VALIDATION_CANDIDATES")
+  else
+    mapfile -t validation_candidates < <(
+      python3 - "$summary_json_file" <<'PY'
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+
+payload = json.loads(Path(sys.argv[1]).read_text())
+for row in payload.get("rows", []):
+    if row.get("status") == "passed" and row.get("verdict") == "positive-edge":
+        print(row["candidate"])
+PY
+    )
+  fi
+
+  validation_status_file="$VALIDATION_OUTPUT_DIR/status.tsv"
+  validation_summary_file="$VALIDATION_OUTPUT_DIR/summary.md"
+  validation_summary_json_file="$VALIDATION_OUTPUT_DIR/summary.json"
+  mkdir -p "$VALIDATION_OUTPUT_DIR"
+  : > "$validation_status_file"
+
+  echo "second strategy basket validation: output_dir=$VALIDATION_OUTPUT_DIR candidates=${validation_candidates[*]:-none} sample_size=$VALIDATION_SAMPLE_SIZE sample_seed=$VALIDATION_SAMPLE_SEED"
+
+  for candidate in "${validation_candidates[@]:-}"; do
+    [[ -n "$candidate" ]] || continue
+    safe_candidate="$(printf '%s' "$candidate" | tr -c 'A-Za-z0-9_' '_')"
+    report_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_validation.md"
+    jsonl_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_validation.jsonl"
+    stderr_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_validation.stderr"
+    cmd=(
+      python3 -m alpaca_bot.replay.cli portfolio-basket-audit
+      --scenario-dir "$SCENARIO_DIR"
+      --strategy "$BASE_STRATEGY"
+      --strategy "$candidate"
+      --sample-size "$VALIDATION_SAMPLE_SIZE"
+      --sample-seed "$VALIDATION_SAMPLE_SEED"
+      --slippage-bps "$SLIPPAGE_BPS"
+      --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
+      --confidence-scale "$candidate=$CANDIDATE_SCALE"
+      --output "$report_path"
+      --jsonl "$jsonl_path"
+    )
+    if [[ -n "$starting_equity" && "$starting_equity" != "none" ]]; then
+      cmd+=(--starting-equity "$starting_equity")
+    fi
+
+    echo "second strategy basket validation: candidate=$candidate"
+    if "${cmd[@]}" 2> "$stderr_path"; then
+      printf '%s\t%s\t%s\t%s\t%s\n' "$candidate" "passed" "$report_path" "$jsonl_path" "$stderr_path" >> "$validation_status_file"
+    else
+      validation_failed_count=$((validation_failed_count + 1))
+      printf '%s\t%s\t%s\t%s\t%s\n' "$candidate" "failed" "$report_path" "$jsonl_path" "$stderr_path" >> "$validation_status_file"
+    fi
+  done
+
+  python3 - "$validation_status_file" "$validation_summary_file" \
+    "$validation_summary_json_file" "$summary_json_file" "$VALIDATION_OUTPUT_DIR" \
+    "$SCENARIO_DIR" "$BASE_STRATEGY" "$VALIDATION_SAMPLE_SIZE" \
+    "$VALIDATION_SAMPLE_SEED" "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" \
+    "$CANDIDATE_SCALE" "${starting_equity:-scenario_default}" \
+    "${skipped_candidates[*]:-none}" <<'PY'
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+
+status_path = Path(sys.argv[1])
+summary_path = Path(sys.argv[2])
+summary_json_path = Path(sys.argv[3])
+prefilter_summary_json_path = Path(sys.argv[4])
+validation_output_dir = sys.argv[5]
+scenario_dir = sys.argv[6]
+base_strategy = sys.argv[7]
+sample_size = sys.argv[8]
+sample_seed = sys.argv[9]
+slippage_bps = sys.argv[10]
+max_open_positions = sys.argv[11]
+candidate_scale = sys.argv[12]
+starting_equity = sys.argv[13]
+excluded_candidates = sys.argv[14]
+
+
+def fmt(value, spec: str = ".2f") -> str:
+    if value is None:
+        return "n/a"
+    return format(float(value), spec)
+
+
+rows = []
+json_rows = []
+for raw in status_path.read_text().splitlines():
+    if not raw.strip():
+        continue
+    candidate, status, report, jsonl, stderr = raw.split("\t")
+    audit_row = None
+    if status == "passed" and Path(jsonl).exists():
+        payloads = [
+            json.loads(line)
+            for line in Path(jsonl).read_text().splitlines()
+            if line.strip()
+        ]
+        if payloads and payloads[-1].get("rows"):
+            audit_row = payloads[-1]["rows"][0]
+    rows.append((candidate, status, report, stderr, audit_row))
+
+
+def sort_key(item):
+    candidate, status, _report, _stderr, audit_row = item
+    if status != "passed" or audit_row is None:
+        return (3, 0.0, candidate)
+    verdict_rank = {
+        "positive-edge": 0,
+        "no-evidence": 1,
+        "insufficient-data": 2,
+        "negative-edge": 2,
+    }.get(audit_row.get("verdict"), 2)
+    ci_low = audit_row.get("ci_low")
+    ci_rank = -(float(ci_low) if ci_low is not None else float("-inf"))
+    return (verdict_rank, ci_rank, candidate)
+
+
+lines = [
+    "# Second strategy independent validation",
+    "",
+    "Run metadata:",
+    "",
+    f"- prefilter_summary_json: `{prefilter_summary_json_path}`",
+    f"- validation_output_dir: `{validation_output_dir}`",
+    f"- scenario_dir: `{scenario_dir}`",
+    f"- base_strategy: `{base_strategy}`",
+    f"- sample_size: `{sample_size}`",
+    f"- sample_seed: `{sample_seed}`",
+    f"- slippage_bps: `{slippage_bps}`",
+    f"- max_open_positions: `{max_open_positions}`",
+    f"- candidate_scale: `{candidate_scale}`",
+    f"- starting_equity: `{starting_equity}`",
+    f"- excluded_candidates: `{excluded_candidates}`",
+    "",
+    "| candidate | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
+    "|---|---|---:|---:|---:|---:|---|---:|---:|---|---|",
+]
+
+validation_positive_edges = 0
+for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
+    if status != "passed" or audit_row is None:
+        json_rows.append(
+            {
+                "candidate": candidate,
+                "status": status,
+                "report": report,
+                "stderr": stderr,
+                "verdict": None,
+            }
+        )
+        lines.append(
+            f"| `{candidate}` | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
+        )
+        continue
+    verdict = audit_row["verdict"]
+    if verdict == "positive-edge":
+        validation_positive_edges += 1
+    ci = (
+        "n/a"
+        if audit_row["ci_low"] is None or audit_row["ci_high"] is None
+        else f"[{fmt(audit_row['ci_low'], '.4f')}, {fmt(audit_row['ci_high'], '.4f')}]"
+    )
+    p_mean_le_zero = audit_row["p_positive"]
+    json_rows.append(
+        {
+            "candidate": candidate,
+            "status": "passed",
+            "report": report,
+            "stderr": stderr,
+            "trades": audit_row["trades"],
+            "profit_factor": audit_row["profit_factor"],
+            "total_pnl": audit_row["total_pnl"],
+            "mean_trade_pnl": audit_row["mean_trade_pnl"],
+            "ci_low": audit_row["ci_low"],
+            "ci_high": audit_row["ci_high"],
+            "p_mean_le_zero": p_mean_le_zero,
+            "zero_cost_total_pnl": audit_row.get("zero_cost_total_pnl"),
+            "cost_drag": audit_row["cost_drag"],
+            "verdict": verdict,
+        }
+    )
+    lines.append(
+        "| "
+        f"`{candidate}` | `passed` | {audit_row['trades']} | "
+        f"{fmt(audit_row['profit_factor'])} | {fmt(audit_row['total_pnl'])} | "
+        f"{fmt(audit_row['mean_trade_pnl'], '.4f')} | {ci} | "
+        f"{fmt(p_mean_le_zero, '.4f')} | {fmt(audit_row['cost_drag'])} | "
+        f"`{verdict}` | `{report}` |"
+    )
+
+if not rows:
+    lines.append("| `none` | `skipped` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
+
+if validation_positive_edges:
+    conclusion = (
+        "Validation found positive-edge survivor(s). This is still not approval "
+        "to change PAPER_APPROVED_STRATEGIES; promote only through an explicit "
+        "operator-reviewed paper approval."
+    )
+else:
+    conclusion = (
+        "No candidate from this batch is approved for paper promotion; every "
+        "independently validated survivor returned no positive validation edge."
+    )
+
+lines.extend(["", conclusion])
+summary_path.write_text("\n".join(lines) + "\n")
+summary_json_path.write_text(
+    json.dumps(
+        {
+            "prefilter_summary_json": str(prefilter_summary_json_path),
+            "validation_output_dir": validation_output_dir,
+            "scenario_dir": scenario_dir,
+            "base_strategy": base_strategy,
+            "sample_size": sample_size,
+            "sample_seed": sample_seed,
+            "slippage_bps": slippage_bps,
+            "max_open_positions": max_open_positions,
+            "candidate_scale": candidate_scale,
+            "starting_equity": starting_equity,
+            "excluded_candidates": excluded_candidates,
+            "positive_edge_validation_rows": validation_positive_edges,
+            "promotion_approved": False,
+            "conclusion": conclusion,
+            "rows": json_rows,
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n"
+)
+print("\n".join(lines))
+print(f"validation_summary={summary_path}")
+print(f"validation_summary_json={summary_json_path}")
+print(f"positive_edge_validation_rows={validation_positive_edges}")
+PY
+
+  if [[ -z "$VALIDATION_LATEST_LINK" && -z "${SECOND_STRATEGY_OUTPUT_DIR:-}" ]]; then
+    VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"
+  fi
+  if [[ -n "$VALIDATION_LATEST_LINK" ]]; then
+    mkdir -p "$(dirname "$VALIDATION_LATEST_LINK")"
+    ln -sfn "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"
+    echo "latest_validation=$VALIDATION_LATEST_LINK"
+  fi
+else
+  echo "second strategy basket validation: disabled"
+fi
+
 if [[ -z "$LATEST_LINK" && -z "${SECOND_STRATEGY_OUTPUT_DIR:-}" ]]; then
   LATEST_LINK="$OUTPUT_ROOT/latest"
 fi
@@ -334,4 +600,7 @@ fi
 
 if [[ "$failed_count" -gt 0 ]]; then
   fail "$failed_count candidate scan command(s) failed; see $OUTPUT_DIR"
+fi
+if [[ "$validation_failed_count" -gt 0 ]]; then
+  fail "$validation_failed_count validation command(s) failed; see $VALIDATION_OUTPUT_DIR"
 fi
