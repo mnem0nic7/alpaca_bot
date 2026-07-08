@@ -365,6 +365,29 @@ Conclusion: the full `failed_breakdown` setup grid did not produce a positive
 prefilter survivor under the fresh prefilter seed. No validation candidate was
 available, and `failed_breakdown` remains unapproved.
 
+## 2026-07-08 EMA Pullback Full Grid
+
+The full `ema_pullback` grid tested EMA periods `7`, `9`, `12`, and `20`
+across relative-volume thresholds `1.3`, `1.5`, and `1.8` and ATR stop
+multipliers `1.0`, `1.5`, and `2.0`:
+
+- artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T075331Z/summary.md` and `validation/summary.md`
+- variants: `grid_001` through `grid_036`
+- result: `positive_edge_prefilter_rows=0`, validation variants `0`,
+  `promotion_approved=false`
+
+| lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---:|---:|---:|---|---|
+| `grid_021` | `EMA_PERIOD=12,RELATIVE_VOLUME_THRESHOLD=1.3,ATR_STOP_MULTIPLIER=2.0` | 361 | 1.27 | 115.41 | [-0.0942, 0.7431] | `no-evidence` |
+| `grid_027` | `EMA_PERIOD=12,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=2.0` | 292 | 1.33 | 113.72 | [-0.1077, 0.8700] | `no-evidence` |
+| `grid_026` | `EMA_PERIOD=12,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=1.5` | 293 | 1.30 | 110.47 | [-0.1459, 0.8561] | `no-evidence` |
+| `grid_036` | `EMA_PERIOD=20,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=2.0` | 247 | 1.29 | 88.11 | [-0.1507, 0.8907] | `no-evidence` |
+| `grid_020` | `EMA_PERIOD=12,RELATIVE_VOLUME_THRESHOLD=1.3,ATR_STOP_MULTIPLIER=1.5` | 362 | 1.22 | 100.92 | [-0.1653, 0.7233] | `no-evidence` |
+
+Conclusion: the full `ema_pullback` setup grid did not produce a positive
+prefilter survivor under the fresh full-grid seed. No validation candidate was
+available, and `ema_pullback` remains unapproved.
+
 ## Proof Visibility
 
 `paper_proof_status.sh` now prints a separate `paper proof second strategy setup
