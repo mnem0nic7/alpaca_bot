@@ -6673,6 +6673,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "missing_validation_families=" in script
     assert "promotion_approved={str(second_strategy_evidence['promotion_approved']).lower()}" in script
     assert "promotion_approved_source={second_strategy_evidence['promotion_approved_source']}" in script
+    assert "promotion_approved = approval_status == \"approved\"" in script
+    assert "scan_summary_ignored" in script
+    assert "scan_promotion_approved or approval_status" not in script
     assert "promotion_approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']}" in script
     assert "promotion_approval_marker_strategy={safe_status_value(second_strategy_evidence['promotion_approval_marker_strategy'])}" in script
     assert "stale_validation_summary" in script

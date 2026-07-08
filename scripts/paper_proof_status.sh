@@ -882,11 +882,13 @@ def load_second_strategy_evidence(
         validation_rows=validation_rows,
         validation_positive_families=validation_positive_families,
     )
-    promotion_approved = scan_promotion_approved or approval_status == "approved"
+    promotion_approved = approval_status == "approved"
     promotion_approved_source = (
-        "scan_summary"
+        "approval_marker"
+        if approval_status == "approved"
+        else "scan_summary_ignored"
         if scan_promotion_approved
-        else ("approval_marker" if approval_status == "approved" else "none")
+        else "none"
     )
     promotion_action_status = "none"
     if promotion_approved and validation_positive_rows > 0:
