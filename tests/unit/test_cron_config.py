@@ -6291,6 +6291,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "execution_quality_warnings.append(\"entry_fill_rate\")" in script
     assert "scale_blockers.append(\"entry_fill_rate\")" in script
     assert "execution_quality_warnings.append(\"historical_entry_fill_rate\")" in script
+    assert "execution_quality_summary_warnings = [" in script
+    assert "if not warning.startswith(\"historical_\")" in script
     assert "current_session_execution_warnings.append(\"unsettled_entry_fill_rate\")" in script
     assert "post_supervisor_execution_warnings.append(\"unsettled_entry_fill_rate\")" in script
     assert "execution_quality_warnings.append(\"capacity_rejections\")" in script
@@ -6298,7 +6300,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "post_supervisor_execution_status" in script
     assert "post_supervisor_execution_warnings.append(\"short_entry_windows\")" in script
     assert "summary_warnings = list(warnings)" in script
-    assert "(\"execution\", execution_quality_warnings)" in script
+    assert "(\"execution\", execution_quality_summary_warnings)" in script
     assert "(\"current_session_execution\", current_session_execution_warnings)" in script
     assert "(\"post_supervisor_execution\", post_supervisor_execution_warnings)" in script
     assert "warning_name = f\"{warning_prefix}_{warning_value}\"" in script

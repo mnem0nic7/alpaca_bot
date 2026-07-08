@@ -3790,6 +3790,11 @@ if (
     # as a scale blocker without turning expected capacity pressure into a
     # profitability-evidence failure.
     scale_blockers.append("capacity_rejections")
+execution_quality_summary_warnings = [
+    warning
+    for warning in execution_quality_warnings
+    if not warning.startswith("historical_")
+]
 current_session_execution_status = (
     "not_started" if current_market_date < proof_start else "observing"
 )
@@ -4858,7 +4863,7 @@ if not proof_not_started and unpaired_filled_exit_count > 0:
     warnings.append("unpaired_filled_exits")
 summary_warnings = list(warnings)
 for warning_prefix, warning_values in (
-    ("execution", execution_quality_warnings),
+    ("execution", execution_quality_summary_warnings),
     ("current_session_execution", current_session_execution_warnings),
     ("post_supervisor_execution", post_supervisor_execution_warnings),
 ):
