@@ -1258,10 +1258,22 @@ def test_nightly_cli_writes_audit_event_after_sweep(monkeypatch, tmp_path):
     from alpaca_bot.nightly import cli as module
     from alpaca_bot.tuning.sweep import TuningCandidate
 
+    started_at = datetime(2026, 7, 7, 21, 30, tzinfo=timezone.utc)
+    completed_at = datetime(2026, 7, 8, 0, 5, tzinfo=timezone.utc)
+
+    class FakeDateTime:
+        calls = iter([started_at, completed_at])
+
+        @classmethod
+        def now(cls, tz=None):
+            value = next(cls.calls)
+            return value if tz is None else value.astimezone(tz)
+
     _patch_env(monkeypatch)
     _make_scenario_files(tmp_path)
     _patch_common_db(monkeypatch, module)
     monkeypatch.setattr(module, "split_scenario", _fake_split)
+    monkeypatch.setattr(module, "datetime", FakeDateTime)
 
     cand = TuningCandidate(params={"BREAKOUT_LOOKBACK_BARS": "20"}, report=None, score=0.5)
     monkeypatch.setattr(module, "run_multi_scenario_sweep", lambda **kw: [cand])
@@ -1296,6 +1308,9 @@ def test_nightly_cli_writes_audit_event_after_sweep(monkeypatch, tmp_path):
     assert payload["best_strategy"] == "breakout"
     assert payload["candidate_env_written"] is True
     assert payload["proof_guard_enabled"] is False
+    assert payload["run_started_at"] == started_at.isoformat()
+    assert payload["completed_at"] == completed_at.isoformat()
+    assert sweep_events[0].created_at == completed_at
     assert "best_score" in payload
 
 

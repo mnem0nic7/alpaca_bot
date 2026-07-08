@@ -110,7 +110,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     trading_mode = settings.trading_mode
     strategy_version = settings.strategy_version
     output_dir = Path(args.output_dir)
-    now = datetime.now(timezone.utc)
+    run_started_at = datetime.now(timezone.utc)
     account_equity = _resolve_account_equity(settings=settings, dry_run=args.dry_run)
 
     conn = connect_postgres(settings.database_url)
@@ -311,7 +311,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             scenario_name=f"{scenario_name_base} [{strat_name}]",
                             trading_mode=trading_mode.value,
                             candidates=candidates,
-                            created_at=now,
+                            created_at=run_started_at,
                         )
                         print(f"  [{strat_name}] DB run_id={run_id}")
                     except Exception as exc:
@@ -341,12 +341,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             if not args.no_db and winners:
                 try:
+                    weight_computed_at = datetime.now(timezone.utc)
                     _publish_winner_strategy_weights(
                         conn=conn,
                         settings=settings,
                         strategy_names=strategy_names,
                         winners=winners,
-                        computed_at=now,
+                        computed_at=weight_computed_at,
                     )
                 except Exception as exc:
                     rollback = getattr(conn, "rollback", None)
@@ -360,7 +361,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             env_written = False
             if winners:
                 composite_params = _build_composite_env(winners)
-                env_block = _format_composite_env_block(composite_params, winners[0][0], now)
+                env_block = _format_composite_env_block(
+                    composite_params, winners[0][0], run_started_at
+                )
                 print(f"\n{env_block}")
                 if args.output_env:
                     Path(args.output_env).write_text(env_block + "\n")
@@ -377,6 +380,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             best_strat = winners[0][0] if winners else None
             best_score = winners[0][2] if winners else None
             try:
+                completed_at = datetime.now(timezone.utc)
                 AuditEventStore(conn).append(
                     AuditEvent(
                         event_type="nightly_sweep_completed",
@@ -387,8 +391,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "best_score": best_score,
                             "candidate_env_written": env_written,
                             "proof_guard_enabled": args.proof_guard,
+                            "run_started_at": run_started_at.isoformat(),
+                            "completed_at": completed_at.isoformat(),
                         },
-                        created_at=now,
+                        created_at=completed_at,
                     )
                 )
             except Exception as exc:
@@ -447,8 +453,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # ── Decision log retention ────────────────────────────────────────────
         if not args.no_db and args.prune_keep_days > 0:
             try:
+                pruned_at = datetime.now(timezone.utc)
                 deleted = DecisionLogStore(conn).prune(
-                    older_than_days=args.prune_keep_days, now=now
+                    older_than_days=args.prune_keep_days, now=pruned_at
                 )
                 AuditEventStore(conn).append(
                     AuditEvent(
@@ -458,7 +465,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "keep_days": args.prune_keep_days,
                             "source": "nightly",
                         },
-                        created_at=now,
+                        created_at=pruned_at,
                     )
                 )
                 print(
