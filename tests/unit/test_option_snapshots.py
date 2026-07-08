@@ -169,6 +169,26 @@ def test_ledger_returns_latest_contract_mark_at_or_before_timestamp():
     ) is None
 
 
+def test_ledger_does_not_carry_snapshots_across_utc_sessions():
+    ledger = OptionChainSnapshotLedger(
+        (
+            OptionChainSnapshot(
+                cycle_at=datetime(2026, 7, 7, 14, 30, tzinfo=timezone.utc),
+                chains_by_symbol={"ACHR": (_contract(ask=1.35),)},
+            ),
+        )
+    )
+    next_session = datetime(2026, 7, 8, 14, 30, tzinfo=timezone.utc)
+
+    assert ledger.snapshot_at_or_before(as_of=next_session) is None
+    assert ledger.symbols_at_or_before(as_of=next_session) == ()
+    assert ledger.chain_at_or_before(symbol="ACHR", as_of=next_session) == ()
+    assert ledger.contract_at_or_before(
+        occ_symbol="ACHR260717C00010000",
+        as_of=next_session,
+    ) is None
+
+
 def test_point_in_time_option_chains_requires_as_of_before_use():
     mapping = PointInTimeOptionChains(
         OptionChainSnapshotLedger(

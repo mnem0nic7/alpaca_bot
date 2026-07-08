@@ -39,6 +39,8 @@ class OptionChainSnapshotLedger:
         symbol_key = symbol.upper()
         as_of_utc = _normalize_utc(as_of)
         for snapshot in reversed(self.snapshots):
+            if snapshot.cycle_at.date() != as_of_utc.date():
+                continue
             if snapshot.cycle_at <= as_of_utc:
                 return snapshot.chains_by_symbol.get(symbol_key, ())
         return ()
@@ -58,6 +60,8 @@ class OptionChainSnapshotLedger:
         occ_key = occ_symbol.upper()
         as_of_utc = _normalize_utc(as_of)
         for snapshot in reversed(self.snapshots):
+            if snapshot.cycle_at.date() != as_of_utc.date():
+                continue
             if snapshot.cycle_at > as_of_utc:
                 continue
             for contracts in snapshot.chains_by_symbol.values():
@@ -69,6 +73,8 @@ class OptionChainSnapshotLedger:
     def snapshot_at_or_before(self, *, as_of: datetime) -> OptionChainSnapshot | None:
         as_of_utc = _normalize_utc(as_of)
         for snapshot in reversed(self.snapshots):
+            if snapshot.cycle_at.date() != as_of_utc.date():
+                continue
             if snapshot.cycle_at <= as_of_utc:
                 return snapshot
         return None
