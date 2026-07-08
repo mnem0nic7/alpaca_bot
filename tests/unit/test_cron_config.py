@@ -5969,11 +5969,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "disabled_strategy_names" in script
     assert "stock_strategy_name_set = set(STRATEGY_REGISTRY)" in script
     assert "option_strategy_name_set = set(OPTION_STRATEGY_NAMES)" in script
+    assert "def option_snapshot_contract_count" in script
     assert "def option_snapshot_ledger_summary" in script
     assert "option_snapshot_due_time = time(10, 0)" in script
     assert "option_snapshot_summary = option_snapshot_ledger_summary" in script
     assert 'option_snapshot_status = "missing" if option_snapshot_due else "not_due"' in script
     assert 'option_snapshot_status = "stale" if option_snapshot_due else "not_due"' in script
+    assert 'option_snapshot_status = "empty" if option_snapshot_due else "not_due"' in script
     assert 'option_snapshot_replay_ready = option_snapshot_status == "ok"' in script
     assert (
         "replay_supported_option_strategy_name_set = (\n"
@@ -6430,6 +6432,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "status={option_snapshot_status}" in script
     assert "target_session={option_snapshot_target_session.isoformat() if option_snapshot_target_session else 'none'}" in script
     assert "latest_file={safe_status_value(option_snapshot_summary['latest_file'])}" in script
+    assert "latest_contracts={option_snapshot_summary['latest_contracts']}" in script
     assert "symbols={len(settings.option_chain_symbols)}" in script
     assert "stock_disabled_candidates={len(disabled_stock_strategy_names)}" in script
     assert "stock_disabled_candidate_names={format_name_list(disabled_stock_strategy_names)}" in script

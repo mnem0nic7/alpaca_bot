@@ -481,6 +481,28 @@ def option_snapshot_file_session(path: Path) -> str:
     return match.group(1) if match else "unknown"
 
 
+def option_snapshot_contract_count(path: Path) -> int:
+    total_contracts = 0
+    try:
+        with path.open(encoding="utf-8") as snapshot_file:
+            for raw_line in snapshot_file:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                payload = json.loads(line)
+                chains_by_symbol = payload.get("chains_by_symbol")
+                if not isinstance(chains_by_symbol, dict):
+                    continue
+                total_contracts += sum(
+                    len(contracts)
+                    for contracts in chains_by_symbol.values()
+                    if isinstance(contracts, list)
+                )
+    except (OSError, json.JSONDecodeError):
+        return 0
+    return total_contracts
+
+
 def option_snapshot_ledger_summary(snapshot_dir: str | None) -> dict[str, object]:
     summary: dict[str, object] = {
         "path": snapshot_dir or "none",
@@ -489,6 +511,7 @@ def option_snapshot_ledger_summary(snapshot_dir: str | None) -> dict[str, object
         "latest_session": "none",
         "latest_modified": "none",
         "latest_bytes": 0,
+        "latest_contracts": 0,
     }
     if not snapshot_dir:
         return summary
@@ -522,6 +545,7 @@ def option_snapshot_ledger_summary(snapshot_dir: str | None) -> dict[str, object
                 timezone.utc,
             ).isoformat(),
             "latest_bytes": latest_stat.st_size,
+            "latest_contracts": option_snapshot_contract_count(latest_path),
         }
     )
     return summary
@@ -1190,6 +1214,8 @@ try:
             != option_snapshot_target_session.isoformat()
         ):
             option_snapshot_status = "stale" if option_snapshot_due else "not_due"
+        elif int(option_snapshot_summary["latest_contracts"]) <= 0:
+            option_snapshot_status = "empty" if option_snapshot_due else "not_due"
         else:
             option_snapshot_status = "ok"
         option_snapshot_replay_ready = option_snapshot_status == "ok"
@@ -4631,6 +4657,7 @@ print(
     f"latest_session={safe_status_value(option_snapshot_summary['latest_session'])} "
     f"latest_modified={safe_status_value(option_snapshot_summary['latest_modified'])} "
     f"latest_bytes={option_snapshot_summary['latest_bytes']} "
+    f"latest_contracts={option_snapshot_summary['latest_contracts']} "
     f"symbols={len(settings.option_chain_symbols)}"
 )
 print(
