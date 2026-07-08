@@ -66,9 +66,11 @@ MAX_OPEN_POSITIONS_VALUE="${SECOND_STRATEGY_MAX_OPEN_POSITIONS:-${MAX_OPEN_POSIT
 CANDIDATE_SCALES="${SECOND_STRATEGY_CANDIDATE_SCALES:-${SECOND_STRATEGY_CANDIDATE_SCALE:-0.10,0.25,0.50}}"
 OUTPUT_ROOT="${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}"
 OUTPUT_DIR="${SECOND_STRATEGY_OUTPUT_DIR:-$OUTPUT_ROOT/$(date -u +%Y%m%dT%H%M%SZ)}"
+PREFILTER_SUMMARY_JSON="${SECOND_STRATEGY_PREFILTER_SUMMARY_JSON:-}"
 LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"
 EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"
 VALIDATE_POSITIVES="${SECOND_STRATEGY_VALIDATE_POSITIVES:-true}"
+VALIDATE_ALL_POSITIVE_ROWS="${SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS:-false}"
 VALIDATION_CANDIDATES="${SECOND_STRATEGY_VALIDATION_CANDIDATES:-}"
 DEFAULT_VALIDATION_CANDIDATE_SCALE="${SECOND_STRATEGY_VALIDATION_CANDIDATE_SCALE:-${SECOND_STRATEGY_CANDIDATE_SCALE:-0.25}}"
 MAX_VALIDATION_CANDIDATES="${SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES:-0}"
@@ -91,8 +93,22 @@ case "${INCLUDE_OPTION_CANDIDATES,,}" in
     fail "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES must be true or false"
     ;;
 esac
+case "${VALIDATE_ALL_POSITIVE_ROWS,,}" in
+  true|1|yes|y)
+    VALIDATE_ALL_POSITIVE_ROWS=true
+    ;;
+  false|0|no|n|"")
+    VALIDATE_ALL_POSITIVE_ROWS=false
+    ;;
+  *)
+    fail "SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS must be true or false"
+    ;;
+esac
 
 [[ -d "$SCENARIO_DIR" ]] || fail "missing scenario dir: $SCENARIO_DIR"
+if [[ -n "$PREFILTER_SUMMARY_JSON" && ! -f "$PREFILTER_SUMMARY_JSON" ]]; then
+  fail "missing prefilter summary JSON: $PREFILTER_SUMMARY_JSON"
+fi
 mkdir -p "$OUTPUT_DIR"
 
 proof_output="$OUTPUT_DIR/proof_status.txt"
@@ -134,7 +150,15 @@ option_candidate_csv=""
 if [[ "$INCLUDE_OPTION_CANDIDATES" == "true" ]]; then
   option_candidate_csv="${SECOND_STRATEGY_OPTION_CANDIDATES:-}"
 fi
-if [[ -n "${SECOND_STRATEGY_CANDIDATES:-}" ]]; then
+if [[ -n "$PREFILTER_SUMMARY_JSON" ]]; then
+  candidates=()
+  if [[ "$INCLUDE_OPTION_CANDIDATES" == "true" && -z "$option_candidate_csv" ]]; then
+    load_proof_status "discovering disabled option candidates"
+    diversification_line="$(grep -E '^paper proof strategy diversification: ' "$proof_output" | tail -n 1 || true)"
+    [[ -n "$diversification_line" ]] || fail "proof status did not print strategy diversification details"
+    option_candidate_csv="$(extract_field "$diversification_line" "option_gated_disabled_candidate_names" || true)"
+  fi
+elif [[ -n "${SECOND_STRATEGY_CANDIDATES:-}" ]]; then
   mapfile -t candidates < <(read_name_list "$SECOND_STRATEGY_CANDIDATES")
   if [[ "$INCLUDE_OPTION_CANDIDATES" == "true" && -z "$option_candidate_csv" ]]; then
     load_proof_status "discovering disabled option candidates"
@@ -184,7 +208,9 @@ else
   skipped_candidates=()
 fi
 
-[[ "${#candidates[@]}" -gt 0 ]] || fail "no candidate strategies to scan"
+if [[ -z "$PREFILTER_SUMMARY_JSON" ]]; then
+  [[ "${#candidates[@]}" -gt 0 ]] || fail "no candidate strategies to scan"
+fi
 mapfile -t candidate_scales < <(read_name_list "$CANDIDATE_SCALES")
 [[ "${#candidate_scales[@]}" -gt 0 ]] || fail "no candidate scales to scan"
 python3 - "${candidate_scales[@]}" <<'PY' || fail "invalid candidate scale list: $CANDIDATE_SCALES"
@@ -241,12 +267,17 @@ fi
 status_file="$OUTPUT_DIR/status.tsv"
 summary_file="$OUTPUT_DIR/summary.md"
 summary_json_file="$OUTPUT_DIR/summary.json"
+prefilter_skipped=false
+if [[ -n "$PREFILTER_SUMMARY_JSON" ]]; then
+  summary_json_file="$PREFILTER_SUMMARY_JSON"
+  prefilter_skipped=true
+fi
 status_parts_dir="$OUTPUT_DIR/status_parts"
 : > "$status_file"
 mkdir -p "$status_parts_dir"
 
 echo "second strategy basket scan: output_dir=$OUTPUT_DIR"
-echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none}"
+echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
 
 failed_count=0
 run_prefilter_job() {
@@ -302,32 +333,35 @@ wait_for_next_prefilter_job() {
   prefilter_running_jobs=$((prefilter_running_jobs - 1))
 }
 
-prefilter_running_jobs=0
-for candidate in "${candidates[@]}"; do
-  if [[ "$candidate" == "$BASE_STRATEGY" ]]; then
-    continue
-  fi
-  for candidate_scale in "${candidate_scales[@]}"; do
-    run_prefilter_job "$candidate" "$candidate_scale" &
-    prefilter_running_jobs=$((prefilter_running_jobs + 1))
-    if [[ "$prefilter_running_jobs" -ge "$SCAN_JOBS" ]]; then
-      wait_for_next_prefilter_job
+if [[ "$prefilter_skipped" == "true" ]]; then
+  echo "second strategy basket scan: using existing prefilter_summary_json=$summary_json_file"
+else
+  prefilter_running_jobs=0
+  for candidate in "${candidates[@]}"; do
+    if [[ "$candidate" == "$BASE_STRATEGY" ]]; then
+      continue
     fi
+    for candidate_scale in "${candidate_scales[@]}"; do
+      run_prefilter_job "$candidate" "$candidate_scale" &
+      prefilter_running_jobs=$((prefilter_running_jobs + 1))
+      if [[ "$prefilter_running_jobs" -ge "$SCAN_JOBS" ]]; then
+        wait_for_next_prefilter_job
+      fi
+    done
   done
-done
-while [[ "$prefilter_running_jobs" -gt 0 ]]; do
-  wait_for_next_prefilter_job
-done
-for status_part in "$status_parts_dir"/*.tsv; do
-  [[ -e "$status_part" ]] || continue
-  cat "$status_part" >> "$status_file"
-done
+  while [[ "$prefilter_running_jobs" -gt 0 ]]; do
+    wait_for_next_prefilter_job
+  done
+  for status_part in "$status_parts_dir"/*.tsv; do
+    [[ -e "$status_part" ]] || continue
+    cat "$status_part" >> "$status_file"
+  done
 
-python3 - "$status_file" "$summary_file" "$summary_json_file" \
-  "$SCENARIO_DIR" "$BASE_STRATEGY" "$SAMPLE_SIZE" "$SAMPLE_SEED" \
-  "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "${candidate_scales[*]}" \
-  "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" \
-  "$SCAN_JOBS" "$INCLUDE_OPTION_CANDIDATES" "${OPTION_CHAIN_SNAPSHOTS:-none}" <<'PY'
+  python3 - "$status_file" "$summary_file" "$summary_json_file" \
+    "$SCENARIO_DIR" "$BASE_STRATEGY" "$SAMPLE_SIZE" "$SAMPLE_SEED" \
+    "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "${candidate_scales[*]}" \
+    "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" \
+    "$SCAN_JOBS" "$INCLUDE_OPTION_CANDIDATES" "${OPTION_CHAIN_SNAPSHOTS:-none}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -502,6 +536,7 @@ print(f"summary={summary_path}")
 print(f"summary_json={summary_json_path}")
 print(f"positive_edge_prefilter_rows={positive_edges}")
 PY
+fi
 
 validation_failed_count=0
 if [[ "${VALIDATE_POSITIVES,,}" == "true" ]]; then
@@ -511,7 +546,8 @@ if [[ "${VALIDATE_POSITIVES,,}" == "true" ]]; then
     read_validation_candidate_specs "$VALIDATION_CANDIDATES" "$DEFAULT_VALIDATION_CANDIDATE_SCALE" > "$validation_specs_file"
   else
     mkdir -p "$VALIDATION_OUTPUT_DIR"
-    python3 - "$summary_json_file" "$validation_specs_file" "$MAX_VALIDATION_CANDIDATES" <<'PY'
+    python3 - "$summary_json_file" "$validation_specs_file" \
+      "$MAX_VALIDATION_CANDIDATES" "$VALIDATE_ALL_POSITIVE_ROWS" <<'PY'
 from __future__ import annotations
 
 import json
@@ -522,8 +558,10 @@ import sys
 payload = json.loads(Path(sys.argv[1]).read_text())
 output_path = Path(sys.argv[2])
 max_validation_candidates = int(sys.argv[3])
+validate_all_positive_rows = sys.argv[4].lower() == "true"
 
 best_by_candidate = {}
+positive_rows = []
 for row in payload.get("rows", []):
     if row.get("status") == "passed" and row.get("verdict") == "positive-edge":
         ci_low = row.get("ci_low")
@@ -534,18 +572,35 @@ for row in payload.get("rows", []):
             -(float(p_mean_le_zero) if p_mean_le_zero is not None else math.inf),
             float(total_pnl) if total_pnl is not None else -math.inf,
         )
+        positive_rows.append((score, row))
         current = best_by_candidate.get(row["candidate"])
         if current is None or score > current[0]:
             best_by_candidate[row["candidate"]] = (score, row)
 
-selected = [
-    item[1]
-    for item in sorted(
-        best_by_candidate.values(),
-        key=lambda item: (item[0][0], item[0][1], item[0][2], item[1]["candidate"]),
-        reverse=True,
-    )
-]
+if validate_all_positive_rows:
+    selected = [
+        item[1]
+        for item in sorted(
+            positive_rows,
+            key=lambda item: (
+                item[0][0],
+                item[0][1],
+                item[0][2],
+                item[1]["candidate"],
+                float(item[1]["candidate_scale"]),
+            ),
+            reverse=True,
+        )
+    ]
+else:
+    selected = [
+        item[1]
+        for item in sorted(
+            best_by_candidate.values(),
+            key=lambda item: (item[0][0], item[0][1], item[0][2], item[1]["candidate"]),
+            reverse=True,
+        )
+    ]
 if max_validation_candidates > 0:
     selected = selected[:max_validation_candidates]
 output_path.write_text(
@@ -565,7 +620,7 @@ PY
   mkdir -p "$validation_status_parts_dir"
 
   validation_spec_count="$(wc -l < "$validation_specs_file" | tr -d ' ')"
-  echo "second strategy basket validation: output_dir=$VALIDATION_OUTPUT_DIR candidates=$validation_spec_count sample_size=$VALIDATION_SAMPLE_SIZE sample_seed=$VALIDATION_SAMPLE_SEED scan_jobs=$SCAN_JOBS"
+  echo "second strategy basket validation: output_dir=$VALIDATION_OUTPUT_DIR candidates=$validation_spec_count sample_size=$VALIDATION_SAMPLE_SIZE sample_seed=$VALIDATION_SAMPLE_SEED scan_jobs=$SCAN_JOBS validate_all_positive_rows=$VALIDATE_ALL_POSITIVE_ROWS"
 
   run_validation_job() {
     local candidate="$1"
@@ -643,7 +698,7 @@ PY
     "$VALIDATION_SAMPLE_SEED" "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" \
     "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" \
     "$MAX_VALIDATION_CANDIDATES" "$SCAN_JOBS" "$INCLUDE_OPTION_CANDIDATES" \
-    "${OPTION_CHAIN_SNAPSHOTS:-none}" <<'PY'
+    "${OPTION_CHAIN_SNAPSHOTS:-none}" "$VALIDATE_ALL_POSITIVE_ROWS" <<'PY'
 from __future__ import annotations
 
 import json
@@ -667,6 +722,7 @@ max_validation_candidates = sys.argv[14]
 scan_jobs = sys.argv[15]
 include_option_candidates = sys.argv[16]
 option_chain_snapshots = sys.argv[17]
+validate_all_positive_rows = sys.argv[18]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -727,6 +783,7 @@ lines = [
     f"- excluded_candidates: `{excluded_candidates}`",
     f"- include_option_candidates: `{include_option_candidates}`",
     f"- option_chain_snapshots: `{option_chain_snapshots}`",
+    f"- validate_all_positive_rows: `{validate_all_positive_rows}`",
     "",
     "| candidate | scale | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
     "|---|---:|---|---:|---:|---:|---:|---|---:|---:|---|---|",
@@ -820,6 +877,7 @@ summary_json_path.write_text(
             "excluded_candidates": excluded_candidates,
             "include_option_candidates": include_option_candidates,
             "option_chain_snapshots": option_chain_snapshots,
+            "validate_all_positive_rows": validate_all_positive_rows,
             "positive_edge_validation_rows": validation_positive_edges,
             "promotion_approved": False,
             "conclusion": conclusion,
@@ -848,10 +906,10 @@ else
   echo "second strategy basket validation: disabled"
 fi
 
-if [[ -z "$LATEST_LINK" && -z "${SECOND_STRATEGY_OUTPUT_DIR:-}" ]]; then
+if [[ "$prefilter_skipped" != "true" && -z "$LATEST_LINK" && -z "${SECOND_STRATEGY_OUTPUT_DIR:-}" ]]; then
   LATEST_LINK="$OUTPUT_ROOT/latest"
 fi
-if [[ -n "$LATEST_LINK" ]]; then
+if [[ "$prefilter_skipped" != "true" && -n "$LATEST_LINK" ]]; then
   mkdir -p "$(dirname "$LATEST_LINK")"
   ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"
   echo "latest=$LATEST_LINK"

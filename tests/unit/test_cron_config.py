@@ -276,7 +276,9 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"' in script
     assert 'EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"' in script
     assert 'CANDIDATE_SCALES="${SECOND_STRATEGY_CANDIDATE_SCALES:-${SECOND_STRATEGY_CANDIDATE_SCALE:-0.10,0.25,0.50}}"' in script
+    assert 'PREFILTER_SUMMARY_JSON="${SECOND_STRATEGY_PREFILTER_SUMMARY_JSON:-}"' in script
     assert 'VALIDATE_POSITIVES="${SECOND_STRATEGY_VALIDATE_POSITIVES:-true}"' in script
+    assert 'VALIDATE_ALL_POSITIVE_ROWS="${SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS:-false}"' in script
     assert 'VALIDATION_CANDIDATES="${SECOND_STRATEGY_VALIDATION_CANDIDATES:-}"' in script
     assert 'MAX_VALIDATION_CANDIDATES="${SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES:-0}"' in script
     assert 'SCAN_JOBS="${SECOND_STRATEGY_SCAN_JOBS:-2}"' in script
@@ -285,12 +287,18 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'INCLUDE_OPTION_CANDIDATES="${SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES:-false}"' in script
     assert 'OPTION_CHAIN_SNAPSHOTS="${SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS:-${OPTION_CHAIN_SNAPSHOT_DIR:-}}"' in script
     assert "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES must be true or false" in script
+    assert "SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS must be true or false" in script
+    assert "missing prefilter summary JSON" in script
+    assert "using existing prefilter_summary_json" in script
+    assert 'prefilter_skipped=false' in script
+    assert 'prefilter_skipped=true' in script
     assert 'option_candidate_csv="${SECOND_STRATEGY_OPTION_CANDIDATES:-}"' in script
     assert "option-chain snapshot path is empty or missing" in script
     assert 'LATEST_LINK="$OUTPUT_ROOT/latest"' in script
     assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script
     assert 'VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"' in script
     assert 'ln -sfn "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"' in script
+    assert '[[ "$prefilter_skipped" != "true" && -n "$LATEST_LINK" ]]' in script
     assert "Run metadata:" in script
     assert 'f"- sample_seed: `{sample_seed}`"' in script
     assert 'f"- starting_equity: `{starting_equity}`"' in script
@@ -305,6 +313,8 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert '--confidence-scale "$candidate=$candidate_scale"' in script
     assert '--option-chain-snapshots "$OPTION_CHAIN_SNAPSHOTS"' in script
     assert "best_by_candidate" in script
+    assert "positive_rows" in script
+    assert "validate_all_positive_rows" in script
     assert "candidate_scales" in script
     assert "run_prefilter_job" in script
     assert "wait_for_next_prefilter_job" in script
