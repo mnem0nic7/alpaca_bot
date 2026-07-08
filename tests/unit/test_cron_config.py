@@ -357,6 +357,7 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "completed_status_part_is_reusable" in script
     assert "reusing completed candidate=" in script
     assert "require_fingerprint" in script
+    assert script.count("require_fingerprint=true") == 2
     assert 'fingerprint_path="$status_part.fingerprint"' in script
     assert "write_status_part_fingerprint" in script
     assert "option_contracts=$OPTION_SNAPSHOT_CONTRACTS" in script

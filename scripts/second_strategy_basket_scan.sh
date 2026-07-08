@@ -572,10 +572,7 @@ run_prefilter_job() {
   jsonl_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.jsonl"
   stderr_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.stderr"
   status_part="$status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
-  require_fingerprint=false
-  if is_option_candidate "$candidate"; then
-    require_fingerprint=true
-  fi
+  require_fingerprint=true
   job_fingerprint="prefilter|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$SAMPLE_SIZE|seed=$SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v1"
   if completed_status_part_is_reusable "$status_part" "$candidate" "$candidate_scale" "$require_fingerprint" "$job_fingerprint"; then
     echo "second strategy basket scan: reusing completed candidate=$candidate scale=$candidate_scale"
@@ -988,10 +985,7 @@ PY
     jsonl_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.jsonl"
     stderr_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.stderr"
     status_part="$validation_status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
-    require_fingerprint=false
-    if is_option_candidate "$candidate"; then
-      require_fingerprint=true
-    fi
+    require_fingerprint=true
     job_fingerprint="validation|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$VALIDATION_SAMPLE_SIZE|seed=$VALIDATION_SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v1"
     if completed_status_part_is_reusable "$status_part" "$candidate" "$candidate_scale" "$require_fingerprint" "$job_fingerprint"; then
       echo "second strategy basket validation: reusing completed candidate=$candidate scale=$candidate_scale"
