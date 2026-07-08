@@ -6121,8 +6121,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "option_strategy_name_set = set(OPTION_STRATEGY_NAMES)" in script
     assert "def option_snapshot_contract_count" in script
     assert "def option_snapshot_ledger_summary" in script
+    assert "target_session: date | None = None" in script
+    assert 'f"option-chain-snapshots-{target_session.isoformat()}.jsonl"' in script
+    assert "selected_path, selected_stat = file_path, stat" in script
     assert "option_snapshot_due_time = time(10, 0)" in script
     assert "option_snapshot_summary = option_snapshot_ledger_summary" in script
+    assert "option_snapshot_target_session" in script
     assert 'option_snapshot_status = "missing" if option_snapshot_due else "not_due"' in script
     assert 'option_snapshot_status = "stale" if option_snapshot_due else "not_due"' in script
     assert 'option_snapshot_status = "empty" if option_snapshot_due else "not_due"' in script

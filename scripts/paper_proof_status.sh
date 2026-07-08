@@ -503,7 +503,10 @@ def option_snapshot_contract_count(path: Path) -> int:
     return total_contracts
 
 
-def option_snapshot_ledger_summary(snapshot_dir: str | None) -> dict[str, object]:
+def option_snapshot_ledger_summary(
+    snapshot_dir: str | None,
+    target_session: date | None = None,
+) -> dict[str, object]:
     summary: dict[str, object] = {
         "path": snapshot_dir or "none",
         "file_count": 0,
@@ -534,18 +537,26 @@ def option_snapshot_ledger_summary(snapshot_dir: str | None) -> dict[str, object
         return summary
     if not files:
         return summary
-    latest_path, latest_stat = max(files, key=lambda item: item[1].st_mtime)
+    selected_path, selected_stat = max(files, key=lambda item: item[1].st_mtime)
+    if target_session is not None:
+        target_snapshot_name = (
+            f"option-chain-snapshots-{target_session.isoformat()}.jsonl"
+        )
+        for file_path, stat in files:
+            if file_path.name == target_snapshot_name:
+                selected_path, selected_stat = file_path, stat
+                break
     summary.update(
         {
             "file_count": len(files),
-            "latest_file": latest_path.name,
-            "latest_session": option_snapshot_file_session(latest_path),
+            "latest_file": selected_path.name,
+            "latest_session": option_snapshot_file_session(selected_path),
             "latest_modified": datetime.fromtimestamp(
-                latest_stat.st_mtime,
+                selected_stat.st_mtime,
                 timezone.utc,
             ).isoformat(),
-            "latest_bytes": latest_stat.st_size,
-            "latest_contracts": option_snapshot_contract_count(latest_path),
+            "latest_bytes": selected_stat.st_size,
+            "latest_contracts": option_snapshot_contract_count(selected_path),
         }
     )
     return summary
@@ -1199,7 +1210,8 @@ try:
             name for name in disabled_strategy_names if name in option_strategy_name_set
         ]
         option_snapshot_summary = option_snapshot_ledger_summary(
-            settings.option_chain_snapshot_dir
+            settings.option_chain_snapshot_dir,
+            option_snapshot_target_session,
         )
         option_snapshot_file_count = int(option_snapshot_summary["file_count"])
         if not settings.option_chain_snapshot_dir:
