@@ -561,6 +561,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "SECOND_STRATEGY_OUTPUT_ROOT=/var/lib/alpaca-bot/nightly/second_strategy" in env_text
     assert "SECOND_STRATEGY_EXCLUDE_CANDIDATES=vwap_cross" in env_text
     assert "SECOND_STRATEGY_CANDIDATE_SCALES=0.10,0.25,0.50" in env_text
+    assert "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES=auto" in env_text
     assert "SECOND_STRATEGY_VALIDATE_POSITIVES=true" in env_text
     assert "SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS=true" in env_text
     assert "SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES=0" in env_text
@@ -642,6 +643,7 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "SECOND_STRATEGY_OUTPUT_ROOT=/var/lib/alpaca-bot/nightly/second_strategy" in script
     assert "SECOND_STRATEGY_EXCLUDE_CANDIDATES=vwap_cross" in script
     assert "SECOND_STRATEGY_CANDIDATE_SCALES=0.10,0.25,0.50" in script
+    assert "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES=auto" in script
     assert "SECOND_STRATEGY_VALIDATE_POSITIVES=true" in script
     assert "SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS=true" in script
     assert "SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES=0" in script

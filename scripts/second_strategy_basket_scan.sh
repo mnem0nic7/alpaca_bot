@@ -79,7 +79,7 @@ VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"
 VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"
 VALIDATION_OUTPUT_DIR="${SECOND_STRATEGY_VALIDATION_OUTPUT_DIR:-$OUTPUT_DIR/validation}"
 VALIDATION_LATEST_LINK="${SECOND_STRATEGY_VALIDATION_LATEST_LINK:-}"
-INCLUDE_OPTION_CANDIDATES="${SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES:-false}"
+INCLUDE_OPTION_CANDIDATES="${SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES:-auto}"
 HOST_OPTION_CHAIN_SNAPSHOT_DIR="${SECOND_STRATEGY_HOST_OPTION_CHAIN_SNAPSHOT_DIR:-/var/lib/alpaca-bot/option-chain-snapshots}"
 OPTION_CHAIN_SNAPSHOTS="${SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS:-}"
 if [[ -z "$OPTION_CHAIN_SNAPSHOTS" ]]; then
@@ -96,8 +96,11 @@ case "${INCLUDE_OPTION_CANDIDATES,,}" in
   false|0|no|n|"")
     INCLUDE_OPTION_CANDIDATES=false
     ;;
+  auto)
+    INCLUDE_OPTION_CANDIDATES=auto
+    ;;
   *)
-    fail "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES must be true or false"
+    fail "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES must be true, false, or auto"
     ;;
 esac
 case "${VALIDATE_ALL_POSITIVE_ROWS,,}" in
@@ -141,6 +144,14 @@ option_snapshot_path_has_files() {
   [[ -d "$path" ]] || return 1
   [[ -n "$(find "$path" -maxdepth 1 -type f -name 'option-chain-snapshots-*.jsonl' -size +0c -print -quit)" ]]
 }
+
+if [[ "$INCLUDE_OPTION_CANDIDATES" == "auto" ]]; then
+  if [[ -n "$OPTION_CHAIN_SNAPSHOTS" ]] && option_snapshot_path_has_files "$OPTION_CHAIN_SNAPSHOTS"; then
+    INCLUDE_OPTION_CANDIDATES=true
+  else
+    INCLUDE_OPTION_CANDIDATES=false
+  fi
+fi
 
 is_option_candidate() {
   local candidate="$1"
