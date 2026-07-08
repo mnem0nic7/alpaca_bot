@@ -68,6 +68,7 @@ OUTPUT_ROOT="${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_s
 OUTPUT_DIR="${SECOND_STRATEGY_OUTPUT_DIR:-$OUTPUT_ROOT/$(date -u +%Y%m%dT%H%M%SZ)}"
 PREFILTER_SUMMARY_JSON="${SECOND_STRATEGY_PREFILTER_SUMMARY_JSON:-}"
 LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"
+UPDATE_LATEST_LINKS="${SECOND_STRATEGY_UPDATE_LATEST_LINKS:-true}"
 EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"
 VALIDATE_POSITIVES="${SECOND_STRATEGY_VALIDATE_POSITIVES:-true}"
 VALIDATE_ALL_POSITIVE_ROWS="${SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS:-true}"
@@ -134,6 +135,17 @@ case "${RESUME_COMPLETED_JOBS,,}" in
     ;;
   *)
     fail "SECOND_STRATEGY_RESUME_COMPLETED_JOBS must be true or false"
+    ;;
+esac
+case "${UPDATE_LATEST_LINKS,,}" in
+  true|1|yes|y)
+    UPDATE_LATEST_LINKS=true
+    ;;
+  false|0|no|n|"")
+    UPDATE_LATEST_LINKS=false
+    ;;
+  *)
+    fail "SECOND_STRATEGY_UPDATE_LATEST_LINKS must be true or false"
     ;;
 esac
 
@@ -236,6 +248,85 @@ print(total_contracts)
 PY
 }
 
+freeze_option_snapshot_input() {
+  local source_path="$1"
+  local destination_root="$2"
+  python3 - "$source_path" "$destination_root" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+source_path = Path(sys.argv[1])
+destination_root = Path(sys.argv[2]) / "option_chain_snapshots"
+latest_path = None
+if source_path.is_file():
+    latest_path = source_path
+elif source_path.is_dir():
+    files = [
+        (path.stat().st_mtime, path)
+        for path in source_path.glob("option-chain-snapshots-*.jsonl")
+        if path.is_file() and path.stat().st_size > 0
+    ]
+    if files:
+        latest_path = max(files, key=lambda item: item[0])[1]
+if latest_path is None:
+    raise SystemExit("no replayable option-chain snapshot file found")
+
+expected_date = None
+prefix = "option-chain-snapshots-"
+if latest_path.stem.startswith(prefix):
+    try:
+        expected_date = datetime.fromisoformat(
+            latest_path.stem.removeprefix(prefix)
+        ).date()
+    except ValueError:
+        expected_date = None
+
+destination_root.mkdir(parents=True, exist_ok=True)
+destination_path = destination_root / latest_path.name
+temporary_path = destination_path.with_suffix(destination_path.suffix + ".tmp")
+total_contracts = 0
+valid_lines = 0
+with latest_path.open(encoding="utf-8") as source, temporary_path.open(
+    "w", encoding="utf-8"
+) as destination:
+    for raw_line in source:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            break
+        if expected_date is not None:
+            cycle_at = datetime.fromisoformat(str(payload["cycle_at"]))
+            if cycle_at.tzinfo is None:
+                cycle_at = cycle_at.replace(tzinfo=timezone.utc)
+            else:
+                cycle_at = cycle_at.astimezone(timezone.utc)
+            if cycle_at.date() != expected_date:
+                raise SystemExit(
+                    "option-chain snapshot cycle_at date does not match filename"
+                )
+        chains_by_symbol = payload.get("chains_by_symbol")
+        if not isinstance(chains_by_symbol, dict):
+            raise SystemExit("option-chain snapshot missing chains_by_symbol")
+        total_contracts += sum(
+            len(contracts)
+            for contracts in chains_by_symbol.values()
+            if isinstance(contracts, list)
+        )
+        destination.write(line)
+        destination.write("\n")
+        valid_lines += 1
+if valid_lines == 0 or total_contracts <= 0:
+    raise SystemExit("frozen option-chain snapshot has no replayable contracts")
+temporary_path.replace(destination_path)
+print(f"{destination_path}\t{total_contracts}")
+PY
+}
+
 OPTION_SNAPSHOT_CONTRACTS=0
 if [[ -n "$OPTION_CHAIN_SNAPSHOTS" ]] && option_snapshot_path_has_files "$OPTION_CHAIN_SNAPSHOTS"; then
   OPTION_SNAPSHOT_CONTRACTS="$(option_snapshot_contract_count "$OPTION_CHAIN_SNAPSHOTS")"
@@ -326,6 +417,11 @@ if [[ "$INCLUDE_OPTION_CANDIDATES" == "true" ]]; then
   [[ -n "$OPTION_CHAIN_SNAPSHOTS" ]] || fail "SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS or OPTION_CHAIN_SNAPSHOT_DIR is required when option candidates are included"
   option_snapshot_path_has_files "$OPTION_CHAIN_SNAPSHOTS" || fail "option-chain snapshot path is empty or missing: $OPTION_CHAIN_SNAPSHOTS"
   [[ "$OPTION_SNAPSHOT_CONTRACTS" =~ ^[0-9]+$ && "$OPTION_SNAPSHOT_CONTRACTS" -gt 0 ]] || fail "option-chain snapshot path has no replayable contracts: $OPTION_CHAIN_SNAPSHOTS"
+  frozen_option_snapshot="$(freeze_option_snapshot_input "$OPTION_CHAIN_SNAPSHOTS" "$OUTPUT_DIR")"
+  OPTION_CHAIN_SNAPSHOTS="${frozen_option_snapshot%%$'\t'*}"
+  OPTION_SNAPSHOT_CONTRACTS="${frozen_option_snapshot#*$'\t'}"
+  [[ -f "$OPTION_CHAIN_SNAPSHOTS" ]] || fail "could not freeze option-chain snapshot: $OPTION_CHAIN_SNAPSHOTS"
+  [[ "$OPTION_SNAPSHOT_CONTRACTS" =~ ^[0-9]+$ && "$OPTION_SNAPSHOT_CONTRACTS" -gt 0 ]] || fail "frozen option-chain snapshot has no replayable contracts: $OPTION_CHAIN_SNAPSHOTS"
 fi
 
 mapfile -t excluded_candidates < <(read_name_list "$EXCLUDE_CANDIDATES")
@@ -1106,7 +1202,7 @@ print(f"validation_summary_json={summary_json_path}")
 print(f"positive_edge_validation_rows={validation_positive_edges}")
 PY
 
-  if [[ -z "$VALIDATION_LATEST_LINK" && -z "${SECOND_STRATEGY_OUTPUT_DIR:-}" ]]; then
+  if [[ -z "$VALIDATION_LATEST_LINK" && "$UPDATE_LATEST_LINKS" == "true" ]]; then
     VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"
   fi
   if [[ -n "$VALIDATION_LATEST_LINK" ]]; then
@@ -1118,7 +1214,7 @@ else
   echo "second strategy basket validation: disabled"
 fi
 
-if [[ "$prefilter_skipped" != "true" && -z "$LATEST_LINK" && -z "${SECOND_STRATEGY_OUTPUT_DIR:-}" ]]; then
+if [[ "$prefilter_skipped" != "true" && -z "$LATEST_LINK" && "$UPDATE_LATEST_LINKS" == "true" ]]; then
   LATEST_LINK="$OUTPUT_ROOT/latest"
 fi
 if [[ "$prefilter_skipped" != "true" && -n "$LATEST_LINK" ]]; then

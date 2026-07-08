@@ -274,6 +274,8 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'starting_equity="${SECOND_STRATEGY_STARTING_EQUITY:-}"' in script
     assert 'OUTPUT_ROOT="${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}"' in script
     assert 'LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"' in script
+    assert 'UPDATE_LATEST_LINKS="${SECOND_STRATEGY_UPDATE_LATEST_LINKS:-true}"' in script
+    assert "SECOND_STRATEGY_UPDATE_LATEST_LINKS must be true or false" in script
     assert 'EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"' in script
     assert 'CANDIDATE_SCALES="${SECOND_STRATEGY_CANDIDATE_SCALES:-${SECOND_STRATEGY_CANDIDATE_SCALE:-0.10,0.25,0.50}}"' in script
     assert 'PREFILTER_SUMMARY_JSON="${SECOND_STRATEGY_PREFILTER_SUMMARY_JSON:-}"' in script
@@ -314,6 +316,13 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'OPTION_REPLAY_STATUS="$(extract_field "$option_snapshot_line" "replay_status" || true)"' in script
     assert 'OPTION_REPLAY_STATUS" == "supported' in script
     assert "option-chain snapshot path has no replayable contracts" in script
+    assert "freeze_option_snapshot_input" in script
+    assert 'destination_root = Path(sys.argv[2]) / "option_chain_snapshots"' in script
+    assert 'temporary_path.replace(destination_path)' in script
+    assert 'frozen_option_snapshot="$(freeze_option_snapshot_input "$OPTION_CHAIN_SNAPSHOTS" "$OUTPUT_DIR")"' in script
+    assert 'OPTION_CHAIN_SNAPSHOTS="${frozen_option_snapshot%%$\'\\t\'*}"' in script
+    assert 'OPTION_SNAPSHOT_CONTRACTS="${frozen_option_snapshot#*$\'\\t\'}"' in script
+    assert "frozen option-chain snapshot has no replayable contracts" in script
     assert "option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS" in script
     assert "option_replay_status=$OPTION_REPLAY_STATUS" in script
     assert "is_known_option_candidate" in script
@@ -325,6 +334,7 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script
     assert 'VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"' in script
     assert 'ln -sfn "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"' in script
+    assert '&& "$UPDATE_LATEST_LINKS" == "true"' in script
     assert '[[ "$prefilter_skipped" != "true" && -n "$LATEST_LINK" ]]' in script
     assert "Run metadata:" in script
     assert 'f"- sample_seed: `{sample_seed}`"' in script
