@@ -4818,6 +4818,16 @@ if not proof_not_started and 0 < trade_count:
         warnings.append("cumulative_pnl_below_minimum")
 if not proof_not_started and unpaired_filled_exit_count > 0:
     warnings.append("unpaired_filled_exits")
+summary_warnings = list(warnings)
+for warning_prefix, warning_values in (
+    ("execution", execution_quality_warnings),
+    ("current_session_execution", current_session_execution_warnings),
+    ("post_supervisor_execution", post_supervisor_execution_warnings),
+):
+    for warning_value in warning_values:
+        warning_name = f"{warning_prefix}_{warning_value}"
+        if warning_name not in summary_warnings:
+            summary_warnings.append(warning_name)
 
 readiness_status = "blocked" if blockers else "ready"
 evidence_blockers = clean_window_blockers if clean_window_status == "dirty" else proof_blockers
@@ -4866,7 +4876,7 @@ print(
     f"overall_blockers={','.join(scale_blockers) if scale_blockers else 'none'} "
     f"clean_window_blockers={','.join(clean_window_blockers) if clean_window_blockers else 'none'} "
     f"sealed_clean_window_blockers={','.join(clean_window_sealed_blockers) if clean_window_sealed_blockers else 'none'} "
-    f"warnings={','.join(warnings) if warnings else 'none'}"
+    f"warnings={','.join(summary_warnings) if summary_warnings else 'none'}"
 )
 
 print(

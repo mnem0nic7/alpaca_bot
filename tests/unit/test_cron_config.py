@@ -5770,7 +5770,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "{','.join(clean_window_sealed_blockers) if clean_window_sealed_blockers else 'none'}"
         in script
     )
-    assert "warnings={','.join(warnings) if warnings else 'none'}" in script
+    assert "warnings={','.join(summary_warnings) if summary_warnings else 'none'}" in script
     assert "partial_pnl_negative" in script
     assert "partial_pnl_below_minimum" in script
     assert "cumulative_pnl_negative" in script
@@ -6297,6 +6297,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "current_session_execution_warnings.append(\"short_entry_windows\")" in script
     assert "post_supervisor_execution_status" in script
     assert "post_supervisor_execution_warnings.append(\"short_entry_windows\")" in script
+    assert "summary_warnings = list(warnings)" in script
+    assert "(\"execution\", execution_quality_warnings)" in script
+    assert "(\"current_session_execution\", current_session_execution_warnings)" in script
+    assert "(\"post_supervisor_execution\", post_supervisor_execution_warnings)" in script
+    assert "warning_name = f\"{warning_prefix}_{warning_value}\"" in script
+    assert "warnings={','.join(summary_warnings) if summary_warnings else 'none'}" in script
     assert "cycle_at >= %s" in script
     assert "AND o.created_at >= %s" in script
     assert "scale_blockers.append(\"capacity_rejections\")" in script
