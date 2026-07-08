@@ -235,6 +235,37 @@ Conclusion: `BB_PERIOD=20` improved total P&L versus the period-15 slice but
 still did not produce a positive prefilter survivor. No validation candidate was
 available, and `bb_squeeze` remains unapproved.
 
+## 2026-07-08 BB Squeeze Period-25 Grid
+
+The final `bb_squeeze` grid slice tested `BB_PERIOD=25`:
+
+- artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T055850Z/summary.md` and `validation/summary.md`
+- variants: `grid_019` through `grid_027`
+- prefilter result: `positive_edge_prefilter_rows=4`
+- validation result: `positive_edge_validation_rows=0`,
+  `promotion_approved=false`
+
+Prefilter survivors:
+
+| lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---:|---:|---:|---|---|
+| `grid_026` | `BB_PERIOD=25,BB_SQUEEZE_THRESHOLD_PCT=0.04,RELATIVE_VOLUME_THRESHOLD=1.5` | 273 | 1.51 | 168.46 | [0.1270, 1.1266] | `positive-edge` |
+| `grid_025` | `BB_PERIOD=25,BB_SQUEEZE_THRESHOLD_PCT=0.04,RELATIVE_VOLUME_THRESHOLD=1.3` | 316 | 1.48 | 185.51 | [0.1228, 1.0771] | `positive-edge` |
+| `grid_022` | `BB_PERIOD=25,BB_SQUEEZE_THRESHOLD_PCT=0.03,RELATIVE_VOLUME_THRESHOLD=1.3` | 263 | 1.52 | 174.92 | [0.1156, 1.2343] | `positive-edge` |
+| `grid_019` | `BB_PERIOD=25,BB_SQUEEZE_THRESHOLD_PCT=0.02,RELATIVE_VOLUME_THRESHOLD=1.3` | 212 | 1.51 | 144.55 | [0.0035, 1.3916] | `positive-edge` |
+
+Independent validation of the top three:
+
+| lever | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---:|---:|---:|---|---|
+| `grid_025` | 423 | 1.14 | 90.09 | [-0.2446, 0.6646] | `no-evidence` |
+| `grid_026` | 401 | 1.14 | 83.62 | [-0.2635, 0.6878] | `no-evidence` |
+| `grid_022` | 401 | 1.08 | 49.15 | [-0.2912, 0.5410] | `no-evidence` |
+
+Conclusion: the `BB_PERIOD=25` prefilter positives were seed-sensitive and did
+not validate independently. The full `bb_squeeze` setup grid has no promotion
+candidate, and `bb_squeeze` remains unapproved.
+
 ## Proof Visibility
 
 `paper_proof_status.sh` now prints a separate `paper proof second strategy setup
