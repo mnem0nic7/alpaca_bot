@@ -117,6 +117,7 @@ for script in \
   paper_profit_probe.sh \
   paper_proof_status.sh \
   apply_candidate.sh \
+  second_strategy_basket_scan.sh \
   runtime_image_health_check.sh
 do
   path="$ROOT_DIR/scripts/$script"

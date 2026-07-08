@@ -215,6 +215,9 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "scripts/apply_candidate.sh" in cron_text
     assert "docker compose --env-file /etc/alpaca_bot/alpaca-bot.env -f deploy/compose.yaml run --rm nightly" in cron_text
     assert "docker compose -f deploy/compose.yaml run --rm nightly" not in cron_text
+    assert "scripts/second_strategy_basket_scan.sh" in cron_text
+    assert "/var/log/alpaca-bot-second-strategy.log" in cron_text
+    assert 'timeout "${SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS:-3600}"' in cron_text
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
     assert "expected HHMM must be a valid 24-hour time" in run_if_ny_time
     assert "date returned invalid HHMM" in run_if_ny_time
@@ -255,6 +258,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "paper_profit_probe.sh" in cron_health
     assert "paper_proof_status.sh" in cron_health
     assert "apply_candidate.sh" in cron_health
+    assert "second_strategy_basket_scan.sh" in cron_health
     assert "runtime_image_health_check.sh" in cron_health
     assert "cron health ok" in cron_health
 
@@ -268,9 +272,16 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert './scripts/paper_proof_status.sh "$ENV_FILE"' in script
     assert "load_proof_status \"loading live broker equity\"" in script
     assert 'starting_equity="${SECOND_STRATEGY_STARTING_EQUITY:-}"' in script
+    assert 'OUTPUT_ROOT="${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}"' in script
+    assert 'LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"' in script
+    assert 'EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"' in script
+    assert 'LATEST_LINK="$OUTPUT_ROOT/latest"' in script
+    assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script
     assert "Run metadata:" in script
     assert 'f"- sample_seed: `{sample_seed}`"' in script
     assert 'f"- starting_equity: `{starting_equity}`"' in script
+    assert 'f"- excluded_candidates: `{excluded_candidates}`"' in script
+    assert "summary_json_path.write_text" in script
     assert "stock_disabled_candidate_names" in script
     assert "python3 -m alpaca_bot.replay.cli portfolio-basket-audit" in script
     assert '--confidence-scale "$candidate=$CANDIDATE_SCALE"' in script

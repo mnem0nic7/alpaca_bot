@@ -48,7 +48,10 @@ SAMPLE_SEED="${SECOND_STRATEGY_SAMPLE_SEED:-second-strategy-k1-giveback-refresh}
 SLIPPAGE_BPS="${SECOND_STRATEGY_SLIPPAGE_BPS:-${REPLAY_SLIPPAGE_BPS:-2}}"
 MAX_OPEN_POSITIONS_VALUE="${SECOND_STRATEGY_MAX_OPEN_POSITIONS:-${MAX_OPEN_POSITIONS:-1}}"
 CANDIDATE_SCALE="${SECOND_STRATEGY_CANDIDATE_SCALE:-0.25}"
-OUTPUT_DIR="${SECOND_STRATEGY_OUTPUT_DIR:-/tmp/alpaca-second-strategy-scan-$(date -u +%Y%m%dT%H%M%SZ)}"
+OUTPUT_ROOT="${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}"
+OUTPUT_DIR="${SECOND_STRATEGY_OUTPUT_DIR:-$OUTPUT_ROOT/$(date -u +%Y%m%dT%H%M%SZ)}"
+LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"
+EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"
 
 [[ -d "$SCENARIO_DIR" ]] || fail "missing scenario dir: $SCENARIO_DIR"
 mkdir -p "$OUTPUT_DIR"
@@ -77,6 +80,29 @@ else
   mapfile -t candidates < <(read_name_list "$candidate_csv")
 fi
 
+mapfile -t excluded_candidates < <(read_name_list "$EXCLUDE_CANDIDATES")
+if [[ "${#excluded_candidates[@]}" -gt 0 ]]; then
+  filtered_candidates=()
+  skipped_candidates=()
+  for candidate in "${candidates[@]}"; do
+    skip_candidate=false
+    for excluded_candidate in "${excluded_candidates[@]}"; do
+      if [[ "$candidate" == "$excluded_candidate" ]]; then
+        skip_candidate=true
+        break
+      fi
+    done
+    if [[ "$skip_candidate" == "true" ]]; then
+      skipped_candidates+=("$candidate")
+    else
+      filtered_candidates+=("$candidate")
+    fi
+  done
+  candidates=("${filtered_candidates[@]}")
+else
+  skipped_candidates=()
+fi
+
 [[ "${#candidates[@]}" -gt 0 ]] || fail "no candidate strategies to scan"
 
 starting_equity="${SECOND_STRATEGY_STARTING_EQUITY:-}"
@@ -88,10 +114,11 @@ fi
 
 status_file="$OUTPUT_DIR/status.tsv"
 summary_file="$OUTPUT_DIR/summary.md"
+summary_json_file="$OUTPUT_DIR/summary.json"
 : > "$status_file"
 
 echo "second strategy basket scan: output_dir=$OUTPUT_DIR"
-echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scale=$CANDIDATE_SCALE starting_equity=${starting_equity:-scenario_default}"
+echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scale=$CANDIDATE_SCALE starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none}"
 
 failed_count=0
 for candidate in "${candidates[@]}"; do
@@ -128,10 +155,10 @@ for candidate in "${candidates[@]}"; do
   fi
 done
 
-python3 - "$status_file" "$summary_file" \
+python3 - "$status_file" "$summary_file" "$summary_json_file" \
   "$SCENARIO_DIR" "$BASE_STRATEGY" "$SAMPLE_SIZE" "$SAMPLE_SEED" \
   "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "$CANDIDATE_SCALE" \
-  "${starting_equity:-scenario_default}" <<'PY'
+  "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" <<'PY'
 from __future__ import annotations
 
 import json
@@ -140,14 +167,16 @@ import sys
 
 status_path = Path(sys.argv[1])
 summary_path = Path(sys.argv[2])
-scenario_dir = sys.argv[3]
-base_strategy = sys.argv[4]
-sample_size = sys.argv[5]
-sample_seed = sys.argv[6]
-slippage_bps = sys.argv[7]
-max_open_positions = sys.argv[8]
-candidate_scale = sys.argv[9]
-starting_equity = sys.argv[10]
+summary_json_path = Path(sys.argv[3])
+scenario_dir = sys.argv[4]
+base_strategy = sys.argv[5]
+sample_size = sys.argv[6]
+sample_seed = sys.argv[7]
+slippage_bps = sys.argv[8]
+max_open_positions = sys.argv[9]
+candidate_scale = sys.argv[10]
+starting_equity = sys.argv[11]
+excluded_candidates = sys.argv[12]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -157,6 +186,7 @@ def fmt(value, spec: str = ".2f") -> str:
 
 
 rows = []
+json_rows = []
 for raw in status_path.read_text().splitlines():
     if not raw.strip():
         continue
@@ -201,6 +231,7 @@ lines = [
     f"- max_open_positions: `{max_open_positions}`",
     f"- candidate_scale: `{candidate_scale}`",
     f"- starting_equity: `{starting_equity}`",
+    f"- excluded_candidates: `{excluded_candidates}`",
     "",
     "| candidate | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
     "|---|---|---:|---:|---:|---:|---|---:|---:|---|---|",
@@ -209,6 +240,15 @@ lines = [
 positive_edges = 0
 for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
     if status != "passed" or audit_row is None:
+        json_rows.append(
+            {
+                "candidate": candidate,
+                "status": status,
+                "report": report,
+                "stderr": stderr,
+                "verdict": None,
+            }
+        )
         lines.append(
             f"| `{candidate}` | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
         )
@@ -222,6 +262,23 @@ for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
         else f"[{fmt(audit_row['ci_low'], '.4f')}, {fmt(audit_row['ci_high'], '.4f')}]"
     )
     p_mean_le_zero = audit_row["p_positive"]
+    json_rows.append(
+        {
+            "candidate": candidate,
+            "status": "passed",
+            "report": report,
+            "stderr": stderr,
+            "trades": audit_row["trades"],
+            "profit_factor": audit_row["profit_factor"],
+            "total_pnl": audit_row["total_pnl"],
+            "mean_trade_pnl": audit_row["mean_trade_pnl"],
+            "ci_low": audit_row["ci_low"],
+            "ci_high": audit_row["ci_high"],
+            "p_mean_le_zero": p_mean_le_zero,
+            "cost_drag": audit_row["cost_drag"],
+            "verdict": verdict,
+        }
+    )
     lines.append(
         "| "
         f"`{candidate}` | `passed` | {audit_row['trades']} | "
@@ -240,10 +297,40 @@ lines.extend([
     ),
 ])
 summary_path.write_text("\n".join(lines) + "\n")
+summary_json_path.write_text(
+    json.dumps(
+        {
+            "scenario_dir": scenario_dir,
+            "base_strategy": base_strategy,
+            "sample_size": sample_size,
+            "sample_seed": sample_seed,
+            "slippage_bps": slippage_bps,
+            "max_open_positions": max_open_positions,
+            "candidate_scale": candidate_scale,
+            "starting_equity": starting_equity,
+            "excluded_candidates": excluded_candidates,
+            "positive_edge_prefilter_rows": positive_edges,
+            "rows": json_rows,
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n"
+)
 print("\n".join(lines))
 print(f"summary={summary_path}")
+print(f"summary_json={summary_json_path}")
 print(f"positive_edge_prefilter_rows={positive_edges}")
 PY
+
+if [[ -z "$LATEST_LINK" && -z "${SECOND_STRATEGY_OUTPUT_DIR:-}" ]]; then
+  LATEST_LINK="$OUTPUT_ROOT/latest"
+fi
+if [[ -n "$LATEST_LINK" ]]; then
+  mkdir -p "$(dirname "$LATEST_LINK")"
+  ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"
+  echo "latest=$LATEST_LINK"
+fi
 
 if [[ "$failed_count" -gt 0 ]]; then
   fail "$failed_count candidate scan command(s) failed; see $OUTPUT_DIR"
