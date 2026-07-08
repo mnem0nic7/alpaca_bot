@@ -285,7 +285,10 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"' in script
     assert 'VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"' in script
     assert 'INCLUDE_OPTION_CANDIDATES="${SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES:-false}"' in script
-    assert 'OPTION_CHAIN_SNAPSHOTS="${SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS:-${OPTION_CHAIN_SNAPSHOT_DIR:-}}"' in script
+    assert 'HOST_OPTION_CHAIN_SNAPSHOT_DIR="${SECOND_STRATEGY_HOST_OPTION_CHAIN_SNAPSHOT_DIR:-/var/lib/alpaca-bot/option-chain-snapshots}"' in script
+    assert 'OPTION_CHAIN_SNAPSHOTS="${SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS:-}"' in script
+    assert 'OPTION_CHAIN_SNAPSHOTS="${OPTION_CHAIN_SNAPSHOT_DIR:-}"' in script
+    assert 'OPTION_CHAIN_SNAPSHOTS="$HOST_OPTION_CHAIN_SNAPSHOT_DIR"' in script
     assert "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES must be true or false" in script
     assert "SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS must be true or false" in script
     assert "missing prefilter summary JSON" in script
