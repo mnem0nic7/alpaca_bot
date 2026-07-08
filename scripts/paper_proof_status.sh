@@ -663,6 +663,7 @@ def load_second_strategy_evidence(
 
     prefilter_rows = prefilter_payload.get("rows", []) if prefilter_payload else []
     validation_rows = validation_payload.get("rows", []) if validation_payload else []
+    prefilter_families = candidate_names_from_rows(prefilter_rows)
     prefilter_positive_families = candidate_names_from_rows(
         prefilter_rows, verdict="positive-edge"
     )
@@ -756,6 +757,7 @@ def load_second_strategy_evidence(
         "prefilter_age_hours": prefilter_age_hours,
         "validation_age_hours": validation_age_hours,
         "max_age_hours": max_age_hours,
+        "prefilter_families": prefilter_families,
         "prefilter_positive_rows": prefilter_positive_rows,
         "prefilter_positive_families": prefilter_positive_families,
         "validated_families": validated_families,
@@ -4697,6 +4699,8 @@ print(
     f"prefilter_age_hours={format_optional_float(second_strategy_evidence['prefilter_age_hours'])} "
     f"validation_age_hours={format_optional_float(second_strategy_evidence['validation_age_hours'])} "
     f"max_age_hours={second_strategy_evidence['max_age_hours']} "
+    f"prefilter_families={len(second_strategy_evidence['prefilter_families'])} "
+    f"prefilter_family_names={format_name_list(second_strategy_evidence['prefilter_families'])} "
     f"prefilter_positive_rows={second_strategy_evidence['prefilter_positive_rows']} "
     f"prefilter_positive_families={len(second_strategy_evidence['prefilter_positive_families'])} "
     f"prefilter_positive_family_names={format_name_list(second_strategy_evidence['prefilter_positive_families'])} "
@@ -4721,6 +4725,8 @@ print(
     f"prefilter_age_hours={format_optional_float(second_strategy_setup_evidence['prefilter_age_hours'])} "
     f"validation_age_hours={format_optional_float(second_strategy_setup_evidence['validation_age_hours'])} "
     f"max_age_hours={second_strategy_setup_evidence['max_age_hours']} "
+    f"prefilter_families={len(second_strategy_setup_evidence['prefilter_families'])} "
+    f"prefilter_family_names={format_name_list(second_strategy_setup_evidence['prefilter_families'])} "
     f"prefilter_positive_rows={second_strategy_setup_evidence['prefilter_positive_rows']} "
     f"prefilter_positive_families={len(second_strategy_setup_evidence['prefilter_positive_families'])} "
     f"prefilter_positive_family_names={format_name_list(second_strategy_setup_evidence['prefilter_positive_families'])} "

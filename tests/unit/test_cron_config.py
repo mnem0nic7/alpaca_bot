@@ -372,6 +372,11 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert "SECOND_STRATEGY_SETUP_VALIDATE_POSITIVES" in script
     assert "SECOND_STRATEGY_SETUP_MAX_VALIDATION_CANDIDATES" in script
     assert "second-strategy-setup-knob-independent-validation" in script
+    assert "candidate_names = []" in script
+    assert "candidate not in candidate_names" in script
+    assert 'f"- candidate_names: `' in script
+    assert '"candidate_count": len(candidate_names)' in script
+    assert '"candidate_names": candidate_names' in script
     assert "from alpaca_bot.tuning.sweep import STRATEGY_GRIDS" in script
     assert "SECOND_STRATEGY_SETUP_VARIANT_MODE must be one of: curated, grid" in script
     assert '"variant_mode": variant_mode' in script
@@ -6614,6 +6619,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "paper proof second strategy evidence:" in script
     assert "second_strategy_setup_evidence = load_second_strategy_evidence" in script
     assert "paper proof second strategy setup evidence:" in script
+    assert "prefilter_families = candidate_names_from_rows(prefilter_rows)" in script
+    assert "prefilter_families={len(second_strategy_evidence['prefilter_families'])}" in script
+    assert "prefilter_family_names={format_name_list(second_strategy_evidence['prefilter_families'])}" in script
+    assert "prefilter_families={len(second_strategy_setup_evidence['prefilter_families'])}" in script
+    assert "prefilter_family_names={format_name_list(second_strategy_setup_evidence['prefilter_families'])}" in script
     assert "candidate_status={second_strategy_setup_evidence['candidate_status']}" in script
     assert "prefilter_positive_rows={second_strategy_setup_evidence['prefilter_positive_rows']}" in script
     assert "validation_positive_rows={second_strategy_setup_evidence['validation_positive_rows']}" in script

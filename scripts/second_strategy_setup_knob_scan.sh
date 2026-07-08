@@ -396,6 +396,12 @@ for raw in status_path.read_text().splitlines():
     rows.append((candidate, variant_label, env_overrides, scale, status, report, stderr, audit_row))
 
 
+candidate_names = []
+for candidate, *_rest in rows:
+    if candidate not in candidate_names:
+        candidate_names.append(candidate)
+
+
 def sort_key(item):
     candidate, variant_label, _env_overrides, _scale, status, _report, _stderr, audit_row = item
     if status != "passed" or audit_row is None:
@@ -429,6 +435,7 @@ lines = [
     f"- variant_mode: `{variant_mode}`",
     f"- max_variants: `{max_variants}`",
     f"- variants: `{variant_count}`",
+    f"- candidate_names: `{','.join(candidate_names) if candidate_names else 'none'}`",
     "",
     "| candidate | lever | overrides | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
     "|---|---|---|---|---:|---:|---:|---:|---|---:|---:|---|---|",
@@ -516,6 +523,8 @@ summary_json_path.write_text(
             "variant_mode": variant_mode,
             "max_variants": int(max_variants),
             "variant_count": int(variant_count),
+            "candidate_count": len(candidate_names),
+            "candidate_names": candidate_names,
             "positive_edge_prefilter_rows": positive_edges,
             "rows": json_rows,
         },
@@ -711,6 +720,12 @@ for raw in status_path.read_text().splitlines():
     rows.append((candidate, variant_label, env_overrides, scale, status, report, stderr, audit_row))
 
 
+candidate_names = []
+for candidate, *_rest in rows:
+    if candidate not in candidate_names:
+        candidate_names.append(candidate)
+
+
 def sort_key(item):
     candidate, variant_label, _env_overrides, _scale, status, _report, _stderr, audit_row = item
     if status != "passed" or audit_row is None:
@@ -744,6 +759,7 @@ lines = [
     f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
+    f"- candidate_names: `{','.join(candidate_names) if candidate_names else 'none'}`",
     "",
     "| candidate | lever | overrides | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
     "|---|---|---|---|---:|---:|---:|---:|---|---:|---:|---|---|",
@@ -842,6 +858,8 @@ summary_json_path.write_text(
             "scan_jobs": scan_jobs,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
+            "candidate_count": len(candidate_names),
+            "candidate_names": candidate_names,
             "positive_edge_validation_rows": validation_positive_edges,
             "promotion_approved": False,
             "conclusion": conclusion,
