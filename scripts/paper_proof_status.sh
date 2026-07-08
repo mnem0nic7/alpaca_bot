@@ -61,6 +61,7 @@ capture_env_overrides \
   PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE \
   PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE \
   PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT \
+  PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT \
   PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS
 
 cd "$(dirname "$0")/.."
@@ -104,6 +105,7 @@ PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE="${PROOF_STATUS_SCALE_MAX_OPE
 PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE="${PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE:-${PAPER_EXECUTION_MIN_ENTRY_FILL_RATE:-0.25}}"
 PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE="${PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE:-${PAPER_EXECUTION_MAX_CAPACITY_REJECT_RATE:-0.05}}"
 PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:-${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}}"
+PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-${SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/setup_knobs}}"
 PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="${PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS:-48}"
 
 if [[ -z "${STRATEGY_VERSION:-}" ]]; then
@@ -238,6 +240,14 @@ second_strategy_volume_args=()
 if [[ -d "$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT" ]]; then
   second_strategy_volume_args=(-v "$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:ro")
 fi
+if [[ -d "$PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT" ]]; then
+  case "$PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT" in
+    "$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT"/*) ;;
+    *)
+      second_strategy_volume_args+=(-v "$PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT:$PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT:ro")
+      ;;
+  esac
+fi
 
 compact_check_detail() {
   local detail
@@ -350,6 +360,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE="$PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE" \
   -e PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE="$PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE" \
   -e PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT" \
+  -e PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="$PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT" \
   -e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" \
   -e PROOF_STATUS_START_DATE="$PROOF_STATUS_START_DATE" \
   -e PROOF_STATUS_END_DATE="$PROOF_STATUS_END_DATE" \
@@ -912,6 +923,9 @@ scenario_dir = Path(os.environ["PROOF_STATUS_SCENARIO_DIR"])
 second_strategy_output_root = Path(
     os.environ["PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT"]
 )
+second_strategy_setup_output_root = Path(
+    os.environ["PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT"]
+)
 second_strategy_max_age_hours = int(
     os.environ["PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS"]
 )
@@ -1003,9 +1017,15 @@ if current_market_date >= proof_start and (
     or latest_completed_session == current_market_date
 ):
     activity_target_session = current_market_date
+now_utc = datetime.now(timezone.utc)
 second_strategy_evidence = load_second_strategy_evidence(
     output_root=second_strategy_output_root,
-    now_utc=datetime.now(timezone.utc),
+    now_utc=now_utc,
+    max_age_hours=second_strategy_max_age_hours,
+)
+second_strategy_setup_evidence = load_second_strategy_evidence(
+    output_root=second_strategy_setup_output_root,
+    now_utc=now_utc,
     max_age_hours=second_strategy_max_age_hours,
 )
 market_timezone = settings.market_timezone.key
@@ -4516,6 +4536,30 @@ print(
     f"promotion_approved={str(second_strategy_evidence['promotion_approved']).lower()} "
     f"max_validation_candidates={safe_status_value(second_strategy_evidence['max_validation_candidates'])} "
     f"validation_verdicts={second_strategy_evidence['validation_verdicts']}"
+)
+print(
+    "paper proof second strategy setup evidence: "
+    f"status={second_strategy_setup_evidence['status']} "
+    f"candidate_status={second_strategy_setup_evidence['candidate_status']} "
+    f"detail={safe_status_value(second_strategy_setup_evidence['detail'])} "
+    f"root={safe_status_value(second_strategy_setup_evidence['root'])} "
+    f"prefilter_summary={safe_status_value(second_strategy_setup_evidence['prefilter_summary'])} "
+    f"validation_summary={safe_status_value(second_strategy_setup_evidence['validation_summary'])} "
+    f"prefilter_age_hours={format_optional_float(second_strategy_setup_evidence['prefilter_age_hours'])} "
+    f"validation_age_hours={format_optional_float(second_strategy_setup_evidence['validation_age_hours'])} "
+    f"max_age_hours={second_strategy_setup_evidence['max_age_hours']} "
+    f"prefilter_positive_rows={second_strategy_setup_evidence['prefilter_positive_rows']} "
+    f"prefilter_positive_families={len(second_strategy_setup_evidence['prefilter_positive_families'])} "
+    f"prefilter_positive_family_names={format_name_list(second_strategy_setup_evidence['prefilter_positive_families'])} "
+    f"validated_families={len(second_strategy_setup_evidence['validated_families'])} "
+    f"validated_family_names={format_name_list(second_strategy_setup_evidence['validated_families'])} "
+    f"missing_validation_families={format_name_list(second_strategy_setup_evidence['missing_validation_families'])} "
+    f"validation_rows={second_strategy_setup_evidence['validation_rows']} "
+    f"validation_positive_rows={second_strategy_setup_evidence['validation_positive_rows']} "
+    f"validation_positive_family_names={format_name_list(second_strategy_setup_evidence['validation_positive_families'])} "
+    f"promotion_approved={str(second_strategy_setup_evidence['promotion_approved']).lower()} "
+    f"max_validation_candidates={safe_status_value(second_strategy_setup_evidence['max_validation_candidates'])} "
+    f"validation_verdicts={second_strategy_setup_evidence['validation_verdicts']}"
 )
 print(
     "paper proof watchlist: "

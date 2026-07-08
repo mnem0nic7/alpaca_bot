@@ -193,3 +193,12 @@ were rerun with a fresh prefilter seed:
 Conclusion: the EMA grid leads did not reproduce under a fresh prefilter seed.
 No validation candidate was available, and `PAPER_APPROVED_STRATEGIES` remains
 `bull_flag`.
+
+## Proof Visibility
+
+`paper_proof_status.sh` now prints a separate `paper proof second strategy setup
+evidence` line from `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs`.
+This keeps the latest setup/grid search result visible beside the broad basket
+scan result. On 2026-07-08 it reported fresh setup evidence with
+`candidate_status=no_positive_prefilter_edge`, `prefilter_positive_rows=0`, and
+`promotion_approved=false`.

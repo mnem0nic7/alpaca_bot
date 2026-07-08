@@ -5564,6 +5564,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert 'scenario_volume_args=(-v "$PROOF_STATUS_SCENARIO_DIR:$PROOF_STATUS_SCENARIO_DIR:ro")' in script
     assert "PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT" in script
     assert "SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy" in script
+    assert "PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT" in script
+    assert (
+        "SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-"
+        "$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/setup_knobs"
+    ) in script
     assert "PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" in script
     assert "PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS must be a positive integer" in script
     assert (
@@ -5575,6 +5580,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert (
         "-e PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="
         "\"$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT\""
+    ) in script
+    assert (
+        "-e PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="
+        "\"$PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT\""
     ) in script
     assert (
         "-e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="
@@ -6390,6 +6399,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "approved_disabled_option_candidates={format_name_list(approved_disabled_option_candidate_names)}" in script
     assert "load_second_strategy_evidence" in script
     assert "paper proof second strategy evidence:" in script
+    assert "second_strategy_setup_evidence = load_second_strategy_evidence" in script
+    assert "paper proof second strategy setup evidence:" in script
+    assert "candidate_status={second_strategy_setup_evidence['candidate_status']}" in script
+    assert "prefilter_positive_rows={second_strategy_setup_evidence['prefilter_positive_rows']}" in script
+    assert "validation_positive_rows={second_strategy_setup_evidence['validation_positive_rows']}" in script
     assert "candidate_status={second_strategy_evidence['candidate_status']}" in script
     assert "prefilter_positive_rows={second_strategy_evidence['prefilter_positive_rows']}" in script
     assert "missing_validation_families=" in script
