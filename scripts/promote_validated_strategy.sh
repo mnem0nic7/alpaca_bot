@@ -1,0 +1,288 @@
+#!/usr/bin/env bash
+# Promote a replay-validated stock strategy into the paper-approved allowlist,
+# enable its runtime flag, and redeploy. The action requires an explicit
+# operator confirmation string after evidence validation succeeds.
+#
+# Usage: promote_validated_strategy.sh [ENV_FILE] [STRATEGY_NAME] [EVIDENCE_ROOT] [DEPLOY_SCRIPT]
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
+REQUESTED_STRATEGY="${2:-}"
+EVIDENCE_ROOT="${3:-${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}}"
+DEPLOY_SCRIPT="${4:-$ROOT_DIR/scripts/deploy.sh}"
+COMPOSE_FILE="${PROMOTE_VALIDATED_STRATEGY_COMPOSE_FILE:-$ROOT_DIR/deploy/compose.yaml}"
+MAX_P_MEAN_LE_ZERO="${PROMOTE_VALIDATED_STRATEGY_MAX_P_MEAN_LE_ZERO:-0.05}"
+MIN_CANDIDATE_TRADES="${PROMOTE_VALIDATED_STRATEGY_MIN_CANDIDATE_TRADES:-30}"
+CONFIRMATION="${PROMOTE_VALIDATED_STRATEGY_CONFIRM:-}"
+LOG_PREFIX="[promote_validated_strategy $(date -u '+%Y-%m-%dT%H:%M:%SZ')]"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "$LOG_PREFIX env file not found: $ENV_FILE" >&2
+  exit 1
+fi
+
+if [[ ! "$MAX_P_MEAN_LE_ZERO" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
+  echo "$LOG_PREFIX PROMOTE_VALIDATED_STRATEGY_MAX_P_MEAN_LE_ZERO must be a non-negative number" >&2
+  exit 1
+fi
+if [[ ! "$MIN_CANDIDATE_TRADES" =~ ^[0-9]+$ ]] || [[ "$MIN_CANDIDATE_TRADES" -lt 1 ]]; then
+  echo "$LOG_PREFIX PROMOTE_VALIDATED_STRATEGY_MIN_CANDIDATE_TRADES must be a positive integer" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
+  echo "$LOG_PREFIX refusing promotion outside paper mode: TRADING_MODE=${TRADING_MODE:-unset}" >&2
+  exit 1
+fi
+if [[ -z "${STRATEGY_VERSION:-}" ]]; then
+  echo "$LOG_PREFIX missing STRATEGY_VERSION in $ENV_FILE" >&2
+  exit 1
+fi
+if [[ "${PAPER_PROOF_FREEZE:-false}" != "true" ]]; then
+  echo "$LOG_PREFIX refusing promotion unless PAPER_PROOF_FREEZE=true" >&2
+  exit 1
+fi
+
+validation_env="$(
+  PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}" python3 - \
+    "$EVIDENCE_ROOT" \
+    "$REQUESTED_STRATEGY" \
+    "$MAX_P_MEAN_LE_ZERO" \
+    "$MIN_CANDIDATE_TRADES" <<'PY'
+from __future__ import annotations
+
+import json
+import shlex
+import sys
+from pathlib import Path
+
+from alpaca_bot.strategy import OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY
+
+
+def fail(message: str) -> None:
+    print(message, file=sys.stderr)
+    raise SystemExit(1)
+
+
+def as_float(row: dict[str, object], key: str) -> float:
+    value = row.get(key)
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key} is not numeric") from exc
+
+
+def as_int(row: dict[str, object], key: str) -> int:
+    value = row.get(key)
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key} is not an integer") from exc
+
+
+root = Path(sys.argv[1])
+requested_strategy = sys.argv[2].strip()
+max_p_mean_le_zero = float(sys.argv[3])
+min_candidate_trades = int(sys.argv[4])
+summary_path = root / "latest_validation" / "summary.json"
+if not summary_path.exists():
+    fail(f"validation summary missing: {summary_path}")
+try:
+    payload = json.loads(summary_path.read_text())
+except json.JSONDecodeError as exc:
+    fail(f"validation summary is not valid JSON: {exc}")
+
+rows = payload.get("rows")
+if not isinstance(rows, list):
+    fail("validation summary rows must be a list")
+
+stock_strategy_names = set(STRATEGY_REGISTRY)
+option_strategy_names = set(OPTION_STRATEGY_NAMES)
+if requested_strategy:
+    if requested_strategy in option_strategy_names:
+        fail(f"{requested_strategy} is an option strategy; stock-only paper proof promotion required")
+    if requested_strategy not in stock_strategy_names:
+        fail(f"{requested_strategy} is not a known stock strategy")
+
+passing_rows: list[dict[str, object]] = []
+errors: list[str] = []
+for row in rows:
+    if not isinstance(row, dict):
+        continue
+    candidate = str(row.get("candidate") or "").strip()
+    if requested_strategy and candidate != requested_strategy:
+        continue
+    if candidate in option_strategy_names:
+        errors.append(f"{candidate}: option strategies are not promoted by this tool")
+        continue
+    if candidate not in stock_strategy_names:
+        errors.append(f"{candidate}: unknown stock strategy")
+        continue
+    try:
+        candidate_trades = as_int(row, "candidate_trades")
+        candidate_total_pnl = as_float(row, "candidate_total_pnl")
+        candidate_ci_low = as_float(row, "candidate_ci_low")
+        candidate_p_mean_le_zero = as_float(row, "candidate_p_mean_le_zero")
+    except ValueError as exc:
+        errors.append(f"{candidate}: {exc}")
+        continue
+    checks = {
+        "status": row.get("status") == "passed",
+        "row_verdict": row.get("verdict") == "positive-edge",
+        "candidate_verdict": row.get("candidate_verdict") == "positive-edge",
+        "candidate_contribution_status": row.get("candidate_contribution_status") == "positive_pnl",
+        "candidate_trades": candidate_trades >= min_candidate_trades,
+        "candidate_total_pnl": candidate_total_pnl > 0.0,
+        "candidate_ci_low": candidate_ci_low > 0.0,
+        "candidate_p_mean_le_zero": candidate_p_mean_le_zero <= max_p_mean_le_zero,
+    }
+    failed = [name for name, ok in checks.items() if not ok]
+    if failed:
+        errors.append(f"{candidate}: failed {','.join(failed)}")
+        continue
+    passing_rows.append(row)
+
+if requested_strategy and not passing_rows:
+    detail = "; ".join(errors) if errors else "no matching candidate row"
+    fail(f"no promotable validation row for {requested_strategy}: {detail}")
+if not requested_strategy:
+    unique_candidates = sorted({str(row.get("candidate")) for row in passing_rows})
+    if len(unique_candidates) != 1:
+        fail(
+            "strategy name required because promotable candidates="
+            + (",".join(unique_candidates) if unique_candidates else "none")
+        )
+
+selected = passing_rows[0]
+strategy_name = str(selected["candidate"])
+outputs = {
+    "VALIDATED_STRATEGY": strategy_name,
+    "VALIDATED_SCALE": str(selected.get("candidate_scale") or ""),
+    "VALIDATED_TRADES": str(selected["candidate_trades"]),
+    "VALIDATED_TOTAL_PNL": str(selected["candidate_total_pnl"]),
+    "VALIDATED_CI_LOW": str(selected["candidate_ci_low"]),
+    "VALIDATED_P_MEAN_LE_ZERO": str(selected["candidate_p_mean_le_zero"]),
+    "VALIDATION_SUMMARY": str(summary_path),
+}
+for key, value in outputs.items():
+    print(f"{key}={shlex.quote(value)}")
+PY
+)"
+
+eval "$validation_env"
+
+required_confirmation="approve-${VALIDATED_STRATEGY}-paper-promotion"
+if [[ "$CONFIRMATION" != "$required_confirmation" ]]; then
+  echo "$LOG_PREFIX evidence validated for $VALIDATED_STRATEGY scale=$VALIDATED_SCALE trades=$VALIDATED_TRADES pnl=$VALIDATED_TOTAL_PNL ci_low=$VALIDATED_CI_LOW p_mean_le_zero=$VALIDATED_P_MEAN_LE_ZERO" >&2
+  echo "$LOG_PREFIX refusing to promote without explicit confirmation" >&2
+  echo "$LOG_PREFIX rerun with PROMOTE_VALIDATED_STRATEGY_CONFIRM=$required_confirmation" >&2
+  exit 2
+fi
+
+read_env_value() {
+  local key="$1"
+  awk -v key="$key" '
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" {
+      value=$0
+      sub("^[[:space:]]*" key "[[:space:]]*=", "", value)
+      sub(/[[:space:]]*#.*/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      gsub(/^["\047]|["\047]$/, "", value)
+      print value
+      exit
+    }
+  ' "$ENV_FILE"
+}
+
+csv_contains() {
+  local csv="$1"
+  local needle="$2"
+  local raw
+  local name
+  local -a names
+  IFS=',' read -r -a names <<< "$csv"
+  for raw in "${names[@]}"; do
+    name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+    if [[ "$name" == "$needle" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+append_csv_name() {
+  local csv="$1"
+  local name="$2"
+  if [[ -z "$csv" ]]; then
+    printf '%s\n' "$name"
+  elif csv_contains "$csv" "$name"; then
+    printf '%s\n' "$csv"
+  else
+    printf '%s,%s\n' "$csv" "$name"
+  fi
+}
+
+update_env_value() {
+  local key="$1"
+  local value="$2"
+  local tmp
+  tmp="$(mktemp)"
+  awk -v key="$key" -v value="$value" '
+    BEGIN { updated = 0 }
+    $0 ~ "^[[:space:]]*" key "[[:space:]]*=" && updated == 0 {
+      print key "=" value
+      updated = 1
+      next
+    }
+    { print }
+    END {
+      if (updated == 0) {
+        print key "=" value
+      }
+    }
+  ' "$ENV_FILE" > "$tmp"
+  cat "$tmp" > "$ENV_FILE"
+  rm -f "$tmp"
+}
+
+current_approved="$(read_env_value PAPER_APPROVED_STRATEGIES)"
+new_approved="$(append_csv_name "$current_approved" "$VALIDATED_STRATEGY")"
+
+backup_env="$(mktemp)"
+cp "$ENV_FILE" "$backup_env"
+restore_env_on_error=false
+cleanup() {
+  if [[ "$restore_env_on_error" == "true" ]]; then
+    cp "$backup_env" "$ENV_FILE"
+  fi
+  rm -f "$backup_env"
+}
+trap cleanup EXIT
+
+if [[ "$new_approved" != "$current_approved" ]]; then
+  restore_env_on_error=true
+  update_env_value PAPER_APPROVED_STRATEGIES "$new_approved"
+  echo "$LOG_PREFIX PAPER_APPROVED_STRATEGIES: ${current_approved:-none} -> $new_approved"
+else
+  echo "$LOG_PREFIX PAPER_APPROVED_STRATEGIES already includes $VALIDATED_STRATEGY"
+fi
+
+compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
+if ! "${compose[@]}" run -T --rm admin \
+  enable-strategy "$VALIDATED_STRATEGY" \
+  --mode paper \
+  --strategy-version "$STRATEGY_VERSION"; then
+  echo "$LOG_PREFIX enable-strategy failed; restored env allowlist" >&2
+  exit 1
+fi
+restore_env_on_error=false
+
+echo "$LOG_PREFIX enabled $VALIDATED_STRATEGY from $VALIDATION_SUMMARY"
+"$DEPLOY_SCRIPT" "$ENV_FILE"
+echo "$LOG_PREFIX promotion complete for $VALIDATED_STRATEGY"

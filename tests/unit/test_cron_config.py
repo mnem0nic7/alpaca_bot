@@ -258,6 +258,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "paper_profit_probe.sh" in cron_health
     assert "paper_proof_status.sh" in cron_health
     assert "apply_candidate.sh" in cron_health
+    assert "promote_validated_strategy.sh" in cron_health
     assert "second_strategy_basket_scan.sh" in cron_health
     assert "runtime_image_health_check.sh" in cron_health
     assert "cron health ok" in cron_health
