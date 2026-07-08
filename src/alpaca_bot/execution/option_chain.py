@@ -33,7 +33,12 @@ class AlpacaOptionChainAdapter:
 
         api_key, secret_key, _paper = resolve_alpaca_credentials(settings)
         factory = _client_factory if _client_factory is not None else OptionHistoricalDataClient
-        return cls(factory(api_key=api_key, secret_key=secret_key))
+        client = factory(api_key=api_key, secret_key=secret_key)
+        _install_default_request_timeout(
+            client,
+            timeout_seconds=settings.option_chain_request_timeout_seconds,
+        )
+        return cls(client)
 
     def get_option_chain(self, symbol: str, settings: Settings) -> list[OptionContract]:
         try:
@@ -109,3 +114,28 @@ def _snapshot_to_contract(occ_symbol: str, underlying: str, snapshot: Any) -> Op
         delta=delta,
         open_interest=open_interest,
     )
+
+
+def _install_default_request_timeout(client: Any, *, timeout_seconds: float) -> None:
+    session = getattr(client, "_session", None)
+    if session is None:
+        return
+    request = getattr(session, "request", None)
+    if not callable(request):
+        return
+
+    setattr(session, "_alpaca_bot_default_timeout_seconds", timeout_seconds)
+    if getattr(session, "_alpaca_bot_timeout_wrapped", False):
+        return
+
+    def request_with_default_timeout(method: str, url: str, **kwargs: Any) -> Any:
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = getattr(
+                session,
+                "_alpaca_bot_default_timeout_seconds",
+                timeout_seconds,
+            )
+        return request(method, url, **kwargs)
+
+    setattr(session, "request", request_with_default_timeout)
+    setattr(session, "_alpaca_bot_timeout_wrapped", True)

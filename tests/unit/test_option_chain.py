@@ -306,3 +306,43 @@ def test_from_settings_constructs_adapter_with_injected_factory():
     api_key, secret_key = built_clients[0]
     assert api_key == "test-api-key"
     assert secret_key == "test-secret-key"
+
+
+def test_from_settings_installs_default_request_timeout():
+    from alpaca_bot.execution.option_chain import AlpacaOptionChainAdapter
+    from tests.unit.helpers import _base_env
+    from alpaca_bot.config import Settings
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def request(self, method, url, **kwargs):
+            self.calls.append((method, url, kwargs))
+            return object()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self._session = FakeSession()
+
+    built_clients = []
+
+    def fake_factory(*, api_key, secret_key):
+        client = FakeClient()
+        built_clients.append(client)
+        return client
+
+    env = _base_env()
+    env["OPTION_CHAIN_REQUEST_TIMEOUT_SECONDS"] = "2.5"
+    env["ALPACA_PAPER_API_KEY"] = "test-api-key"
+    env["ALPACA_PAPER_SECRET_KEY"] = "test-secret-key"
+    settings = Settings.from_env(env)
+    adapter = AlpacaOptionChainAdapter.from_settings(settings, _client_factory=fake_factory)
+
+    session = adapter._client._session
+    session.request("GET", "https://example.test")
+    session.request("GET", "https://example.test/slow", timeout=7.0)
+
+    assert len(built_clients) == 1
+    assert session.calls[0][2]["timeout"] == 2.5
+    assert session.calls[1][2]["timeout"] == 7.0

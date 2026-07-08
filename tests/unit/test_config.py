@@ -229,6 +229,16 @@ def test_option_chain_snapshot_dir_default_and_override():
     assert settings.option_chain_snapshot_dir == "/tmp/alpaca-options"
 
 
+def test_option_chain_request_timeout_default_override_and_validation():
+    assert Settings.from_env(_base_env()).option_chain_request_timeout_seconds == 10.0
+
+    settings = Settings.from_env(_base_env(OPTION_CHAIN_REQUEST_TIMEOUT_SECONDS="2.5"))
+    assert settings.option_chain_request_timeout_seconds == 2.5
+
+    with pytest.raises(ValueError, match="OPTION_CHAIN_REQUEST_TIMEOUT_SECONDS"):
+        Settings.from_env(_base_env(OPTION_CHAIN_REQUEST_TIMEOUT_SECONDS="0"))
+
+
 def test_floor_auto_raise_max_age_days_default_and_validation():
     settings = Settings.from_env(_base_env())
     assert settings.floor_auto_raise_max_age_days == 7

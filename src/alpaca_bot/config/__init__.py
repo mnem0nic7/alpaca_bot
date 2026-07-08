@@ -200,6 +200,7 @@ class Settings:
     option_chain_min_total_volume: int = 0
     option_chain_symbols: tuple[str, ...] = ()
     option_chain_snapshot_dir: str | None = None
+    option_chain_request_timeout_seconds: float = 10.0
     option_stop_buffer_pct: float = 0.10
     option_max_spread_pct: float = 0.50
     option_min_open_interest: int = 0
@@ -493,6 +494,9 @@ class Settings:
             option_chain_snapshot_dir=(
                 values.get("OPTION_CHAIN_SNAPSHOT_DIR", "").strip() or None
             ),
+            option_chain_request_timeout_seconds=float(
+                values.get("OPTION_CHAIN_REQUEST_TIMEOUT_SECONDS", "10.0")
+            ),
             option_stop_buffer_pct=float(values.get("OPTION_STOP_BUFFER_PCT", "0.10")),
             option_max_spread_pct=float(values.get("OPTION_MAX_SPREAD_PCT", "0.50")),
             option_min_open_interest=int(values.get("OPTION_MIN_OPEN_INTEREST", "0")),
@@ -780,6 +784,8 @@ class Settings:
             raise ValueError("OPTION_DTE_MAX must be greater than OPTION_DTE_MIN")
         if not 0.0 < self.option_delta_target <= 1.0:
             raise ValueError("OPTION_DELTA_TARGET must be between 0 (exclusive) and 1.0 (inclusive)")
+        if self.option_chain_request_timeout_seconds <= 0:
+            raise ValueError("OPTION_CHAIN_REQUEST_TIMEOUT_SECONDS must be positive")
         if not 0.0 < self.option_max_spread_pct <= 1.0:
             raise ValueError(
                 "OPTION_MAX_SPREAD_PCT must be between 0 (exclusive) and 1.0 (inclusive)"
