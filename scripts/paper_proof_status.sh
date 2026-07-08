@@ -59,7 +59,9 @@ capture_env_overrides \
   PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE \
   PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE \
   PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE \
-  PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE
+  PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE \
+  PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT \
+  PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS
 
 cd "$(dirname "$0")/.."
 
@@ -101,6 +103,8 @@ PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE="${PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE:-
 PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE="${PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE:-${PAPER_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE:-0.00}}"
 PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE="${PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE:-${PAPER_EXECUTION_MIN_ENTRY_FILL_RATE:-0.25}}"
 PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE="${PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE:-${PAPER_EXECUTION_MAX_CAPACITY_REJECT_RATE:-0.05}}"
+PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:-${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}}"
+PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="${PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS:-48}"
 
 if [[ -z "${STRATEGY_VERSION:-}" ]]; then
   echo "missing STRATEGY_VERSION in $ENV_FILE" >&2
@@ -201,6 +205,11 @@ if [[ ! "$PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE" =~ ^([0-9]+)(\.[0-9]+
   echo "PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE must be a non-negative number" >&2
   exit 1
 fi
+if [[ ! "$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" =~ ^[0-9]+$ ]] \
+  || [[ "$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" -lt 1 ]]; then
+  echo "PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS must be a positive integer" >&2
+  exit 1
+fi
 case "${PROOF_STATUS_FAIL_ON_ISSUES,,}" in
   true|false) ;;
   *)
@@ -224,6 +233,10 @@ trading_mode="${TRADING_MODE:-paper}"
 scenario_volume_args=()
 if [[ "${PROOF_STATUS_REQUIRE_SCENARIOS,,}" == "true" && -d "$PROOF_STATUS_SCENARIO_DIR" ]]; then
   scenario_volume_args=(-v "$PROOF_STATUS_SCENARIO_DIR:$PROOF_STATUS_SCENARIO_DIR:ro")
+fi
+second_strategy_volume_args=()
+if [[ -d "$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT" ]]; then
+  second_strategy_volume_args=(-v "$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:ro")
 fi
 
 compact_check_detail() {
@@ -312,6 +325,7 @@ echo "paper proof trading status:"
 echo "paper proof evidence status:"
 "${compose[@]}" run -T --rm \
   "${scenario_volume_args[@]}" \
+  "${second_strategy_volume_args[@]}" \
   -e PROOF_STATUS_STRATEGY="$PROOF_STATUS_STRATEGY" \
   -e PROOF_STATUS_APPROVED_STRATEGIES="$PROOF_STATUS_APPROVED_STRATEGIES" \
   -e PROOF_STATUS_MIN_TRADES="$PROOF_STATUS_MIN_TRADES" \
@@ -335,6 +349,8 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE="$PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE" \
   -e PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE="$PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE" \
   -e PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE="$PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE" \
+  -e PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT" \
+  -e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" \
   -e PROOF_STATUS_START_DATE="$PROOF_STATUS_START_DATE" \
   -e PROOF_STATUS_END_DATE="$PROOF_STATUS_END_DATE" \
   -e PROOF_STATUS_CRON_HEALTH_STATUS="$cron_health_status" \
@@ -444,6 +460,203 @@ def parse_name_list(raw: str | None) -> list[str]:
 
 def format_name_list(names: list[str]) -> str:
     return ",".join(names) if names else "none"
+
+
+def format_optional_float(value: float | None, digits: int = 1) -> str:
+    if value is None:
+        return "none"
+    return f"{value:.{digits}f}"
+
+
+def safe_status_value(value: object, *, max_length: int = 160) -> str:
+    text = "none" if value is None else str(value).strip()
+    if not text:
+        return "none"
+    text = re.sub(r"\s+", "_", text)
+    text = re.sub(r"[^A-Za-z0-9_.:+,/@=-]", "_", text)
+    return text[:max_length] or "none"
+
+
+def load_json_payload(path: Path) -> tuple[dict | None, str | None]:
+    if not path.exists():
+        return None, "missing"
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        return None, f"invalid_json:{exc.msg}"
+    except OSError as exc:
+        return None, f"unreadable:{exc}"
+    if not isinstance(payload, dict):
+        return None, "invalid_json:top_level_not_object"
+    return payload, None
+
+
+def file_age_hours(path: Path, *, now_utc: datetime) -> float | None:
+    if not path.exists():
+        return None
+    try:
+        modified_at = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    except OSError:
+        return None
+    return max(0.0, (now_utc - modified_at).total_seconds() / 3600.0)
+
+
+def candidate_names_from_rows(rows: object, *, verdict: str | None = None) -> list[str]:
+    names: list[str] = []
+    if not isinstance(rows, list):
+        return names
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if verdict is not None and row.get("verdict") != verdict:
+            continue
+        name = str(row.get("candidate") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_:-]+", name):
+            continue
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def summarize_validation_verdicts(rows: object, *, limit: int = 10) -> str:
+    parts: list[str] = []
+    if not isinstance(rows, list):
+        return "none"
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        candidate = safe_status_value(row.get("candidate"))
+        if candidate == "none":
+            continue
+        scale = safe_status_value(row.get("candidate_scale"))
+        verdict = safe_status_value(row.get("verdict"))
+        parts.append(f"{candidate}:{scale}:{verdict}")
+        if len(parts) >= limit:
+            break
+    return ",".join(parts) if parts else "none"
+
+
+def load_second_strategy_evidence(
+    *,
+    output_root: Path,
+    now_utc: datetime,
+    max_age_hours: int,
+) -> dict[str, object]:
+    prefilter_summary_path = output_root / "latest" / "summary.json"
+    validation_summary_path = output_root / "latest_validation" / "summary.json"
+    prefilter_payload, prefilter_error = load_json_payload(prefilter_summary_path)
+    validation_payload, validation_error = load_json_payload(validation_summary_path)
+
+    prefilter_rows = prefilter_payload.get("rows", []) if prefilter_payload else []
+    validation_rows = validation_payload.get("rows", []) if validation_payload else []
+    prefilter_positive_families = candidate_names_from_rows(
+        prefilter_rows, verdict="positive-edge"
+    )
+    validated_families = candidate_names_from_rows(validation_rows)
+    validation_positive_families = candidate_names_from_rows(
+        validation_rows, verdict="positive-edge"
+    )
+    missing_validation_families = [
+        name
+        for name in prefilter_positive_families
+        if name not in validated_families
+    ]
+
+    prefilter_age_hours = file_age_hours(prefilter_summary_path, now_utc=now_utc)
+    validation_age_hours = file_age_hours(validation_summary_path, now_utc=now_utc)
+    stale_parts: list[str] = []
+    if (
+        prefilter_age_hours is not None
+        and prefilter_age_hours > max_age_hours
+    ):
+        stale_parts.append("prefilter")
+    if (
+        validation_age_hours is not None
+        and validation_age_hours > max_age_hours
+    ):
+        stale_parts.append("validation")
+
+    invalid_parts = [
+        name
+        for name, error in (
+            ("prefilter", prefilter_error),
+            ("validation", validation_error),
+        )
+        if error is not None and error != "missing"
+    ]
+    if invalid_parts:
+        evidence_status = "invalid"
+        detail = ",".join(invalid_parts)
+    elif prefilter_error == "missing" and validation_error == "missing":
+        evidence_status = "missing"
+        detail = "latest_summaries_missing"
+    elif validation_error == "missing":
+        evidence_status = "missing_validation"
+        detail = "latest_validation_summary_missing"
+    elif prefilter_error == "missing":
+        evidence_status = "missing_prefilter"
+        detail = "latest_prefilter_summary_missing"
+    elif stale_parts:
+        evidence_status = "stale"
+        detail = ",".join(stale_parts)
+    else:
+        evidence_status = "ok"
+        detail = "fresh"
+
+    promotion_approved = bool(
+        validation_payload.get("promotion_approved") if validation_payload else False
+    )
+    validation_positive_rows = int(
+        validation_payload.get("positive_edge_validation_rows", 0)
+        if validation_payload
+        else 0
+    )
+    prefilter_positive_rows = int(
+        prefilter_payload.get("positive_edge_prefilter_rows", 0)
+        if prefilter_payload
+        else 0
+    )
+
+    if validation_error == "missing":
+        candidate_status = "validation_missing"
+    elif prefilter_error == "missing":
+        candidate_status = "prefilter_missing"
+    elif promotion_approved and validation_positive_rows > 0:
+        candidate_status = "approved_candidate_found"
+    elif missing_validation_families:
+        candidate_status = "partial_validation"
+    elif prefilter_positive_rows > 0 and validation_positive_rows == 0:
+        candidate_status = "no_positive_validation_edge"
+    elif prefilter_positive_rows == 0:
+        candidate_status = "no_positive_prefilter_edge"
+    else:
+        candidate_status = "no_approved_candidate"
+
+    return {
+        "status": evidence_status,
+        "candidate_status": candidate_status,
+        "detail": detail,
+        "root": str(output_root),
+        "prefilter_summary": str(prefilter_summary_path),
+        "validation_summary": str(validation_summary_path),
+        "prefilter_age_hours": prefilter_age_hours,
+        "validation_age_hours": validation_age_hours,
+        "max_age_hours": max_age_hours,
+        "prefilter_positive_rows": prefilter_positive_rows,
+        "prefilter_positive_families": prefilter_positive_families,
+        "validated_families": validated_families,
+        "missing_validation_families": missing_validation_families,
+        "validation_rows": len(validation_rows) if isinstance(validation_rows, list) else 0,
+        "validation_positive_rows": validation_positive_rows,
+        "validation_positive_families": validation_positive_families,
+        "promotion_approved": promotion_approved,
+        "max_validation_candidates": (
+            validation_payload.get("max_validation_candidates", "none")
+            if validation_payload
+            else "none"
+        ),
+        "validation_verdicts": summarize_validation_verdicts(validation_rows),
+    }
 
 
 def format_trade_pnl_atom(trade: dict, pnl: float) -> str:
@@ -696,6 +909,12 @@ execution_max_capacity_reject_rate = float(
 min_confidence_floor = float(os.environ["PROOF_STATUS_MIN_CONFIDENCE_FLOOR"])
 require_scenarios = os.environ.get("PROOF_STATUS_REQUIRE_SCENARIOS", "true").lower() == "true"
 scenario_dir = Path(os.environ["PROOF_STATUS_SCENARIO_DIR"])
+second_strategy_output_root = Path(
+    os.environ["PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT"]
+)
+second_strategy_max_age_hours = int(
+    os.environ["PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS"]
+)
 stream_start_grace_seconds = int(os.environ["PROOF_STATUS_STREAM_START_GRACE_SECONDS"])
 readiness_max_pass_age_minutes = int(
     os.environ["PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES"]
@@ -784,6 +1003,11 @@ if current_market_date >= proof_start and (
     or latest_completed_session == current_market_date
 ):
     activity_target_session = current_market_date
+second_strategy_evidence = load_second_strategy_evidence(
+    output_root=second_strategy_output_root,
+    now_utc=datetime.now(timezone.utc),
+    max_age_hours=second_strategy_max_age_hours,
+)
 market_timezone = settings.market_timezone.key
 readiness_due = False
 readiness_first_check_time = time(9, 15)
@@ -4268,6 +4492,30 @@ print(
     f"option_gated_disabled_candidate_names={format_name_list(option_gated_disabled_strategy_names)} "
     f"approved_disabled_stock_candidates={format_name_list(approved_disabled_stock_candidate_names)} "
     f"approved_disabled_option_candidates={format_name_list(approved_disabled_option_candidate_names)}"
+)
+print(
+    "paper proof second strategy evidence: "
+    f"status={second_strategy_evidence['status']} "
+    f"candidate_status={second_strategy_evidence['candidate_status']} "
+    f"detail={safe_status_value(second_strategy_evidence['detail'])} "
+    f"root={safe_status_value(second_strategy_evidence['root'])} "
+    f"prefilter_summary={safe_status_value(second_strategy_evidence['prefilter_summary'])} "
+    f"validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])} "
+    f"prefilter_age_hours={format_optional_float(second_strategy_evidence['prefilter_age_hours'])} "
+    f"validation_age_hours={format_optional_float(second_strategy_evidence['validation_age_hours'])} "
+    f"max_age_hours={second_strategy_evidence['max_age_hours']} "
+    f"prefilter_positive_rows={second_strategy_evidence['prefilter_positive_rows']} "
+    f"prefilter_positive_families={len(second_strategy_evidence['prefilter_positive_families'])} "
+    f"prefilter_positive_family_names={format_name_list(second_strategy_evidence['prefilter_positive_families'])} "
+    f"validated_families={len(second_strategy_evidence['validated_families'])} "
+    f"validated_family_names={format_name_list(second_strategy_evidence['validated_families'])} "
+    f"missing_validation_families={format_name_list(second_strategy_evidence['missing_validation_families'])} "
+    f"validation_rows={second_strategy_evidence['validation_rows']} "
+    f"validation_positive_rows={second_strategy_evidence['validation_positive_rows']} "
+    f"validation_positive_family_names={format_name_list(second_strategy_evidence['validation_positive_families'])} "
+    f"promotion_approved={str(second_strategy_evidence['promotion_approved']).lower()} "
+    f"max_validation_candidates={safe_status_value(second_strategy_evidence['max_validation_candidates'])} "
+    f"validation_verdicts={second_strategy_evidence['validation_verdicts']}"
 )
 print(
     "paper proof watchlist: "

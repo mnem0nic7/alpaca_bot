@@ -5503,8 +5503,24 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_SCENARIO_DIR" in script
     assert "PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios" in script
     assert 'scenario_volume_args=(-v "$PROOF_STATUS_SCENARIO_DIR:$PROOF_STATUS_SCENARIO_DIR:ro")' in script
+    assert "PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT" in script
+    assert "SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy" in script
+    assert "PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" in script
+    assert "PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS must be a positive integer" in script
+    assert (
+        'second_strategy_volume_args=(-v "$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:'
+        '$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:ro")'
+    ) in script
     assert "-e PROOF_STATUS_REQUIRE_SCENARIOS=\"$PROOF_STATUS_REQUIRE_SCENARIOS\"" in script
     assert "-e PROOF_STATUS_SCENARIO_DIR=\"$PROOF_STATUS_SCENARIO_DIR\"" in script
+    assert (
+        "-e PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="
+        "\"$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT\""
+    ) in script
+    assert (
+        "-e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="
+        "\"$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS\""
+    ) in script
     assert "PROOF_STATUS_STREAM_START_GRACE_SECONDS" in script
     assert "PROOF_STATUS_STREAM_START_GRACE_SECONDS must be a non-negative integer" in script
     assert "PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" in script
@@ -6313,6 +6329,15 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "option_gated_disabled_candidate_names={format_name_list(option_gated_disabled_strategy_names)}" in script
     assert "approved_disabled_stock_candidates={format_name_list(approved_disabled_stock_candidate_names)}" in script
     assert "approved_disabled_option_candidates={format_name_list(approved_disabled_option_candidate_names)}" in script
+    assert "load_second_strategy_evidence" in script
+    assert "paper proof second strategy evidence:" in script
+    assert "candidate_status={second_strategy_evidence['candidate_status']}" in script
+    assert "prefilter_positive_rows={second_strategy_evidence['prefilter_positive_rows']}" in script
+    assert "missing_validation_families=" in script
+    assert "promotion_approved={str(second_strategy_evidence['promotion_approved']).lower()}" in script
+    assert "validation_verdicts={second_strategy_evidence['validation_verdicts']}" in script
+    assert "partial_validation" in script
+    assert "no_positive_validation_edge" in script
     assert "required_active_days={scale_min_active_days}" in script
     assert "profit_factor={profit_factor_text}" in script
     assert "single_win_pnl_share={single_win_pnl_share_text}" in script
