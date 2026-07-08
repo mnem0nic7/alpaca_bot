@@ -122,6 +122,7 @@ for script in \
   session_guard.sh \
   paper_profit_probe.sh \
   paper_proof_status.sh \
+  nightly_cycle.sh \
   apply_candidate.sh \
   promote_validated_strategy.sh \
   second_strategy_basket_scan.sh \

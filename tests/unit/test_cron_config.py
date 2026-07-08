@@ -6,6 +6,8 @@ from pathlib import Path
 def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     cron_text = Path("deploy/cron.d/alpaca-bot").read_text()
     install_cron = Path("scripts/install_cron.sh").read_text()
+    nightly_cycle_path = Path("scripts/nightly_cycle.sh")
+    nightly_cycle = nightly_cycle_path.read_text()
     run_if_ny_time = Path("scripts/run_if_ny_time.sh").read_text()
     cron_health = Path("scripts/cron_health_check.sh").read_text()
 
@@ -204,6 +206,10 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "PROOF_STATUS_FAIL_ON_ISSUES=true" in cron_text
     assert "/var/log/alpaca-bot-proof-status.log" in cron_text
     assert "run_locked_check_with_audit.sh session_guard" in cron_text
+    assert "scripts/nightly_cycle.sh" in cron_text
+    assert "bash -lc" not in cron_text
+    assert "docker compose --env-file" not in cron_text
+    assert "Keeping the pipeline in a repo-owned script" in cron_text
     assert 'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"' in install_cron
     assert 'TARGET_CRON="${ALPACA_BOT_CRON_FILE:-/etc/cron.d/alpaca-bot}"' in install_cron
     assert 'install -m 644 "$ROOT_DIR/deploy/cron.d/alpaca-bot" "$TARGET_CRON"' in install_cron
@@ -215,16 +221,34 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "force refresh 12:15/14:25/16:55/17:24" in install_cron
     assert "paper activity 10:25/10:35/12:00/14:35" in install_cron
     assert "proof status 17:28" in install_cron
-    assert "scripts/apply_candidate.sh" in cron_text
-    assert 'timeout "${NIGHTLY_TIMEOUT_SECONDS:-14400}"' in cron_text
+    assert "nightly cycle 17:30" in install_cron
+    syntax_check = subprocess.run(["bash", "-n", str(nightly_cycle_path)], check=False)
+    assert syntax_check.returncode == 0
+    assert 'ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"' in nightly_cycle
+    assert 'NIGHTLY_LOG="${NIGHTLY_LOG:-/var/log/alpaca-bot-nightly.log}"' in nightly_cycle
     assert (
-        'timeout "${NIGHTLY_TIMEOUT_SECONDS:-14400}" docker compose --env-file '
+        'SECOND_STRATEGY_LOG="${SECOND_STRATEGY_LOG:-/var/log/alpaca-bot-second-strategy.log}"'
+        in nightly_cycle
+    )
+    assert 'NIGHTLY_TIMEOUT_SECONDS="${NIGHTLY_TIMEOUT_SECONDS:-14400}"' in nightly_cycle
+    assert 'SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS="${SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS:-7200}"' in nightly_cycle
+    assert "require_positive_integer NIGHTLY_TIMEOUT_SECONDS" in nightly_cycle
+    assert "require_positive_integer SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS" in nightly_cycle
+    assert "scripts/apply_candidate.sh" in nightly_cycle
+    assert 'timeout "$NIGHTLY_TIMEOUT_SECONDS"' in nightly_cycle
+    assert (
+        'timeout "$NIGHTLY_TIMEOUT_SECONDS" docker compose --env-file '
         "/etc/alpaca_bot/alpaca-bot.env -f deploy/compose.yaml run --rm nightly"
-    ) in cron_text
+    ) not in nightly_cycle
+    assert (
+        'timeout "$NIGHTLY_TIMEOUT_SECONDS" docker compose --env-file "$ENV_FILE" '
+        "-f deploy/compose.yaml run --rm nightly"
+    ) in nightly_cycle
     assert "docker compose -f deploy/compose.yaml run --rm nightly" not in cron_text
-    assert "scripts/second_strategy_basket_scan.sh" in cron_text
-    assert "/var/log/alpaca-bot-second-strategy.log" in cron_text
-    assert 'timeout "${SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS:-7200}"' in cron_text
+    assert "scripts/second_strategy_basket_scan.sh" in nightly_cycle
+    assert "/var/log/alpaca-bot-second-strategy.log" in nightly_cycle
+    assert 'timeout "$SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS"' in nightly_cycle
+    assert '>> "$SECOND_STRATEGY_LOG" 2>&1' in nightly_cycle
     assert 'ACTUAL_HHMM="$(TZ=America/New_York date +%H%M)"' in run_if_ny_time
     assert "expected HHMM must be a valid 24-hour time" in run_if_ny_time
     assert "date returned invalid HHMM" in run_if_ny_time
@@ -267,6 +291,7 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "session_guard.sh" in cron_health
     assert "paper_profit_probe.sh" in cron_health
     assert "paper_proof_status.sh" in cron_health
+    assert "nightly_cycle.sh" in cron_health
     assert "apply_candidate.sh" in cron_health
     assert "promote_validated_strategy.sh" in cron_health
     assert "second_strategy_basket_scan.sh" in cron_health
