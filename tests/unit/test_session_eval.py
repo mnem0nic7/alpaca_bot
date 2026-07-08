@@ -61,6 +61,32 @@ def test_report_from_records_exit_breakdown():
     assert report.eod_losses == 1
 
 
+def test_session_report_prints_strategy_exit_breakdown(capsys):
+    from alpaca_bot.admin.session_eval_cli import _print_session_report
+
+    report = report_from_records(
+        [
+            _make_trade(exit_=102.0, exit_reason="giveback_exit"),
+            _make_trade(exit_=98.0, exit_reason="giveback_exit"),
+        ],
+        starting_equity=100_000.0,
+        strategy_name="bull_flag",
+    )
+
+    _print_session_report(
+        report,
+        eval_label="2026-05-04",
+        trading_mode="paper",
+        strategy_version="v1",
+    )
+
+    out = capsys.readouterr().out
+    assert "Strategy wins:" in out
+    assert "Strategy losses:" in out
+    assert "giveback_exit" in out
+    assert "EOD wins:      0" in out
+
+
 def test_report_from_records_zero_trades():
     report = report_from_records([], starting_equity=100_000.0)
     assert report.total_trades == 0
@@ -174,6 +200,14 @@ def test_row_to_trade_record_profit_target_exit():
     row = _make_trade_row(intent_type="exit", reason="profit_target", exit_fill=103.0)
     record = _row_to_trade_record(row)
     assert record.exit_reason == "profit_target"
+    assert record.pnl > 0
+
+
+def test_row_to_trade_record_preserves_strategy_exit_reason():
+    from alpaca_bot.admin.session_eval_cli import _row_to_trade_record
+    row = _make_trade_row(intent_type="exit", reason="giveback_exit", exit_fill=103.0)
+    record = _row_to_trade_record(row)
+    assert record.exit_reason == "giveback_exit"
     assert record.pnl > 0
 
 

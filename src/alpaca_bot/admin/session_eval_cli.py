@@ -388,9 +388,8 @@ def _row_to_trade_record(row: dict) -> ReplayTradeRecord:
 def _exit_reason_from_order(row: dict) -> str:
     if row.get("intent_type") == "stop":
         return "stop"
-    if row.get("reason") == "profit_target":
-        return "profit_target"
-    return "eod"
+    reason = str(row.get("reason") or "eod_flatten")
+    return "eod" if reason == "eod_flatten" else reason
 
 
 @dataclass
@@ -1628,9 +1627,20 @@ def _print_session_report(
 
     print()
     print(" Exit breakdown:")
+    strategy_exit_wins = sum(
+        1
+        for trade in report.trades
+        if trade.exit_reason not in {"stop", "eod", "profit_target"} and trade.pnl > 0
+    )
+    strategy_exit_losses = sum(
+        1
+        for trade in report.trades
+        if trade.exit_reason not in {"stop", "eod", "profit_target"} and trade.pnl <= 0
+    )
     print(f"   Stop wins:   {report.stop_wins:3d}   Stop losses:   {report.stop_losses:3d}")
     print(f"   EOD wins:    {report.eod_wins:3d}   EOD losses:    {report.eod_losses:3d}")
     print(f"   Target wins: {report.profit_target_wins:3d}   Target losses: {report.profit_target_losses:3d}")
+    print(f"   Strategy wins:{strategy_exit_wins:3d}   Strategy losses:{strategy_exit_losses:3d}")
 
     if report.trades:
         print()
