@@ -194,6 +194,27 @@ Conclusion: the EMA grid leads did not reproduce under a fresh prefilter seed.
 No validation candidate was available, and `PAPER_APPROVED_STRATEGIES` remains
 `bull_flag`.
 
+## 2026-07-08 BB Squeeze Period-15 Grid
+
+The first `bb_squeeze` grid slice tested `BB_PERIOD=15` across squeeze
+thresholds `0.02`, `0.03`, and `0.04` and relative-volume thresholds `1.3`,
+`1.5`, and `2.0`:
+
+- artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T052402Z/summary.md` and `validation/summary.md`
+- variants: `grid_001` through `grid_009`
+- result: `positive_edge_prefilter_rows=0`, validation variants `0`,
+  `promotion_approved=false`
+
+| lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---:|---:|---:|---|---|
+| `grid_007` | `BB_PERIOD=15,BB_SQUEEZE_THRESHOLD_PCT=0.04,RELATIVE_VOLUME_THRESHOLD=1.3` | 355 | 1.10 | 51.84 | [-0.3175, 0.6652] | `no-evidence` |
+| `grid_004` | `BB_PERIOD=15,BB_SQUEEZE_THRESHOLD_PCT=0.03,RELATIVE_VOLUME_THRESHOLD=1.3` | 324 | 1.08 | 39.24 | [-0.3552, 0.6235] | `no-evidence` |
+| `grid_008` | `BB_PERIOD=15,BB_SQUEEZE_THRESHOLD_PCT=0.04,RELATIVE_VOLUME_THRESHOLD=1.5` | 314 | 0.99 | -5.09 | [-0.5318, 0.5048] | `no-evidence` |
+
+Conclusion: the `BB_PERIOD=15` slice did not produce a positive prefilter
+survivor. No validation candidate was available, and `bb_squeeze` remains
+unapproved.
+
 ## Proof Visibility
 
 `paper_proof_status.sh` now prints a separate `paper proof second strategy setup
