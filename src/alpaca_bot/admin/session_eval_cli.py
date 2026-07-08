@@ -400,6 +400,7 @@ class SessionDiagnostics:
     stop_rejection_recoveries: list[AuditEvent] = field(default_factory=list)
     failed_entries: list[OrderRecord] = field(default_factory=list)
     stream_issues: list[AuditEvent] = field(default_factory=list)
+    stream_recovery_events: list[AuditEvent] = field(default_factory=list)
     open_positions: list[PositionRecord] = field(default_factory=list)
     active_orders: list[OrderRecord] = field(default_factory=list)
     reconciliation_issues: list[AuditEvent] = field(default_factory=list)
@@ -520,11 +521,28 @@ class SessionDiagnostics:
 
     @property
     def proof_blocking_stream_issues(self) -> list[AuditEvent]:
+        recovery_times = [
+            event.created_at
+            for event in self.stream_recovery_events
+            if event.event_type == "trade_update_stream_started"
+        ]
         return [
             issue
             for issue in self.stream_issues
             if issue.event_type != "stream_heartbeat_stale"
+            and not self._is_recovered_stream_exit(issue, recovery_times)
         ]
+
+    @staticmethod
+    def _is_recovered_stream_exit(
+        issue: AuditEvent,
+        recovery_times: Sequence[datetime],
+    ) -> bool:
+        if issue.event_type != "trade_update_stream_stopped":
+            return False
+        if str(issue.payload.get("reason") or "") != "stream_exited":
+            return False
+        return any(recovered_at >= issue.created_at for recovered_at in recovery_times)
 
     @property
     def flat_paper_profit_lock_pause(self) -> bool:
@@ -881,6 +899,16 @@ def _build_session_diagnostics(
                 "trade_update_failed",
                 "protective_stop_quantity_replace_failed",
             ],
+            since=session_start,
+            until=session_end,
+            limit=100,
+            trading_mode=trading_mode,
+            strategy_version=strategy_version,
+            strategy_names=strategy_names,
+        ),
+        stream_recovery_events=_list_audit_events_for_strategies(
+            audit_store,
+            event_types=["trade_update_stream_started"],
             since=session_start,
             until=session_end,
             limit=100,

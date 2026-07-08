@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -583,6 +583,56 @@ def test_session_eval_cli_fail_on_diagnostics_fails_active_local_order(
     out = capsys.readouterr().out
     assert "Active orders after session: AAPL (pending_submit entry)" in out
     assert "Guard failed: operational diagnostics contain proof-blocking issues" in out
+
+
+def test_session_diagnostics_allows_recovered_stream_exit():
+    import alpaca_bot.admin.session_eval_cli as cli_module
+    from alpaca_bot.storage.models import AuditEvent
+
+    stopped_at = datetime(2026, 5, 4, 14, 30, tzinfo=timezone.utc)
+    diagnostics = cli_module.SessionDiagnostics(
+        stream_issues=[
+            AuditEvent(
+                event_type="trade_update_stream_stopped",
+                payload={"reason": "stream_exited"},
+                created_at=stopped_at,
+            ),
+        ],
+        stream_recovery_events=[
+            AuditEvent(
+                event_type="trade_update_stream_started",
+                payload={},
+                created_at=stopped_at + timedelta(minutes=1),
+            ),
+        ],
+        total_supervisor_cycles=3,
+        decision_activity=cli_module.DecisionActivityStats(records=120),
+    )
+
+    assert diagnostics.has_issues is True
+    assert diagnostics.proof_blocking_stream_issues == []
+    assert diagnostics.has_guard_issues is False
+
+
+def test_session_diagnostics_blocks_unrecovered_stream_exit():
+    import alpaca_bot.admin.session_eval_cli as cli_module
+    from alpaca_bot.storage.models import AuditEvent
+
+    stopped_at = datetime(2026, 5, 4, 14, 30, tzinfo=timezone.utc)
+    diagnostics = cli_module.SessionDiagnostics(
+        stream_issues=[
+            AuditEvent(
+                event_type="trade_update_stream_stopped",
+                payload={"reason": "stream_exited"},
+                created_at=stopped_at,
+            ),
+        ],
+        total_supervisor_cycles=3,
+        decision_activity=cli_module.DecisionActivityStats(records=120),
+    )
+
+    assert diagnostics.proof_blocking_stream_issues == diagnostics.stream_issues
+    assert diagnostics.has_guard_issues is True
 
 
 def test_load_entries_disabled_cycle_stats_parses_colon_reasons(monkeypatch):
