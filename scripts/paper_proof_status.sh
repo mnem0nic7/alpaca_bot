@@ -362,6 +362,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT" \
   -e PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="$PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT" \
   -e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" \
+  -e PROOF_STATUS_ENV_FILE="$ENV_FILE" \
   -e PROOF_STATUS_START_DATE="$PROOF_STATUS_START_DATE" \
   -e PROOF_STATUS_END_DATE="$PROOF_STATUS_END_DATE" \
   -e PROOF_STATUS_CRON_HEALTH_STATUS="$cron_health_status" \
@@ -671,6 +672,54 @@ def rows_missing_candidate_attribution(rows: object) -> bool:
     return False
 
 
+def as_float_or_none(value: object) -> float | None:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def as_int_or_none(value: object) -> int | None:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def best_promotion_candidate_from_rows(rows: object) -> dict[str, object] | None:
+    candidates: list[tuple[float, float, int, dict[str, object]]] = []
+    if not isinstance(rows, list):
+        return None
+    stock_strategy_names = set(STRATEGY_REGISTRY)
+    option_strategy_names = set(OPTION_STRATEGY_NAMES)
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("candidate") or "").strip()
+        if name not in stock_strategy_names or name in option_strategy_names:
+            continue
+        if row.get("status") != "passed":
+            continue
+        if row.get("verdict") != "positive-edge":
+            continue
+        if row.get("candidate_verdict") != "positive-edge":
+            continue
+        if row.get("candidate_contribution_status") != "positive_pnl":
+            continue
+        trades = as_int_or_none(row.get("candidate_trades"))
+        total_pnl = as_float_or_none(row.get("candidate_total_pnl"))
+        ci_low = as_float_or_none(row.get("candidate_ci_low"))
+        p_mean_le_zero = as_float_or_none(row.get("candidate_p_mean_le_zero"))
+        if trades is None or total_pnl is None or ci_low is None or p_mean_le_zero is None:
+            continue
+        if trades < 30 or total_pnl <= 0.0 or ci_low <= 0.0 or p_mean_le_zero > 0.05:
+            continue
+        candidates.append((ci_low, -p_mean_le_zero, trades, row))
+    if not candidates:
+        return None
+    return sorted(candidates, reverse=True)[0][3]
+
+
 def load_second_strategy_evidence(
     *,
     output_root: Path,
@@ -758,6 +807,14 @@ def load_second_strategy_evidence(
         if prefilter_payload
         else 0
     )
+    promotion_candidate = best_promotion_candidate_from_rows(validation_rows)
+    promotion_action_status = "none"
+    if promotion_approved and validation_positive_rows > 0:
+        promotion_action_status = "approved"
+    elif evidence_status == "ok" and promotion_candidate is not None:
+        promotion_action_status = "ready"
+    elif validation_positive_rows > 0:
+        promotion_action_status = "review_evidence"
 
     if validation_error == "missing":
         candidate_status = "validation_missing"
@@ -795,6 +852,37 @@ def load_second_strategy_evidence(
         "validation_positive_rows": validation_positive_rows,
         "validation_positive_families": validation_positive_families,
         "promotion_approved": promotion_approved,
+        "promotion_action_status": promotion_action_status,
+        "promotion_candidate": (
+            str(promotion_candidate.get("candidate"))
+            if promotion_candidate is not None
+            else "none"
+        ),
+        "promotion_candidate_scale": (
+            str(promotion_candidate.get("candidate_scale"))
+            if promotion_candidate is not None
+            else "none"
+        ),
+        "promotion_candidate_trades": (
+            as_int_or_none(promotion_candidate.get("candidate_trades"))
+            if promotion_candidate is not None
+            else None
+        ),
+        "promotion_candidate_total_pnl": (
+            as_float_or_none(promotion_candidate.get("candidate_total_pnl"))
+            if promotion_candidate is not None
+            else None
+        ),
+        "promotion_candidate_ci_low": (
+            as_float_or_none(promotion_candidate.get("candidate_ci_low"))
+            if promotion_candidate is not None
+            else None
+        ),
+        "promotion_candidate_p_mean_le_zero": (
+            as_float_or_none(promotion_candidate.get("candidate_p_mean_le_zero"))
+            if promotion_candidate is not None
+            else None
+        ),
         "max_validation_candidates": (
             validation_payload.get("max_validation_candidates", "none")
             if validation_payload
@@ -1068,6 +1156,10 @@ readiness_max_pass_age_minutes = int(
     os.environ["PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES"]
 )
 fail_on_issues = os.environ.get("PROOF_STATUS_FAIL_ON_ISSUES", "false").lower() == "true"
+proof_status_env_file = os.environ.get(
+    "PROOF_STATUS_ENV_FILE",
+    "/etc/alpaca_bot/alpaca-bot.env",
+)
 cron_health_status = os.environ.get("PROOF_STATUS_CRON_HEALTH_STATUS", "unknown")
 cron_health_detail = os.environ.get("PROOF_STATUS_CRON_HEALTH_DETAIL", "").strip()
 ops_health_status = os.environ.get("PROOF_STATUS_OPS_HEALTH_STATUS", "unknown")
@@ -4759,6 +4851,25 @@ print(
     f"promotion_approved={str(second_strategy_evidence['promotion_approved']).lower()} "
     f"max_validation_candidates={safe_status_value(second_strategy_evidence['max_validation_candidates'])} "
     f"validation_verdicts={second_strategy_evidence['validation_verdicts']}"
+)
+promotion_strategy = safe_status_value(second_strategy_evidence["promotion_candidate"])
+promotion_confirmation = (
+    f"approve-{promotion_strategy}-paper-promotion"
+    if promotion_strategy != "none"
+    else "none"
+)
+print(
+    "paper proof second strategy promotion action: "
+    f"status={second_strategy_evidence['promotion_action_status']} "
+    f"strategy={promotion_strategy} "
+    f"confirmation={promotion_confirmation} "
+    f"script=./scripts/promote_validated_strategy.sh "
+    f"env_file={safe_status_value(proof_status_env_file)} "
+    f"candidate_scale={safe_status_value(second_strategy_evidence['promotion_candidate_scale'])} "
+    f"candidate_trades={safe_status_value(second_strategy_evidence['promotion_candidate_trades'])} "
+    f"candidate_total_pnl={format_optional_float(second_strategy_evidence['promotion_candidate_total_pnl'], 2)} "
+    f"candidate_ci_low={format_optional_float(second_strategy_evidence['promotion_candidate_ci_low'], 4)} "
+    f"candidate_p_mean_le_zero={format_optional_float(second_strategy_evidence['promotion_candidate_p_mean_le_zero'], 4)}"
 )
 print(
     "paper proof second strategy setup evidence: "
