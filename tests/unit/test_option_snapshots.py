@@ -333,3 +333,32 @@ def test_load_option_chain_snapshot_reports_file_and_line_for_bad_rows(tmp_path)
 
     with pytest.raises(ValueError, match=r"option-chain-snapshots-2026-07-07.jsonl:1"):
         load_option_chain_snapshot_ledger(path)
+
+
+def test_load_option_chain_snapshot_rejects_cycle_date_file_mismatch(tmp_path):
+    path = tmp_path / "option-chain-snapshots-2026-07-08.jsonl"
+    path.write_text(
+        json.dumps(
+            {
+                "cycle_at": "2026-07-07T14:30:00+00:00",
+                "chains_by_symbol": {
+                    "ACHR": [
+                        {
+                            "ask": 1.35,
+                            "bid": 1.2,
+                            "expiry": "2026-07-17",
+                            "occ_symbol": "ACHR260717C00010000",
+                            "option_type": "call",
+                            "strike": 10.0,
+                            "underlying": "ACHR",
+                        }
+                    ]
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"option-chain-snapshots-2026-07-08.jsonl:1"):
+        load_option_chain_snapshot_ledger(path)

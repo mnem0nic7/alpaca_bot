@@ -483,6 +483,12 @@ def option_snapshot_file_session(path: Path) -> str:
 
 def option_snapshot_contract_count(path: Path) -> int:
     total_contracts = 0
+    expected_session = option_snapshot_file_session(path)
+    expected_date = (
+        date.fromisoformat(expected_session)
+        if expected_session != "unknown"
+        else None
+    )
     try:
         with path.open(encoding="utf-8") as snapshot_file:
             for raw_line in snapshot_file:
@@ -490,6 +496,14 @@ def option_snapshot_contract_count(path: Path) -> int:
                 if not line:
                     continue
                 payload = json.loads(line)
+                if expected_date is not None:
+                    cycle_at = datetime.fromisoformat(str(payload["cycle_at"]))
+                    if cycle_at.tzinfo is None:
+                        cycle_at = cycle_at.replace(tzinfo=timezone.utc)
+                    else:
+                        cycle_at = cycle_at.astimezone(timezone.utc)
+                    if cycle_at.date() != expected_date:
+                        return 0
                 chains_by_symbol = payload.get("chains_by_symbol")
                 if not isinstance(chains_by_symbol, dict):
                     continue
@@ -498,7 +512,7 @@ def option_snapshot_contract_count(path: Path) -> int:
                     for contracts in chains_by_symbol.values()
                     if isinstance(contracts, list)
                 )
-    except (OSError, json.JSONDecodeError):
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         return 0
     return total_contracts
 

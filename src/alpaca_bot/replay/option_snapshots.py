@@ -191,8 +191,20 @@ def _snapshot_files(path: Path, *, session_date: date | None) -> list[Path]:
     return sorted(path.glob("option-chain-snapshots-*.jsonl"))
 
 
+def _snapshot_file_session(path: Path) -> date | None:
+    stem = path.stem
+    prefix = "option-chain-snapshots-"
+    if not stem.startswith(prefix):
+        return None
+    try:
+        return date.fromisoformat(stem.removeprefix(prefix))
+    except ValueError:
+        return None
+
+
 def _load_snapshot_file(path: Path) -> list[OptionChainSnapshot]:
     snapshots: list[OptionChainSnapshot] = []
+    file_session = _snapshot_file_session(path)
     with path.open("r", encoding="utf-8") as handle:
         for line_number, raw_line in enumerate(handle, start=1):
             line = raw_line.strip()
@@ -200,7 +212,15 @@ def _load_snapshot_file(path: Path) -> list[OptionChainSnapshot]:
                 continue
             try:
                 payload = json.loads(line)
-                snapshots.append(_snapshot_from_payload(payload))
+                snapshot = _snapshot_from_payload(payload)
+                if (
+                    file_session is not None
+                    and snapshot.cycle_at.date() != file_session
+                ):
+                    raise ValueError(
+                        "cycle_at date does not match snapshot file session"
+                    )
+                snapshots.append(snapshot)
             except Exception as exc:
                 raise ValueError(
                     f"invalid option-chain snapshot {path}:{line_number}"

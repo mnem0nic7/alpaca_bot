@@ -302,6 +302,7 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "option-chain snapshot path is empty or missing" in script
     assert "option_snapshot_contract_count" in script
     assert "OPTION_SNAPSHOT_CONTRACTS" in script
+    assert "cycle_at.date() != expected_date" in script
     assert "option-chain snapshot path has no replayable contracts" in script
     assert "option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS" in script
     assert 'LATEST_LINK="$OUTPUT_ROOT/latest"' in script
@@ -6121,6 +6122,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "option_strategy_name_set = set(OPTION_STRATEGY_NAMES)" in script
     assert "def option_snapshot_contract_count" in script
     assert "def option_snapshot_ledger_summary" in script
+    assert "cycle_at.date() != expected_date" in script
     assert "target_session: date | None = None" in script
     assert 'f"option-chain-snapshots-{target_session.isoformat()}.jsonl"' in script
     assert "selected_path, selected_stat = file_path, stat" in script

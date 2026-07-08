@@ -150,6 +150,7 @@ option_snapshot_contract_count() {
   python3 - "$path" <<'PY'
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 path = Path(sys.argv[1])
@@ -174,6 +175,15 @@ except OSError:
 
 total_contracts = 0
 if latest_path is not None:
+    expected_date = None
+    prefix = "option-chain-snapshots-"
+    if latest_path.stem.startswith(prefix):
+        try:
+            expected_date = datetime.fromisoformat(
+                latest_path.stem.removeprefix(prefix)
+            ).date()
+        except ValueError:
+            expected_date = None
     try:
         with latest_path.open(encoding="utf-8") as snapshot_file:
             for raw_line in snapshot_file:
@@ -181,6 +191,15 @@ if latest_path is not None:
                 if not line:
                     continue
                 payload = json.loads(line)
+                if expected_date is not None:
+                    cycle_at = datetime.fromisoformat(str(payload["cycle_at"]))
+                    if cycle_at.tzinfo is None:
+                        cycle_at = cycle_at.replace(tzinfo=timezone.utc)
+                    else:
+                        cycle_at = cycle_at.astimezone(timezone.utc)
+                    if cycle_at.date() != expected_date:
+                        total_contracts = 0
+                        break
                 chains_by_symbol = payload.get("chains_by_symbol")
                 if not isinstance(chains_by_symbol, dict):
                     continue
@@ -189,7 +208,7 @@ if latest_path is not None:
                     for contracts in chains_by_symbol.values()
                     if isinstance(contracts, list)
                 )
-    except (OSError, json.JSONDecodeError):
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
         total_contracts = 0
 print(total_contracts)
 PY
