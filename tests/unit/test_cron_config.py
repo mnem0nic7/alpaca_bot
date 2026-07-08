@@ -6714,6 +6714,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "validation_summary_sha256_missing" in script
     assert "validation_summary_unreadable" in script
     assert "validation_summary_sha256_mismatch" in script
+    assert (
+        "expected_confirmation = (\n"
+        "        f\"approve-{strategy}-paper-promotion-sha256-{validation_summary_sha256}\""
+    ) in script
+    assert "if confirmation != expected_confirmation:" in script
     assert "strategy_rows = [" in script
     assert "for row in strategy_rows:" in script
     assert "candidate_total_pnl" in script
@@ -6722,6 +6727,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "promotion_action_status" in script
     assert "paper proof second strategy promotion action:" in script
     assert "confirmation={promotion_confirmation}" in script
+    assert "promotion_validation_summary_sha256 = safe_status_value(" in script
+    assert (
+        "f\"approve-{promotion_strategy}-paper-promotion-sha256-"
+        "{promotion_validation_summary_sha256}\""
+    ) in script
     assert "script=./scripts/promote_validated_strategy.sh" in script
     assert "approval_marker={safe_status_value(second_strategy_evidence['promotion_approval_marker'])}" in script
     assert "approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']}" in script

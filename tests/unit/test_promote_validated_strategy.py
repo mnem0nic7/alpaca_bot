@@ -62,6 +62,15 @@ def _write_summary(
     )
 
 
+def _summary_sha256(root: Path) -> str:
+    summary_path = root / "latest_validation" / "summary.json"
+    return hashlib.sha256(summary_path.read_bytes()).hexdigest()
+
+
+def _confirmation(root: Path, strategy: str = "ema_pullback") -> str:
+    return f"approve-{strategy}-paper-promotion-sha256-{_summary_sha256(root)}"
+
+
 def _make_fake_deploy(tmp_path: Path, *, exit_code: int = 0) -> Path:
     deploy = tmp_path / "deploy.sh"
     deploy.write_text(
@@ -140,11 +149,33 @@ def test_promote_validated_strategy_requires_explicit_confirmation(tmp_path: Pat
     )
 
     summary_path = evidence_root / "latest_validation" / "summary.json"
-    summary_sha256 = hashlib.sha256(summary_path.read_bytes()).hexdigest()
+    summary_sha256 = _summary_sha256(evidence_root)
     assert result.returncode == 2
-    assert "PROMOTE_VALIDATED_STRATEGY_CONFIRM=approve-ema_pullback-paper-promotion" in result.stderr
+    assert f"PROMOTE_VALIDATED_STRATEGY_CONFIRM={_confirmation(evidence_root)}" in result.stderr
     assert f"validation_summary={summary_path.resolve()}" in result.stderr
     assert f"validation_summary_sha256={summary_sha256}" in result.stderr
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
+    assert not (tmp_path / "docker_calls").exists()
+    assert not (tmp_path / "deploy_calls").exists()
+
+
+def test_promote_validated_strategy_rejects_legacy_generic_confirmation(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    deploy_script = _make_fake_deploy(tmp_path)
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=deploy_script,
+        tmp_path=tmp_path,
+        confirmation="approve-ema_pullback-paper-promotion",
+    )
+
+    assert result.returncode == 2
+    assert f"PROMOTE_VALIDATED_STRATEGY_CONFIRM={_confirmation(evidence_root)}" in result.stderr
     assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
     assert not (tmp_path / "docker_calls").exists()
     assert not (tmp_path / "deploy_calls").exists()
@@ -162,7 +193,7 @@ def test_promote_validated_strategy_rejects_weak_candidate_evidence(tmp_path: Pa
         evidence_root=evidence_root,
         deploy_script=deploy_script,
         tmp_path=tmp_path,
-        confirmation="approve-ema_pullback-paper-promotion",
+        confirmation=_confirmation(evidence_root),
     )
 
     assert result.returncode == 1
@@ -184,7 +215,7 @@ def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_pa
         evidence_root=evidence_root,
         deploy_script=deploy_script,
         tmp_path=tmp_path,
-        confirmation="approve-ema_pullback-paper-promotion",
+        confirmation=_confirmation(evidence_root),
     )
 
     assert result.returncode == 0, result.stderr
@@ -195,10 +226,10 @@ def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_pa
     assert (tmp_path / "deploy_calls").read_text().strip() == str(env_file)
     approval_marker = json.loads((evidence_root / "promotion_approval.json").read_text())
     summary_path = evidence_root / "latest_validation" / "summary.json"
-    summary_sha256 = hashlib.sha256(summary_path.read_bytes()).hexdigest()
+    summary_sha256 = _summary_sha256(evidence_root)
     assert approval_marker["schema_version"] == 2
     assert approval_marker["strategy"] == "ema_pullback"
-    assert approval_marker["confirmation"] == "approve-ema_pullback-paper-promotion"
+    assert approval_marker["confirmation"] == _confirmation(evidence_root)
     assert approval_marker["strategy_version"] == "v1-breakout"
     assert approval_marker["env_file"] == str(env_file)
     assert approval_marker["validation_summary"] == str(summary_path.resolve())
@@ -241,7 +272,7 @@ def test_promote_validated_strategy_selects_best_passing_row(tmp_path: Path) -> 
         evidence_root=evidence_root,
         deploy_script=deploy_script,
         tmp_path=tmp_path,
-        confirmation="approve-ema_pullback-paper-promotion",
+        confirmation=_confirmation(evidence_root),
     )
 
     assert result.returncode == 0, result.stderr
@@ -264,7 +295,7 @@ def test_promote_validated_strategy_rolls_back_when_deploy_fails(tmp_path: Path)
         evidence_root=evidence_root,
         deploy_script=deploy_script,
         tmp_path=tmp_path,
-        confirmation="approve-ema_pullback-paper-promotion",
+        confirmation=_confirmation(evidence_root),
     )
 
     assert result.returncode == 1

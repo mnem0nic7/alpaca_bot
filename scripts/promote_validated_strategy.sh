@@ -189,7 +189,7 @@ PY
 
 eval "$validation_env"
 
-required_confirmation="approve-${VALIDATED_STRATEGY}-paper-promotion"
+required_confirmation="approve-${VALIDATED_STRATEGY}-paper-promotion-sha256-${VALIDATION_SUMMARY_SHA256}"
 if [[ "$CONFIRMATION" != "$required_confirmation" ]]; then
   echo "$LOG_PREFIX evidence validated for $VALIDATED_STRATEGY scale=$VALIDATED_SCALE trades=$VALIDATED_TRADES pnl=$VALIDATED_TOTAL_PNL ci_low=$VALIDATED_CI_LOW p_mean_le_zero=$VALIDATED_P_MEAN_LE_ZERO validation_summary=$VALIDATION_SUMMARY validation_summary_sha256=$VALIDATION_SUMMARY_SHA256" >&2
   echo "$LOG_PREFIX refusing to promote without explicit confirmation" >&2

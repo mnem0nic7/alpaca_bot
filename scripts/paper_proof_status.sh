@@ -744,9 +744,6 @@ def approval_marker_status(
     strategy = str(payload.get("strategy") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_:-]+", strategy):
         return "invalid_strategy", "none"
-    confirmation = str(payload.get("confirmation") or "").strip()
-    if confirmation != f"approve-{strategy}-paper-promotion":
-        return "confirmation_mismatch", strategy
     if evidence_status != "ok":
         return f"evidence_{evidence_status}", strategy
     marker_strategy_version = str(payload.get("strategy_version") or "").strip()
@@ -769,6 +766,12 @@ def approval_marker_status(
         return "validation_summary_unreadable", strategy
     if marker_summary_sha256 != validation_summary_sha256:
         return "validation_summary_sha256_mismatch", strategy
+    confirmation = str(payload.get("confirmation") or "").strip()
+    expected_confirmation = (
+        f"approve-{strategy}-paper-promotion-sha256-{validation_summary_sha256}"
+    )
+    if confirmation != expected_confirmation:
+        return "confirmation_mismatch", strategy
     if strategy not in validation_positive_families:
         return "latest_validation_missing_positive_edge", strategy
     strategy_rows = [
@@ -5061,9 +5064,12 @@ print(
     f"validation_verdicts={second_strategy_evidence['validation_verdicts']}"
 )
 promotion_strategy = safe_status_value(second_strategy_evidence["promotion_candidate"])
+promotion_validation_summary_sha256 = safe_status_value(
+    second_strategy_evidence["validation_summary_sha256"]
+)
 promotion_confirmation = (
-    f"approve-{promotion_strategy}-paper-promotion"
-    if promotion_strategy != "none"
+    f"approve-{promotion_strategy}-paper-promotion-sha256-{promotion_validation_summary_sha256}"
+    if promotion_strategy != "none" and promotion_validation_summary_sha256 != "none"
     else "none"
 )
 print(
