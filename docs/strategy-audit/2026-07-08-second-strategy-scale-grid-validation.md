@@ -215,6 +215,26 @@ Conclusion: the `BB_PERIOD=15` slice did not produce a positive prefilter
 survivor. No validation candidate was available, and `bb_squeeze` remains
 unapproved.
 
+## 2026-07-08 BB Squeeze Period-20 Grid
+
+The second `bb_squeeze` grid slice tested `BB_PERIOD=20` across the same
+squeeze and relative-volume thresholds:
+
+- artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T054220Z/summary.md` and `validation/summary.md`
+- variants: `grid_010` through `grid_018`
+- result: `positive_edge_prefilter_rows=0`, validation variants `0`,
+  `promotion_approved=false`
+
+| lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---:|---:|---:|---|---|
+| `grid_013` | `BB_PERIOD=20,BB_SQUEEZE_THRESHOLD_PCT=0.03,RELATIVE_VOLUME_THRESHOLD=1.3` | 283 | 1.34 | 128.67 | [-0.1368, 1.1037] | `no-evidence` |
+| `grid_010` | `BB_PERIOD=20,BB_SQUEEZE_THRESHOLD_PCT=0.02,RELATIVE_VOLUME_THRESHOLD=1.3` | 218 | 1.36 | 105.27 | [-0.2231, 1.2829] | `no-evidence` |
+| `grid_014` | `BB_PERIOD=20,BB_SQUEEZE_THRESHOLD_PCT=0.03,RELATIVE_VOLUME_THRESHOLD=1.5` | 239 | 1.25 | 79.16 | [-0.3043, 1.0778] | `no-evidence` |
+
+Conclusion: `BB_PERIOD=20` improved total P&L versus the period-15 slice but
+still did not produce a positive prefilter survivor. No validation candidate was
+available, and `bb_squeeze` remains unapproved.
+
 ## Proof Visibility
 
 `paper_proof_status.sh` now prints a separate `paper proof second strategy setup
