@@ -160,7 +160,15 @@ if not requested_strategy:
             + (",".join(unique_candidates) if unique_candidates else "none")
         )
 
-selected = passing_rows[0]
+selected = sorted(
+    passing_rows,
+    key=lambda row: (
+        as_float(row, "candidate_ci_low"),
+        -as_float(row, "candidate_p_mean_le_zero"),
+        as_int(row, "candidate_trades"),
+    ),
+    reverse=True,
+)[0]
 strategy_name = str(selected["candidate"])
 outputs = {
     "VALIDATED_STRATEGY": strategy_name,

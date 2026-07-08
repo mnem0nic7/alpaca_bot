@@ -22,9 +22,7 @@ def _write_env(path: Path, approved: str = "bull_flag") -> None:
     )
 
 
-def _write_summary(root: Path, row_overrides: dict[str, object] | None = None) -> None:
-    validation_dir = root / "latest_validation"
-    validation_dir.mkdir(parents=True)
+def _candidate_row(row_overrides: dict[str, object] | None = None) -> dict[str, object]:
     row: dict[str, object] = {
         "candidate": "ema_pullback",
         "candidate_scale": "0.50",
@@ -40,12 +38,24 @@ def _write_summary(root: Path, row_overrides: dict[str, object] | None = None) -
     }
     if row_overrides:
         row.update(row_overrides)
+    return row
+
+
+def _write_summary(
+    root: Path,
+    row_overrides: dict[str, object] | None = None,
+    *,
+    rows: list[dict[str, object]] | None = None,
+) -> None:
+    validation_dir = root / "latest_validation"
+    validation_dir.mkdir(parents=True)
+    summary_rows = rows if rows is not None else [_candidate_row(row_overrides)]
     (validation_dir / "summary.json").write_text(
         json.dumps(
             {
-                "positive_edge_validation_rows": 1,
+                "positive_edge_validation_rows": len(summary_rows),
                 "promotion_approved": False,
-                "rows": [row],
+                "rows": summary_rows,
             }
         )
     )
@@ -185,6 +195,51 @@ def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_pa
         (evidence_root / "latest_validation" / "summary.json").resolve()
     )
     assert approval_marker["candidate_trades"] == 291
+    assert approval_marker["candidate_ci_low"] == 0.0007
+
+
+def test_promote_validated_strategy_selects_best_passing_row(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(
+        evidence_root,
+        rows=[
+            _candidate_row(
+                {
+                    "candidate_scale": "0.25",
+                    "candidate_trades": 80,
+                    "candidate_total_pnl": 40.0,
+                    "candidate_ci_low": 0.0002,
+                    "candidate_p_mean_le_zero": 0.0300,
+                }
+            ),
+            _candidate_row(
+                {
+                    "candidate_scale": "0.50",
+                    "candidate_trades": 291,
+                    "candidate_total_pnl": 177.32,
+                    "candidate_ci_low": 0.0007,
+                    "candidate_p_mean_le_zero": 0.0245,
+                }
+            ),
+        ],
+    )
+    deploy_script = _make_fake_deploy(tmp_path)
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=deploy_script,
+        tmp_path=tmp_path,
+        confirmation="approve-ema_pullback-paper-promotion",
+    )
+
+    assert result.returncode == 0, result.stderr
+    approval_marker = json.loads((evidence_root / "promotion_approval.json").read_text())
+    assert approval_marker["candidate_scale"] == "0.50"
+    assert approval_marker["candidate_trades"] == 291
+    assert approval_marker["candidate_total_pnl"] == 177.32
     assert approval_marker["candidate_ci_low"] == 0.0007
 
 

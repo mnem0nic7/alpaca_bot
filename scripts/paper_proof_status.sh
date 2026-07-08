@@ -749,22 +749,14 @@ def approval_marker_status(
         return "stale_validation_summary", strategy
     if strategy not in validation_positive_families:
         return "latest_validation_missing_positive_edge", strategy
-    matching_rows = [
+    strategy_rows = [
         row
         for row in validation_rows
         if isinstance(row, dict)
         and str(row.get("candidate") or "").strip() == strategy
     ] if isinstance(validation_rows, list) else []
-    if not matching_rows:
+    if not strategy_rows:
         return "latest_validation_missing_row", strategy
-    row = matching_rows[0]
-    expected_values = {
-        "candidate_scale": str(row.get("candidate_scale") or ""),
-        "candidate_trades": as_int_or_none(row.get("candidate_trades")),
-        "candidate_total_pnl": as_float_or_none(row.get("candidate_total_pnl")),
-        "candidate_ci_low": as_float_or_none(row.get("candidate_ci_low")),
-        "candidate_p_mean_le_zero": as_float_or_none(row.get("candidate_p_mean_le_zero")),
-    }
     marker_values = {
         "candidate_scale": str(payload.get("candidate_scale") or ""),
         "candidate_trades": as_int_or_none(payload.get("candidate_trades")),
@@ -772,16 +764,43 @@ def approval_marker_status(
         "candidate_ci_low": as_float_or_none(payload.get("candidate_ci_low")),
         "candidate_p_mean_le_zero": as_float_or_none(payload.get("candidate_p_mean_le_zero")),
     }
-    for key, expected_value in expected_values.items():
-        marker_value = marker_values[key]
-        if expected_value is None or marker_value is None:
+    for key, marker_value in marker_values.items():
+        if marker_value is None or marker_value == "":
             return f"{key}_missing", strategy
-        if isinstance(expected_value, float):
-            if not math.isclose(marker_value, expected_value, rel_tol=1e-9, abs_tol=1e-9):
-                return f"{key}_mismatch", strategy
-        elif marker_value != expected_value:
-            return f"{key}_mismatch", strategy
-    return "approved", strategy
+
+    mismatch_key = "candidate_scale"
+    for row in strategy_rows:
+        expected_values = {
+            "candidate_scale": str(row.get("candidate_scale") or ""),
+            "candidate_trades": as_int_or_none(row.get("candidate_trades")),
+            "candidate_total_pnl": as_float_or_none(row.get("candidate_total_pnl")),
+            "candidate_ci_low": as_float_or_none(row.get("candidate_ci_low")),
+            "candidate_p_mean_le_zero": as_float_or_none(row.get("candidate_p_mean_le_zero")),
+        }
+        row_matches = True
+        for key, expected_value in expected_values.items():
+            marker_value = marker_values[key]
+            if expected_value is None or expected_value == "":
+                row_matches = False
+                mismatch_key = key
+                break
+            if isinstance(expected_value, float):
+                if not math.isclose(
+                    float(marker_value),
+                    expected_value,
+                    rel_tol=1e-9,
+                    abs_tol=1e-9,
+                ):
+                    row_matches = False
+                    mismatch_key = key
+                    break
+            elif marker_value != expected_value:
+                row_matches = False
+                mismatch_key = key
+                break
+        if row_matches:
+            return "approved", strategy
+    return f"{mismatch_key}_mismatch", strategy
 
 
 def load_second_strategy_evidence(
