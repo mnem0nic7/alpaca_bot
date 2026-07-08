@@ -6665,6 +6665,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "missing_validation_families=" in script
     assert "promotion_approved={str(second_strategy_evidence['promotion_approved']).lower()}" in script
     assert "validation_verdicts={second_strategy_evidence['validation_verdicts']}" in script
+    assert "validated_candidate_unapproved" in script
+    assert "validated_stock_candidate_unapproved" in script
+    assert "validated_unapproved_stock_candidates=" in script
+    assert "validated_unapproved_option_candidates=" in script
     assert "partial_validation" in script
     assert "no_positive_validation_edge" in script
     assert "required_active_days={scale_min_active_days}" in script

@@ -765,6 +765,8 @@ def load_second_strategy_evidence(
         candidate_status = "prefilter_missing"
     elif promotion_approved and validation_positive_rows > 0:
         candidate_status = "approved_candidate_found"
+    elif validation_positive_rows > 0:
+        candidate_status = "validated_candidate_unapproved"
     elif missing_validation_families:
         candidate_status = "partial_validation"
     elif prefilter_positive_rows > 0 and validation_positive_rows == 0:
@@ -1320,6 +1322,21 @@ try:
             name
             for name in disabled_option_strategy_names
             if name in approved_strategy_name_set
+        ]
+        validated_positive_candidate_names = (
+            list(second_strategy_evidence["validation_positive_families"])
+            if second_strategy_evidence["status"] == "ok"
+            else []
+        )
+        validated_unapproved_stock_candidate_names = [
+            name
+            for name in validated_positive_candidate_names
+            if name in stock_strategy_name_set and name not in approved_strategy_name_set
+        ]
+        validated_unapproved_option_candidate_names = [
+            name
+            for name in validated_positive_candidate_names
+            if name in option_strategy_name_set and name not in approved_strategy_name_set
         ]
         approved_active_strategy_names = [
             name for name in active_strategy_names if name in approved_strategy_name_set
@@ -3576,31 +3593,30 @@ strategy_diversification_gap = max(
     0,
     scale_min_strategies - len(approved_replay_active_strategy_names),
 )
-strategy_diversification_candidate_status = (
-    "met"
-    if strategy_diversification_status == "ok"
-    else (
-        "unapproved_active_strategy"
-        if unapproved_active_strategy_names
-        else (
-            "replay_unsupported_active_strategy"
-            if active_replay_unsupported_strategy_names
-            else (
-                "approved_stock_candidate_disabled"
-                if approved_disabled_stock_candidate_names
-                else (
-                    (
-                        "approved_option_candidate_disabled"
-                        if option_snapshot_replay_ready
-                        else "approved_option_candidate_replay_unavailable"
-                    )
-                    if approved_disabled_option_candidate_names
-                    else "no_approved_stock_strategy"
-                )
-            )
-        )
+if strategy_diversification_status == "ok":
+    strategy_diversification_candidate_status = "met"
+elif unapproved_active_strategy_names:
+    strategy_diversification_candidate_status = "unapproved_active_strategy"
+elif active_replay_unsupported_strategy_names:
+    strategy_diversification_candidate_status = "replay_unsupported_active_strategy"
+elif approved_disabled_stock_candidate_names:
+    strategy_diversification_candidate_status = "approved_stock_candidate_disabled"
+elif validated_unapproved_stock_candidate_names:
+    strategy_diversification_candidate_status = "validated_stock_candidate_unapproved"
+elif approved_disabled_option_candidate_names:
+    strategy_diversification_candidate_status = (
+        "approved_option_candidate_disabled"
+        if option_snapshot_replay_ready
+        else "approved_option_candidate_replay_unavailable"
     )
-)
+elif validated_unapproved_option_candidate_names:
+    strategy_diversification_candidate_status = (
+        "validated_option_candidate_unapproved"
+        if option_snapshot_replay_ready
+        else "validated_option_candidate_replay_unavailable"
+    )
+else:
+    strategy_diversification_candidate_status = "no_approved_stock_strategy"
 proof_robustness_status = "ready" if not proof_blockers else "blocked"
 sealed_proof_robustness_status = (
     "ready" if not sealed_proof_blockers else "blocked"
@@ -4698,7 +4714,9 @@ print(
     f"option_gated_disabled_candidates={len(option_gated_disabled_strategy_names)} "
     f"option_gated_disabled_candidate_names={format_name_list(option_gated_disabled_strategy_names)} "
     f"approved_disabled_stock_candidates={format_name_list(approved_disabled_stock_candidate_names)} "
-    f"approved_disabled_option_candidates={format_name_list(approved_disabled_option_candidate_names)}"
+    f"approved_disabled_option_candidates={format_name_list(approved_disabled_option_candidate_names)} "
+    f"validated_unapproved_stock_candidates={format_name_list(validated_unapproved_stock_candidate_names)} "
+    f"validated_unapproved_option_candidates={format_name_list(validated_unapproved_option_candidate_names)}"
 )
 print(
     "paper proof option snapshots: "
