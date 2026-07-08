@@ -1870,24 +1870,29 @@ status_line="$("${compose[@]}" run -T --rm admin status \
 
 if [[ "$status_line" == *"status=close_only"* ]] \
   && [[ "$status_line" == *"kill_switch=false"* ]]; then
-  if [[ "$status_line" == *"paper proof failed"* ]] \
-    || [[ "$status_line" == *"session guard failed"* ]]; then
-    echo "paper readiness refusing auto-resume after failed proof guard: $status_line" >&2
-    exit 1
+  status_updated_at="$(sed -n 's/.* updated_at=\([^ ]*\).*/\1/p' <<< "$status_line")"
+  status_session_date=""
+  if [[ -n "$status_updated_at" ]]; then
+    status_session_date="$(TZ=America/New_York date -d "$status_updated_at" +%F 2>/dev/null || true)"
+  fi
+  current_session_date="$(TZ=America/New_York date +%F)"
+  readiness_session_date="$PAPER_READINESS_SESSION_DATE"
+  status_is_same_session=false
+  if [[ -z "$status_session_date" \
+    || "$status_session_date" == "$current_session_date" \
+    || "$status_session_date" == "$readiness_session_date" ]]; then
+    status_is_same_session=true
   fi
 
-  if [[ "$status_line" == *"reason=paper profit lock"* ]] \
-    || [[ "$status_line" == *"reason=paper proof risk lock"* ]]; then
-    status_updated_at="$(sed -n 's/.* updated_at=\([^ ]*\).*/\1/p' <<< "$status_line")"
-    status_session_date=""
-    if [[ -n "$status_updated_at" ]]; then
-      status_session_date="$(TZ=America/New_York date -d "$status_updated_at" +%F 2>/dev/null || true)"
+  if [[ "$status_is_same_session" == "true" ]]; then
+    if [[ "$status_line" == *"paper proof failed"* ]] \
+      || [[ "$status_line" == *"session guard failed"* ]]; then
+      echo "paper readiness refusing auto-resume after failed proof guard: $status_line" >&2
+      exit 1
     fi
-    current_session_date="$(TZ=America/New_York date +%F)"
-    readiness_session_date="$PAPER_READINESS_SESSION_DATE"
-    if [[ -z "$status_session_date" \
-      || "$status_session_date" == "$current_session_date" \
-      || "$status_session_date" == "$readiness_session_date" ]]; then
+
+    if [[ "$status_line" == *"reason=paper profit lock"* ]] \
+      || [[ "$status_line" == *"reason=paper proof risk lock"* ]]; then
       if [[ "$status_line" == *"reason=paper profit lock"* ]]; then
         same_session_profit_lock=true
       else
