@@ -5973,16 +5973,15 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "option_snapshot_due_time = time(10, 0)" in script
     assert "option_snapshot_summary = option_snapshot_ledger_summary" in script
     assert 'option_snapshot_status = "missing" if option_snapshot_due else "not_due"' in script
-    assert 'option_snapshot_status = "stale"' in script
-    assert "option_snapshot_replay_ready = int(option_snapshot_summary[\"file_count\"]) > 0" in script
+    assert 'option_snapshot_status = "stale" if option_snapshot_due else "not_due"' in script
+    assert 'option_snapshot_replay_ready = option_snapshot_status == "ok"' in script
     assert (
         "replay_supported_option_strategy_name_set = (\n"
         "            option_strategy_name_set if option_snapshot_replay_ready else set()"
     ) in script
     assert "replay_supported_strategy_name_set" in script
     assert "option_replay_status" in script
-    assert "snapshot_missing" in script
-    assert "snapshot_unconfigured" in script
+    assert 'else f"snapshot_{option_snapshot_status}"' in script
     assert "active_replay_supported_strategy_names" in script
     assert "disabled_replay_supported_strategy_names" in script
     assert "active_replay_unsupported_strategy_names" in script

@@ -1177,22 +1177,22 @@ try:
         option_snapshot_summary = option_snapshot_ledger_summary(
             settings.option_chain_snapshot_dir
         )
-        option_snapshot_replay_ready = int(option_snapshot_summary["file_count"]) > 0
+        option_snapshot_file_count = int(option_snapshot_summary["file_count"])
         if not settings.option_chain_snapshot_dir:
             option_snapshot_status = "unconfigured"
         elif not settings.option_chain_symbols:
             option_snapshot_status = "misconfigured"
-        elif not option_snapshot_replay_ready:
+        elif option_snapshot_file_count <= 0:
             option_snapshot_status = "missing" if option_snapshot_due else "not_due"
         elif (
-            option_snapshot_due
-            and option_snapshot_target_session is not None
+            option_snapshot_target_session is not None
             and option_snapshot_summary["latest_session"]
             != option_snapshot_target_session.isoformat()
         ):
-            option_snapshot_status = "stale"
+            option_snapshot_status = "stale" if option_snapshot_due else "not_due"
         else:
             option_snapshot_status = "ok"
+        option_snapshot_replay_ready = option_snapshot_status == "ok"
         replay_supported_option_strategy_name_set = (
             option_strategy_name_set if option_snapshot_replay_ready else set()
         )
@@ -1202,11 +1202,7 @@ try:
         option_replay_status = (
             "supported"
             if option_snapshot_replay_ready
-            else (
-                "snapshot_missing"
-                if settings.option_chain_snapshot_dir
-                else "snapshot_unconfigured"
-            )
+            else f"snapshot_{option_snapshot_status}"
         )
         active_replay_supported_strategy_names = [
             name
