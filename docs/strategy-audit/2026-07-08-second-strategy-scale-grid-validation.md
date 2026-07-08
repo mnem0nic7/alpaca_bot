@@ -503,3 +503,32 @@ This keeps the latest setup/grid search result visible beside the broad basket
 scan result. On 2026-07-08 it reported fresh setup evidence with
 `candidate_status=no_positive_prefilter_edge`, `prefilter_positive_rows=0`,
 `validation_positive_rows=0`, and `promotion_approved=false`.
+
+## 2026-07-08 Live Evidence Refresh
+
+The latest broad basket artifact now points at:
+
+```text
+/var/lib/alpaca-bot/nightly/second_strategy/20260708T193053Z/summary.md
+/var/lib/alpaca-bot/nightly/second_strategy/20260708T193053Z/validation/summary.md
+```
+
+An initial validation at starting equity `68995.52` produced a borderline
+positive `ema_pullback` contribution with candidate CI low `0.0007`. Re-running
+the same validation path against current broker equity `69006.57` invalidated
+that edge:
+
+| candidate | scale | candidate trades | candidate P&L | candidate 95% CI mean/trade | candidate p(mean<=0) | verdict |
+|---|---:|---:|---:|---|---:|---|
+| `ema_pullback` | 0.50 | 292 | 179.74 | [-0.0075, 1.2366] | 0.0290 | `no-evidence` |
+
+The refreshed validation summary includes `candidate_count=1` and
+`candidate_names=["ema_pullback"]`, reports `validation_positive_rows=0`, and
+sets `promotion_approved=false`. The current proof status therefore reports
+`candidate_status=no_positive_validation_edge`,
+`validated_unapproved_stock_candidates=none`, and promotion action
+`status=none`.
+
+No strategy, paper approval allowlist, or live paper parameter was changed by
+this evidence refresh. Keep `PAPER_APPROVED_STRATEGIES=bull_flag`; no second
+strategy is currently approved for paper promotion.

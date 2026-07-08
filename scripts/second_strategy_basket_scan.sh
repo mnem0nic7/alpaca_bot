@@ -745,6 +745,11 @@ for raw in status_path.read_text().splitlines():
                 audit_row["trade_diagnostics"] = trade_diagnostics
     rows.append((candidate, candidate_scale, status, report, stderr, audit_row))
 
+candidate_names = []
+for candidate, *_rest in rows:
+    if candidate not in candidate_names:
+        candidate_names.append(candidate)
+
 
 def sort_key(item):
     candidate, candidate_scale, status, _report, _stderr, audit_row = item
@@ -781,6 +786,7 @@ lines = [
     f"- excluded_candidates: `{excluded_candidates}`",
     f"- include_option_candidates: `{include_option_candidates}`",
     f"- option_chain_snapshots: `{option_chain_snapshots}`",
+    f"- candidate_names: `{','.join(candidate_names) if candidate_names else 'none'}`",
     "",
     "| candidate | scale | status | trades | candidate trades | candidate P&L | candidate mean/trade | candidate 95% CI mean/trade | candidate p(mean<=0) | basket total P&L | basket 95% CI mean/trade | basket verdict | verdict | report |",
     "|---|---:|---|---:|---:|---:|---:|---|---:|---:|---|---|---|---|",
@@ -883,6 +889,8 @@ summary_json_path.write_text(
             "excluded_candidates": excluded_candidates,
             "include_option_candidates": include_option_candidates,
             "option_chain_snapshots": option_chain_snapshots,
+            "candidate_count": len(candidate_names),
+            "candidate_names": candidate_names,
             "positive_edge_prefilter_rows": positive_edges,
             "rows": json_rows,
         },
@@ -1186,6 +1194,11 @@ for raw in status_path.read_text().splitlines():
                 audit_row["trade_diagnostics"] = trade_diagnostics
     rows.append((candidate, candidate_scale, status, report, stderr, audit_row))
 
+candidate_names = []
+for candidate, *_rest in rows:
+    if candidate not in candidate_names:
+        candidate_names.append(candidate)
+
 
 def sort_key(item):
     candidate, candidate_scale, status, _report, _stderr, audit_row = item
@@ -1225,6 +1238,7 @@ lines = [
     f"- include_option_candidates: `{include_option_candidates}`",
     f"- option_chain_snapshots: `{option_chain_snapshots}`",
     f"- validate_all_positive_rows: `{validate_all_positive_rows}`",
+    f"- candidate_names: `{','.join(candidate_names) if candidate_names else 'none'}`",
     "",
     "| candidate | scale | status | trades | candidate trades | candidate P&L | candidate mean/trade | candidate 95% CI mean/trade | candidate p(mean<=0) | basket total P&L | basket 95% CI mean/trade | basket verdict | verdict | report |",
     "|---|---:|---|---:|---:|---:|---:|---|---:|---:|---|---|---|---|",
@@ -1339,6 +1353,8 @@ summary_json_path.write_text(
             "include_option_candidates": include_option_candidates,
             "option_chain_snapshots": option_chain_snapshots,
             "validate_all_positive_rows": validate_all_positive_rows,
+            "candidate_count": len(candidate_names),
+            "candidate_names": candidate_names,
             "positive_edge_validation_rows": validation_positive_edges,
             "promotion_approved": False,
             "conclusion": conclusion,

@@ -3930,6 +3930,19 @@ elif validated_unapproved_option_candidate_names:
         if option_snapshot_replay_ready
         else "validated_option_candidate_replay_unavailable"
     )
+elif (
+    second_strategy_evidence["status"] == "ok"
+    and second_strategy_evidence["candidate_status"]
+    in {
+        "partial_validation",
+        "no_positive_validation_edge",
+        "no_positive_prefilter_edge",
+        "no_approved_candidate",
+    }
+):
+    strategy_diversification_candidate_status = str(
+        second_strategy_evidence["candidate_status"]
+    )
 else:
     strategy_diversification_candidate_status = "no_approved_stock_strategy"
 proof_robustness_status = "ready" if not proof_blockers else "blocked"

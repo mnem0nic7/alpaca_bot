@@ -377,6 +377,11 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "candidate_ci_low" in script
     assert "candidate_verdict" in script
     assert "missing-candidate-edge-diagnostics" in script
+    assert "candidate_names = []" in script
+    assert "candidate not in candidate_names" in script
+    assert 'f"- candidate_names: `' in script
+    assert script.count('"candidate_count": len(candidate_names)') == 2
+    assert script.count('"candidate_names": candidate_names') == 2
     assert 'p_mean_le_zero = audit_row["p_positive"]' in script
     assert "1.0 - float(audit_row" not in script
     assert "PAPER_APPROVED_STRATEGIES" in script
@@ -6230,6 +6235,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "approved_option_candidate_disabled" in script
     assert "approved_option_candidate_replay_unavailable" in script
     assert "replay_unsupported_active_strategy" in script
+    assert 'second_strategy_evidence["candidate_status"]' in script
+    assert '"no_positive_validation_edge"' in script
+    assert '"no_positive_prefilter_edge"' in script
     assert "no_approved_stock_strategy" in script
     assert "scale_blockers.append(\"profit_concentration\")" in script
     assert "scale_blockers.append(\"eod_loss_share\")" in script
