@@ -257,7 +257,17 @@ new_approved="$(append_csv_name "$current_approved" "$VALIDATED_STRATEGY")"
 backup_env="$(mktemp)"
 cp "$ENV_FILE" "$backup_env"
 restore_env_on_error=false
+rollback_strategy_on_error=false
+compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
 cleanup() {
+  if [[ "$rollback_strategy_on_error" == "true" ]]; then
+    if ! "${compose[@]}" run -T --rm admin \
+      disable-strategy "$VALIDATED_STRATEGY" \
+      --mode paper \
+      --strategy-version "$STRATEGY_VERSION"; then
+      echo "$LOG_PREFIX failed to roll back strategy flag for $VALIDATED_STRATEGY" >&2
+    fi
+  fi
   if [[ "$restore_env_on_error" == "true" ]]; then
     cp "$backup_env" "$ENV_FILE"
   fi
@@ -273,7 +283,6 @@ else
   echo "$LOG_PREFIX PAPER_APPROVED_STRATEGIES already includes $VALIDATED_STRATEGY"
 fi
 
-compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
 if ! "${compose[@]}" run -T --rm admin \
   enable-strategy "$VALIDATED_STRATEGY" \
   --mode paper \
@@ -281,8 +290,13 @@ if ! "${compose[@]}" run -T --rm admin \
   echo "$LOG_PREFIX enable-strategy failed; restored env allowlist" >&2
   exit 1
 fi
-restore_env_on_error=false
+rollback_strategy_on_error=true
 
 echo "$LOG_PREFIX enabled $VALIDATED_STRATEGY from $VALIDATION_SUMMARY"
-"$DEPLOY_SCRIPT" "$ENV_FILE"
+if ! "$DEPLOY_SCRIPT" "$ENV_FILE"; then
+  echo "$LOG_PREFIX deploy failed; rolling back env allowlist and strategy flag" >&2
+  exit 1
+fi
+restore_env_on_error=false
+rollback_strategy_on_error=false
 echo "$LOG_PREFIX promotion complete for $VALIDATED_STRATEGY"
