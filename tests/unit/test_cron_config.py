@@ -213,7 +213,11 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "paper activity 10:25/10:35/12:00/14:35" in install_cron
     assert "proof status 17:28" in install_cron
     assert "scripts/apply_candidate.sh" in cron_text
-    assert "docker compose --env-file /etc/alpaca_bot/alpaca-bot.env -f deploy/compose.yaml run --rm nightly" in cron_text
+    assert 'timeout "${NIGHTLY_TIMEOUT_SECONDS:-14400}"' in cron_text
+    assert (
+        'timeout "${NIGHTLY_TIMEOUT_SECONDS:-14400}" docker compose --env-file '
+        "/etc/alpaca_bot/alpaca-bot.env -f deploy/compose.yaml run --rm nightly"
+    ) in cron_text
     assert "docker compose -f deploy/compose.yaml run --rm nightly" not in cron_text
     assert "scripts/second_strategy_basket_scan.sh" in cron_text
     assert "/var/log/alpaca-bot-second-strategy.log" in cron_text

@@ -557,6 +557,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "BULL_FLAG_CONSOLIDATION_RANGE_PCT=0.5" in env_text
     assert "REPLAY_SLIPPAGE_BPS=2.0" in env_text
     assert "NIGHTLY_MAX_COMBOS=24" in env_text
+    assert "NIGHTLY_TIMEOUT_SECONDS=14400" in env_text
     assert "SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS=7200" in env_text
     assert "SECOND_STRATEGY_OUTPUT_ROOT=/var/lib/alpaca-bot/nightly/second_strategy" in env_text
     assert "SECOND_STRATEGY_EXCLUDE_CANDIDATES=vwap_cross" in env_text
@@ -639,6 +640,7 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "ENTRY_ORDER_ACTIVE_BARS=1" in script
     assert 'REPLAY_SLIPPAGE_BPS="2.0"' in script
     assert "NIGHTLY_MAX_COMBOS=24" in script
+    assert "NIGHTLY_TIMEOUT_SECONDS=14400" in script
     assert "SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS=7200" in script
     assert "SECOND_STRATEGY_OUTPUT_ROOT=/var/lib/alpaca-bot/nightly/second_strategy" in script
     assert "SECOND_STRATEGY_EXCLUDE_CANDIDATES=vwap_cross" in script
