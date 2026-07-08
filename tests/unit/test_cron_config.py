@@ -275,8 +275,10 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'OUTPUT_ROOT="${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}"' in script
     assert 'LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"' in script
     assert 'EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"' in script
+    assert 'CANDIDATE_SCALES="${SECOND_STRATEGY_CANDIDATE_SCALES:-${SECOND_STRATEGY_CANDIDATE_SCALE:-0.10,0.25,0.50}}"' in script
     assert 'VALIDATE_POSITIVES="${SECOND_STRATEGY_VALIDATE_POSITIVES:-true}"' in script
     assert 'VALIDATION_CANDIDATES="${SECOND_STRATEGY_VALIDATION_CANDIDATES:-}"' in script
+    assert 'MAX_VALIDATION_CANDIDATES="${SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES:-6}"' in script
     assert 'VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"' in script
     assert 'VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"' in script
     assert 'LATEST_LINK="$OUTPUT_ROOT/latest"' in script
@@ -292,7 +294,9 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "promotion_approved" in script
     assert "stock_disabled_candidate_names" in script
     assert "python3 -m alpaca_bot.replay.cli portfolio-basket-audit" in script
-    assert '--confidence-scale "$candidate=$CANDIDATE_SCALE"' in script
+    assert '--confidence-scale "$candidate=$candidate_scale"' in script
+    assert "best_by_candidate" in script
+    assert "candidate_scales" in script
     assert "ci_rank = -" in script
     assert 'p_mean_le_zero = audit_row["p_positive"]' in script
     assert "1.0 - float(audit_row" not in script

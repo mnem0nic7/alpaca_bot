@@ -33,6 +33,22 @@ read_name_list() {
   done
 }
 
+read_validation_candidate_specs() {
+  local raw="$1"
+  local default_scale="$2"
+  local spec
+  while IFS= read -r spec; do
+    [[ -n "$spec" ]] || continue
+    if [[ "$spec" == *"="* ]]; then
+      printf '%s\t%s\n' "${spec%%=*}" "${spec#*=}"
+    elif [[ "$spec" == *":"* ]]; then
+      printf '%s\t%s\n' "${spec%%:*}" "${spec#*:}"
+    else
+      printf '%s\t%s\n' "$spec" "$default_scale"
+    fi
+  done < <(read_name_list "$raw")
+}
+
 [[ -f "$ENV_FILE" ]] || fail "missing env file: $ENV_FILE"
 
 cd "$ROOT_DIR"
@@ -47,13 +63,15 @@ SAMPLE_SIZE="${SECOND_STRATEGY_SAMPLE_SIZE:-80}"
 SAMPLE_SEED="${SECOND_STRATEGY_SAMPLE_SEED:-second-strategy-k1-giveback-refresh}"
 SLIPPAGE_BPS="${SECOND_STRATEGY_SLIPPAGE_BPS:-${REPLAY_SLIPPAGE_BPS:-2}}"
 MAX_OPEN_POSITIONS_VALUE="${SECOND_STRATEGY_MAX_OPEN_POSITIONS:-${MAX_OPEN_POSITIONS:-1}}"
-CANDIDATE_SCALE="${SECOND_STRATEGY_CANDIDATE_SCALE:-0.25}"
+CANDIDATE_SCALES="${SECOND_STRATEGY_CANDIDATE_SCALES:-${SECOND_STRATEGY_CANDIDATE_SCALE:-0.10,0.25,0.50}}"
 OUTPUT_ROOT="${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}"
 OUTPUT_DIR="${SECOND_STRATEGY_OUTPUT_DIR:-$OUTPUT_ROOT/$(date -u +%Y%m%dT%H%M%SZ)}"
 LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"
 EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"
 VALIDATE_POSITIVES="${SECOND_STRATEGY_VALIDATE_POSITIVES:-true}"
 VALIDATION_CANDIDATES="${SECOND_STRATEGY_VALIDATION_CANDIDATES:-}"
+DEFAULT_VALIDATION_CANDIDATE_SCALE="${SECOND_STRATEGY_VALIDATION_CANDIDATE_SCALE:-${SECOND_STRATEGY_CANDIDATE_SCALE:-0.25}}"
+MAX_VALIDATION_CANDIDATES="${SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES:-6}"
 VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"
 VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"
 VALIDATION_OUTPUT_DIR="${SECOND_STRATEGY_VALIDATION_OUTPUT_DIR:-$OUTPUT_DIR/validation}"
@@ -110,6 +128,39 @@ else
 fi
 
 [[ "${#candidates[@]}" -gt 0 ]] || fail "no candidate strategies to scan"
+mapfile -t candidate_scales < <(read_name_list "$CANDIDATE_SCALES")
+[[ "${#candidate_scales[@]}" -gt 0 ]] || fail "no candidate scales to scan"
+python3 - "${candidate_scales[@]}" <<'PY' || fail "invalid candidate scale list: $CANDIDATE_SCALES"
+from __future__ import annotations
+
+import sys
+
+for raw in sys.argv[1:]:
+    try:
+        scale = float(raw)
+    except ValueError as exc:
+        raise SystemExit(f"candidate scale must be numeric: {raw}") from exc
+    if not 0.0 < scale <= 1.0:
+        raise SystemExit(f"candidate scale must be in (0.0, 1.0]: {raw}")
+PY
+python3 - "$DEFAULT_VALIDATION_CANDIDATE_SCALE" "$MAX_VALIDATION_CANDIDATES" <<'PY' || fail "invalid validation scale or cap"
+from __future__ import annotations
+
+import sys
+
+try:
+    scale = float(sys.argv[1])
+except ValueError as exc:
+    raise SystemExit(f"default validation scale must be numeric: {sys.argv[1]}") from exc
+if not 0.0 < scale <= 1.0:
+    raise SystemExit(f"default validation scale must be in (0.0, 1.0]: {sys.argv[1]}")
+try:
+    cap = int(sys.argv[2])
+except ValueError as exc:
+    raise SystemExit(f"max validation candidates must be an integer: {sys.argv[2]}") from exc
+if cap < 0:
+    raise SystemExit(f"max validation candidates must be non-negative: {sys.argv[2]}")
+PY
 
 starting_equity="${SECOND_STRATEGY_STARTING_EQUITY:-}"
 if [[ -z "$starting_equity" ]]; then
@@ -124,46 +175,49 @@ summary_json_file="$OUTPUT_DIR/summary.json"
 : > "$status_file"
 
 echo "second strategy basket scan: output_dir=$OUTPUT_DIR"
-echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scale=$CANDIDATE_SCALE starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none}"
+echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} starting_equity=${starting_equity:-scenario_default} excluded_candidates=${skipped_candidates[*]:-none}"
 
 failed_count=0
 for candidate in "${candidates[@]}"; do
   if [[ "$candidate" == "$BASE_STRATEGY" ]]; then
     continue
   fi
-  safe_candidate="$(printf '%s' "$candidate" | tr -c 'A-Za-z0-9_' '_')"
-  report_path="$OUTPUT_DIR/${safe_candidate}_basket.md"
-  jsonl_path="$OUTPUT_DIR/${safe_candidate}_basket.jsonl"
-  stderr_path="$OUTPUT_DIR/${safe_candidate}_basket.stderr"
-  cmd=(
-    python3 -m alpaca_bot.replay.cli portfolio-basket-audit
-    --scenario-dir "$SCENARIO_DIR"
-    --strategy "$BASE_STRATEGY"
-    --strategy "$candidate"
-    --sample-size "$SAMPLE_SIZE"
-    --sample-seed "$SAMPLE_SEED"
-    --slippage-bps "$SLIPPAGE_BPS"
-    --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
-    --confidence-scale "$candidate=$CANDIDATE_SCALE"
-    --output "$report_path"
-    --jsonl "$jsonl_path"
-  )
-  if [[ -n "$starting_equity" && "$starting_equity" != "none" ]]; then
-    cmd+=(--starting-equity "$starting_equity")
-  fi
+  for candidate_scale in "${candidate_scales[@]}"; do
+    safe_candidate="$(printf '%s' "$candidate" | tr -c 'A-Za-z0-9_' '_')"
+    safe_scale="$(printf '%s' "$candidate_scale" | tr -c 'A-Za-z0-9_' '_')"
+    report_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.md"
+    jsonl_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.jsonl"
+    stderr_path="$OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_basket.stderr"
+    cmd=(
+      python3 -m alpaca_bot.replay.cli portfolio-basket-audit
+      --scenario-dir "$SCENARIO_DIR"
+      --strategy "$BASE_STRATEGY"
+      --strategy "$candidate"
+      --sample-size "$SAMPLE_SIZE"
+      --sample-seed "$SAMPLE_SEED"
+      --slippage-bps "$SLIPPAGE_BPS"
+      --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
+      --confidence-scale "$candidate=$candidate_scale"
+      --output "$report_path"
+      --jsonl "$jsonl_path"
+    )
+    if [[ -n "$starting_equity" && "$starting_equity" != "none" ]]; then
+      cmd+=(--starting-equity "$starting_equity")
+    fi
 
-  echo "second strategy basket scan: candidate=$candidate"
-  if "${cmd[@]}" 2> "$stderr_path"; then
-    printf '%s\t%s\t%s\t%s\t%s\n' "$candidate" "passed" "$report_path" "$jsonl_path" "$stderr_path" >> "$status_file"
-  else
-    failed_count=$((failed_count + 1))
-    printf '%s\t%s\t%s\t%s\t%s\n' "$candidate" "failed" "$report_path" "$jsonl_path" "$stderr_path" >> "$status_file"
-  fi
+    echo "second strategy basket scan: candidate=$candidate scale=$candidate_scale"
+    if "${cmd[@]}" 2> "$stderr_path"; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "passed" "$report_path" "$jsonl_path" "$stderr_path" >> "$status_file"
+    else
+      failed_count=$((failed_count + 1))
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "failed" "$report_path" "$jsonl_path" "$stderr_path" >> "$status_file"
+    fi
+  done
 done
 
 python3 - "$status_file" "$summary_file" "$summary_json_file" \
   "$SCENARIO_DIR" "$BASE_STRATEGY" "$SAMPLE_SIZE" "$SAMPLE_SEED" \
-  "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "$CANDIDATE_SCALE" \
+  "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "${candidate_scales[*]}" \
   "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" <<'PY'
 from __future__ import annotations
 
@@ -180,7 +234,7 @@ sample_size = sys.argv[6]
 sample_seed = sys.argv[7]
 slippage_bps = sys.argv[8]
 max_open_positions = sys.argv[9]
-candidate_scale = sys.argv[10]
+candidate_scales = sys.argv[10]
 starting_equity = sys.argv[11]
 excluded_candidates = sys.argv[12]
 
@@ -196,7 +250,7 @@ json_rows = []
 for raw in status_path.read_text().splitlines():
     if not raw.strip():
         continue
-    candidate, status, report, jsonl, stderr = raw.split("\t")
+    candidate, candidate_scale, status, report, jsonl, stderr = raw.split("\t")
     audit_row = None
     if status == "passed" and Path(jsonl).exists():
         payloads = [
@@ -206,13 +260,13 @@ for raw in status_path.read_text().splitlines():
         ]
         if payloads and payloads[-1].get("rows"):
             audit_row = payloads[-1]["rows"][0]
-    rows.append((candidate, status, report, stderr, audit_row))
+    rows.append((candidate, candidate_scale, status, report, stderr, audit_row))
 
 
 def sort_key(item):
-    candidate, status, _report, _stderr, audit_row = item
+    candidate, candidate_scale, status, _report, _stderr, audit_row = item
     if status != "passed" or audit_row is None:
-        return (3, 0.0, candidate)
+        return (3, 0.0, candidate, float(candidate_scale))
     verdict_rank = {
         "positive-edge": 0,
         "no-evidence": 1,
@@ -221,7 +275,7 @@ def sort_key(item):
     }.get(audit_row.get("verdict"), 2)
     ci_low = audit_row.get("ci_low")
     ci_rank = -(float(ci_low) if ci_low is not None else float("-inf"))
-    return (verdict_rank, ci_rank, candidate)
+    return (verdict_rank, ci_rank, candidate, float(candidate_scale))
 
 
 lines = [
@@ -235,20 +289,21 @@ lines = [
     f"- sample_seed: `{sample_seed}`",
     f"- slippage_bps: `{slippage_bps}`",
     f"- max_open_positions: `{max_open_positions}`",
-    f"- candidate_scale: `{candidate_scale}`",
+    f"- candidate_scales: `{candidate_scales}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
     "",
-    "| candidate | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
-    "|---|---|---:|---:|---:|---:|---|---:|---:|---|---|",
+    "| candidate | scale | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
+    "|---|---:|---|---:|---:|---:|---:|---|---:|---:|---|---|",
 ]
 
 positive_edges = 0
-for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
+for candidate, candidate_scale, status, report, stderr, audit_row in sorted(rows, key=sort_key):
     if status != "passed" or audit_row is None:
         json_rows.append(
             {
                 "candidate": candidate,
+                "candidate_scale": candidate_scale,
                 "status": status,
                 "report": report,
                 "stderr": stderr,
@@ -256,7 +311,7 @@ for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
             }
         )
         lines.append(
-            f"| `{candidate}` | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
+            f"| `{candidate}` | {candidate_scale} | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
         )
         continue
     verdict = audit_row["verdict"]
@@ -271,6 +326,7 @@ for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
     json_rows.append(
         {
             "candidate": candidate,
+            "candidate_scale": candidate_scale,
             "status": "passed",
             "report": report,
             "stderr": stderr,
@@ -287,7 +343,7 @@ for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
     )
     lines.append(
         "| "
-        f"`{candidate}` | `passed` | {audit_row['trades']} | "
+        f"`{candidate}` | {candidate_scale} | `passed` | {audit_row['trades']} | "
         f"{fmt(audit_row['profit_factor'])} | {fmt(audit_row['total_pnl'])} | "
         f"{fmt(audit_row['mean_trade_pnl'], '.4f')} | {ci} | "
         f"{fmt(p_mean_le_zero, '.4f')} | {fmt(audit_row['cost_drag'])} | "
@@ -312,7 +368,7 @@ summary_json_path.write_text(
             "sample_seed": sample_seed,
             "slippage_bps": slippage_bps,
             "max_open_positions": max_open_positions,
-            "candidate_scale": candidate_scale,
+            "candidate_scales": candidate_scales,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
             "positive_edge_prefilter_rows": positive_edges,
@@ -331,39 +387,73 @@ PY
 
 validation_failed_count=0
 if [[ "${VALIDATE_POSITIVES,,}" == "true" ]]; then
+  validation_specs_file="$VALIDATION_OUTPUT_DIR/candidates.tsv"
   if [[ -n "$VALIDATION_CANDIDATES" ]]; then
-    mapfile -t validation_candidates < <(read_name_list "$VALIDATION_CANDIDATES")
+    mkdir -p "$VALIDATION_OUTPUT_DIR"
+    read_validation_candidate_specs "$VALIDATION_CANDIDATES" "$DEFAULT_VALIDATION_CANDIDATE_SCALE" > "$validation_specs_file"
   else
-    mapfile -t validation_candidates < <(
-      python3 - "$summary_json_file" <<'PY'
+    mkdir -p "$VALIDATION_OUTPUT_DIR"
+    python3 - "$summary_json_file" "$validation_specs_file" "$MAX_VALIDATION_CANDIDATES" <<'PY'
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 import sys
 
 payload = json.loads(Path(sys.argv[1]).read_text())
+output_path = Path(sys.argv[2])
+max_validation_candidates = int(sys.argv[3])
+
+best_by_candidate = {}
 for row in payload.get("rows", []):
     if row.get("status") == "passed" and row.get("verdict") == "positive-edge":
-        print(row["candidate"])
-PY
+        ci_low = row.get("ci_low")
+        p_mean_le_zero = row.get("p_mean_le_zero")
+        total_pnl = row.get("total_pnl")
+        score = (
+            float(ci_low) if ci_low is not None else -math.inf,
+            -(float(p_mean_le_zero) if p_mean_le_zero is not None else math.inf),
+            float(total_pnl) if total_pnl is not None else -math.inf,
+        )
+        current = best_by_candidate.get(row["candidate"])
+        if current is None or score > current[0]:
+            best_by_candidate[row["candidate"]] = (score, row)
+
+selected = [
+    item[1]
+    for item in sorted(
+        best_by_candidate.values(),
+        key=lambda item: (item[0][0], item[0][1], item[0][2], item[1]["candidate"]),
+        reverse=True,
     )
+]
+if max_validation_candidates > 0:
+    selected = selected[:max_validation_candidates]
+output_path.write_text(
+    "".join(
+        f"{row['candidate']}\t{row['candidate_scale']}\n"
+        for row in selected
+    )
+)
+PY
   fi
 
   validation_status_file="$VALIDATION_OUTPUT_DIR/status.tsv"
   validation_summary_file="$VALIDATION_OUTPUT_DIR/summary.md"
   validation_summary_json_file="$VALIDATION_OUTPUT_DIR/summary.json"
-  mkdir -p "$VALIDATION_OUTPUT_DIR"
   : > "$validation_status_file"
 
-  echo "second strategy basket validation: output_dir=$VALIDATION_OUTPUT_DIR candidates=${validation_candidates[*]:-none} sample_size=$VALIDATION_SAMPLE_SIZE sample_seed=$VALIDATION_SAMPLE_SEED"
+  validation_spec_count="$(wc -l < "$validation_specs_file" | tr -d ' ')"
+  echo "second strategy basket validation: output_dir=$VALIDATION_OUTPUT_DIR candidates=$validation_spec_count sample_size=$VALIDATION_SAMPLE_SIZE sample_seed=$VALIDATION_SAMPLE_SEED"
 
-  for candidate in "${validation_candidates[@]:-}"; do
-    [[ -n "$candidate" ]] || continue
+  while IFS=$'\t' read -r candidate candidate_scale; do
+    [[ -n "$candidate" && -n "$candidate_scale" ]] || continue
     safe_candidate="$(printf '%s' "$candidate" | tr -c 'A-Za-z0-9_' '_')"
-    report_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_validation.md"
-    jsonl_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_validation.jsonl"
-    stderr_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_validation.stderr"
+    safe_scale="$(printf '%s' "$candidate_scale" | tr -c 'A-Za-z0-9_' '_')"
+    report_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.md"
+    jsonl_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.jsonl"
+    stderr_path="$VALIDATION_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_validation.stderr"
     cmd=(
       python3 -m alpaca_bot.replay.cli portfolio-basket-audit
       --scenario-dir "$SCENARIO_DIR"
@@ -373,7 +463,7 @@ PY
       --sample-seed "$VALIDATION_SAMPLE_SEED"
       --slippage-bps "$SLIPPAGE_BPS"
       --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
-      --confidence-scale "$candidate=$CANDIDATE_SCALE"
+      --confidence-scale "$candidate=$candidate_scale"
       --output "$report_path"
       --jsonl "$jsonl_path"
     )
@@ -381,21 +471,21 @@ PY
       cmd+=(--starting-equity "$starting_equity")
     fi
 
-    echo "second strategy basket validation: candidate=$candidate"
+    echo "second strategy basket validation: candidate=$candidate scale=$candidate_scale"
     if "${cmd[@]}" 2> "$stderr_path"; then
-      printf '%s\t%s\t%s\t%s\t%s\n' "$candidate" "passed" "$report_path" "$jsonl_path" "$stderr_path" >> "$validation_status_file"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "passed" "$report_path" "$jsonl_path" "$stderr_path" >> "$validation_status_file"
     else
       validation_failed_count=$((validation_failed_count + 1))
-      printf '%s\t%s\t%s\t%s\t%s\n' "$candidate" "failed" "$report_path" "$jsonl_path" "$stderr_path" >> "$validation_status_file"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$candidate" "$candidate_scale" "failed" "$report_path" "$jsonl_path" "$stderr_path" >> "$validation_status_file"
     fi
-  done
+  done < "$validation_specs_file"
 
   python3 - "$validation_status_file" "$validation_summary_file" \
     "$validation_summary_json_file" "$summary_json_file" "$VALIDATION_OUTPUT_DIR" \
     "$SCENARIO_DIR" "$BASE_STRATEGY" "$VALIDATION_SAMPLE_SIZE" \
     "$VALIDATION_SAMPLE_SEED" "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" \
-    "$CANDIDATE_SCALE" "${starting_equity:-scenario_default}" \
-    "${skipped_candidates[*]:-none}" <<'PY'
+    "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" \
+    "$MAX_VALIDATION_CANDIDATES" <<'PY'
 from __future__ import annotations
 
 import json
@@ -413,9 +503,9 @@ sample_size = sys.argv[8]
 sample_seed = sys.argv[9]
 slippage_bps = sys.argv[10]
 max_open_positions = sys.argv[11]
-candidate_scale = sys.argv[12]
-starting_equity = sys.argv[13]
-excluded_candidates = sys.argv[14]
+starting_equity = sys.argv[12]
+excluded_candidates = sys.argv[13]
+max_validation_candidates = sys.argv[14]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -429,7 +519,7 @@ json_rows = []
 for raw in status_path.read_text().splitlines():
     if not raw.strip():
         continue
-    candidate, status, report, jsonl, stderr = raw.split("\t")
+    candidate, candidate_scale, status, report, jsonl, stderr = raw.split("\t")
     audit_row = None
     if status == "passed" and Path(jsonl).exists():
         payloads = [
@@ -439,13 +529,13 @@ for raw in status_path.read_text().splitlines():
         ]
         if payloads and payloads[-1].get("rows"):
             audit_row = payloads[-1]["rows"][0]
-    rows.append((candidate, status, report, stderr, audit_row))
+    rows.append((candidate, candidate_scale, status, report, stderr, audit_row))
 
 
 def sort_key(item):
-    candidate, status, _report, _stderr, audit_row = item
+    candidate, candidate_scale, status, _report, _stderr, audit_row = item
     if status != "passed" or audit_row is None:
-        return (3, 0.0, candidate)
+        return (3, 0.0, candidate, float(candidate_scale))
     verdict_rank = {
         "positive-edge": 0,
         "no-evidence": 1,
@@ -454,7 +544,7 @@ def sort_key(item):
     }.get(audit_row.get("verdict"), 2)
     ci_low = audit_row.get("ci_low")
     ci_rank = -(float(ci_low) if ci_low is not None else float("-inf"))
-    return (verdict_rank, ci_rank, candidate)
+    return (verdict_rank, ci_rank, candidate, float(candidate_scale))
 
 
 lines = [
@@ -470,20 +560,21 @@ lines = [
     f"- sample_seed: `{sample_seed}`",
     f"- slippage_bps: `{slippage_bps}`",
     f"- max_open_positions: `{max_open_positions}`",
-    f"- candidate_scale: `{candidate_scale}`",
+    f"- max_validation_candidates: `{max_validation_candidates}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
     "",
-    "| candidate | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
-    "|---|---|---:|---:|---:|---:|---|---:|---:|---|---|",
+    "| candidate | scale | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
+    "|---|---:|---|---:|---:|---:|---:|---|---:|---:|---|---|",
 ]
 
 validation_positive_edges = 0
-for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
+for candidate, candidate_scale, status, report, stderr, audit_row in sorted(rows, key=sort_key):
     if status != "passed" or audit_row is None:
         json_rows.append(
             {
                 "candidate": candidate,
+                "candidate_scale": candidate_scale,
                 "status": status,
                 "report": report,
                 "stderr": stderr,
@@ -491,7 +582,7 @@ for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
             }
         )
         lines.append(
-            f"| `{candidate}` | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
+            f"| `{candidate}` | {candidate_scale} | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
         )
         continue
     verdict = audit_row["verdict"]
@@ -506,6 +597,7 @@ for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
     json_rows.append(
         {
             "candidate": candidate,
+            "candidate_scale": candidate_scale,
             "status": "passed",
             "report": report,
             "stderr": stderr,
@@ -523,7 +615,7 @@ for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
     )
     lines.append(
         "| "
-        f"`{candidate}` | `passed` | {audit_row['trades']} | "
+        f"`{candidate}` | {candidate_scale} | `passed` | {audit_row['trades']} | "
         f"{fmt(audit_row['profit_factor'])} | {fmt(audit_row['total_pnl'])} | "
         f"{fmt(audit_row['mean_trade_pnl'], '.4f')} | {ci} | "
         f"{fmt(p_mean_le_zero, '.4f')} | {fmt(audit_row['cost_drag'])} | "
@@ -531,7 +623,7 @@ for candidate, status, report, stderr, audit_row in sorted(rows, key=sort_key):
     )
 
 if not rows:
-    lines.append("| `none` | `skipped` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
+    lines.append("| `none` | n/a | `skipped` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a |")
 
 if validation_positive_edges:
     conclusion = (
@@ -558,7 +650,7 @@ summary_json_path.write_text(
             "sample_seed": sample_seed,
             "slippage_bps": slippage_bps,
             "max_open_positions": max_open_positions,
-            "candidate_scale": candidate_scale,
+            "max_validation_candidates": max_validation_candidates,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
             "positive_edge_validation_rows": validation_positive_edges,
