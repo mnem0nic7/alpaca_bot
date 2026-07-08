@@ -70,7 +70,7 @@ SAMPLE_SEED="${SECOND_STRATEGY_SETUP_SAMPLE_SEED:-second-strategy-setup-knob-pre
 SLIPPAGE_BPS="${SECOND_STRATEGY_SETUP_SLIPPAGE_BPS:-${SECOND_STRATEGY_SLIPPAGE_BPS:-${REPLAY_SLIPPAGE_BPS:-2}}}"
 MAX_OPEN_POSITIONS_VALUE="${SECOND_STRATEGY_SETUP_MAX_OPEN_POSITIONS:-${SECOND_STRATEGY_MAX_OPEN_POSITIONS:-${MAX_OPEN_POSITIONS:-1}}}"
 CANDIDATE_SCALE="${SECOND_STRATEGY_SETUP_CANDIDATE_SCALE:-${SECOND_STRATEGY_CANDIDATE_SCALE:-0.25}}"
-OUTPUT_ROOT="${SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy_setup}"
+OUTPUT_ROOT="${SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}/setup_knobs}"
 OUTPUT_DIR="${SECOND_STRATEGY_SETUP_OUTPUT_DIR:-$OUTPUT_ROOT/$(date -u +%Y%m%dT%H%M%SZ)}"
 LATEST_LINK="${SECOND_STRATEGY_SETUP_LATEST_LINK:-}"
 EXCLUDE_CANDIDATES="${SECOND_STRATEGY_SETUP_EXCLUDE_CANDIDATES:-${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}}"
@@ -755,6 +755,11 @@ if validation_positive_edges:
         "Validation found positive-edge setup-knob survivor(s). This is still "
         "not approval to change PAPER_APPROVED_STRATEGIES or live paper "
         "parameters; promote only through explicit operator review."
+    )
+elif not json_rows:
+    conclusion = (
+        "No setup-knob variant produced a positive prefilter survivor, so "
+        "independent validation had no variants to run and no paper promotion is approved."
     )
 else:
     conclusion = (

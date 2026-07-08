@@ -321,7 +321,8 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert './scripts/paper_proof_status.sh "$ENV_FILE"' in script
     assert "stock_disabled_candidate_names" in script
     assert "SECOND_STRATEGY_SETUP_OUTPUT_ROOT" in script
-    assert "/var/lib/alpaca-bot/nightly/second_strategy_setup" in script
+    assert "SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy" in script
+    assert "/setup_knobs" in script
     assert "SECOND_STRATEGY_SETUP_VARIANT_LABELS" in script
     assert "SECOND_STRATEGY_SETUP_VALIDATE_POSITIVES" in script
     assert "SECOND_STRATEGY_SETUP_MAX_VALIDATION_CANDIDATES" in script
@@ -355,6 +356,7 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert "PRIOR_DAY_HIGH_LOOKBACK_BARS=2" in script
     assert "positive setup-knob prefilter row is only a survivor" in script
     assert "not approval to change PAPER_APPROVED_STRATEGIES" in script
+    assert "independent validation had no variants to run" in script
     assert "promotion_approved" in script
     assert "wait -n" in script
     assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script

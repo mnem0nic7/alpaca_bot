@@ -144,3 +144,25 @@ The wrapper refuses to vary the protected paper-proof execution parameters:
 Like the scale scanner, this is evidence tooling only. A positive prefilter row
 is just a setup-variant survivor for independent validation; it is not approval
 to change live paper parameters or `PAPER_APPROVED_STRATEGIES`.
+By default it writes under
+`/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs`.
+
+## 2026-07-08 Setup-Knob Scan Result
+
+A full setup-knob scan completed under the shared second-strategy evidence root:
+
+- prefilter artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T040133Z/summary.md` and `summary.json`
+- validation artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T040133Z/validation/summary.md` and `summary.json`
+
+Result: 14 variants scanned, `positive_edge_prefilter_rows=0`, validation
+variants `0`, `positive_edge_validation_rows=0`, and
+`promotion_approved=false`. No setup-knob variant is approved for paper
+promotion, and no strategy or live paper parameter was changed.
+
+| candidate | lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---|---:|---:|---:|---|---|
+| `bb_squeeze` | `AL_bb_period` | `BB_PERIOD=10` | 245 | 1.26 | 81.79 | [-0.2283, 0.8930] | `no-evidence` |
+| `ema_pullback` | `AH_ema_period` | `EMA_PERIOD=7` | 289 | 1.02 | 8.87 | [-0.4935, 0.5898] | `no-evidence` |
+| `bb_squeeze` | `AN_bb_squeeze_threshold` | `BB_SQUEEZE_THRESHOLD_PCT=0.05` | 213 | 1.09 | 30.33 | [-0.5570, 0.8521] | `no-evidence` |
+| `momentum` | `U_prior_high_lookback` | `PRIOR_DAY_HIGH_LOOKBACK_BARS=2` | 286 | 1.04 | 17.20 | [-0.5759, 0.7398] | `no-evidence` |
+| `breakout` | `X_breakout_lookback` | `BREAKOUT_LOOKBACK_BARS=10` | 205 | 0.54 | -211.23 | [-1.6708, -0.3623] | `negative-edge` |
