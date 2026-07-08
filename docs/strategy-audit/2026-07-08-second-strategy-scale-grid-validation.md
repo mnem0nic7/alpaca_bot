@@ -74,3 +74,46 @@ independent validation.
 Follow-up automation change: the scanner default was changed to
 `SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES=0`, which means validate every
 positive prefilter survivor family unless an operator intentionally sets a cap.
+
+## Uncapped Validation Refresh
+
+After the proof status began reporting second-strategy evidence, the latest
+scheduled artifact showed complete prefilter evidence but partial validation
+coverage: `orb` was a positive prefilter survivor and was only covered by the
+manual `validation_extra` run.
+
+An uncapped refresh was run with `SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES=0`
+and `SECOND_STRATEGY_SCAN_JOBS=2`:
+
+```text
+/var/lib/alpaca-bot/nightly/second_strategy/20260708T030517Z/summary.md
+/var/lib/alpaca-bot/nightly/second_strategy/20260708T030517Z/summary.json
+/var/lib/alpaca-bot/nightly/second_strategy/20260708T030517Z/validation/summary.md
+/var/lib/alpaca-bot/nightly/second_strategy/20260708T030517Z/validation/summary.json
+```
+
+The scan found the same 19 positive prefilter rows across 7 candidate families:
+`vwap_reversion`, `ema_pullback`, `gap_and_go`, `high_watermark`,
+`failed_breakdown`, `bb_squeeze`, and `orb`.
+
+Independent validation used the 160-scenario
+`second-strategy-independent-validation` sample and selected the best prefilter
+scale for every survivor family:
+
+| candidate | scale | trades | total P&L | 95% CI mean/trade | verdict |
+|---|---:|---:|---:|---|---|
+| `ema_pullback` | 0.50 | 351 | 168.60 | [-0.0807, 1.1487] | `no-evidence` |
+| `failed_breakdown` | 0.10 | 191 | 112.77 | [-0.0909, 1.4134] | `no-evidence` |
+| `orb` | 0.10 | 551 | 98.98 | [-0.2648, 0.6330] | `no-evidence` |
+| `bb_squeeze` | 0.10 | 286 | 13.28 | [-0.3402, 0.4296] | `no-evidence` |
+| `high_watermark` | 0.10 | 68 | -2.41 | [-1.1999, 1.2399] | `no-evidence` |
+| `gap_and_go` | 0.10 | 68 | -6.22 | [-1.3481, 1.2568] | `no-evidence` |
+| `vwap_reversion` | 0.25 | 89 | -23.54 | [-2.0141, 1.6840] | `no-evidence` |
+
+The proof status now reports
+`candidate_status=no_positive_validation_edge`,
+`missing_validation_families=none`, `validation_rows=7`,
+`validation_positive_rows=0`, and `promotion_approved=false`.
+
+Conclusion: the strategy diversification blocker remains real. Do not promote
+or enable a second strategy from this scan.
