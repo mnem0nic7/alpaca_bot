@@ -5953,9 +5953,16 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "disabled_strategy_names" in script
     assert "stock_strategy_name_set = set(STRATEGY_REGISTRY)" in script
     assert "option_strategy_name_set = set(OPTION_STRATEGY_NAMES)" in script
-    assert "replay_supported_option_strategy_name_set: set[str] = set()" in script
+    assert "def option_snapshot_ledger_has_files" in script
+    assert "option_snapshot_replay_ready = option_snapshot_ledger_has_files" in script
+    assert (
+        "replay_supported_option_strategy_name_set = (\n"
+        "            option_strategy_name_set if option_snapshot_replay_ready else set()"
+    ) in script
     assert "replay_supported_strategy_name_set" in script
     assert "option_replay_status" in script
+    assert "snapshot_missing" in script
+    assert "snapshot_unconfigured" in script
     assert "active_replay_supported_strategy_names" in script
     assert "disabled_replay_supported_strategy_names" in script
     assert "active_replay_unsupported_strategy_names" in script
@@ -5971,6 +5978,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "strategy_diversification_candidate_status" in script
     assert "replay_unsupported_strategy" in script
     assert "approved_stock_candidate_disabled" in script
+    assert "approved_option_candidate_disabled" in script
     assert "approved_option_candidate_replay_unavailable" in script
     assert "replay_unsupported_active_strategy" in script
     assert "no_approved_stock_strategy" in script

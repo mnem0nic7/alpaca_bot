@@ -473,6 +473,23 @@ def format_name_list(names: list[str]) -> str:
     return ",".join(names) if names else "none"
 
 
+def option_snapshot_ledger_has_files(snapshot_dir: str | None) -> bool:
+    if not snapshot_dir:
+        return False
+    path = Path(snapshot_dir)
+    try:
+        if path.is_file():
+            return path.stat().st_size > 0
+        if not path.is_dir():
+            return False
+        return any(
+            file_path.is_file() and file_path.stat().st_size > 0
+            for file_path in path.glob("option-chain-snapshots-*.jsonl")
+        )
+    except OSError:
+        return False
+
+
 def format_optional_float(value: float | None, digits: int = 1) -> str:
     if value is None:
         return "none"
@@ -1093,15 +1110,23 @@ try:
         disabled_option_strategy_names = [
             name for name in disabled_strategy_names if name in option_strategy_name_set
         ]
-        # Replay scenarios and portfolio replay price stock bars only today.
-        replay_supported_option_strategy_name_set: set[str] = set()
+        option_snapshot_replay_ready = option_snapshot_ledger_has_files(
+            settings.option_chain_snapshot_dir
+        )
+        replay_supported_option_strategy_name_set = (
+            option_strategy_name_set if option_snapshot_replay_ready else set()
+        )
         replay_supported_strategy_name_set = (
             stock_strategy_name_set | replay_supported_option_strategy_name_set
         )
         option_replay_status = (
             "supported"
-            if option_strategy_name_set <= replay_supported_option_strategy_name_set
-            else "unsupported"
+            if option_snapshot_replay_ready
+            else (
+                "snapshot_missing"
+                if settings.option_chain_snapshot_dir
+                else "snapshot_unconfigured"
+            )
         )
         active_replay_supported_strategy_names = [
             name
@@ -3406,7 +3431,11 @@ strategy_diversification_candidate_status = (
                 "approved_stock_candidate_disabled"
                 if approved_disabled_stock_candidate_names
                 else (
-                    "approved_option_candidate_replay_unavailable"
+                    (
+                        "approved_option_candidate_disabled"
+                        if option_snapshot_replay_ready
+                        else "approved_option_candidate_replay_unavailable"
+                    )
                     if approved_disabled_option_candidate_names
                     else "no_approved_stock_strategy"
                 )
