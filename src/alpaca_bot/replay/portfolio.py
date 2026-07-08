@@ -32,6 +32,7 @@ from alpaca_bot.domain.models import (
     WorkingEntryOrder,
 )
 from alpaca_bot.replay.mechanics import (
+    apply_slippage,
     entry_fill_price,
     eod_exit_price,
     profit_target_price,
@@ -41,9 +42,17 @@ from alpaca_bot.replay.mechanics import (
 )
 from alpaca_bot.replay.report import ReplayTradeRecord
 from alpaca_bot.risk.sizing import calculate_position_size
-from alpaca_bot.strategy import STRATEGY_REGISTRY, StrategySignalEvaluator
+from alpaca_bot.strategy import (
+    OPTION_STRATEGY_FACTORIES,
+    STRATEGY_REGISTRY,
+    StrategySignalEvaluator,
+)
 from alpaca_bot.strategy.breakout import session_day
 from alpaca_bot.strategy.market_context import compute_market_context
+from alpaca_bot.replay.option_snapshots import (
+    OptionChainSnapshotLedger,
+    make_point_in_time_option_evaluator,
+)
 
 
 @dataclass
@@ -98,10 +107,12 @@ class PortfolioReplayRunner:
         settings: Settings,
         signal_evaluator: StrategySignalEvaluator | None = None,
         strategy_name: str = "breakout",
+        option_chain_ledger: OptionChainSnapshotLedger | None = None,
     ):
         self.settings = settings
         self.signal_evaluator = signal_evaluator
         self.strategy_name = strategy_name
+        self.option_chain_ledger = option_chain_ledger
         self._lanes: dict[str, _Lane] = {}
         self._daily_slice_cache: dict[tuple[str, date], Sequence[Bar]] = {}
         self._regime_daily: list[Bar] = []
@@ -431,11 +442,16 @@ class PortfolioReplayRunner:
                 # single-strategy path: bars-free EOD flatten intents wait for
                 # that symbol's own next fresh bar, where pricing is correct.
                 for intent in cycle.intents:
-                    lane = self._lanes.get(intent.symbol)
+                    lane_symbol = (
+                        intent.underlying_symbol
+                        if intent.is_option and intent.underlying_symbol
+                        else intent.symbol
+                    )
+                    lane = self._lanes.get(lane_symbol)
                     if lane is None:
                         continue
                     if intent.intent_type == CycleIntentType.EXIT:
-                        if intent.symbol not in fresh_set:
+                        if lane_symbol not in fresh_set:
                             continue
                         closed, equity = self._eod_exit(
                             lane,
@@ -449,7 +465,7 @@ class PortfolioReplayRunner:
                         if closed is not None:
                             trades.append(closed)
                     elif intent.intent_type == CycleIntentType.UPDATE_STOP:
-                        if intent.symbol not in fresh_set:
+                        if lane_symbol not in fresh_set:
                             continue
                         if lane.position is not None and intent.stop_price is not None:
                             if should_update_stop(
@@ -478,6 +494,8 @@ class PortfolioReplayRunner:
     def _place_order(self, lane: _Lane, intent) -> None:
         if lane.position is not None or lane.working_order is not None:
             return
+        if intent.is_option and self.option_chain_ledger is None:
+            return
         nxt = lane.cursor + 1
         if nxt >= len(lane.intraday):
             return
@@ -485,17 +503,23 @@ class PortfolioReplayRunner:
         if expires_at is None:
             return
         lane.working_order = WorkingEntryOrder(
-            symbol=intent.symbol,
+            symbol=(
+                intent.underlying_symbol
+                if intent.is_option and intent.underlying_symbol
+                else intent.symbol
+            ),
             signal_timestamp=intent.timestamp,
             active_bar_timestamp=lane.intraday[nxt].timestamp,
             expires_at_timestamp=expires_at,
-            stop_price=intent.stop_price,
-            limit_price=intent.limit_price,
-            initial_stop_price=intent.initial_stop_price,
+            stop_price=float(intent.stop_price or 0.0),
+            limit_price=float(intent.limit_price or 0.0),
+            initial_stop_price=float(intent.initial_stop_price or 0.0),
             entry_level=0.0,
             relative_volume=0.0,
             quantity=intent.quantity,
             strategy_name=intent.strategy_name or self.strategy_name,
+            is_option=bool(intent.is_option),
+            option_symbol=intent.symbol if intent.is_option else None,
         )
 
     def _resolve_order(
@@ -514,6 +538,8 @@ class PortfolioReplayRunner:
             )
             lane.working_order = None
             return equity
+        if order.is_option:
+            return self._resolve_option_order(lane, bar, equity, traded_symbols)
         raw = simulate_buy_stop_limit_fill(
             bar=bar, stop_price=order.stop_price, limit_price=order.limit_price
         )
@@ -545,11 +571,69 @@ class PortfolioReplayRunner:
         lane.working_order = None
         return equity
 
+    def _resolve_option_order(
+        self,
+        lane: _Lane,
+        bar: Bar,
+        equity: float,
+        traded_symbols: set[tuple[str, date]],
+    ) -> float:
+        order = lane.working_order
+        if order is None:
+            return equity
+        contract = self._option_contract_at(
+            option_symbol=order.option_symbol,
+            as_of=self._bar_close_time(bar),
+        )
+        ask = contract.ask if contract is not None else None
+        if (
+            ask is None
+            or ask <= 0.0
+            or order.limit_price <= 0.0
+            or ask > order.limit_price
+        ):
+            if bar.timestamp >= order.last_active_bar_timestamp:
+                traded_symbols.add(
+                    (order.symbol, session_day(order.signal_timestamp, self.settings))
+                )
+                lane.working_order = None
+            return equity
+
+        fill = min(
+            apply_slippage(
+                ask,
+                side="buy",
+                bps=self.settings.replay_slippage_bps,
+            ),
+            order.limit_price,
+        )
+        qty = float(order.quantity or 0.0)
+        if qty <= 0.0:
+            lane.working_order = None
+            return equity
+        lane.position = OpenPosition(
+            symbol=order.symbol,
+            entry_timestamp=bar.timestamp,
+            entry_price=fill,
+            quantity=qty,
+            entry_level=order.entry_level,
+            initial_stop_price=0.0,
+            stop_price=0.0,
+            highest_price=fill,
+            strategy_name=order.strategy_name,
+            is_option=True,
+            option_symbol=order.option_symbol,
+        )
+        lane.working_order = None
+        return equity
+
     def _resolve_exits(self, lane, bar, equity, traded_symbols):
         """Stop-hit (priority) then profit-target. Returns (closed_trades, equity)."""
         closed: list[ReplayTradeRecord] = []
         pos = lane.position
         if pos is None:
+            return closed, equity
+        if pos.is_option:
             return closed, equity
         pos.highest_price = max(pos.highest_price, bar.high)
 
@@ -566,7 +650,6 @@ class PortfolioReplayRunner:
         if self.settings.enable_profit_target and lane.position is not None:
             target = profit_target_price(position=pos, settings=self.settings)
             if bar.high >= target:
-                from alpaca_bot.replay.mechanics import apply_slippage
                 exit_px = apply_slippage(target, side="sell", bps=self.settings.replay_slippage_bps)
                 equity += (exit_px - pos.entry_price) * pos.quantity
                 closed.append(self._record(pos, bar, exit_px, "profit_target"))
@@ -578,8 +661,12 @@ class PortfolioReplayRunner:
         pos = lane.position
         if pos is None:
             return None, equity
-        px = eod_exit_price(bar=bar, bps=self.settings.replay_slippage_bps)
-        equity += (px - pos.entry_price) * pos.quantity
+        if pos.is_option:
+            px = self._option_exit_price(pos, self._bar_close_time(bar))
+            equity += (px - pos.entry_price) * pos.quantity * 100.0
+        else:
+            px = eod_exit_price(bar=bar, bps=self.settings.replay_slippage_bps)
+            equity += (px - pos.entry_price) * pos.quantity
         exit_reason = "eod" if reason == "eod_flatten" else reason
         rec = self._record(pos, bar, px, exit_reason)
         traded_symbols.add((pos.symbol, session_day(bar.timestamp, self.settings)))
@@ -591,12 +678,40 @@ class PortfolioReplayRunner:
         # the same float quantity used for equity bookkeeping so audits and
         # proof-horizon checks match live paper proof semantics.
         qty = float(pos.quantity)
-        pnl = (exit_price - pos.entry_price) * qty
+        multiplier = 100.0 if pos.is_option else 1.0
+        pnl = (exit_price - pos.entry_price) * qty * multiplier
         return ReplayTradeRecord(
-            symbol=pos.symbol, entry_price=pos.entry_price, exit_price=exit_price,
+            symbol=pos.option_symbol or pos.symbol,
+            entry_price=pos.entry_price, exit_price=exit_price,
             quantity=qty, entry_time=pos.entry_timestamp,
             exit_time=bar.timestamp, exit_reason=reason, pnl=pnl,
             return_pct=(exit_price - pos.entry_price) / pos.entry_price,
+        )
+
+    def _option_contract_at(
+        self,
+        *,
+        option_symbol: str | None,
+        as_of: datetime,
+    ):
+        if self.option_chain_ledger is None or not option_symbol:
+            return None
+        return self.option_chain_ledger.contract_at_or_before(
+            occ_symbol=option_symbol,
+            as_of=as_of,
+        )
+
+    def _option_exit_price(self, pos: OpenPosition, as_of: datetime) -> float:
+        contract = self._option_contract_at(
+            option_symbol=pos.option_symbol,
+            as_of=as_of,
+        )
+        if contract is None or contract.bid <= 0.0:
+            return 0.0
+        return apply_slippage(
+            contract.bid,
+            side="sell",
+            bps=self.settings.replay_slippage_bps,
         )
 
 
@@ -607,6 +722,7 @@ class PortfolioBasketReplayRunner(PortfolioReplayRunner):
         strategies: Sequence[tuple[str, StrategySignalEvaluator]],
         *,
         strategy_equity_scales: Mapping[str, float] | None = None,
+        option_chain_ledger: OptionChainSnapshotLedger | None = None,
     ):
         if not strategies:
             raise ValueError("PortfolioBasketReplayRunner requires at least one strategy")
@@ -615,6 +731,7 @@ class PortfolioBasketReplayRunner(PortfolioReplayRunner):
             settings,
             signal_evaluator=first_evaluator,
             strategy_name=first_name,
+            option_chain_ledger=option_chain_ledger,
         )
         self.strategies = tuple(strategies)
         self.strategy_equity_scales = dict(strategy_equity_scales or {})
@@ -662,6 +779,7 @@ def portfolio_basket_pooled_trades(
     strategy_names: Sequence[str],
     *,
     strategy_equity_scales: Mapping[str, float] | None = None,
+    option_chain_ledger: OptionChainSnapshotLedger | None = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> list[ReplayTradeRecord]:
     """Replay several enabled strategies against one shared-equity portfolio."""
@@ -669,15 +787,25 @@ def portfolio_basket_pooled_trades(
         raise ValueError("portfolio basket requires at least one strategy")
     strategies: list[tuple[str, StrategySignalEvaluator]] = []
     for name in strategy_names:
-        try:
+        if name in STRATEGY_REGISTRY:
             evaluator = STRATEGY_REGISTRY[name]
-        except KeyError as exc:
-            raise ValueError(f"unknown strategy for portfolio basket: {name}") from exc
+        elif name in OPTION_STRATEGY_FACTORIES:
+            if option_chain_ledger is None:
+                raise ValueError(
+                    f"option strategy {name!r} requires option_chain_ledger"
+                )
+            evaluator = make_point_in_time_option_evaluator(
+                OPTION_STRATEGY_FACTORIES[name],
+                option_chain_ledger,
+            )
+        else:
+            raise ValueError(f"unknown strategy for portfolio basket: {name}")
         strategies.append((name, evaluator))
     runner = PortfolioBasketReplayRunner(
         settings,
         strategies,
         strategy_equity_scales=strategy_equity_scales,
+        option_chain_ledger=option_chain_ledger,
     )
     label = "+".join(strategy_names)
     return runner.run(

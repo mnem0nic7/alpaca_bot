@@ -939,6 +939,131 @@ def test_portfolio_basket_audit_subcommand_scores_combined_basket(
     assert payload["rows"][0]["strategy"] == "bull_flag+orb"
 
 
+def test_portfolio_basket_audit_supports_option_snapshot_ledger(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from datetime import date, datetime, timezone
+
+    from alpaca_bot.domain.models import OptionContract
+    from alpaca_bot.replay import cli as replay_cli
+    from alpaca_bot.replay.audit import StrategyAuditRow
+    from alpaca_bot.replay.cli import main
+    from alpaca_bot.replay.option_snapshots import append_option_chain_snapshot
+
+    _set_audit_env(monkeypatch)
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+    payload = json.loads(_GOLDEN_SCENARIO.read_text())
+    for symbol in ("AAA", "BBB"):
+        scenario = dict(payload)
+        scenario["name"] = symbol
+        scenario["symbol"] = symbol
+        for key in ("daily_bars", "intraday_bars"):
+            scenario[key] = [dict(bar, symbol=symbol) for bar in payload[key]]
+        (scenario_dir / f"{symbol}.json").write_text(json.dumps(scenario))
+    snapshot_dir = tmp_path / "snapshots"
+    append_option_chain_snapshot(
+        snapshot_dir=snapshot_dir,
+        cycle_at=datetime(2026, 1, 2, 15, 0, tzinfo=timezone.utc),
+        chains_by_symbol={
+            "AAA": [
+                OptionContract(
+                    occ_symbol="AAA260717P00100000",
+                    underlying="AAA",
+                    option_type="put",
+                    strike=100.0,
+                    expiry=date(2026, 7, 17),
+                    bid=1.0,
+                    ask=1.2,
+                )
+            ]
+        },
+    )
+    captured: dict[str, object] = {}
+
+    def fake_basket_pooled_trades(
+        scenarios,
+        settings,
+        strategy_names,
+        *,
+        strategy_equity_scales=None,
+        option_chain_ledger=None,
+        on_progress=None,
+    ):
+        del scenarios, settings, strategy_equity_scales, on_progress
+        captured["basket"] = tuple(strategy_names)
+        captured["ledger_snapshots"] = len(option_chain_ledger.snapshots)
+        return []
+
+    def fake_run_audit(*, scenarios, settings, strategies, pooled_trades_fn, **kwargs):
+        pooled_trades_fn(scenarios, settings, strategies[0])
+        return [
+            StrategyAuditRow(
+                strategy=strategies[0],
+                scenarios=len(scenarios),
+                trades=1,
+                win_rate=1.0,
+                profit_factor=None,
+                total_pnl=1.0,
+                mean_trade_pnl=1.0,
+                annualized_sharpe=None,
+                ci_low=None,
+                ci_high=None,
+                p_positive=None,
+                zero_cost_total_pnl=1.0,
+                cost_drag=0.0,
+                verdict="insufficient-data",
+            )
+        ]
+
+    monkeypatch.setattr(
+        replay_cli,
+        "portfolio_basket_pooled_trades",
+        fake_basket_pooled_trades,
+    )
+    monkeypatch.setattr(replay_cli, "run_audit", fake_run_audit)
+    out_md = tmp_path / "basket.md"
+
+    rc = main([
+        "portfolio-basket-audit",
+        "--scenario-dir", str(scenario_dir),
+        "--strategy", "bull_flag",
+        "--strategy", "bear_orb",
+        "--option-chain-snapshots", str(snapshot_dir),
+        "--output", str(out_md),
+    ])
+
+    assert rc == 0
+    assert captured == {
+        "basket": ("bull_flag", "bear_orb"),
+        "ledger_snapshots": 1,
+    }
+    assert "Option replay marks:" in out_md.read_text()
+
+
+def test_portfolio_basket_audit_rejects_option_strategy_without_snapshots(
+    tmp_path,
+    monkeypatch,
+    capsys,
+) -> None:
+    from alpaca_bot.replay.cli import main
+
+    _set_audit_env(monkeypatch)
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+
+    rc = main([
+        "portfolio-basket-audit",
+        "--scenario-dir", str(scenario_dir),
+        "--strategy", "bull_flag",
+        "--strategy", "bear_orb",
+    ])
+
+    assert rc == 1
+    assert "--option-chain-snapshots" in capsys.readouterr().err
+
+
 def test_portfolio_basket_audit_rejects_single_strategy(
     tmp_path,
     monkeypatch,

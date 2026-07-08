@@ -37,9 +37,10 @@ from alpaca_bot.replay.portfolio import (
     portfolio_basket_pooled_trades,
     portfolio_pooled_trades,
 )
+from alpaca_bot.replay.option_snapshots import load_option_chain_snapshot_ledger
 from alpaca_bot.replay.report import BacktestReport, ReplayTradeRecord
 from alpaca_bot.replay.runner import ReplayRunner
-from alpaca_bot.strategy import STRATEGY_REGISTRY
+from alpaca_bot.strategy import OPTION_STRATEGY_FACTORIES, STRATEGY_REGISTRY
 from alpaca_bot.tuning.sweep import DEFAULT_GRID, _parse_grid, run_sweep
 
 
@@ -314,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
     basket_p.add_argument(
         "--strategy",
         action="append",
-        choices=list(STRATEGY_REGISTRY),
+        choices=sorted(set(STRATEGY_REGISTRY) | set(OPTION_STRATEGY_FACTORIES)),
         required=True,
         metavar="NAME",
         help="strategy in the basket (repeatable; order matches runtime priority)",
@@ -361,6 +362,15 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "scale sizing equity for a basket strategy, matching runtime "
             "confidence sizing (repeatable; default: 1.0 for every strategy)"
+        ),
+    )
+    basket_p.add_argument(
+        "--option-chain-snapshots",
+        default=None,
+        metavar="PATH",
+        help=(
+            "option-chain snapshot JSONL file or directory required when the "
+            "basket includes option strategies"
         ),
     )
     basket_p.add_argument("--output", metavar="FILE", default="-")
@@ -1156,6 +1166,28 @@ def _cmd_portfolio_basket_audit(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    option_names = [
+        name for name in basket_names if name in OPTION_STRATEGY_FACTORIES
+    ]
+    option_chain_ledger = None
+    if option_names:
+        if not args.option_chain_snapshots:
+            print(
+                "portfolio-basket-audit option strategies require "
+                "--option-chain-snapshots",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            option_chain_ledger = load_option_chain_snapshot_ledger(
+                args.option_chain_snapshots,
+            )
+        except Exception as exc:
+            print(f"could not load option-chain snapshots: {exc}", file=sys.stderr)
+            return 1
+        if not option_chain_ledger.snapshots:
+            print("option-chain snapshot ledger is empty", file=sys.stderr)
+            return 1
     try:
         confidence_scales = _parse_confidence_scales(
             args.confidence_scale,
@@ -1226,6 +1258,12 @@ def _cmd_portfolio_basket_audit(args: argparse.Namespace) -> int:
             f"Confidence sizing scales: `{scale_text}`.",
             "",
         ])
+    if option_names:
+        blocks.extend([
+            "Option replay marks: "
+            f"`{args.option_chain_snapshots}` for `{','.join(option_names)}`.",
+            "",
+        ])
 
     def emit_progress(msg: str) -> None:
         print(f"[portfolio-basket-audit] {msg}", file=sys.stderr)
@@ -1234,12 +1272,18 @@ def _cmd_portfolio_basket_audit(args: argparse.Namespace) -> int:
         ksettings = dataclasses.replace(settings, max_open_positions=k)
 
         def basket_pooled_trades_with_progress(scenarios, settings, _label):
+            option_kwargs = (
+                {"option_chain_ledger": option_chain_ledger}
+                if option_chain_ledger is not None
+                else {}
+            )
             return portfolio_basket_pooled_trades(
                 scenarios,
                 settings,
                 basket_names,
                 strategy_equity_scales=confidence_scales,
                 on_progress=emit_progress,
+                **option_kwargs,
             )
 
         rows = run_audit(

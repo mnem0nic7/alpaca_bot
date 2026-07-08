@@ -1,9 +1,15 @@
 # tests/unit/test_portfolio_runner.py
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+
+import pytest
 
 from alpaca_bot.config import Settings
 from alpaca_bot.core.engine import CycleResult
-from alpaca_bot.domain.models import Bar, MarketContext, ReplayScenario
+from alpaca_bot.domain.models import Bar, MarketContext, OptionContract, ReplayScenario
+from alpaca_bot.replay.option_snapshots import (
+    OptionChainSnapshot,
+    OptionChainSnapshotLedger,
+)
 from alpaca_bot.replay.portfolio import (
     PortfolioBasketReplayRunner,
     PortfolioReplayRunner,
@@ -464,6 +470,114 @@ def test_portfolio_order_fill_preserves_strategy_name():
 
     assert lane.position is not None
     assert lane.position.strategy_name == "momentum"
+
+
+def test_portfolio_option_order_uses_snapshot_marks_and_multiplier():
+    settings = Settings.from_env({**ENV, "REPLAY_SLIPPAGE_BPS": "0"})
+    t0 = _utc(2026, 1, 2, 14, 30)
+    t1 = _utc(2026, 1, 2, 14, 45)
+    t2 = _utc(2026, 1, 2, 15, 0)
+    occ = "AAA260717P00100000"
+    ledger = OptionChainSnapshotLedger(
+        (
+            OptionChainSnapshot(
+                cycle_at=_utc(2026, 1, 2, 15, 0),
+                chains_by_symbol={
+                    "AAA": (
+                        OptionContract(
+                            occ_symbol=occ,
+                            underlying="AAA",
+                            option_type="put",
+                            strike=100.0,
+                            expiry=date(2026, 7, 17),
+                            bid=1.00,
+                            ask=1.20,
+                        ),
+                    )
+                },
+            ),
+            OptionChainSnapshot(
+                cycle_at=_utc(2026, 1, 2, 15, 15),
+                chains_by_symbol={
+                    "AAA": (
+                        OptionContract(
+                            occ_symbol=occ,
+                            underlying="AAA",
+                            option_type="put",
+                            strike=100.0,
+                            expiry=date(2026, 7, 17),
+                            bid=1.50,
+                            ask=1.70,
+                        ),
+                    )
+                },
+            ),
+        )
+    )
+    runner = PortfolioReplayRunner(
+        settings,
+        signal_evaluator=lambda **k: None,
+        strategy_name="bear_orb",
+        option_chain_ledger=ledger,
+    )
+    runner._index_scenarios([
+        ReplayScenario(
+            name="AAA",
+            symbol="AAA",
+            starting_equity=100000.0,
+            daily_bars=[_bar("AAA", _utc(2026, 1, 1, 5, 0))],
+            intraday_bars=[
+                _bar("AAA", t0, o=100, h=101, l=99, c=100, v=5000),
+                _bar("AAA", t1, o=99, h=100, l=97, c=98, v=5000),
+                _bar("AAA", t2, o=98, h=99, l=95, c=96, v=5000),
+            ],
+        )
+    ])
+    lane = runner._lanes["AAA"]
+    lane.cursor = 0
+
+    from alpaca_bot.core.engine import CycleIntent, CycleIntentType
+
+    runner._place_order(
+        lane,
+        CycleIntent(
+            intent_type=CycleIntentType.ENTRY,
+            symbol=occ,
+            timestamp=t0,
+            quantity=2.0,
+            limit_price=1.25,
+            strategy_name="bear_orb",
+            underlying_symbol="AAA",
+            is_option=True,
+            option_strike=100.0,
+            option_expiry=date(2026, 7, 17),
+            option_type_str="put",
+        ),
+    )
+
+    lane.cursor = 1
+    equity = runner._resolve_order(lane, lane.intraday[lane.cursor], 100000.0, set())
+
+    assert equity == 100000.0
+    assert lane.position is not None
+    assert lane.position.is_option is True
+    assert lane.position.symbol == "AAA"
+    assert lane.position.option_symbol == occ
+    assert lane.position.entry_price == 1.20
+
+    lane.cursor = 2
+    trade, equity = runner._eod_exit(
+        lane,
+        lane.intraday[lane.cursor],
+        equity,
+        set(),
+    )
+
+    assert trade is not None
+    assert trade.symbol == occ
+    assert trade.exit_price == 1.50
+    assert trade.pnl == pytest.approx(60.0)
+    assert equity == pytest.approx(100060.0)
 
 
 def test_portfolio_eod_exit_preserves_viability_reason():

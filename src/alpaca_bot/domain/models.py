@@ -63,6 +63,8 @@ class WorkingEntryOrder:
     quantity: float | None = None
     strategy_name: str = "breakout"
     expires_at_timestamp: datetime | None = None
+    is_option: bool = False
+    option_symbol: str | None = None
 
     @property
     def last_active_bar_timestamp(self) -> datetime:
@@ -85,6 +87,8 @@ class OpenPosition:
     highest_price: float = 0.0
     lowest_price: float = 0.0
     strategy_name: str = "breakout"
+    is_option: bool = False
+    option_symbol: str | None = None
 
     @property
     def risk_per_share(self) -> float:
