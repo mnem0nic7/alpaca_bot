@@ -388,6 +388,29 @@ Conclusion: the full `ema_pullback` setup grid did not produce a positive
 prefilter survivor under the fresh full-grid seed. No validation candidate was
 available, and `ema_pullback` remains unapproved.
 
+## 2026-07-08 ORB Full Grid
+
+The full `orb` grid tested opening-range bars `1`, `2`, `3`, and `4` across
+relative-volume thresholds `1.3`, `1.5`, and `1.8` and ATR stop multipliers
+`1.0`, `1.5`, and `2.0`:
+
+- artifacts: `/var/lib/alpaca-bot/nightly/second_strategy/setup_knobs/20260708T093256Z/summary.md` and `validation/summary.md`
+- variants: `grid_001` through `grid_036`
+- result: `positive_edge_prefilter_rows=0`, validation variants `0`,
+  `promotion_approved=false`
+
+| lever | override | trades | profit factor | total P&L | 95% CI mean/trade | verdict |
+|---|---|---:|---:|---:|---|---|
+| `grid_016` | `ORB_OPENING_BARS=2,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=1.0` | 502 | 1.22 | 183.53 | [-0.1469, 0.9665] | `no-evidence` |
+| `grid_018` | `ORB_OPENING_BARS=2,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=2.0` | 498 | 1.26 | 203.81 | [-0.1523, 0.9819] | `no-evidence` |
+| `grid_017` | `ORB_OPENING_BARS=2,RELATIVE_VOLUME_THRESHOLD=1.8,ATR_STOP_MULTIPLIER=1.5` | 498 | 1.25 | 196.68 | [-0.1668, 0.9639] | `no-evidence` |
+| `grid_013` | `ORB_OPENING_BARS=2,RELATIVE_VOLUME_THRESHOLD=1.5,ATR_STOP_MULTIPLIER=1.0` | 520 | 1.21 | 188.23 | [-0.2125, 0.9431] | `no-evidence` |
+| `grid_012` | `ORB_OPENING_BARS=2,RELATIVE_VOLUME_THRESHOLD=1.3,ATR_STOP_MULTIPLIER=2.0` | 534 | 1.18 | 156.38 | [-0.2176, 0.8546] | `no-evidence` |
+
+Conclusion: the full `orb` setup grid did not produce a positive prefilter
+survivor under the fresh full-grid seed. No validation candidate was available,
+and `orb` remains unapproved.
+
 ## Proof Visibility
 
 `paper_proof_status.sh` now prints a separate `paper proof second strategy setup
