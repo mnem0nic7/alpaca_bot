@@ -594,25 +594,19 @@ def safe_status_value(value: object, *, max_length: int = 160) -> str:
     return text[:max_length] or "none"
 
 
-def load_json_payload(path: Path) -> tuple[dict | None, str | None]:
+def load_json_payload(path: Path) -> tuple[dict | None, str | None, str | None]:
     if not path.exists():
-        return None, "missing"
+        return None, "missing", None
     try:
-        payload = json.loads(path.read_text())
+        raw_bytes = path.read_bytes()
+        payload = json.loads(raw_bytes)
     except json.JSONDecodeError as exc:
-        return None, f"invalid_json:{exc.msg}"
+        return None, f"invalid_json:{exc.msg}", None
     except OSError as exc:
-        return None, f"unreadable:{exc}"
+        return None, f"unreadable:{exc}", None
     if not isinstance(payload, dict):
-        return None, "invalid_json:top_level_not_object"
-    return payload, None
-
-
-def sha256_file(path: Path) -> str | None:
-    try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except OSError:
-        return None
+        return None, "invalid_json:top_level_not_object", None
+    return payload, None, hashlib.sha256(raw_bytes).hexdigest()
 
 
 def file_age_hours(path: Path, *, now_utc: datetime) -> float | None:
@@ -737,6 +731,7 @@ def approval_marker_status(
     strategy_version: str,
     env_file: str,
     validation_summary_path: Path,
+    validation_summary_sha256: str | None,
     validation_rows: object,
     validation_positive_families: list[str],
 ) -> tuple[str, str]:
@@ -770,10 +765,9 @@ def approval_marker_status(
     marker_summary_sha256 = str(payload.get("validation_summary_sha256") or "").strip()
     if not marker_summary_sha256:
         return "validation_summary_sha256_missing", strategy
-    expected_summary_sha256 = sha256_file(validation_summary_path)
-    if expected_summary_sha256 is None:
+    if validation_summary_sha256 is None:
         return "validation_summary_unreadable", strategy
-    if marker_summary_sha256 != expected_summary_sha256:
+    if marker_summary_sha256 != validation_summary_sha256:
         return "validation_summary_sha256_mismatch", strategy
     if strategy not in validation_positive_families:
         return "latest_validation_missing_positive_edge", strategy
@@ -843,9 +837,15 @@ def load_second_strategy_evidence(
     prefilter_summary_path = output_root / "latest" / "summary.json"
     validation_summary_path = output_root / "latest_validation" / "summary.json"
     approval_marker_path = output_root / "promotion_approval.json"
-    prefilter_payload, prefilter_error = load_json_payload(prefilter_summary_path)
-    validation_payload, validation_error = load_json_payload(validation_summary_path)
-    approval_payload, approval_error = load_json_payload(approval_marker_path)
+    prefilter_payload, prefilter_error, _prefilter_sha256 = load_json_payload(
+        prefilter_summary_path
+    )
+    validation_payload, validation_error, validation_summary_sha256 = load_json_payload(
+        validation_summary_path
+    )
+    approval_payload, approval_error, _approval_sha256 = load_json_payload(
+        approval_marker_path
+    )
 
     prefilter_rows = prefilter_payload.get("rows", []) if prefilter_payload else []
     validation_rows = validation_payload.get("rows", []) if validation_payload else []
@@ -930,6 +930,7 @@ def load_second_strategy_evidence(
         strategy_version=strategy_version,
         env_file=env_file,
         validation_summary_path=validation_summary_path,
+        validation_summary_sha256=validation_summary_sha256,
         validation_rows=validation_rows,
         validation_positive_families=validation_positive_families,
     )

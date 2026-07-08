@@ -6679,7 +6679,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "promotion_approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']}" in script
     assert "promotion_approval_marker_strategy={safe_status_value(second_strategy_evidence['promotion_approval_marker_strategy'])}" in script
     assert "import hashlib" in script
-    assert "hashlib.sha256(path.read_bytes()).hexdigest()" in script
+    assert "raw_bytes = path.read_bytes()" in script
+    assert "payload = json.loads(raw_bytes)" in script
+    assert "hashlib.sha256(raw_bytes).hexdigest()" in script
+    assert "validation_summary_sha256=validation_summary_sha256" in script
     assert "payload.get(\"schema_version\") != 2" in script
     assert "marker_strategy_version = str(payload.get(\"strategy_version\") or \"\").strip()" in script
     assert "return \"strategy_version_missing\", strategy" in script
