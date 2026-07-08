@@ -3213,8 +3213,22 @@ avg_trade_pnl = pnl / trade_count if trade_count else None
 win_rate = wins / trade_count * 100 if trade_count else None
 best_trade = max(trade_pnl_rows, key=lambda row: row[1]) if trade_pnl_rows else None
 worst_trade = min(trade_pnl_rows, key=lambda row: row[1]) if trade_pnl_rows else None
+non_best_trade_pnl_rows = list(trade_pnl_rows)
+if best_trade is not None and best_trade[1] > 0:
+    non_best_trade_pnl_rows.remove(best_trade)
+non_best_avg_trade_pnl = (
+    sum(trade_pnl for _, trade_pnl in non_best_trade_pnl_rows)
+    / len(non_best_trade_pnl_rows)
+    if non_best_trade_pnl_rows
+    else None
+)
 win_rate_text = f"{win_rate:.1f}%" if win_rate is not None else "none"
 avg_trade_pnl_text = f"{avg_trade_pnl:.2f}" if avg_trade_pnl is not None else "none"
+non_best_avg_trade_pnl_text = (
+    f"{non_best_avg_trade_pnl:.2f}"
+    if non_best_avg_trade_pnl is not None
+    else "none"
+)
 best_trade_text = (
     format_trade_pnl_atom(best_trade[0], best_trade[1]) if best_trade else "none"
 )
@@ -3882,6 +3896,18 @@ if (
         0.0,
         (best_winning_trade_pnl / scale_max_single_win_pnl_share) - pnl,
     )
+concentration_non_best_avg_trade_gap = (
+    math.ceil(concentration_net_pnl_needed / non_best_avg_trade_pnl)
+    if concentration_net_pnl_needed > 0.0
+    and non_best_avg_trade_pnl is not None
+    and non_best_avg_trade_pnl > 0.0
+    else None
+)
+concentration_non_best_avg_trade_gap_text = (
+    str(concentration_non_best_avg_trade_gap)
+    if concentration_non_best_avg_trade_gap is not None
+    else "none"
+)
 if strategy_diversification_status == "ok":
     strategy_diversification_candidate_status = "met"
 elif unapproved_active_strategy_names:
@@ -5334,6 +5360,8 @@ print(
     f"active_days_remaining={active_days_remaining} "
     f"approved_replay_strategy_gap={strategy_diversification_gap} "
     f"concentration_net_pnl_needed={concentration_net_pnl_needed:.2f} "
+    f"concentration_non_best_avg_pnl={non_best_avg_trade_pnl_text} "
+    f"concentration_non_best_avg_trade_gap={concentration_non_best_avg_trade_gap_text} "
     f"single_win_pnl_share={single_win_pnl_share_text} "
     f"max_single_win_pnl_share={scale_max_single_win_pnl_share:.2f}"
 )

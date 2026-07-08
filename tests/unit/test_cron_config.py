@@ -5746,6 +5746,15 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "active_days_remaining={active_days_remaining}" in script
     assert "approved_replay_strategy_gap={strategy_diversification_gap}" in script
     assert "concentration_net_pnl_needed={concentration_net_pnl_needed:.2f}" in script
+    assert "non_best_trade_pnl_rows = list(trade_pnl_rows)" in script
+    assert "non_best_avg_trade_pnl = (" in script
+    assert "concentration_non_best_avg_trade_gap = (" in script
+    assert "math.ceil(concentration_net_pnl_needed / non_best_avg_trade_pnl)" in script
+    assert "concentration_non_best_avg_pnl={non_best_avg_trade_pnl_text}" in script
+    assert (
+        "concentration_non_best_avg_trade_gap="
+        "{concentration_non_best_avg_trade_gap_text}"
+    ) in script
     assert "blockers={','.join(blockers) if blockers else 'none'}" in script
     assert (
         "evidence_blockers={','.join(evidence_blockers) if evidence_blockers else 'none'}"
