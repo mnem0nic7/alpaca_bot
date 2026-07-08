@@ -717,6 +717,63 @@ def test_evaluate_candidates_oos_pooled_scores_total_report(monkeypatch) -> None
     assert scores == [pytest.approx(1.75)]
 
 
+def test_evaluate_candidates_oos_pooled_reports_progress(monkeypatch) -> None:
+    """OOS scoring emits candidate progress without changing scores."""
+    import alpaca_bot.tuning.sweep as sweep_module
+
+    quiet = _make_quiet_scenario()
+    progress: list[str] = []
+    calls: list[dict] = []
+    pooled = BacktestReport(
+        trades=(),
+        total_trades=5,
+        winning_trades=4,
+        losing_trades=1,
+        win_rate=0.8,
+        mean_return_pct=0.02,
+        max_drawdown_pct=0.01,
+        annualized_sharpe=1.75,
+        profit_factor=2.0,
+    )
+
+    def fake_pooled_report(**kwargs):
+        calls.append(kwargs)
+        kwargs["on_progress"](f"{kwargs['progress_label']}: replay 100%")
+        return pooled
+
+    monkeypatch.setattr(sweep_module, "_pooled_report", fake_pooled_report)
+
+    candidate = TuningCandidate(
+        params={
+            "BREAKOUT_LOOKBACK_BARS": "20",
+            "RELATIVE_VOLUME_THRESHOLD": "1.5",
+            "DAILY_SMA_PERIOD": "20",
+        },
+        report=None,
+        score=1.0,
+    )
+
+    scores = evaluate_candidates_oos(
+        candidates=[candidate],
+        oos_scenarios=[quiet, quiet],
+        base_env=_base_env(),
+        min_trades=3,
+        aggregate="pooled",
+        on_progress=progress.append,
+    )
+
+    assert scores == [pytest.approx(1.75)]
+    assert calls[0]["progress_label"] == "oos candidate 1/1"
+    assert progress == [
+        "oos candidate 1/1: replay 100%",
+        (
+            "oos candidate 1/1 complete score=1.7500 trades=5 "
+            "params={'BREAKOUT_LOOKBACK_BARS': '20', "
+            "'RELATIVE_VOLUME_THRESHOLD': '1.5', 'DAILY_SMA_PERIOD': '20'}"
+        ),
+    ]
+
+
 def test_evaluate_candidates_oos_forwards_fractionable_symbols(monkeypatch) -> None:
     """OOS scoring must preserve the paper fractionability set too."""
     import alpaca_bot.tuning.sweep as sweep_module

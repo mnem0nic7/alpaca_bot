@@ -295,6 +295,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     max_trades=args.max_trades,
                     signal_evaluator=signal_evaluator,
                     fractionable_symbols=fractionable_symbols,
+                    on_progress=lambda msg, strat=strat_name: print(
+                        f"  [{strat}] {msg}"
+                    ),
                 )
 
                 held_pairs = [
@@ -484,6 +487,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 @dataclass(frozen=True)
+class _ProofGuardThresholds:
+    min_trades: int
+    min_pnl: float
+    min_active_days: int
+    min_profit_factor: float
+    max_single_win_pnl_share: float
+    max_eod_loss_share: float
+
+
+@dataclass(frozen=True)
 class _ProofGuardMetrics:
     trades: int
     total_pnl: float
@@ -491,6 +504,10 @@ class _ProofGuardMetrics:
     first_threshold_pass_rate: float | None
     p95_sessions_to_pass: int | None
     slowest_sessions_to_pass: int | None
+    active_trade_days: int = 0
+    profit_factor: float | None = None
+    single_win_pnl_share: float | None = None
+    eod_loss_share: float | None = None
 
 
 def _select_proof_guarded_candidate(
@@ -504,7 +521,7 @@ def _select_proof_guarded_candidate(
 ) -> tuple[TuningCandidate, float] | None:
     """Return the first held candidate that does not regress proof metrics."""
 
-    min_trades, min_pnl = _resolve_proof_guard_thresholds(base_env)
+    thresholds = _resolve_proof_guard_thresholds(base_env)
     base_settings = _settings_with_fractionable(
         Settings.from_env(base_env),
         fractionable_symbols=fractionable_symbols,
@@ -524,8 +541,7 @@ def _select_proof_guarded_candidate(
         scenarios=scenarios,
         report=baseline_report,
         settings=base_settings,
-        min_trades=min_trades,
-        min_pnl=min_pnl,
+        thresholds=thresholds,
     )
     print(f"  [{strategy_name}] proof guard baseline: {_format_proof_guard_metrics(baseline)}")
 
@@ -536,7 +552,12 @@ def _select_proof_guarded_candidate(
     )
     print(
         f"  [{strategy_name}] proof guard: evaluating {len(ranked_pairs)} "
-        f"held candidate(s) against min_trades={min_trades} min_pnl={min_pnl:.2f}"
+        f"held candidate(s) against min_trades={thresholds.min_trades} "
+        f"min_pnl={thresholds.min_pnl:.2f} "
+        f"min_active_days={thresholds.min_active_days} "
+        f"min_profit_factor={thresholds.min_profit_factor:.2f} "
+        f"max_single_win_pnl_share={thresholds.max_single_win_pnl_share:.2f} "
+        f"max_eod_loss_share={thresholds.max_eod_loss_share:.2f}"
     )
 
     rejected = 0
@@ -565,10 +586,13 @@ def _select_proof_guarded_candidate(
             scenarios=scenarios,
             report=candidate_report,
             settings=candidate_settings,
-            min_trades=min_trades,
-            min_pnl=min_pnl,
+            thresholds=thresholds,
         )
-        regressions = _proof_guard_regressions(baseline=baseline, candidate=metrics)
+        regressions = _proof_guard_regressions(
+            baseline=baseline,
+            candidate=metrics,
+            thresholds=thresholds,
+        )
         if not regressions:
             print(
                 f"  [{strategy_name}] proof guard accepted params={candidate.params}: "
@@ -588,7 +612,7 @@ def _select_proof_guarded_candidate(
     return None
 
 
-def _resolve_proof_guard_thresholds(base_env: dict[str, str]) -> tuple[int, float]:
+def _resolve_proof_guard_thresholds(base_env: dict[str, str]) -> _ProofGuardThresholds:
     scale_min_trades = _positive_int_env(
         base_env, "PAPER_SCALE_MIN_TRADES", default="30"
     )
@@ -597,8 +621,33 @@ def _resolve_proof_guard_thresholds(base_env: dict[str, str]) -> tuple[int, floa
         "PROFIT_PROBE_MIN_TRADES",
         default=str(scale_min_trades),
     )
-    return max(min_trades, scale_min_trades), float(
-        base_env.get("PROFIT_PROBE_MIN_PNL", "0.01")
+    return _ProofGuardThresholds(
+        min_trades=max(min_trades, scale_min_trades),
+        min_pnl=_non_negative_float_env(
+            base_env,
+            "PROFIT_PROBE_MIN_PNL",
+            default="0.01",
+        ),
+        min_active_days=_positive_int_env(
+            base_env,
+            "PAPER_SCALE_MIN_ACTIVE_DAYS",
+            default="5",
+        ),
+        min_profit_factor=_non_negative_float_env(
+            base_env,
+            "PAPER_SCALE_MIN_PROFIT_FACTOR",
+            default="1.20",
+        ),
+        max_single_win_pnl_share=_non_negative_float_env(
+            base_env,
+            "PAPER_SCALE_MAX_SINGLE_WIN_PNL_SHARE",
+            default="0.50",
+        ),
+        max_eod_loss_share=_non_negative_float_env(
+            base_env,
+            "PAPER_SCALE_MAX_EOD_LOSS_SHARE",
+            default="0.50",
+        ),
     )
 
 
@@ -610,6 +659,22 @@ def _positive_int_env(base_env: dict[str, str], name: str, *, default: str) -> i
         raise ValueError(f"{name} must be a positive integer") from None
     if value < 1:
         raise ValueError(f"{name} must be a positive integer")
+    return value
+
+
+def _non_negative_float_env(
+    base_env: dict[str, str],
+    name: str,
+    *,
+    default: str,
+) -> float:
+    raw = base_env.get(name, default)
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a non-negative number") from None
+    if value < 0.0:
+        raise ValueError(f"{name} must be a non-negative number")
     return value
 
 
@@ -734,18 +799,42 @@ def _proof_guard_metrics(
     scenarios: list,
     report,
     settings: Settings,
-    min_trades: int,
-    min_pnl: float,
+    thresholds: _ProofGuardThresholds,
 ) -> _ProofGuardMetrics:
     sessions = sorted({
         bar.timestamp.astimezone(settings.market_timezone).date()
         for scenario in scenarios
         for bar in scenario.intraday_bars
     })
-    pnls_by_exit_session: dict[date, list[float]] = {}
+    trades_by_exit_session: dict[date, list] = {}
     for trade in report.trades:
         exit_session = trade.exit_time.astimezone(settings.market_timezone).date()
-        pnls_by_exit_session.setdefault(exit_session, []).append(float(trade.pnl))
+        trades_by_exit_session.setdefault(exit_session, []).append(trade)
+
+    total_gross_profit = sum(
+        float(trade.pnl) for trade in report.trades if trade.pnl > 0
+    )
+    total_gross_loss = abs(
+        sum(float(trade.pnl) for trade in report.trades if trade.pnl < 0)
+    )
+    total_profit_factor = (
+        total_gross_profit / total_gross_loss if total_gross_loss > 0 else None
+    )
+    total_pnl = sum(float(trade.pnl) for trade in report.trades)
+    best_win = max(
+        (float(trade.pnl) for trade in report.trades if trade.pnl > 0),
+        default=0.0,
+    )
+    single_win_pnl_share = (
+        best_win / total_pnl if total_pnl > 0 and best_win > 0 else None
+    )
+    total_losses = sum(1 for trade in report.trades if trade.pnl < 0)
+    total_eod_losses = sum(
+        1
+        for trade in report.trades
+        if trade.pnl < 0 and _is_eod_exit_reason(str(trade.exit_reason))
+    )
+    eod_loss_share = total_eod_losses / total_losses if total_losses else None
 
     starts_eventually_passed = 0
     starts_reaching_min_trades = 0
@@ -755,21 +844,49 @@ def _proof_guard_metrics(
     for start_index, _start_session in enumerate(sessions):
         trade_count = 0
         pnl = 0.0
+        active_day_count = 0
+        gross_profit = 0.0
+        gross_loss = 0.0
+        best_start_win = 0.0
+        losses = 0
+        eod_losses = 0
         first_threshold_seen = False
         pass_index: int | None = None
 
         for session_index in range(start_index, len(sessions)):
             session = sessions[session_index]
-            session_pnls = pnls_by_exit_session.get(session, [])
-            if session_pnls:
-                trade_count += len(session_pnls)
-                pnl += sum(session_pnls)
-            if not first_threshold_seen and trade_count >= min_trades:
+            session_trades = trades_by_exit_session.get(session, [])
+            if session_trades:
+                trade_count += len(session_trades)
+                active_day_count += 1
+                for trade in session_trades:
+                    trade_pnl = float(trade.pnl)
+                    pnl += trade_pnl
+                    if trade_pnl > 0:
+                        gross_profit += trade_pnl
+                        best_start_win = max(best_start_win, trade_pnl)
+                    elif trade_pnl < 0:
+                        gross_loss += abs(trade_pnl)
+                        losses += 1
+                        if _is_eod_exit_reason(str(trade.exit_reason)):
+                            eod_losses += 1
+            blockers = _proof_guard_blockers(
+                trade_count=trade_count,
+                pnl=pnl,
+                active_day_count=active_day_count,
+                gross_profit=gross_profit,
+                gross_loss=gross_loss,
+                best_win=best_start_win,
+                losses=losses,
+                eod_losses=eod_losses,
+                thresholds=thresholds,
+            )
+            if not first_threshold_seen and trade_count >= thresholds.min_trades:
                 first_threshold_seen = True
                 starts_reaching_min_trades += 1
-                if pnl >= min_pnl:
+                if not blockers:
                     first_threshold_passes += 1
-            if trade_count >= min_trades and pnl >= min_pnl:
+            if not blockers:
                 pass_index = session_index
                 break
 
@@ -780,7 +897,7 @@ def _proof_guard_metrics(
     sessions_to_pass.sort()
     return _ProofGuardMetrics(
         trades=int(report.total_trades),
-        total_pnl=round(sum(float(trade.pnl) for trade in report.trades), 2),
+        total_pnl=round(total_pnl, 2),
         eventual_pass_rate=(
             starts_eventually_passed / len(sessions)
             if sessions else None
@@ -791,13 +908,65 @@ def _proof_guard_metrics(
         ),
         p95_sessions_to_pass=_ceil_percentile(sessions_to_pass, 0.95),
         slowest_sessions_to_pass=max(sessions_to_pass) if sessions_to_pass else None,
+        active_trade_days=sum(1 for trades in trades_by_exit_session.values() if trades),
+        profit_factor=total_profit_factor,
+        single_win_pnl_share=single_win_pnl_share,
+        eod_loss_share=eod_loss_share,
     )
+
+
+def _proof_guard_blockers(
+    *,
+    trade_count: int,
+    pnl: float,
+    active_day_count: int,
+    gross_profit: float,
+    gross_loss: float,
+    best_win: float,
+    losses: int,
+    eod_losses: int,
+    thresholds: _ProofGuardThresholds,
+) -> list[str]:
+    blockers: list[str] = []
+    if trade_count < thresholds.min_trades:
+        blockers.append("sample_trades")
+    if active_day_count < thresholds.min_active_days:
+        blockers.append("active_days")
+    if pnl < thresholds.min_pnl:
+        blockers.append("positive_pnl")
+
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else None
+    if (
+        profit_factor is not None
+        and profit_factor < thresholds.min_profit_factor
+    ):
+        blockers.append("profit_factor")
+
+    single_win_pnl_share = best_win / pnl if pnl > 0 and best_win > 0 else None
+    if (
+        single_win_pnl_share is not None
+        and single_win_pnl_share > thresholds.max_single_win_pnl_share
+    ):
+        blockers.append("profit_concentration")
+
+    eod_loss_share = eod_losses / losses if losses else None
+    if (
+        eod_loss_share is not None
+        and eod_loss_share > thresholds.max_eod_loss_share
+    ):
+        blockers.append("eod_loss_share")
+    return blockers
+
+
+def _is_eod_exit_reason(exit_reason: str) -> bool:
+    return exit_reason.strip().lower() in {"eod", "eod_flatten"}
 
 
 def _proof_guard_regressions(
     *,
     baseline: _ProofGuardMetrics,
     candidate: _ProofGuardMetrics,
+    thresholds: _ProofGuardThresholds | None = None,
 ) -> list[str]:
     regressions: list[str] = []
     epsilon = 1e-9
@@ -805,6 +974,75 @@ def _proof_guard_regressions(
         regressions.append(
             f"total_pnl {candidate.total_pnl:.2f} < baseline {baseline.total_pnl:.2f}"
         )
+    if candidate.active_trade_days < baseline.active_trade_days:
+        regressions.append(
+            "active_trade_days "
+            f"{candidate.active_trade_days} < baseline {baseline.active_trade_days}"
+        )
+    if _lt_profit_factor(candidate.profit_factor, baseline.profit_factor, epsilon):
+        regressions.append(
+            "profit_factor "
+            f"{_fmt_profit_factor(candidate.profit_factor)} < baseline "
+            f"{_fmt_profit_factor(baseline.profit_factor)}"
+        )
+    if _gt_optional_float(
+        candidate.single_win_pnl_share,
+        baseline.single_win_pnl_share,
+        epsilon,
+    ):
+        regressions.append(
+            "single_win_pnl_share "
+            f"{_fmt_pct(candidate.single_win_pnl_share)} > baseline "
+            f"{_fmt_pct(baseline.single_win_pnl_share)}"
+        )
+    if _gt_optional_float(candidate.eod_loss_share, baseline.eod_loss_share, epsilon):
+        regressions.append(
+            "eod_loss_share "
+            f"{_fmt_pct(candidate.eod_loss_share)} > baseline "
+            f"{_fmt_pct(baseline.eod_loss_share)}"
+        )
+    if thresholds is not None:
+        if (
+            candidate.profit_factor is not None
+            and candidate.profit_factor + epsilon < thresholds.min_profit_factor
+            and not (
+                baseline.profit_factor is not None
+                and baseline.profit_factor + epsilon < thresholds.min_profit_factor
+            )
+        ):
+            regressions.append(
+                "profit_factor "
+                f"{_fmt_profit_factor(candidate.profit_factor)} < required "
+                f"{thresholds.min_profit_factor:.2f}"
+            )
+        if (
+            candidate.single_win_pnl_share is not None
+            and candidate.single_win_pnl_share
+            > thresholds.max_single_win_pnl_share + epsilon
+            and not (
+                baseline.single_win_pnl_share is not None
+                and baseline.single_win_pnl_share
+                > thresholds.max_single_win_pnl_share + epsilon
+            )
+        ):
+            regressions.append(
+                "single_win_pnl_share "
+                f"{_fmt_pct(candidate.single_win_pnl_share)} > required "
+                f"{thresholds.max_single_win_pnl_share:.2%}"
+            )
+        if (
+            candidate.eod_loss_share is not None
+            and candidate.eod_loss_share > thresholds.max_eod_loss_share + epsilon
+            and not (
+                baseline.eod_loss_share is not None
+                and baseline.eod_loss_share > thresholds.max_eod_loss_share + epsilon
+            )
+        ):
+            regressions.append(
+                "eod_loss_share "
+                f"{_fmt_pct(candidate.eod_loss_share)} > required "
+                f"{thresholds.max_eod_loss_share:.2%}"
+            )
     if _lt_optional(candidate.eventual_pass_rate, baseline.eventual_pass_rate, epsilon):
         regressions.append(
             "eventual_pass_rate "
@@ -863,9 +1101,37 @@ def _gt_optional(candidate: int | None, baseline: int | None) -> bool:
     return candidate > baseline
 
 
+def _gt_optional_float(
+    candidate: float | None,
+    baseline: float | None,
+    epsilon: float,
+) -> bool:
+    if baseline is None:
+        return False
+    if candidate is None:
+        return False
+    return candidate > baseline + epsilon
+
+
+def _lt_profit_factor(
+    candidate: float | None,
+    baseline: float | None,
+    epsilon: float,
+) -> bool:
+    if baseline is None:
+        return False
+    if candidate is None:
+        return False
+    return candidate + epsilon < baseline
+
+
 def _format_proof_guard_metrics(metrics: _ProofGuardMetrics) -> str:
     return (
         f"trades={metrics.trades} pnl={metrics.total_pnl:.2f} "
+        f"active_days={metrics.active_trade_days} "
+        f"profit_factor={_fmt_profit_factor(metrics.profit_factor)} "
+        f"single_win_share={_fmt_pct(metrics.single_win_pnl_share)} "
+        f"eod_loss_share={_fmt_pct(metrics.eod_loss_share)} "
         f"eventual={_fmt_pct(metrics.eventual_pass_rate)} "
         f"first={_fmt_pct(metrics.first_threshold_pass_rate)} "
         f"p95={_fmt_int(metrics.p95_sessions_to_pass)} "
@@ -879,6 +1145,10 @@ def _fmt_pct(value: float | None) -> str:
 
 def _fmt_int(value: int | None) -> str:
     return "n/a" if value is None else str(value)
+
+
+def _fmt_profit_factor(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.2f}"
 
 
 def _weekdays_back(n: int) -> list[date]:

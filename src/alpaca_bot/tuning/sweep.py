@@ -443,6 +443,7 @@ def evaluate_candidates_oos(
     max_trades: int = 0,
     signal_evaluator: "StrategySignalEvaluator | None" = None,
     fractionable_symbols: frozenset[str] | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> list[float | None]:
     """Score each candidate against OOS scenarios; returns a parallel list of scores.
 
@@ -451,7 +452,8 @@ def evaluate_candidates_oos(
     Does not produce new TuningCandidate objects — read-only scoring pass.
     """
     scores: list[float | None] = []
-    for candidate in candidates:
+    total_candidates = len(candidates)
+    for candidate_index, candidate in enumerate(candidates, start=1):
         merged_env = {**base_env, **candidate.params}
         try:
             settings = _settings_from_env(
@@ -460,14 +462,21 @@ def evaluate_candidates_oos(
             )
         except ValueError:
             scores.append(None)
+            if on_progress is not None:
+                on_progress(
+                    f"oos candidate {candidate_index}/{total_candidates} "
+                    f"skipped invalid params={candidate.params}"
+                )
             continue
         if aggregate == "pooled":
             report = _pooled_report(
                 scenarios=oos_scenarios,
                 settings=settings,
                 signal_evaluator=signal_evaluator,
+                on_progress=on_progress,
+                progress_label=f"oos candidate {candidate_index}/{total_candidates}",
             )
-            scores.append(
+            score = (
                 score_report(
                     report,
                     min_trades=min_trades,
@@ -477,12 +486,23 @@ def evaluate_candidates_oos(
                 if report is not None
                 else None
             )
+            scores.append(score)
+            if on_progress is not None:
+                trades = report.total_trades if report is not None else 0
+                score_text = "none" if score is None else f"{score:.4f}"
+                on_progress(
+                    f"oos candidate {candidate_index}/{total_candidates} complete "
+                    f"score={score_text} trades={trades} params={candidate.params}"
+                )
             continue
         runner = ReplayRunner(settings, signal_evaluator=signal_evaluator)
         per_scenario_scores: list[float | None] = []
+        total_trades = 0
         for scenario in oos_scenarios:
             result = runner.run(scenario)
             report: BacktestReport | None = result.backtest_report  # type: ignore[assignment]
+            if report is not None:
+                total_trades += report.total_trades
             s = (
                 score_report(report, min_trades=min_trades, max_drawdown_pct=max_drawdown_pct,
                              max_trades=max_trades)
@@ -490,11 +510,18 @@ def evaluate_candidates_oos(
             )
             per_scenario_scores.append(s)
         if any(s is None for s in per_scenario_scores):
-            scores.append(None)
+            score = None
         elif aggregate == "mean":
             valid = [s for s in per_scenario_scores if s is not None]
-            scores.append(sum(valid) / len(valid))
+            score = sum(valid) / len(valid)
         else:  # "min"
             valid = [s for s in per_scenario_scores if s is not None]
-            scores.append(min(valid))
+            score = min(valid)
+        scores.append(score)
+        if on_progress is not None:
+            score_text = "none" if score is None else f"{score:.4f}"
+            on_progress(
+                f"oos candidate {candidate_index}/{total_candidates} complete "
+                f"score={score_text} trades={total_trades} params={candidate.params}"
+            )
     return scores

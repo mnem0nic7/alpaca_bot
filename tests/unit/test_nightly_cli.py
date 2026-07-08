@@ -669,20 +669,93 @@ def test_proof_guard_thresholds_use_scale_floor():
 
     assert module._resolve_proof_guard_thresholds(
         {"PAPER_SCALE_MIN_TRADES": "30"}
-    ) == (30, 0.01)
+    ) == module._ProofGuardThresholds(
+        min_trades=30,
+        min_pnl=0.01,
+        min_active_days=5,
+        min_profit_factor=1.2,
+        max_single_win_pnl_share=0.5,
+        max_eod_loss_share=0.5,
+    )
     assert module._resolve_proof_guard_thresholds(
         {
             "PAPER_SCALE_MIN_TRADES": "30",
             "PROFIT_PROBE_MIN_TRADES": "12",
             "PROFIT_PROBE_MIN_PNL": "2.34",
         }
-    ) == (30, 2.34)
+    ) == module._ProofGuardThresholds(
+        min_trades=30,
+        min_pnl=2.34,
+        min_active_days=5,
+        min_profit_factor=1.2,
+        max_single_win_pnl_share=0.5,
+        max_eod_loss_share=0.5,
+    )
     assert module._resolve_proof_guard_thresholds(
         {
             "PAPER_SCALE_MIN_TRADES": "30",
             "PROFIT_PROBE_MIN_TRADES": "44",
+            "PAPER_SCALE_MIN_ACTIVE_DAYS": "7",
+            "PAPER_SCALE_MIN_PROFIT_FACTOR": "1.5",
+            "PAPER_SCALE_MAX_SINGLE_WIN_PNL_SHARE": "0.4",
+            "PAPER_SCALE_MAX_EOD_LOSS_SHARE": "0.25",
         }
-    ) == (44, 0.01)
+    ) == module._ProofGuardThresholds(
+        min_trades=44,
+        min_pnl=0.01,
+        min_active_days=7,
+        min_profit_factor=1.5,
+        max_single_win_pnl_share=0.4,
+        max_eod_loss_share=0.25,
+    )
+
+
+def test_proof_guard_regressions_rejects_concentration_above_gate():
+    from alpaca_bot.nightly import cli as module
+
+    thresholds = module._ProofGuardThresholds(
+        min_trades=30,
+        min_pnl=0.01,
+        min_active_days=5,
+        min_profit_factor=1.2,
+        max_single_win_pnl_share=0.5,
+        max_eod_loss_share=0.5,
+    )
+    baseline = module._ProofGuardMetrics(
+        trades=60,
+        total_pnl=100.0,
+        eventual_pass_rate=0.9,
+        first_threshold_pass_rate=0.8,
+        p95_sessions_to_pass=12,
+        slowest_sessions_to_pass=18,
+        active_trade_days=9,
+        profit_factor=2.0,
+        single_win_pnl_share=0.4,
+        eod_loss_share=0.25,
+    )
+    candidate = module._ProofGuardMetrics(
+        trades=60,
+        total_pnl=100.0,
+        eventual_pass_rate=0.9,
+        first_threshold_pass_rate=0.8,
+        p95_sessions_to_pass=12,
+        slowest_sessions_to_pass=18,
+        active_trade_days=9,
+        profit_factor=2.0,
+        single_win_pnl_share=0.75,
+        eod_loss_share=0.25,
+    )
+
+    regressions = module._proof_guard_regressions(
+        baseline=baseline,
+        candidate=candidate,
+        thresholds=thresholds,
+    )
+
+    assert regressions == [
+        "single_win_pnl_share 75.00% > baseline 40.00%",
+        "single_win_pnl_share 75.00% > required 50.00%",
+    ]
 
 
 def test_proof_guard_forwards_fractionable_symbols(monkeypatch):
