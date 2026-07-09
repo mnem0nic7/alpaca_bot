@@ -700,6 +700,7 @@ import json
 import math
 import os
 import re
+import shlex
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 
@@ -6698,6 +6699,17 @@ if approval_marker_action_status == "ready":
         approval_marker_command_status = f"broker_{promotion_broker_flat_status}"
     else:
         approval_marker_command_status = "ready"
+approval_marker_quick_command = "unavailable"
+if approval_marker_command_status == "ready":
+    approval_marker_quick_command = " ".join(
+        [
+            "APPROVE_VALIDATED_STRATEGY_MARKER_CONFIRM="
+            f"{shlex.quote(promotion_confirmation)}",
+            "APPROVE_VALIDATED_STRATEGY_MARKER_DRY_RUN=false",
+            shlex.quote("./scripts/approve_validated_strategy_marker.sh"),
+            shlex.quote(promotion_strategy),
+        ]
+    )
 print(
     "paper proof second strategy promotion action: "
     f"status={promotion_action_status} "
@@ -6739,6 +6751,11 @@ print(
     f"candidate_total_pnl={format_optional_float(second_strategy_evidence['promotion_candidate_total_pnl'], 2)} "
     f"candidate_ci_low={format_optional_float(second_strategy_evidence['promotion_candidate_ci_low'], 4)} "
     f"candidate_p_mean_le_zero={format_optional_float(second_strategy_evidence['promotion_candidate_p_mean_le_zero'], 4)}"
+)
+print(
+    "paper proof second strategy approval quick command: "
+    f"status={approval_marker_command_status} "
+    f"command={approval_marker_quick_command}"
 )
 print(
     "paper proof second strategy setup evidence: "
