@@ -998,9 +998,9 @@ class RuntimeSupervisor:
         # Resolve registered strategies (breakout, etc.)
         active_strategies = list(self._resolve_active_strategies())
 
-        # Fetch option chains when options are tradable or observation snapshots
-        # are configured. Option strategies themselves remain gated by
-        # ENABLE_OPTIONS_TRADING below.
+        # Fetch option chains before strategy evaluation only when options are
+        # tradable. Snapshot-only observation runs after stock dispatch so it
+        # cannot delay entry placement on a fresh bar.
         # breakout_calls is NOT in STRATEGY_REGISTRY — it is a factory that closes over chains.
         option_chains_by_symbol: dict = {}
         option_order_store = getattr(self.runtime, "option_order_store", None)
@@ -1017,36 +1017,15 @@ class RuntimeSupervisor:
             )
         )
         should_fetch_option_chains = (
-            (
-                self.settings.enable_options_trading
-                or option_chain_snapshot_due
-            )
+            self.settings.enable_options_trading
             and self._option_chain_adapter is not None
             and bool(self.settings.option_chain_symbols)
         )
         if should_fetch_option_chains:
-            def _fetch_one(sym: str) -> tuple[str, list]:
-                return sym, self._option_chain_adapter.get_option_chain(sym, self.settings)
-
-            executor = ThreadPoolExecutor(max_workers=10)
-            configured = set(s.upper() for s in self.settings.option_chain_symbols)
-            # Fetch only configured underlyings that also have intraday bars this session.
-            # OPTION_CHAIN_MIN_TOTAL_VOLUME is no longer used for symbol selection.
-            symbols_to_fetch = [sym for sym in intraday_bars_by_symbol if sym in configured]
-            futures = {executor.submit(_fetch_one, sym): sym for sym in symbols_to_fetch}
-            try:
-                for future in as_completed(futures, timeout=45):
-                    sym = futures[future]
-                    try:
-                        _, chains = future.result()
-                        if chains:
-                            option_chains_by_symbol[sym] = chains
-                    except Exception:
-                        logger.exception("option chain fetch failed for %s", sym)
-            except TimeoutError:
-                logger.warning("option chain fetch timed out after 45s, using partial results")
-            finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+            option_chains_by_symbol = self._fetch_option_chains_for_snapshot_symbols(
+                intraday_bars_by_symbol,
+                timestamp=timestamp,
+            )
             if self.settings.enable_options_trading:
                 _flag_store = getattr(self.runtime, "strategy_flag_store", None)
                 _store_lock = getattr(self.runtime, "store_lock", None)
@@ -1064,52 +1043,12 @@ class RuntimeSupervisor:
                         active_strategies.append(
                             (opt_name, factory(option_chains_by_symbol))
                         )
-            option_chain_counts = {
-                sym: len(option_chains_by_symbol.get(sym, []))
-                for sym in self.settings.option_chain_symbols
-            }
             if self.settings.option_chain_snapshot_dir:
-                chains_for_snapshot = {
-                    sym: option_chains_by_symbol.get(sym, ())
-                    for sym in self.settings.option_chain_symbols
-                }
-                try:
-                    snapshot_path = append_option_chain_snapshot(
-                        snapshot_dir=self.settings.option_chain_snapshot_dir,
-                        cycle_at=timestamp,
-                        chains_by_symbol=chains_for_snapshot,
-                    )
-                    self._append_audit(
-                        AuditEvent(
-                            event_type="option_chain_snapshot_recorded",
-                            payload={
-                                "path": str(snapshot_path),
-                                "symbols": len(chains_for_snapshot),
-                                "contracts": sum(option_chain_counts.values()),
-                                "session_date": session_date.isoformat(),
-                                "cycle_at": timestamp.isoformat(),
-                                "trading_mode": self.settings.trading_mode.value,
-                                "strategy_version": self.settings.strategy_version,
-                            },
-                            created_at=timestamp,
-                        )
-                    )
-                except Exception as exc:
-                    logger.exception("failed to record option chain snapshot")
-                    self._append_audit(
-                        AuditEvent(
-                            event_type="option_chain_snapshot_failed",
-                            payload={"error": str(exc)},
-                            created_at=timestamp,
-                        )
-                    )
-            self._append_audit(
-                AuditEvent(
-                    event_type="option_chains_fetched",
-                    payload=option_chain_counts,
-                    created_at=timestamp,
+                self._record_option_chain_snapshot(
+                    option_chains_by_symbol=option_chains_by_symbol,
+                    session_date=session_date,
+                    timestamp=timestamp,
                 )
-            )
 
         # Add open option position underlying symbols to prevent double-entry.
         if option_order_store is not None:
@@ -1420,6 +1359,19 @@ class RuntimeSupervisor:
                 + (option_dispatch_eod_report.failed_count if option_dispatch_eod_report is not None else 0)
             )
         )
+
+        if option_chain_snapshot_due:
+            snapshot_option_chains_by_symbol = (
+                self._fetch_option_chains_for_snapshot_symbols(
+                    intraday_bars_by_symbol,
+                    timestamp=timestamp,
+                )
+            )
+            self._record_option_chain_snapshot(
+                option_chains_by_symbol=snapshot_option_chains_by_symbol,
+                session_date=session_date,
+                timestamp=timestamp,
+            )
 
         return SupervisorCycleReport(
             entries_disabled=entries_disabled,
@@ -2646,6 +2598,99 @@ class RuntimeSupervisor:
             )
         except Exception:
             logger.exception("Notifier failed to send option dispatch failure alert")
+
+    def _fetch_option_chains_for_snapshot_symbols(
+        self,
+        intraday_bars_by_symbol: dict[str, list[Bar]],
+        *,
+        timestamp: datetime,
+    ) -> dict[str, list]:
+        if self._option_chain_adapter is None or not self.settings.option_chain_symbols:
+            return {}
+
+        def _fetch_one(sym: str) -> tuple[str, list]:
+            return sym, self._option_chain_adapter.get_option_chain(sym, self.settings)
+
+        option_chains_by_symbol: dict[str, list] = {}
+        executor = ThreadPoolExecutor(max_workers=10)
+        configured = set(s.upper() for s in self.settings.option_chain_symbols)
+        # Fetch only configured underlyings that also have intraday bars this session.
+        # OPTION_CHAIN_MIN_TOTAL_VOLUME is no longer used for symbol selection.
+        symbols_to_fetch = [sym for sym in intraday_bars_by_symbol if sym in configured]
+        futures = {executor.submit(_fetch_one, sym): sym for sym in symbols_to_fetch}
+        try:
+            for future in as_completed(futures, timeout=45):
+                sym = futures[future]
+                try:
+                    _, chains = future.result()
+                    if chains:
+                        option_chains_by_symbol[sym] = chains
+                except Exception:
+                    logger.exception("option chain fetch failed for %s", sym)
+        except TimeoutError:
+            logger.warning("option chain fetch timed out after 45s, using partial results")
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+        option_chain_counts = {
+            sym: len(option_chains_by_symbol.get(sym, []))
+            for sym in self.settings.option_chain_symbols
+        }
+        self._append_audit(
+            AuditEvent(
+                event_type="option_chains_fetched",
+                payload=option_chain_counts,
+                created_at=timestamp,
+            )
+        )
+        return option_chains_by_symbol
+
+    def _record_option_chain_snapshot(
+        self,
+        *,
+        option_chains_by_symbol: dict[str, list],
+        session_date: date,
+        timestamp: datetime,
+    ) -> None:
+        if not self.settings.option_chain_snapshot_dir:
+            return
+        option_chain_counts = {
+            sym: len(option_chains_by_symbol.get(sym, []))
+            for sym in self.settings.option_chain_symbols
+        }
+        chains_for_snapshot = {
+            sym: option_chains_by_symbol.get(sym, ())
+            for sym in self.settings.option_chain_symbols
+        }
+        try:
+            snapshot_path = append_option_chain_snapshot(
+                snapshot_dir=self.settings.option_chain_snapshot_dir,
+                cycle_at=timestamp,
+                chains_by_symbol=chains_for_snapshot,
+            )
+            self._append_audit(
+                AuditEvent(
+                    event_type="option_chain_snapshot_recorded",
+                    payload={
+                        "path": str(snapshot_path),
+                        "symbols": len(chains_for_snapshot),
+                        "contracts": sum(option_chain_counts.values()),
+                        "session_date": session_date.isoformat(),
+                        "cycle_at": timestamp.isoformat(),
+                        "trading_mode": self.settings.trading_mode.value,
+                        "strategy_version": self.settings.strategy_version,
+                    },
+                    created_at=timestamp,
+                )
+            )
+        except Exception as exc:
+            logger.exception("failed to record option chain snapshot")
+            self._append_audit(
+                AuditEvent(
+                    event_type="option_chain_snapshot_failed",
+                    payload={"error": str(exc)},
+                    created_at=timestamp,
+                )
+            )
 
     def _option_chain_snapshot_recorded_for_session(
         self, *, session_date: date

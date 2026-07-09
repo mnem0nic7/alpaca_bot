@@ -77,7 +77,15 @@ class RecordingAuditStore:
         return list(reversed(rows))[:limit]
 
 
-def _make_supervisor(*, adapter, audit_store=None, get_stock_bars=None, extra_env=None):
+def _make_supervisor(
+    *,
+    adapter,
+    audit_store=None,
+    get_stock_bars=None,
+    extra_env=None,
+    cycle_runner=None,
+    order_dispatcher=None,
+):
     """Build a RuntimeSupervisor wired with a watchlist returning _WATCHLIST_SYMBOLS."""
     RuntimeSupervisor = import_module("alpaca_bot.runtime.supervisor").RuntimeSupervisor
     env = {
@@ -147,11 +155,14 @@ def _make_supervisor(*, adapter, audit_store=None, get_stock_bars=None, extra_en
         stream=None,
         close_runtime_fn=lambda _: None,
         connection_checker=lambda _: True,
-        cycle_runner=lambda *, strategy_name, **kwargs: SimpleNamespace(intents=[]),
+        cycle_runner=(
+            cycle_runner
+            or (lambda *, strategy_name, **kwargs: SimpleNamespace(intents=[]))
+        ),
         cycle_intent_executor=lambda **kwargs: SimpleNamespace(
             submitted_exit_count=0, failed_exit_count=0
         ),
-        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+        order_dispatcher=order_dispatcher or (lambda **kwargs: {"submitted_count": 0}),
         option_chain_adapter=adapter,
     )
 
@@ -233,6 +244,42 @@ def test_option_chain_snapshot_records_when_options_trading_disabled(tmp_path):
         if e.event_type == "option_entry_intent_created"
     ]
     assert sorted(tmp_path.glob("option-chain-snapshots-*.jsonl"))
+
+
+def test_option_chain_snapshot_only_runs_after_stock_dispatch(tmp_path):
+    """Replay snapshot capture must not make the first eligible stock orders late."""
+    events: list[str] = []
+
+    class OrderedOptionChainAdapter(RecordingOptionChainAdapter):
+        def get_option_chain(self, symbol: str, settings) -> list:
+            events.append(f"fetch:{symbol}")
+            return super().get_option_chain(symbol, settings)
+
+    adapter = OrderedOptionChainAdapter()
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        audit_store=RecordingAuditStore(),
+        extra_env={
+            "ENABLE_OPTIONS_TRADING": "false",
+            "OPTION_CHAIN_SYMBOLS": "ACHR,METC",
+            "OPTION_CHAIN_SNAPSHOT_DIR": str(tmp_path),
+        },
+        cycle_runner=lambda *, strategy_name, **kwargs: (
+            events.append(f"cycle:{strategy_name}") or SimpleNamespace(intents=[])
+        ),
+        order_dispatcher=lambda **kwargs: (
+            events.append("dispatch") or {"submitted_count": 0}
+        ),
+    )
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    dispatch_index = events.index("dispatch")
+    fetch_indices = [
+        index for index, event in enumerate(events) if event.startswith("fetch:")
+    ]
+    assert fetch_indices
+    assert all(index > dispatch_index for index in fetch_indices)
 
 
 def test_option_chain_snapshot_only_waits_until_due_time(tmp_path):
