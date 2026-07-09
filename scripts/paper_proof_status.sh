@@ -304,6 +304,7 @@ nightly_stage="none"
 nightly_detail="none"
 second_strategy_scan_status="unknown"
 second_strategy_scan_detail="none"
+second_strategy_scan_event_epoch="none"
 
 probe_nightly_cycle_status() {
   local process_line=""
@@ -439,6 +440,7 @@ probe_second_strategy_scan_status() {
   if [[ ! -f "$PROOF_STATUS_SECOND_STRATEGY_LOG" ]]; then
     second_strategy_scan_status="missing_log"
     second_strategy_scan_detail="none"
+    second_strategy_scan_event_epoch="none"
     return 0
   fi
 
@@ -477,12 +479,17 @@ probe_second_strategy_scan_status() {
   if [[ -z "$latest_event" ]]; then
     second_strategy_scan_status="unknown"
     second_strategy_scan_detail="none"
+    second_strategy_scan_event_epoch="none"
     return 0
   fi
 
   IFS=$'\t' read -r event_status event_detail <<< "$latest_event"
   second_strategy_scan_status="${event_status:-unknown}"
   second_strategy_scan_detail="$(compact_status_value "${event_detail:-none}")"
+  second_strategy_scan_event_epoch="$(stat -c %Y "$PROOF_STATUS_SECOND_STRATEGY_LOG" 2>/dev/null || true)"
+  if [[ ! "$second_strategy_scan_event_epoch" =~ ^[0-9]+$ ]]; then
+    second_strategy_scan_event_epoch="none"
+  fi
 }
 
 probe_second_strategy_scan_status
@@ -666,6 +673,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_NIGHTLY_DETAIL="$nightly_detail" \
   -e PROOF_STATUS_SECOND_STRATEGY_SCAN_STATUS="$second_strategy_scan_status" \
   -e PROOF_STATUS_SECOND_STRATEGY_SCAN_DETAIL="$second_strategy_scan_detail" \
+  -e PROOF_STATUS_SECOND_STRATEGY_SCAN_EVENT_EPOCH="$second_strategy_scan_event_epoch" \
   -e PROOF_STATUS_OPS_HEALTH_STATUS="$ops_health_status" \
   -e PROOF_STATUS_OPS_HEALTH_DETAIL="$ops_health_detail" \
   -e PROOF_STATUS_OPS_CLOSE_ONLY_HEALTH_STATUS="$ops_close_only_health_status" \
@@ -916,6 +924,15 @@ def file_age_hours(path: Path, *, now_utc: datetime) -> float | None:
     except OSError:
         return None
     return max(0.0, (now_utc - modified_at).total_seconds() / 3600.0)
+
+
+def file_mtime_epoch(path: Path) -> float | None:
+    if not path.exists():
+        return None
+    try:
+        return float(path.stat().st_mtime)
+    except OSError:
+        return None
 
 
 def candidate_names_from_rows(rows: object, *, verdict: str | None = None) -> list[str]:
@@ -1199,6 +1216,8 @@ def load_second_strategy_evidence(
 
     prefilter_age_hours = file_age_hours(prefilter_summary_path, now_utc=now_utc)
     validation_age_hours = file_age_hours(validation_summary_path, now_utc=now_utc)
+    prefilter_summary_mtime_epoch = file_mtime_epoch(prefilter_summary_path)
+    validation_summary_mtime_epoch = file_mtime_epoch(validation_summary_path)
     stale_parts: list[str] = []
     if (
         prefilter_age_hours is not None
@@ -1313,6 +1332,8 @@ def load_second_strategy_evidence(
         "validation_summary_sha256": validation_summary_sha256 or "none",
         "prefilter_age_hours": prefilter_age_hours,
         "validation_age_hours": validation_age_hours,
+        "prefilter_summary_mtime_epoch": prefilter_summary_mtime_epoch,
+        "validation_summary_mtime_epoch": validation_summary_mtime_epoch,
         "max_age_hours": max_age_hours,
         "prefilter_families": prefilter_families,
         "prefilter_positive_rows": prefilter_positive_rows,
@@ -1680,6 +1701,9 @@ second_strategy_scan_status = os.environ.get(
 second_strategy_scan_detail = os.environ.get(
     "PROOF_STATUS_SECOND_STRATEGY_SCAN_DETAIL", "none"
 )
+second_strategy_scan_event_epoch = as_float_or_none(
+    os.environ.get("PROOF_STATUS_SECOND_STRATEGY_SCAN_EVENT_EPOCH")
+)
 ops_health_status = os.environ.get("PROOF_STATUS_OPS_HEALTH_STATUS", "unknown")
 ops_health_detail = os.environ.get("PROOF_STATUS_OPS_HEALTH_DETAIL", "").strip()
 ops_close_only_health_status = os.environ.get(
@@ -1777,6 +1801,26 @@ second_strategy_setup_evidence = load_second_strategy_evidence(
     strategy_version=strategy_version,
     env_file=proof_status_env_file,
 )
+
+if second_strategy_scan_status == "failed" and second_strategy_evidence["status"] == "ok":
+    evidence_event_epochs = [
+        value
+        for value in (
+            second_strategy_evidence["prefilter_summary_mtime_epoch"],
+            second_strategy_evidence["validation_summary_mtime_epoch"],
+        )
+        if value is not None
+    ]
+    if (
+        second_strategy_scan_event_epoch is not None
+        and evidence_event_epochs
+        and max(evidence_event_epochs) > second_strategy_scan_event_epoch
+    ):
+        second_strategy_scan_status = "ok"
+        second_strategy_scan_detail = (
+            "fresh_second_strategy_evidence_after_failed_log"
+        )
+
 market_timezone = settings.market_timezone.key
 readiness_due = False
 readiness_first_check_time = time(9, 15)
