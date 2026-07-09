@@ -332,6 +332,7 @@ update_env_value() {
   env_name="$(basename "$ENV_FILE")"
   tmp="$(mktemp "$env_dir/.${env_name}.${key}.XXXXXX")"
   chmod --reference="$ENV_FILE" "$tmp" 2>/dev/null || true
+  chown --reference="$ENV_FILE" "$tmp" 2>/dev/null || true
   if ! awk -v key="$key" -v value="$value" '
     BEGIN { updated = 0 }
     $0 ~ "^[[:space:]]*" key "[[:space:]]*=" && updated == 0 {

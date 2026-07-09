@@ -285,6 +285,10 @@ def test_promote_validated_strategy_rejects_weak_candidate_evidence(tmp_path: Pa
 
 
 def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_path: Path) -> None:
+    script_text = SCRIPT.read_text()
+    assert 'chmod --reference="$ENV_FILE" "$tmp"' in script_text
+    assert 'chown --reference="$ENV_FILE" "$tmp"' in script_text
+
     env_file = tmp_path / "alpaca-bot.env"
     evidence_root = tmp_path / "evidence"
     scoped_strategy_lines = [
