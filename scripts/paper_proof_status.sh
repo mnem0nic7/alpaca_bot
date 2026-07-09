@@ -2618,6 +2618,8 @@ try:
         entry_order_maintenance_drained_count = 0
         entry_order_short_window_drained_count = 0
         entry_order_filled_symbols = "none"
+        entry_order_expired_symbols = "none"
+        entry_order_expired_reasons = "none"
         posture_entry_order_count = 0
         posture_entry_order_filled_count = 0
         posture_entry_quality_would_reject_count = 0
@@ -2638,6 +2640,7 @@ try:
         current_session_entry_order_settled_filled_count = 0
         current_session_entry_order_filled_symbols = "none"
         current_session_entry_order_expired_symbols = "none"
+        current_session_entry_order_expired_reasons = "none"
         current_session_entry_order_active_symbols = "none"
         current_session_entry_order_maintenance_drained_symbols = "none"
         current_session_entry_order_short_window_drained_symbols = "none"
@@ -2659,6 +2662,7 @@ try:
         post_supervisor_entry_order_settled_filled_count = 0
         post_supervisor_entry_order_filled_symbols = "none"
         post_supervisor_entry_order_expired_symbols = "none"
+        post_supervisor_entry_order_expired_reasons = "none"
         post_supervisor_entry_order_active_symbols = "none"
         post_supervisor_entry_order_short_window_count = 0
         post_supervisor_entry_order_min_remaining_active_minutes = None
@@ -2727,6 +2731,29 @@ try:
                 WITH entry_orders AS (
                   SELECT
                     o.*,
+                    COALESCE(
+                      NULLIF(o.reason, ''),
+                      (
+                        SELECT CASE
+                          WHEN a.event_type = 'order_expired_stale_signal'
+                            THEN 'stale_signal'
+                          WHEN COALESCE(a.payload->>'reason', '') = 'short active dispatch window'
+                            THEN 'short_active_window'
+                          WHEN COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'
+                            THEN 'deploy_maintenance'
+                          ELSE 'next_bar_expired'
+                        END
+                        FROM audit_events a
+                        WHERE a.event_type IN (
+                          'entry_order_expired_next_bar',
+                          'order_expired_stale_signal'
+                        )
+                          AND a.payload->>'client_order_id' = o.client_order_id
+                        ORDER BY a.created_at DESC, a.event_id DESC
+                        LIMIT 1
+                      ),
+                      CASE WHEN o.status = 'expired' THEN 'expired' ELSE 'none' END
+                    ) AS expiry_reason,
                     EXISTS (
                       SELECT 1
                       FROM audit_events a
@@ -2813,7 +2840,23 @@ try:
                         AND (status = 'filled' OR COALESCE(filled_quantity, 0) > 0)
                     ),
                     'none'
-                  ) AS filled_symbols
+                  ) AS filled_symbols,
+                  COALESCE(
+                    string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
+                      WHERE NOT maintenance_drained
+                        AND NOT short_window_drained
+                        AND (strategy_expired OR status = 'expired')
+                    ),
+                    'none'
+                  ) AS expired_symbols,
+                  COALESCE(
+                    string_agg(DISTINCT expiry_reason, ',' ORDER BY expiry_reason) FILTER (
+                      WHERE NOT maintenance_drained
+                        AND NOT short_window_drained
+                        AND (strategy_expired OR status = 'expired')
+                    ),
+                    'none'
+                  ) AS expired_reasons
                 FROM entry_orders
                 """,
                 (
@@ -2841,6 +2884,8 @@ try:
                     execution_quality_row[7] or 0
                 )
                 entry_order_filled_symbols = execution_quality_row[8] or "none"
+                entry_order_expired_symbols = execution_quality_row[9] or "none"
+                entry_order_expired_reasons = execution_quality_row[10] or "none"
 
             cur.execute(
                 """
@@ -3009,6 +3054,29 @@ try:
                 WITH entry_orders AS (
                   SELECT
                     o.*,
+                    COALESCE(
+                      NULLIF(o.reason, ''),
+                      (
+                        SELECT CASE
+                          WHEN a.event_type = 'order_expired_stale_signal'
+                            THEN 'stale_signal'
+                          WHEN COALESCE(a.payload->>'reason', '') = 'short active dispatch window'
+                            THEN 'short_active_window'
+                          WHEN COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'
+                            THEN 'deploy_maintenance'
+                          ELSE 'next_bar_expired'
+                        END
+                        FROM audit_events a
+                        WHERE a.event_type IN (
+                          'entry_order_expired_next_bar',
+                          'order_expired_stale_signal'
+                        )
+                          AND a.payload->>'client_order_id' = o.client_order_id
+                        ORDER BY a.created_at DESC, a.event_id DESC
+                        LIMIT 1
+                      ),
+                      CASE WHEN o.status = 'expired' THEN 'expired' ELSE 'none' END
+                    ) AS expiry_reason,
                     EXISTS (
                       SELECT 1
                       FROM audit_events a
@@ -3114,6 +3182,14 @@ try:
                     'none'
                   ) AS expired_symbols,
                   COALESCE(
+                    string_agg(DISTINCT expiry_reason, ',' ORDER BY expiry_reason) FILTER (
+                      WHERE NOT maintenance_drained
+                        AND NOT short_window_drained
+                        AND (strategy_expired OR status = 'expired')
+                    ),
+                    'none'
+                  ) AS expired_reasons,
+                  COALESCE(
                     string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
                       WHERE NOT maintenance_drained
                         AND NOT short_window_drained
@@ -3214,24 +3290,27 @@ try:
                 current_session_entry_order_expired_symbols = (
                     current_session_execution_row[11] or "none"
                 )
-                current_session_entry_order_active_symbols = (
+                current_session_entry_order_expired_reasons = (
                     current_session_execution_row[12] or "none"
                 )
-                current_session_entry_order_maintenance_drained_symbols = (
+                current_session_entry_order_active_symbols = (
                     current_session_execution_row[13] or "none"
                 )
-                current_session_entry_order_short_window_drained_symbols = (
+                current_session_entry_order_maintenance_drained_symbols = (
                     current_session_execution_row[14] or "none"
                 )
-                current_session_entry_order_short_window_count = int(
-                    current_session_execution_row[15] or 0
+                current_session_entry_order_short_window_drained_symbols = (
+                    current_session_execution_row[15] or "none"
                 )
-                if current_session_execution_row[16] is not None:
+                current_session_entry_order_short_window_count = int(
+                    current_session_execution_row[16] or 0
+                )
+                if current_session_execution_row[17] is not None:
                     current_session_entry_order_min_remaining_active_minutes = float(
-                        current_session_execution_row[16]
+                        current_session_execution_row[17]
                     )
                 current_session_entry_order_short_window_symbols = (
-                    current_session_execution_row[17] or "none"
+                    current_session_execution_row[18] or "none"
                 )
 
             if (
@@ -3305,6 +3384,29 @@ try:
                     WITH entry_orders AS (
                       SELECT
                         o.*,
+                        COALESCE(
+                          NULLIF(o.reason, ''),
+                          (
+                            SELECT CASE
+                              WHEN a.event_type = 'order_expired_stale_signal'
+                                THEN 'stale_signal'
+                              WHEN COALESCE(a.payload->>'reason', '') = 'short active dispatch window'
+                                THEN 'short_active_window'
+                              WHEN COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'
+                                THEN 'deploy_maintenance'
+                              ELSE 'next_bar_expired'
+                            END
+                            FROM audit_events a
+                            WHERE a.event_type IN (
+                              'entry_order_expired_next_bar',
+                              'order_expired_stale_signal'
+                            )
+                              AND a.payload->>'client_order_id' = o.client_order_id
+                            ORDER BY a.created_at DESC, a.event_id DESC
+                            LIMIT 1
+                          ),
+                          CASE WHEN o.status = 'expired' THEN 'expired' ELSE 'none' END
+                        ) AS expiry_reason,
                         EXISTS (
                           SELECT 1
                           FROM audit_events a
@@ -3400,6 +3502,14 @@ try:
                         'none'
                       ) AS expired_symbols,
                       COALESCE(
+                        string_agg(DISTINCT expiry_reason, ',' ORDER BY expiry_reason) FILTER (
+                          WHERE NOT maintenance_drained
+                            AND NOT short_window_drained
+                            AND (strategy_expired OR status = 'expired')
+                        ),
+                        'none'
+                      ) AS expired_reasons,
+                      COALESCE(
                         string_agg(DISTINCT symbol, ',' ORDER BY symbol) FILTER (
                           WHERE NOT maintenance_drained
                             AND NOT short_window_drained
@@ -3483,18 +3593,21 @@ try:
                     post_supervisor_entry_order_expired_symbols = (
                         post_supervisor_execution_row[9] or "none"
                     )
-                    post_supervisor_entry_order_active_symbols = (
+                    post_supervisor_entry_order_expired_reasons = (
                         post_supervisor_execution_row[10] or "none"
                     )
-                    post_supervisor_entry_order_short_window_count = int(
-                        post_supervisor_execution_row[11] or 0
+                    post_supervisor_entry_order_active_symbols = (
+                        post_supervisor_execution_row[11] or "none"
                     )
-                    if post_supervisor_execution_row[12] is not None:
+                    post_supervisor_entry_order_short_window_count = int(
+                        post_supervisor_execution_row[12] or 0
+                    )
+                    if post_supervisor_execution_row[13] is not None:
                         post_supervisor_entry_order_min_remaining_active_minutes = float(
-                            post_supervisor_execution_row[12]
+                            post_supervisor_execution_row[13]
                         )
                     post_supervisor_entry_order_short_window_symbols = (
-                        post_supervisor_execution_row[13] or "none"
+                        post_supervisor_execution_row[14] or "none"
                     )
 
         unpaired_filled_exit_count = 0
@@ -5931,6 +6044,8 @@ print(
     f"effective_entry_fill_rate_source={effective_entry_fill_rate_source} "
     f"accepted_to_fill_rate={accepted_to_fill_rate_text} "
     f"filled_symbols={entry_order_filled_symbols} "
+    f"expired_symbols={entry_order_expired_symbols} "
+    f"expired_reasons={entry_order_expired_reasons} "
     f"current_posture_filled_symbols={posture_entry_order_filled_symbols}"
 )
 print(
@@ -5962,6 +6077,7 @@ print(
     f"accepted_to_fill_rate={current_session_accepted_to_fill_rate_text} "
     f"filled_symbols={current_session_entry_order_filled_symbols} "
     f"expired_symbols={current_session_entry_order_expired_symbols} "
+    f"expired_reasons={current_session_entry_order_expired_reasons} "
     f"active_symbols={current_session_entry_order_active_symbols} "
     f"maintenance_drained_symbols={current_session_entry_order_maintenance_drained_symbols} "
     f"short_window_drained_symbols={current_session_entry_order_short_window_drained_symbols} "
@@ -5997,6 +6113,7 @@ print(
     f"accepted_to_fill_rate={post_supervisor_accepted_to_fill_rate_text} "
     f"filled_symbols={post_supervisor_entry_order_filled_symbols} "
     f"expired_symbols={post_supervisor_entry_order_expired_symbols} "
+    f"expired_reasons={post_supervisor_entry_order_expired_reasons} "
     f"active_symbols={post_supervisor_entry_order_active_symbols} "
     f"short_window={post_supervisor_entry_order_short_window_count} "
     f"min_remaining_active_minutes={post_supervisor_entry_order_min_remaining_active_minutes_text} "

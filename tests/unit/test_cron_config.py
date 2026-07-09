@@ -2373,6 +2373,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"min_entry_fill_rate": "proof_current_execution_min_entry_fill_rate"' in script
     assert '"filled_symbols": "proof_current_execution_filled_symbols"' in script
     assert '"expired_symbols": "proof_current_execution_expired_symbols"' in script
+    assert '"expired_reasons": "proof_current_execution_expired_reasons"' in script
     assert '"active_symbols": "proof_current_execution_active_symbols"' in script
     assert (
         '"maintenance_drained_symbols": '
@@ -6418,11 +6419,17 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'" in script
     assert "COALESCE(a.payload->>'reason', '') NOT LIKE 'deploy maintenance%%'" in script
     assert "COALESCE(a.payload->>'reason', '') = 'short active dispatch window'" in script
+    assert "NULLIF(o.reason, '')" in script
+    assert "THEN 'stale_signal'" in script
+    assert "THEN 'short_active_window'" in script
+    assert "THEN 'deploy_maintenance'" in script
+    assert "ELSE 'next_bar_expired'" in script
     assert "short_window_drained" in script
     assert ") AS strategy_expired" in script
     assert "AND NOT strategy_expired" in script
     assert "AND (strategy_expired OR status = 'expired')" in script
     assert ") AS expired_symbols" in script
+    assert ") AS expired_reasons" in script
     assert ") AS active_symbols" in script
     assert ") AS maintenance_drained_symbols" in script
     assert ") AS short_window_drained_symbols" in script
@@ -6975,6 +6982,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "effective_entry_fill_rate_source={effective_entry_fill_rate_source}" in script
     assert "accepted_to_fill_rate={accepted_to_fill_rate_text}" in script
     assert "filled_symbols={entry_order_filled_symbols}" in script
+    assert "expired_symbols={entry_order_expired_symbols}" in script
+    assert "expired_reasons={entry_order_expired_reasons}" in script
     assert "current_posture_filled_symbols={posture_entry_order_filled_symbols}" in script
     assert "paper proof current-session execution:" in script
     assert "status={current_session_execution_status}" in script
@@ -6998,6 +7007,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "accepted_to_fill_rate={current_session_accepted_to_fill_rate_text}" in script
     assert "filled_symbols={current_session_entry_order_filled_symbols}" in script
     assert "expired_symbols={current_session_entry_order_expired_symbols}" in script
+    assert "expired_reasons={current_session_entry_order_expired_reasons}" in script
     assert "active_symbols={current_session_entry_order_active_symbols}" in script
     assert (
         "maintenance_drained_symbols="
@@ -7025,6 +7035,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "{post_supervisor_settled_accepted_for_fill_count}"
     ) in script
     assert "accepted_to_fill_rate={post_supervisor_accepted_to_fill_rate_text}" in script
+    assert "expired_reasons={post_supervisor_entry_order_expired_reasons}" in script
     assert "short_window={post_supervisor_entry_order_short_window_count}" in script
     assert "settled_entry_fill_rate" in script
     assert "paper proof scoring:" in script

@@ -195,6 +195,7 @@ PROOF_CURRENT_EXECUTION_FIELDS = {
     "accepted_to_fill_rate": "proof_current_execution_accepted_to_fill_rate",
     "filled_symbols": "proof_current_execution_filled_symbols",
     "expired_symbols": "proof_current_execution_expired_symbols",
+    "expired_reasons": "proof_current_execution_expired_reasons",
     "active_symbols": "proof_current_execution_active_symbols",
     "maintenance_drained_symbols": "proof_current_execution_maintenance_drained_symbols",
     "short_window_drained_symbols": "proof_current_execution_short_window_drained_symbols",
@@ -243,6 +244,7 @@ PROOF_POST_SUPERVISOR_EXECUTION_FIELDS = {
     ),
     "filled_symbols": "proof_post_supervisor_execution_filled_symbols",
     "expired_symbols": "proof_post_supervisor_execution_expired_symbols",
+    "expired_reasons": "proof_post_supervisor_execution_expired_reasons",
     "active_symbols": "proof_post_supervisor_execution_active_symbols",
     "short_window": "proof_post_supervisor_execution_short_window",
     "min_remaining_active_minutes": (
