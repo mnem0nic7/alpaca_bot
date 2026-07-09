@@ -1398,6 +1398,98 @@ def test_runtime_supervisor_early_dispatch_respects_close_only(
     assert dispatch_calls[1]["allowed_intent_types"] == {"stop", "exit"}
 
 
+def test_runtime_supervisor_dispatches_new_entry_after_strategy_execution(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    from alpaca_bot.core.engine import CycleIntent, CycleIntentType, CycleResult
+
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 45, tzinfo=timezone.utc)
+    runtime = make_runtime_context(settings)
+    events: list[str] = []
+    dispatch_calls: list[dict[str, object]] = []
+
+    def fake_run_cycle(**kwargs):
+        strategy_name = kwargs["strategy_name"]
+        events.append(f"cycle:{strategy_name}")
+        if strategy_name != "bull_flag":
+            return CycleResult(as_of=now, intents=[])
+        return CycleResult(
+            as_of=now,
+            intents=[
+                CycleIntent(
+                    intent_type=CycleIntentType.ENTRY,
+                    symbol="AAPL",
+                    timestamp=now,
+                    quantity=1,
+                    stop_price=101.0,
+                    limit_price=101.1,
+                    initial_stop_price=99.0,
+                    client_order_id="paper:v1-breakout:AAPL:entry:new",
+                    signal_timestamp=now - timedelta(minutes=15),
+                    strategy_name="bull_flag",
+                )
+            ],
+        )
+
+    def fake_execute_cycle_intents(**kwargs):
+        strategy_name = (
+            kwargs["cycle_result"].intents[0].strategy_name
+            if kwargs["cycle_result"].intents
+            else "none"
+        )
+        events.append(f"execute:{strategy_name}")
+        return SimpleNamespace(
+            submitted_exit_count=0,
+            failed_exit_count=0,
+            updated_pending_stop_count=0,
+        )
+
+    def fake_dispatch_pending_orders(**kwargs):
+        events.append("dispatch")
+        dispatch_calls.append(kwargs)
+        return {"submitted_count": 1 if len(dispatch_calls) == 1 else 0}
+
+    monkeypatch.setattr(module, "run_cycle", fake_run_cycle)
+    monkeypatch.setattr(module, "execute_cycle_intents", fake_execute_cycle_intents)
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        fake_dispatch_pending_orders,
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=FakeMarketData(
+            intraday_bars_by_symbol={
+                "AAPL": make_bar_series("AAPL", end=now, count=21),
+                "MSFT": make_bar_series("MSFT", end=now, count=21),
+                "SPY": make_bar_series("SPY", end=now, count=21),
+            },
+            daily_bars_by_symbol={
+                "AAPL": make_bar_series("AAPL", end=now, count=20, days=True),
+                "MSFT": make_bar_series("MSFT", end=now, count=20, days=True),
+                "SPY": make_bar_series("SPY", end=now, count=20, days=True),
+            },
+        ),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    first_dispatch_index = events.index("dispatch")
+    assert events[first_dispatch_index - 1] == "execute:bull_flag"
+    assert len(dispatch_calls) == 2
+    assert "allowed_intent_types" not in dispatch_calls[0]
+    assert dispatch_calls[0]["blocked_strategy_names"] == set()
+    assert report.dispatch_report["submitted_count"] == 1
+
+
 def test_runtime_supervisor_only_enables_new_entries_once_per_completed_signal_bar(
     monkeypatch,
 ) -> None:

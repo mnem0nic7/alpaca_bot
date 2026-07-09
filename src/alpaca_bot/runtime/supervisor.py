@@ -242,6 +242,24 @@ def _combine_dispatch_reports(
     return SupervisorDispatchReport(submitted_count=total)
 
 
+def _cycle_creates_pending_dispatch_work(
+    cycle_result: object,
+    exec_report: object | None,
+) -> bool:
+    for intent in getattr(cycle_result, "intents", []) or []:
+        if (
+            getattr(intent, "intent_type", None) is CycleIntentType.ENTRY
+            and not getattr(intent, "is_option", False)
+        ):
+            return True
+    if exec_report is None:
+        return False
+    return (
+        int(getattr(exec_report, "updated_pending_stop_count", 0) or 0) > 0
+        or int(getattr(exec_report, "failed_exit_count", 0) or 0) > 0
+    )
+
+
 def _option_snapshot_path_session(value: object) -> date | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -1132,6 +1150,7 @@ class RuntimeSupervisor:
         entries_disabled_strategies: set[str] = set()
         strategy_entries_disabled_reasons: dict[str, tuple[str, ...]] = {}
         entry_cadence_used = False
+        stock_dispatch_report = pre_cycle_dispatch_report
         # Track occupied slots globally across all strategies so no single
         # strategy can exceed the portfolio-wide max_open_positions cap.
         global_occupied_slots = len(
@@ -1298,6 +1317,26 @@ class RuntimeSupervisor:
                     else 0
                 )
                 global_occupied_slots = max(global_occupied_slots - confirmed_exits, 0)
+
+                if (
+                    status is not TradingStatusValue.HALTED
+                    and _cycle_creates_pending_dispatch_work(cycle_result, exec_report)
+                ):
+                    strategy_dispatch_kwargs = {
+                        "settings": self.settings,
+                        "runtime": self.runtime,
+                        "broker": self.broker,
+                        "now": timestamp,
+                        "blocked_strategy_names": set(entries_disabled_strategies),
+                        "notifier": self._notifier,
+                        "session_type": session_type,
+                    }
+                    if entries_disabled:
+                        strategy_dispatch_kwargs["allowed_intent_types"] = {"stop", "exit"}
+                    stock_dispatch_report = _combine_dispatch_reports(
+                        stock_dispatch_report,
+                        self._order_dispatcher(**strategy_dispatch_kwargs),
+                    )
             except Exception:
                 logger.exception(
                     "Strategy cycle failed for %s; skipping to next strategy",
@@ -1358,7 +1397,7 @@ class RuntimeSupervisor:
         if entries_disabled:
             dispatch_kwargs["allowed_intent_types"] = {"stop", "exit"}
         dispatch_report = _combine_dispatch_reports(
-            pre_cycle_dispatch_report,
+            stock_dispatch_report,
             self._order_dispatcher(**dispatch_kwargs),
         )
 
