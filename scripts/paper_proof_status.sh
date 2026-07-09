@@ -1707,6 +1707,30 @@ def load_second_strategy_evidence(
 
     prefilter_rows = prefilter_payload.get("rows", []) if prefilter_payload else []
     validation_rows = validation_payload.get("rows", []) if validation_payload else []
+    validation_prefilter_summary = "none"
+    validation_prefilter_lineage_status = "not_applicable"
+    validation_prefilter_lineage_error = False
+    if validation_payload is not None and prefilter_payload is not None:
+        validation_prefilter_summary = str(
+            validation_payload.get("prefilter_summary_json") or ""
+        ).strip() or "none"
+        if validation_prefilter_summary == "none":
+            validation_prefilter_lineage_status = "reference_missing"
+            validation_prefilter_lineage_error = True
+        else:
+            validation_prefilter_path = Path(validation_prefilter_summary)
+            if not validation_prefilter_path.is_absolute():
+                validation_prefilter_path = (
+                    validation_summary_path.parent / validation_prefilter_path
+                )
+            if (
+                validation_prefilter_path.resolve()
+                != prefilter_summary_path.resolve()
+            ):
+                validation_prefilter_lineage_status = "reference_mismatch"
+                validation_prefilter_lineage_error = True
+            else:
+                validation_prefilter_lineage_status = "ok"
     prefilter_families = candidate_names_from_rows(prefilter_rows)
     prefilter_positive_families = candidate_names_from_rows(
         prefilter_rows, verdict="positive-edge"
@@ -1754,6 +1778,8 @@ def load_second_strategy_evidence(
         )
         if error is not None and error != "missing"
     ]
+    if validation_prefilter_lineage_error:
+        invalid_parts.append("validation_prefilter_lineage")
     if invalid_parts:
         evidence_status = "invalid"
         detail = ",".join(invalid_parts)
@@ -2015,6 +2041,10 @@ def load_second_strategy_evidence(
         "root": str(output_root),
         "prefilter_summary": str(prefilter_summary_path),
         "validation_summary": str(validation_summary_path),
+        "validation_prefilter_summary": validation_prefilter_summary,
+        "validation_prefilter_lineage_status": (
+            validation_prefilter_lineage_status
+        ),
         "proof_horizon_summary": str(proof_horizon_summary_path),
         "prefilter_summary_sha256": prefilter_summary_sha256 or "none",
         "validation_summary_sha256": validation_summary_sha256 or "none",
@@ -6955,6 +6985,8 @@ print(
     f"root={safe_status_value(second_strategy_evidence['root'])} "
     f"prefilter_summary={safe_status_value(second_strategy_evidence['prefilter_summary'])} "
     f"validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])} "
+    f"validation_prefilter_summary={safe_status_value(second_strategy_evidence['validation_prefilter_summary'])} "
+    f"validation_prefilter_lineage_status={safe_status_value(second_strategy_evidence['validation_prefilter_lineage_status'])} "
     f"proof_horizon_summary={safe_status_value(second_strategy_evidence['proof_horizon_summary'])} "
     f"prefilter_summary_sha256={safe_status_value(second_strategy_evidence['prefilter_summary_sha256'])} "
     f"validation_summary_sha256={safe_status_value(second_strategy_evidence['validation_summary_sha256'])} "
@@ -7105,6 +7137,8 @@ print(
     f"root={safe_status_value(second_strategy_setup_evidence['root'])} "
     f"prefilter_summary={safe_status_value(second_strategy_setup_evidence['prefilter_summary'])} "
     f"validation_summary={safe_status_value(second_strategy_setup_evidence['validation_summary'])} "
+    f"validation_prefilter_summary={safe_status_value(second_strategy_setup_evidence['validation_prefilter_summary'])} "
+    f"validation_prefilter_lineage_status={safe_status_value(second_strategy_setup_evidence['validation_prefilter_lineage_status'])} "
     f"prefilter_summary_sha256={safe_status_value(second_strategy_setup_evidence['prefilter_summary_sha256'])} "
     f"validation_summary_sha256={safe_status_value(second_strategy_setup_evidence['validation_summary_sha256'])} "
     f"prefilter_age_hours={format_optional_float(second_strategy_setup_evidence['prefilter_age_hours'])} "

@@ -7618,6 +7618,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "                < second_strategy_min_proof_horizon_pass_rate"
     ) in script
     assert "\"prefilter_summary_sha256\": prefilter_summary_sha256 or \"none\"" in script
+    assert 'validation_payload.get("prefilter_summary_json")' in script
+    assert "validation_prefilter_path.resolve()" in script
+    assert "prefilter_summary_path.resolve()" in script
+    assert 'invalid_parts.append("validation_prefilter_lineage")' in script
+    assert "validation_prefilter_lineage_status=" in script
     assert "\"validation_summary_sha256\": validation_summary_sha256 or \"none\"" in script
     assert "\"proof_horizon_summary_sha256\": proof_horizon_summary_sha256 or \"none\"" in script
     assert "prefilter_summary_sha256={safe_status_value(second_strategy_evidence['prefilter_summary_sha256'])}" in script

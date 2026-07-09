@@ -680,3 +680,10 @@ broad scan instead of producing zero-trade rows. Once coverage matures, the
 scanner freezes every available session at 15-minute decision boundaries and
 the basket CLI samples only symbols represented in that point-in-time ledger.
 This preserves usable marks across days without copying every intrabar poll.
+
+Follow-up: proof status now verifies validation lineage by resolving the
+validation summary's `prefilter_summary_json` against the currently published
+prefilter summary. Both current broad and setup evidence chains report
+`validation_prefilter_lineage_status=ok`; a missing or cross-generation
+reference now makes the evidence invalid before any promotion action can be
+offered.
