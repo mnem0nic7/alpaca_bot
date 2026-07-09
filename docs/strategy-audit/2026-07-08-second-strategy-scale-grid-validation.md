@@ -730,3 +730,26 @@ currently reports `snapshot_sessions=2`, `replay_sessions=1`, and
 undercovered and cannot satisfy the option-strategy replay gate. The basket
 scanner applies the same minimum to its frozen input, including when option
 candidates are requested explicitly.
+
+Post-close deployment and complete evidence recovery on 2026-07-09:
+
+- NTRA flattened normally at the configured EOD boundary. The entry filled at
+  `283.11`, the exit filled at `281.41`, and realized P&L was `-2.47`; local and
+  broker positions/orders then reconciled to zero.
+- The current image deployed with readiness, ops, stream, cron, decision-dry-run,
+  and image-health checks all passing. Only `bull_flag` remains enabled. More
+  than 30 quiet minutes after startup produced no false stream-staleness event.
+- The complete 21-family prefilter generation at `20260709T001604Z` contained
+  seven positive rows across `ema_pullback`, `bb_squeeze`, and `orb`. Independent
+  validation rejected every `bb_squeeze`/`orb` row and EMA scale `0.50`; EMA
+  scales `0.10` and `0.25` retained positive candidate contribution.
+- Both surviving EMA scales failed the historical proof horizon. Scale `0.10`
+  produced total P&L `36.97` and an eventual pass rate of `0.3152`; scale `0.25`
+  produced total P&L `48.80` and an eventual pass rate of `0.3877`. Both are
+  below the required `0.5000`, so passing candidates remain zero and no
+  approval marker or strategy enablement was written.
+- The authoritative `latest`, `latest_validation`, and `latest_proof_horizon`
+  links now resolve to this complete prefilter generation and the isolated
+  `manual_full_recovery_20260709T201642Z` artifacts. Proof status reports lineage
+  `ok`, readiness `ready`, exposure `flat`, and paper progress of four closed
+  trades over three active days with net P&L `12.52`.
