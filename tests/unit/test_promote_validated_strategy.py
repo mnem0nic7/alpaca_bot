@@ -139,15 +139,15 @@ def _run_promote(
     deploy_script: Path,
     tmp_path: Path,
     confirmation: str | None = None,
-    dry_run: bool = False,
+    dry_run: bool | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": f"{_make_fake_docker(tmp_path)}:/usr/bin:/bin",
     }
     if confirmation is not None:
         env["PROMOTE_VALIDATED_STRATEGY_CONFIRM"] = confirmation
-    if dry_run:
-        env["PROMOTE_VALIDATED_STRATEGY_DRY_RUN"] = "true"
+    if dry_run is not None:
+        env["PROMOTE_VALIDATED_STRATEGY_DRY_RUN"] = "true" if dry_run else "false"
     return subprocess.run(
         [
             str(SCRIPT),
@@ -175,6 +175,7 @@ def test_promote_validated_strategy_requires_explicit_confirmation(tmp_path: Pat
         evidence_root=evidence_root,
         deploy_script=deploy_script,
         tmp_path=tmp_path,
+        dry_run=False,
     )
 
     summary_path = evidence_root / "latest_validation" / "summary.json"
@@ -202,10 +203,10 @@ def test_promote_validated_strategy_dry_run_reports_gates_without_mutation(
         evidence_root=evidence_root,
         deploy_script=deploy_script,
         tmp_path=tmp_path,
-        dry_run=True,
     )
 
     assert result.returncode == 0, result.stderr
+    assert 'DRY_RUN="${PROMOTE_VALIDATED_STRATEGY_DRY_RUN:-true}"' in SCRIPT.read_text()
     stdout = result.stdout
     assert "dry_run=true" in stdout
     assert "strategy=ema_pullback" in stdout
@@ -243,6 +244,7 @@ def test_promote_validated_strategy_requires_flat_broker_before_mutation(
         deploy_script=deploy_script,
         tmp_path=tmp_path,
         confirmation=_confirmation(evidence_root),
+        dry_run=False,
     )
 
     assert result.returncode == 1
@@ -272,6 +274,7 @@ def test_promote_validated_strategy_rechecks_evidence_after_broker_check(
         deploy_script=deploy_script,
         tmp_path=tmp_path,
         confirmation=confirmation,
+        dry_run=False,
     )
 
     assert result.returncode == 1
@@ -307,6 +310,7 @@ def test_promote_validated_strategy_requires_env_write_access_before_broker_chec
             deploy_script=deploy_script,
             tmp_path=tmp_path,
             confirmation=_confirmation(evidence_root),
+            dry_run=False,
         )
     finally:
         env_dir.chmod(0o750)
@@ -332,6 +336,7 @@ def test_promote_validated_strategy_rejects_legacy_generic_confirmation(tmp_path
         deploy_script=deploy_script,
         tmp_path=tmp_path,
         confirmation="approve-ema_pullback-paper-promotion",
+        dry_run=False,
     )
 
     assert result.returncode == 2
@@ -354,6 +359,7 @@ def test_promote_validated_strategy_rejects_weak_candidate_evidence(tmp_path: Pa
         deploy_script=deploy_script,
         tmp_path=tmp_path,
         confirmation=_confirmation(evidence_root),
+        dry_run=False,
     )
 
     assert result.returncode == 1
@@ -390,6 +396,7 @@ def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_pa
         deploy_script=deploy_script,
         tmp_path=tmp_path,
         confirmation=_confirmation(evidence_root),
+        dry_run=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -463,6 +470,7 @@ def test_promote_validated_strategy_selects_best_passing_row(tmp_path: Path) -> 
         deploy_script=deploy_script,
         tmp_path=tmp_path,
         confirmation=_confirmation(evidence_root),
+        dry_run=False,
     )
 
     assert result.returncode == 0, result.stderr
@@ -492,6 +500,7 @@ def test_promote_validated_strategy_rolls_back_when_deploy_fails(tmp_path: Path)
         deploy_script=deploy_script,
         tmp_path=tmp_path,
         confirmation=_confirmation(evidence_root),
+        dry_run=False,
     )
 
     assert result.returncode == 1

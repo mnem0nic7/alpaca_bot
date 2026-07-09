@@ -6894,6 +6894,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "promotion_action_status" in script
     assert "paper proof second strategy promotion action:" in script
     assert "confirmation={promotion_confirmation}" in script
+    assert "dry_run_default=true" in script
+    assert "mutation_requires_dry_run_false=true" in script
     assert 'promotion_action_status == "ready"' in script
     assert 'promotion_action_status = "ready_needs_write_access"' in script
     assert "promotion_validation_summary_sha256 = safe_status_value(" in script
