@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import stat
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
+import pytest
 
 SCRIPT = Path(__file__).parent.parent.parent / "scripts" / "promote_validated_strategy.sh"
 
@@ -199,6 +202,41 @@ def test_promote_validated_strategy_requires_flat_broker_before_mutation(
     docker_calls = (tmp_path / "docker_calls").read_text()
     assert "--entrypoint python admin" in docker_calls
     assert "enable-strategy" not in docker_calls
+    assert not (tmp_path / "deploy_calls").exists()
+
+
+def test_promote_validated_strategy_requires_env_write_access_before_broker_check(
+    tmp_path: Path,
+) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root can write through read-only mode bits")
+
+    env_dir = tmp_path / "readonly_env"
+    env_dir.mkdir()
+    env_file = env_dir / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    deploy_script = _make_fake_deploy(tmp_path)
+    env_file.chmod(0o440)
+    env_dir.chmod(0o550)
+
+    try:
+        result = _run_promote(
+            env_file=env_file,
+            evidence_root=evidence_root,
+            deploy_script=deploy_script,
+            tmp_path=tmp_path,
+            confirmation=_confirmation(evidence_root),
+        )
+    finally:
+        env_dir.chmod(0o750)
+        env_file.chmod(0o640)
+
+    assert result.returncode == 1
+    assert "env file is not writable" in result.stderr
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
+    assert not (tmp_path / "docker_calls").exists()
     assert not (tmp_path / "deploy_calls").exists()
 
 

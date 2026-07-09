@@ -234,6 +234,40 @@ if ! verify_validation_summary_current; then
   exit 1
 fi
 
+require_promotion_write_access() {
+  local env_dir
+  local marker_dir
+  local marker_parent
+
+  env_dir="$(dirname "$ENV_FILE")"
+  if [[ ! -w "$ENV_FILE" ]]; then
+    echo "$LOG_PREFIX env file is not writable: $ENV_FILE" >&2
+    exit 1
+  fi
+  if [[ ! -w "$env_dir" ]]; then
+    echo "$LOG_PREFIX env file directory is not writable for atomic update: $env_dir" >&2
+    exit 1
+  fi
+
+  marker_dir="$(dirname "$APPROVAL_MARKER")"
+  marker_parent="$(dirname "$marker_dir")"
+  if [[ -e "$APPROVAL_MARKER" && ! -w "$APPROVAL_MARKER" ]]; then
+    echo "$LOG_PREFIX approval marker is not writable: $APPROVAL_MARKER" >&2
+    exit 1
+  fi
+  if [[ -d "$marker_dir" ]]; then
+    if [[ ! -w "$marker_dir" ]]; then
+      echo "$LOG_PREFIX approval marker directory is not writable: $marker_dir" >&2
+      exit 1
+    fi
+  elif [[ ! -d "$marker_parent" || ! -w "$marker_parent" ]]; then
+    echo "$LOG_PREFIX approval marker parent directory is not writable: $marker_parent" >&2
+    exit 1
+  fi
+}
+
+require_promotion_write_access
+
 if ! BROKER_FLAT_CONTEXT="promote validated strategy" \
   "$ROOT_DIR/scripts/broker_flat_check.sh" "$ENV_FILE"; then
   echo "$LOG_PREFIX refusing promotion because paper broker is not flat" >&2
