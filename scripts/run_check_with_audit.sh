@@ -218,6 +218,33 @@ PROOF_SECOND_STRATEGY_PROMOTION_ACTION_FIELDS = {
     "approval_marker_action_status": (
         "proof_second_strategy_promotion_action_approval_marker_action_status"
     ),
+    "approval_marker_command_status": (
+        "proof_second_strategy_promotion_action_approval_marker_command_status"
+    ),
+    "approval_marker_command_confirm_env": (
+        "proof_second_strategy_promotion_action_approval_marker_command_confirm_env"
+    ),
+    "approval_marker_command_dry_run_env": (
+        "proof_second_strategy_promotion_action_approval_marker_command_dry_run_env"
+    ),
+    "approval_marker_command_dry_run_value": (
+        "proof_second_strategy_promotion_action_approval_marker_command_dry_run_value"
+    ),
+    "approval_marker_command_approval_only_env": (
+        "proof_second_strategy_promotion_action_approval_marker_command_approval_only_env"
+    ),
+    "approval_marker_command_approval_only_value": (
+        "proof_second_strategy_promotion_action_approval_marker_command_approval_only_value"
+    ),
+    "approval_marker_command_evidence_root": (
+        "proof_second_strategy_promotion_action_approval_marker_command_evidence_root"
+    ),
+    "approval_marker_command_deploy_script": (
+        "proof_second_strategy_promotion_action_approval_marker_command_deploy_script"
+    ),
+    "broker_flat_status": (
+        "proof_second_strategy_promotion_action_broker_flat_status"
+    ),
     "env_file": "proof_second_strategy_promotion_action_env_file",
     "write_access_status": (
         "proof_second_strategy_promotion_action_write_access_status"

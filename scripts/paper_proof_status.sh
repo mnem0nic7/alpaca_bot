@@ -6367,6 +6367,21 @@ promotion_confirmation = (
     if promotion_strategy != "none" and promotion_validation_summary_sha256 != "none"
     else "none"
 )
+promotion_broker_flat_status = (
+    "unknown"
+    if broker_exposure_warning
+    else "ok"
+    if (broker_open_orders or 0) == 0 and (broker_open_positions or 0) == 0
+    else "not_flat"
+)
+approval_marker_command_status = approval_marker_action_status
+if approval_marker_action_status == "ready":
+    if promotion_confirmation == "none":
+        approval_marker_command_status = "missing_confirmation"
+    elif promotion_broker_flat_status != "ok":
+        approval_marker_command_status = f"broker_{promotion_broker_flat_status}"
+    else:
+        approval_marker_command_status = "ready"
 print(
     "paper proof second strategy promotion action: "
     f"status={promotion_action_status} "
@@ -6377,6 +6392,15 @@ print(
     f"mutation_requires_dry_run_false=true "
     f"approval_marker_only_supported=true "
     f"approval_marker_action_status={approval_marker_action_status} "
+    f"approval_marker_command_status={approval_marker_command_status} "
+    f"approval_marker_command_confirm_env=PROMOTE_VALIDATED_STRATEGY_CONFIRM "
+    f"approval_marker_command_dry_run_env=PROMOTE_VALIDATED_STRATEGY_DRY_RUN "
+    f"approval_marker_command_dry_run_value=false "
+    f"approval_marker_command_approval_only_env=PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY "
+    f"approval_marker_command_approval_only_value=true "
+    f"approval_marker_command_evidence_root={safe_status_value(second_strategy_evidence['root'])} "
+    f"approval_marker_command_deploy_script=./scripts/deploy.sh "
+    f"broker_flat_status={promotion_broker_flat_status} "
     f"env_file={safe_status_value(proof_status_env_file)} "
     f"write_access_status={safe_status_value(promotion_write_access_status)} "
     f"env_file_writable={safe_status_value(promotion_env_file_writable)} "
