@@ -705,3 +705,13 @@ ping/reconnect remains active, and every supervisor cycle still reconciles
 orders and positions through the broker REST API. Graceful stream shutdown now
 waits six seconds, covering the SDK's five-second receive timeout before the
 runtime closes its database connection.
+
+The same NTRA audit exposed a cancel/fill recovery race: the local entry had
+already reached a terminal cancel state while Alpaca still reported it open and
+then filled it. Recovery previously searched only active local orders, labeled
+the broker order as missing, and could rebuild a filled position without the
+strategy's original stop metadata. Broker-referenced terminal rows are now
+resolved by client order ID as well. Open-order recovery preserves the original
+strategy, signal, entry limits, and stop plan; closed-order recovery also
+restores the exact fill and uses that stop plan when it queues protection for a
+newly recovered position.

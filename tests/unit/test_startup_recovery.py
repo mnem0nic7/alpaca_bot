@@ -308,6 +308,150 @@ def test_recover_startup_state_syncs_broker_only_positions_and_orders() -> None:
     )
 
 
+def test_recovery_reactivates_canceled_broker_order_with_local_risk_metadata() -> None:
+    settings = make_settings()
+    created_at = datetime(2026, 7, 9, 14, 31, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 9, 14, 46, tzinfo=timezone.utc)
+    entry_id = "bull_flag:v1-breakout:2026-07-09:NTRA:entry:2026-07-09T14:30:00+00:00"
+    canceled_entry = OrderRecord(
+        client_order_id=entry_id,
+        symbol="NTRA",
+        side="buy",
+        intent_type="entry",
+        status="canceled",
+        quantity=1.4534,
+        trading_mode=TradingMode.PAPER,
+        strategy_version=settings.strategy_version,
+        strategy_name="bull_flag",
+        created_at=created_at,
+        updated_at=now,
+        stop_price=283.22,
+        limit_price=283.36,
+        initial_stop_price=269.60,
+        broker_order_id="broker-entry-ntra",
+        signal_timestamp=datetime(2026, 7, 9, 14, 30, tzinfo=timezone.utc),
+    )
+    order_store = RecordingOrderStore(existing_orders=[canceled_entry])
+    runtime = make_runtime_context(
+        settings,
+        position_store=RecordingPositionStore(),
+        order_store=order_store,
+    )
+
+    report = recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[],
+        broker_open_orders=[
+            BrokerOrder(
+                client_order_id=entry_id,
+                broker_order_id="broker-entry-ntra",
+                symbol="NTRA",
+                side="buy",
+                status="new",
+                quantity=1.4534,
+            )
+        ],
+        now=now,
+    )
+
+    assert report.mismatches == (f"broker order differs locally: {entry_id}",)
+    recovered_entry = next(
+        order
+        for order in order_store.saved
+        if order.client_order_id == entry_id and order.status == "new"
+    )
+    assert recovered_entry.strategy_name == "bull_flag"
+    assert recovered_entry.stop_price == pytest.approx(283.22)
+    assert recovered_entry.limit_price == pytest.approx(283.36)
+    assert recovered_entry.initial_stop_price == pytest.approx(269.60)
+    assert recovered_entry.signal_timestamp == datetime(
+        2026, 7, 9, 14, 30, tzinfo=timezone.utc
+    )
+
+
+def test_recovery_preserves_canceled_entry_stop_when_broker_reports_fill() -> None:
+    settings = make_settings()
+    created_at = datetime(2026, 7, 9, 14, 31, tzinfo=timezone.utc)
+    filled_at = datetime(2026, 7, 9, 14, 50, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 9, 14, 52, tzinfo=timezone.utc)
+    entry_id = "bull_flag:v1-breakout:2026-07-09:NTRA:entry:2026-07-09T14:30:00+00:00"
+    canceled_entry = OrderRecord(
+        client_order_id=entry_id,
+        symbol="NTRA",
+        side="buy",
+        intent_type="entry",
+        status="canceled",
+        quantity=1.4534,
+        trading_mode=TradingMode.PAPER,
+        strategy_version=settings.strategy_version,
+        strategy_name="bull_flag",
+        created_at=created_at,
+        updated_at=filled_at,
+        stop_price=283.22,
+        limit_price=283.36,
+        initial_stop_price=269.60,
+        broker_order_id="broker-entry-ntra",
+        signal_timestamp=datetime(2026, 7, 9, 14, 30, tzinfo=timezone.utc),
+    )
+    order_store = RecordingOrderStore(existing_orders=[canceled_entry])
+    position_store = RecordingPositionStore()
+    runtime = make_runtime_context(
+        settings,
+        position_store=position_store,
+        order_store=order_store,
+    )
+
+    report = recover_startup_state(
+        settings=settings,
+        runtime=runtime,
+        broker_open_positions=[
+            BrokerPosition(
+                symbol="NTRA",
+                quantity=1.4534,
+                entry_price=283.11,
+            )
+        ],
+        broker_open_orders=[],
+        broker_closed_orders=[
+            BrokerOrder(
+                client_order_id=entry_id,
+                broker_order_id="broker-entry-ntra",
+                symbol="NTRA",
+                side="buy",
+                status="filled",
+                quantity=1.4534,
+                fill_price=283.11,
+                filled_quantity=1.4534,
+                updated_at=filled_at,
+            )
+        ],
+        now=now,
+    )
+
+    assert "broker position missing locally: NTRA" in report.mismatches
+    assert f"broker closed order fill recovered: {entry_id}" in report.mismatches
+    recovered_position = position_store.replace_all_calls[0]["positions"][0]
+    assert recovered_position.strategy_name == "bull_flag"
+    assert recovered_position.stop_price == pytest.approx(269.60)
+    assert recovered_position.initial_stop_price == pytest.approx(269.60)
+    recovered_entry = [
+        order for order in order_store.saved if order.client_order_id == entry_id
+    ][-1]
+    assert recovered_entry.status == "filled"
+    assert recovered_entry.fill_price == pytest.approx(283.11)
+    assert recovered_entry.initial_stop_price == pytest.approx(269.60)
+    recovery_stops = [
+        order
+        for order in order_store.saved
+        if order.symbol == "NTRA"
+        and order.intent_type == "stop"
+        and order.status == "pending_submit"
+    ]
+    assert len(recovery_stops) == 1
+    assert recovery_stops[0].stop_price == pytest.approx(269.60)
+
+
 def test_recover_startup_state_clears_local_state_missing_at_broker() -> None:
     settings = make_settings()
     now = datetime(2026, 4, 24, 19, 5, tzinfo=timezone.utc)

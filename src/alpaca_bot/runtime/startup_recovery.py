@@ -126,6 +126,29 @@ def recover_startup_state(
         strategy_version=settings.strategy_version,
         statuses=ACTIVE_ORDER_STATUSES,
     )
+    local_orders_by_broker_id = {
+        order.broker_order_id: order for order in local_active_orders if order.broker_order_id
+    }
+    local_orders_by_client_id = {order.client_order_id: order for order in local_active_orders}
+    resolved_local_orders: dict[str, OrderRecord | None] = {}
+
+    def resolve_local_order(broker_order: BrokerOrder) -> OrderRecord | None:
+        existing = None
+        if broker_order.broker_order_id is not None:
+            existing = local_orders_by_broker_id.get(broker_order.broker_order_id)
+        if existing is None:
+            existing = local_orders_by_client_id.get(broker_order.client_order_id)
+        if existing is not None:
+            return existing
+        if broker_order.client_order_id not in resolved_local_orders:
+            loaded = runtime.order_store.load(broker_order.client_order_id)
+            if loaded is not None and (
+                loaded.trading_mode != settings.trading_mode
+                or loaded.strategy_version != settings.strategy_version
+            ):
+                loaded = None
+            resolved_local_orders[broker_order.client_order_id] = loaded
+        return resolved_local_orders[broker_order.client_order_id]
 
     synced_positions: list[PositionRecord] = []
     # Tracks brand-new positions (no prior local record) that need a stop order queued.
@@ -231,8 +254,29 @@ def recover_startup_state(
         if not local_for_symbol:
             mismatches.append(f"broker position missing locally: {broker_position.symbol}")
             is_option = _is_option_symbol(broker_position.symbol)
+            recoverable_orders = list(local_active_orders)
+            recoverable_client_order_ids = {
+                order.client_order_id for order in recoverable_orders
+            }
+            for broker_order in (*broker_open_orders, *broker_closed_orders):
+                if (
+                    broker_order.symbol != broker_position.symbol
+                    or _infer_intent_type(
+                        client_order_id=broker_order.client_order_id,
+                        side=broker_order.side,
+                    )
+                    != "entry"
+                ):
+                    continue
+                local_order = resolve_local_order(broker_order)
+                if (
+                    local_order is not None
+                    and local_order.client_order_id not in recoverable_client_order_ids
+                ):
+                    recoverable_orders.append(local_order)
+                    recoverable_client_order_ids.add(local_order.client_order_id)
             recovered_entry = _latest_recoverable_entry_order(
-                local_active_orders, broker_position.symbol
+                recoverable_orders, broker_position.symbol
             )
             resolved_strategy_name = (
                 recovered_entry.strategy_name
@@ -357,20 +401,11 @@ def recover_startup_state(
                 seen_symbols_with_mismatch.add(position.symbol)
             cleared_position_count += 1
 
-    local_orders_by_broker_id = {
-        order.broker_order_id: order for order in local_active_orders if order.broker_order_id
-    }
-    local_orders_by_client_id = {order.client_order_id: order for order in local_active_orders}
-
     synced_order_count = 0
     matched_local_client_ids: set[str] = set()
     recovered_closed_order_fills: dict[str, OrderRecord] = {}
     for broker_order in broker_open_orders:
-        existing = None
-        if broker_order.broker_order_id is not None:
-            existing = local_orders_by_broker_id.get(broker_order.broker_order_id)
-        if existing is None:
-            existing = local_orders_by_client_id.get(broker_order.client_order_id)
+        existing = resolve_local_order(broker_order)
         if existing is not None:
             matched_local_client_ids.add(existing.client_order_id)
 
@@ -386,11 +421,7 @@ def recover_startup_state(
         synced_order_count += 1
 
     for broker_order in broker_closed_orders:
-        existing = None
-        if broker_order.broker_order_id is not None:
-            existing = local_orders_by_broker_id.get(broker_order.broker_order_id)
-        if existing is None:
-            existing = local_orders_by_client_id.get(broker_order.client_order_id)
+        existing = resolve_local_order(broker_order)
         if existing is None:
             continue
 
@@ -747,11 +778,7 @@ def recover_startup_state(
                 )
                 active_stop_symbols.add(pos.symbol)
         for broker_order in broker_open_orders:
-            existing = None
-            if broker_order.broker_order_id is not None:
-                existing = local_orders_by_broker_id.get(broker_order.broker_order_id)
-            if existing is None:
-                existing = local_orders_by_client_id.get(broker_order.client_order_id)
+            existing = resolve_local_order(broker_order)
             if existing is None:
                 _log.critical(
                     "startup_recovery: broker order has no local record — stop prices unknown. "
