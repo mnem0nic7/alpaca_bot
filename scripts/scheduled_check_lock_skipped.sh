@@ -916,6 +916,38 @@ post_supervisor_line = (
     if post_supervisor_parts
     else ""
 )
+active_day_fields = [
+    ("status", "proof_active_day_status"),
+    ("active_days", "proof_active_days"),
+    ("required_active_days", "proof_required_active_days"),
+    ("active_days_remaining", "proof_active_days_remaining"),
+    ("sample_trades_remaining", "proof_sample_trades_remaining"),
+    (
+        "remaining_trades_per_required_active_day",
+        "proof_remaining_trades_per_required_active_day",
+    ),
+    ("sessions", "proof_active_day_sessions"),
+    ("trades_by_session", "proof_trades_by_session"),
+    ("latest_exit_session", "proof_active_day_latest_exit_session"),
+    ("next_possible_session", "proof_active_day_next_possible_session"),
+    ("future_sessions", "proof_active_day_future_sessions"),
+    (
+        "earliest_active_days_met_session",
+        "proof_earliest_active_days_met_session",
+    ),
+    ("projection_status", "proof_active_day_projection_status"),
+    ("projection_warning", "proof_active_day_projection_warning"),
+]
+active_day_parts = [
+    f"{name}={payload[key]}"
+    for name, key in active_day_fields
+    if payload.get(key) not in {None, ""}
+]
+active_day_line = (
+    "paper proof active day detail: " + " ".join(active_day_parts)
+    if active_day_parts
+    else ""
+)
 concentration_fields = [
     ("status", "proof_concentration_status"),
     ("best_winning_trade", "proof_concentration_best_winning_trade"),
@@ -1092,7 +1124,7 @@ print(
 	    f"{row[12]}|{row[13]}|{row[14]}|{row[15]}|{row[16]}|{row[17]}|"
 	    f"{row[18]}|{row[19]}|{row[20]}|{row[21]}|{row[22]}|"
 	    f"{row[23]}|{row[24]}|{row[25]}|{row[27]}|"
-	    f"{age_minutes}|{post_supervisor_line}|{concentration_line}|"
+	    f"{age_minutes}|{post_supervisor_line}|{concentration_line}|{active_day_line}|"
 	    f"{strategy_diversification_line}|{second_strategy_promotion_action_line}"
 	)
 PY
@@ -1486,9 +1518,10 @@ case "$CHECK_NAME" in
     latest_age_minutes=""
     latest_post_supervisor_execution_line=""
     latest_concentration_line=""
+    latest_active_day_line=""
     latest_strategy_diversification_line=""
     latest_second_strategy_promotion_action_line=""
-    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line latest_concentration_line latest_strategy_diversification_line latest_second_strategy_promotion_action_line <<< "$latest_proof_status"
+    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line latest_concentration_line latest_active_day_line latest_strategy_diversification_line latest_second_strategy_promotion_action_line <<< "$latest_proof_status"
     proof_lock_is_recent=false
     if [[ "$latest_age_minutes" =~ ^[0-9]+$ ]] \
       && (( 10#$latest_age_minutes <= 10#$PROOF_STATUS_LOCK_MAX_AGE_MINUTES )); then
@@ -1513,6 +1546,9 @@ case "$CHECK_NAME" in
       fi
       if [[ -n "$latest_second_strategy_promotion_action_line" ]]; then
         echo "$latest_second_strategy_promotion_action_line"
+      fi
+      if [[ -n "$latest_active_day_line" ]]; then
+        echo "$latest_active_day_line"
       fi
       if [[ -n "$latest_concentration_line" ]]; then
         echo "$latest_concentration_line"

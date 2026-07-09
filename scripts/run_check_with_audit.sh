@@ -64,6 +64,7 @@ output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"
 context_line="$(grep -E '^scheduled check context: ' "$output_file" | tail -n 1 || true)"
 proof_summary_line="$(grep -E '^paper proof summary: ' "$output_file" | tail -n 1 || true)"
 proof_progress_line="$(grep -E '^paper proof progress: ' "$output_file" | tail -n 1 || true)"
+proof_active_day_detail_line="$(grep -E '^paper proof active day detail: ' "$output_file" | tail -n 1 || true)"
 proof_concentration_line="$(grep -E '^paper proof concentration: ' "$output_file" | tail -n 1 || true)"
 proof_strategy_diversification_line="$(grep -E '^paper proof strategy diversification: ' "$output_file" | tail -n 1 || true)"
 proof_second_strategy_promotion_action_line="$(grep -E '^paper proof second strategy promotion action: ' "$output_file" | tail -n 1 || true)"
@@ -81,6 +82,7 @@ export AUDIT_OUTPUT_TAIL="$output_tail"
 export AUDIT_CONTEXT_LINE="$context_line"
 export AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"
 export AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"
+export AUDIT_PROOF_ACTIVE_DAY_DETAIL_LINE="$proof_active_day_detail_line"
 export AUDIT_PROOF_CONCENTRATION_LINE="$proof_concentration_line"
 export AUDIT_PROOF_STRATEGY_DIVERSIFICATION_LINE="$proof_strategy_diversification_line"
 export AUDIT_PROOF_SECOND_STRATEGY_PROMOTION_ACTION_LINE="$proof_second_strategy_promotion_action_line"
@@ -100,6 +102,7 @@ if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_CONTEXT_LINE \
     -e AUDIT_PROOF_SUMMARY_LINE \
     -e AUDIT_PROOF_PROGRESS_LINE \
+    -e AUDIT_PROOF_ACTIVE_DAY_DETAIL_LINE \
     -e AUDIT_PROOF_CONCENTRATION_LINE \
     -e AUDIT_PROOF_STRATEGY_DIVERSIFICATION_LINE \
     -e AUDIT_PROOF_SECOND_STRATEGY_PROMOTION_ACTION_LINE \
@@ -138,6 +141,7 @@ CONTEXT_VALUE = re.compile(r"^[A-Za-z0-9_.:,+-]+$")
 PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")
 PROOF_SUMMARY_PREFIX = "paper proof summary: "
 PROOF_PROGRESS_PREFIX = "paper proof progress: "
+PROOF_ACTIVE_DAY_DETAIL_PREFIX = "paper proof active day detail: "
 PROOF_CONCENTRATION_PREFIX = "paper proof concentration: "
 PROOF_STRATEGY_DIVERSIFICATION_PREFIX = "paper proof strategy diversification: "
 PROOF_SECOND_STRATEGY_PROMOTION_ACTION_PREFIX = (
@@ -169,6 +173,26 @@ PROOF_PROGRESS_FIELDS = {
     "required_pnl": "proof_required_pnl",
     "first_exit_session": "proof_first_exit_session",
     "latest_exit_session": "proof_latest_exit_session",
+}
+PROOF_ACTIVE_DAY_DETAIL_FIELDS = {
+    "status": "proof_active_day_status",
+    "active_days": "proof_active_days",
+    "required_active_days": "proof_required_active_days",
+    "active_days_remaining": "proof_active_days_remaining",
+    "sample_trades_remaining": "proof_sample_trades_remaining",
+    "remaining_trades_per_required_active_day": (
+        "proof_remaining_trades_per_required_active_day"
+    ),
+    "sessions": "proof_active_day_sessions",
+    "trades_by_session": "proof_trades_by_session",
+    "latest_exit_session": "proof_active_day_latest_exit_session",
+    "next_possible_session": "proof_active_day_next_possible_session",
+    "future_sessions": "proof_active_day_future_sessions",
+    "earliest_active_days_met_session": (
+        "proof_earliest_active_days_met_session"
+    ),
+    "projection_status": "proof_active_day_projection_status",
+    "projection_warning": "proof_active_day_projection_warning",
 }
 PROOF_CONCENTRATION_FIELDS = {
     "status": "proof_concentration_status",
@@ -500,6 +524,13 @@ try:
             os.environ.get("AUDIT_PROOF_PROGRESS_LINE", ""),
             prefix=PROOF_PROGRESS_PREFIX,
             field_map=PROOF_PROGRESS_FIELDS,
+        )
+    )
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_PROOF_ACTIVE_DAY_DETAIL_LINE", ""),
+            prefix=PROOF_ACTIVE_DAY_DETAIL_PREFIX,
+            field_map=PROOF_ACTIVE_DAY_DETAIL_FIELDS,
         )
     )
     payload.update(

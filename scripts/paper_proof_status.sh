@@ -1898,6 +1898,33 @@ def load_next_market_session_after(
     return min(upcoming), None
 
 
+def load_upcoming_market_session_dates(
+    settings: Settings, *, after_date: date, count: int
+) -> tuple[list[date], str | None]:
+    if count <= 0:
+        return [], None
+    lookahead_days = max(14, count * 10)
+    try:
+        calendar = AlpacaExecutionAdapter.from_settings(settings).get_market_calendar(
+            start=after_date + timedelta(days=1),
+            end=after_date + timedelta(days=lookahead_days),
+        )
+    except Exception as exc:
+        return [], str(exc)
+
+    upcoming = [
+        session.session_date
+        for session in calendar
+        if session.session_date > after_date
+    ]
+    if len(upcoming) < count:
+        return (
+            upcoming,
+            f"only {len(upcoming)} market sessions found after {after_date.isoformat()}",
+        )
+    return upcoming[:count], None
+
+
 def load_broker_exposure(
     settings: Settings,
 ) -> tuple[
@@ -4396,9 +4423,23 @@ exit_sessions = [
     for trade in trades
     if trade.get("exit_time") is not None
 ]
-active_trade_day_count = len(set(exit_sessions))
+active_trade_session_dates = sorted(set(exit_sessions))
+active_trade_day_count = len(active_trade_session_dates)
 first_exit_session = min(exit_sessions).isoformat() if exit_sessions else ""
 latest_exit_session = max(exit_sessions).isoformat() if exit_sessions else ""
+active_trade_sessions_text = (
+    ",".join(session.isoformat() for session in active_trade_session_dates)
+    if active_trade_session_dates
+    else "none"
+)
+trade_count_by_session_text = (
+    ",".join(
+        f"{session.isoformat()}:{sum(1 for exit_session in exit_sessions if exit_session == session)}"
+        for session in active_trade_session_dates
+    )
+    if active_trade_session_dates
+    else "none"
+)
 gross_profit = sum(trade_pnl for _, trade_pnl in trade_pnl_rows if trade_pnl > 0)
 gross_loss = abs(sum(trade_pnl for _, trade_pnl in trade_pnl_rows if trade_pnl < 0))
 profit_factor = gross_profit / gross_loss if gross_loss > 0 else None
@@ -5030,6 +5071,56 @@ strategy_diversification_gap = max(
 )
 sample_trades_remaining = max(0, scale_min_trades - trade_count)
 active_days_remaining = max(0, scale_min_active_days - active_trade_day_count)
+active_day_projection_anchor = (
+    active_trade_session_dates[-1]
+    if active_trade_session_dates
+    else proof_start - timedelta(days=1)
+)
+(
+    active_day_future_sessions,
+    active_day_projection_warning,
+) = load_upcoming_market_session_dates(
+    settings,
+    after_date=active_day_projection_anchor,
+    count=active_days_remaining,
+)
+active_day_future_sessions_text = (
+    ",".join(session.isoformat() for session in active_day_future_sessions)
+    if active_day_future_sessions
+    else "none"
+)
+next_possible_active_session_text = (
+    active_day_future_sessions[0].isoformat()
+    if active_day_future_sessions
+    else "none"
+)
+earliest_active_days_met_session_text = (
+    active_day_future_sessions[-1].isoformat()
+    if active_days_remaining > 0
+    and len(active_day_future_sessions) >= active_days_remaining
+    else latest_exit_session
+    if active_days_remaining == 0 and latest_exit_session
+    else "none"
+)
+active_day_projection_status = (
+    "met"
+    if active_days_remaining == 0
+    else "calendar_warning"
+    if active_day_projection_warning
+    else "ok"
+    if len(active_day_future_sessions) >= active_days_remaining
+    else "incomplete"
+)
+remaining_trades_per_required_active_day = (
+    sample_trades_remaining / active_days_remaining
+    if active_days_remaining > 0
+    else None
+)
+remaining_trades_per_required_active_day_text = (
+    f"{remaining_trades_per_required_active_day:.1f}"
+    if remaining_trades_per_required_active_day is not None
+    else "none"
+)
 concentration_net_pnl_needed = 0.0
 if (
     single_win_pnl_share is not None
@@ -6629,6 +6720,23 @@ print(
     f"concentration_non_best_avg_trade_gap={concentration_non_best_avg_trade_gap_text} "
     f"single_win_pnl_share={single_win_pnl_share_text} "
     f"max_single_win_pnl_share={scale_max_single_win_pnl_share:.2f}"
+)
+print(
+    "paper proof active day detail: "
+    f"status={'ok' if active_days_remaining == 0 else 'blocked'} "
+    f"active_days={active_trade_day_count} "
+    f"required_active_days={scale_min_active_days} "
+    f"active_days_remaining={active_days_remaining} "
+    f"sample_trades_remaining={sample_trades_remaining} "
+    f"remaining_trades_per_required_active_day={remaining_trades_per_required_active_day_text} "
+    f"sessions={active_trade_sessions_text} "
+    f"trades_by_session={trade_count_by_session_text} "
+    f"latest_exit_session={latest_exit_session or 'none'} "
+    f"next_possible_session={next_possible_active_session_text} "
+    f"future_sessions={active_day_future_sessions_text} "
+    f"earliest_active_days_met_session={earliest_active_days_met_session_text} "
+    f"projection_status={active_day_projection_status} "
+    f"projection_warning={safe_status_value(active_day_projection_warning)}"
 )
 print(
     "paper proof concentration: "
