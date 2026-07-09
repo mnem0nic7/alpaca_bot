@@ -447,6 +447,14 @@
             </p>
           </div>
           <div>
+            <p class="eyebrow">Approval Safety</p>
+            <p class="value mono {{ 'warn' if proof_payload.get('proof_second_strategy_promotion_action_approval_marker_command_status', 'unknown') not in ['ready', 'approved', 'none', 'unknown'] or proof_payload.get('proof_second_strategy_promotion_action_broker_flat_status', 'unknown') not in ['ok', 'none', 'unknown'] else '' }}">
+              command={{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_status", "unknown") }}
+              broker={{ proof_payload.get("proof_second_strategy_promotion_action_broker_flat_status", "unknown") }}
+              write={{ proof_payload.get("proof_second_strategy_promotion_action_write_access_status", "unknown") }}
+            </p>
+          </div>
+          <div>
             <p class="eyebrow">Approval Script</p>
             <p class="value mono">{{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_script", "unknown") }}</p>
           </div>
@@ -575,6 +583,9 @@
                     {% if event.payload.get("proof_second_strategy_promotion_action_status") %} promotion={{ event.payload.get("proof_second_strategy_promotion_action_status") }}{% endif %}
                     {% if event.payload.get("proof_second_strategy_promotion_action_handoff_status") %} promotion_handoff={{ event.payload.get("proof_second_strategy_promotion_action_handoff_status") }}{% endif %}
                     {% if event.payload.get("proof_second_strategy_promotion_action_approval_marker_status") %} approval_marker={{ event.payload.get("proof_second_strategy_promotion_action_approval_marker_status") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_promotion_action_approval_marker_command_status") %} approval_command={{ event.payload.get("proof_second_strategy_promotion_action_approval_marker_command_status") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_promotion_action_broker_flat_status") %} broker_flat={{ event.payload.get("proof_second_strategy_promotion_action_broker_flat_status") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_promotion_action_write_access_status") %} promotion_write={{ event.payload.get("proof_second_strategy_promotion_action_write_access_status") }}{% endif %}
                     {% if event.payload.get("proof_scenario_status") %} scenarios={{ event.payload.get("proof_scenario_status") }}:{{ event.payload.get("proof_scenario_active", "?") }}@{{ event.payload.get("proof_scenario_expected_session", "?") }}{% endif %}
                     {% if event.payload.get("proof_scenario_problems") and event.payload.get("proof_scenario_problems") != "none" %} scenario_problems={{ event.payload.get("proof_scenario_problems") }}{% endif %}
                     {% if event.payload.get("proof_execution_quality_status") %} exec_quality={{ event.payload.get("proof_execution_quality_status") }} warnings={{ event.payload.get("proof_execution_quality_warnings", "?") }} fill={{ event.payload.get("proof_execution_quality_entry_fill_rate", "?") }} effective={{ event.payload.get("proof_execution_quality_effective_entry_fill_rate", "?") }} delay={{ event.payload.get("proof_execution_quality_entry_dispatch_delay", "?") }} posture_delay={{ event.payload.get("proof_execution_quality_current_posture_entry_dispatch_delay", "?") }}{% endif %}

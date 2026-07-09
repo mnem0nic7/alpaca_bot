@@ -186,6 +186,13 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_second_strategy_promotion_action_handoff_status": (
                 "ready_needs_privileged_env_write"
             ),
+            "proof_second_strategy_promotion_action_approval_marker_command_status": (
+                "ready"
+            ),
+            "proof_second_strategy_promotion_action_broker_flat_status": "ok",
+            "proof_second_strategy_promotion_action_write_access_status": (
+                "env_file_not_writable"
+            ),
             "proof_second_strategy_promotion_action_approval_marker_status": "missing",
             "proof_second_strategy_promotion_action_env_file": (
                 "/etc/alpaca_bot/alpaca-bot.env"
@@ -467,6 +474,13 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "promotion=ready_needs_write_access" in response.text
     assert "promotion_handoff=ready_needs_privileged_env_write" in response.text
     assert "approval_marker=missing" in response.text
+    assert "Approval Safety" in response.text
+    assert "command=ready" in response.text
+    assert "broker=ok" in response.text
+    assert "write=env_file_not_writable" in response.text
+    assert "approval_command=ready" in response.text
+    assert "broker_flat=ok" in response.text
+    assert "promotion_write=env_file_not_writable" in response.text
     assert "awaiting_min_trades" in response.text
     assert "Overall Reason" in response.text
     assert "awaiting_overall_blockers" in response.text
