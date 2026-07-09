@@ -1283,6 +1283,8 @@ nightly_automation_fields = [
     ("active_log", "proof_nightly_active_log"),
     ("max_age_minutes", "proof_nightly_max_age_minutes"),
     ("stall_minutes", "proof_nightly_stall_minutes"),
+    ("run_age_limit_status", "proof_nightly_run_age_limit_status"),
+    ("log_stall_status", "proof_nightly_log_stall_status"),
     ("stage", "proof_nightly_stage"),
     ("second_strategy_scan_status", "proof_second_strategy_scan_status"),
     ("second_strategy_scan_detail", "proof_second_strategy_scan_detail"),

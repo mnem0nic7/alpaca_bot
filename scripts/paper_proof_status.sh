@@ -1416,6 +1416,24 @@ def as_int_or_none(value: object) -> int | None:
         return None
 
 
+def nightly_threshold_status(
+    status: str,
+    value: object,
+    limit: object,
+    *,
+    exceeded_suffix: str,
+) -> str:
+    if status == "idle":
+        return "not_applicable_idle"
+    if status.endswith(exceeded_suffix):
+        return "exceeded"
+    parsed_value = as_int_or_none(value)
+    parsed_limit = as_int_or_none(limit)
+    if parsed_value is None or parsed_limit is None:
+        return "unknown"
+    return "exceeded" if parsed_value > parsed_limit else "ok"
+
+
 def parse_marker_approved_at(value: object) -> datetime | None:
     raw_value = str(value or "").strip()
     if not raw_value:
@@ -2153,6 +2171,18 @@ nightly_stall_minutes = os.environ.get(
 )
 nightly_stage = os.environ.get("PROOF_STATUS_NIGHTLY_STAGE", "none")
 nightly_detail = os.environ.get("PROOF_STATUS_NIGHTLY_DETAIL", "none")
+nightly_run_age_limit_status = nightly_threshold_status(
+    nightly_status,
+    nightly_age_minutes,
+    nightly_max_age_minutes,
+    exceeded_suffix="_stale",
+)
+nightly_log_stall_status = nightly_threshold_status(
+    nightly_status,
+    nightly_log_age_minutes,
+    nightly_stall_minutes,
+    exceeded_suffix="_stalled",
+)
 second_strategy_scan_status = os.environ.get(
     "PROOF_STATUS_SECOND_STRATEGY_SCAN_STATUS", "unknown"
 )
@@ -6457,6 +6487,8 @@ print(
     f"active_log={nightly_active_log} "
     f"max_age_minutes={nightly_max_age_minutes} "
     f"stall_minutes={nightly_stall_minutes} "
+    f"run_age_limit_status={nightly_run_age_limit_status} "
+    f"log_stall_status={nightly_log_stall_status} "
     f"stage={nightly_stage or 'none'} "
     f"second_strategy_scan_status={second_strategy_scan_status} "
     f"second_strategy_scan_detail={second_strategy_scan_detail} "

@@ -160,6 +160,8 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_nightly_log_age_minutes": "411",
             "proof_nightly_max_age_minutes": "390",
             "proof_nightly_stall_minutes": "90",
+            "proof_nightly_run_age_limit_status": "not_applicable_idle",
+            "proof_nightly_log_stall_status": "not_applicable_idle",
             "proof_nightly_stage": (
                 "apply_candidate_2026-07-09T00:16:04Z_"
                 "PAPER_PROOF_FREEZE=true__skipping_candidate_auto-apply."
@@ -514,6 +516,8 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "max_run=390" in response.text
     assert "log_age=411" in response.text
     assert "stall_after=90" in response.text
+    assert "run_limit=not_applicable_idle" in response.text
+    assert "log_stall=not_applicable_idle" in response.text
     assert "log_age=411/390" not in response.text
     assert "PAPER_PROOF_FREEZE=true__skipping_candidate_auto-apply." in response.text
     assert "nightly=idle" in response.text
@@ -526,6 +530,8 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "nightly_max_run=390" in response.text
     assert "nightly_log_age=411" in response.text
     assert "nightly_stall_after=90" in response.text
+    assert "nightly_run_limit=not_applicable_idle" in response.text
+    assert "nightly_log_stall=not_applicable_idle" in response.text
     assert (
         "nightly_stage=apply_candidate_2026-07-09T00:16:04Z_"
         "PAPER_PROOF_FREEZE=true__skipping_candidate_auto-apply."
