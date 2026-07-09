@@ -190,7 +190,12 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_required_active_days": "5",
             "proof_remaining_trades_per_required_active_day": "9.0",
             "proof_active_day_next_possible_session": "2026-07-09",
+            "proof_active_day_sessions": "2026-07-07,2026-07-08",
+            "proof_trades_by_session": "2026-07-07:2,2026-07-08:1",
+            "proof_active_day_future_sessions": "2026-07-09,2026-07-10,2026-07-13",
             "proof_earliest_active_days_met_session": "2026-07-13",
+            "proof_active_day_projection_status": "ok",
+            "proof_active_day_projection_warning": "none",
             "proof_concentration_status": "blocked",
             "proof_concentration_best_winning_trade": "DRUG:14.65@2026-07-08",
             "proof_concentration_non_best_pnl": "0.34",
@@ -478,10 +483,19 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "per_day=9.0" in response.text
     assert "next=2026-07-09" in response.text
     assert "earliest=2026-07-13" in response.text
+    assert "sessions=2026-07-07,2026-07-08" in response.text
+    assert "trades_by_session=2026-07-07:2,2026-07-08:1" in response.text
+    assert "future=2026-07-09,2026-07-10,2026-07-13" in response.text
+    assert "projection=ok" in response.text
+    assert "projection_warning=none" in response.text
     assert "active_day=blocked" in response.text
     assert "trades_per_day=9.0" in response.text
     assert "next_active_day=2026-07-09" in response.text
     assert "earliest_active_days=2026-07-13" in response.text
+    assert "active_day_sessions=2026-07-07,2026-07-08" in response.text
+    assert "trades_by_session=2026-07-07:2,2026-07-08:1" in response.text
+    assert "future_active_days=2026-07-09,2026-07-10,2026-07-13" in response.text
+    assert "active_day_projection=ok" in response.text
     assert "gap_strategies=1" in response.text
     assert "concentration_runway=needs_higher_non_best_pnl" in response.text
     assert "concentration_non_best_avg=0.17" in response.text

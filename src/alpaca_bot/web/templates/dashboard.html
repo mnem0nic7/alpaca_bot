@@ -408,6 +408,11 @@
               per_day={{ proof_payload.get("proof_remaining_trades_per_required_active_day", "unknown") }}
               next={{ proof_payload.get("proof_active_day_next_possible_session", "unknown") }}
               earliest={{ proof_payload.get("proof_earliest_active_days_met_session", "unknown") }}
+              sessions={{ proof_payload.get("proof_active_day_sessions", "unknown") }}
+              trades_by_session={{ proof_payload.get("proof_trades_by_session", "unknown") }}
+              future={{ proof_payload.get("proof_active_day_future_sessions", "unknown") }}
+              projection={{ proof_payload.get("proof_active_day_projection_status", "unknown") }}
+              projection_warning={{ proof_payload.get("proof_active_day_projection_warning", "unknown") }}
             </p>
           </div>
           {% endif %}
@@ -601,6 +606,10 @@
                     {% if event.payload.get("proof_remaining_trades_per_required_active_day") %} trades_per_day={{ event.payload.get("proof_remaining_trades_per_required_active_day") }}{% endif %}
                     {% if event.payload.get("proof_active_day_next_possible_session") %} next_active_day={{ event.payload.get("proof_active_day_next_possible_session") }}{% endif %}
                     {% if event.payload.get("proof_earliest_active_days_met_session") %} earliest_active_days={{ event.payload.get("proof_earliest_active_days_met_session") }}{% endif %}
+                    {% if event.payload.get("proof_active_day_sessions") %} active_day_sessions={{ event.payload.get("proof_active_day_sessions") }}{% endif %}
+                    {% if event.payload.get("proof_trades_by_session") %} trades_by_session={{ event.payload.get("proof_trades_by_session") }}{% endif %}
+                    {% if event.payload.get("proof_active_day_future_sessions") %} future_active_days={{ event.payload.get("proof_active_day_future_sessions") }}{% endif %}
+                    {% if event.payload.get("proof_active_day_projection_status") %} active_day_projection={{ event.payload.get("proof_active_day_projection_status") }}{% endif %}
                     {% if event.payload.get("proof_gap_approved_replay_strategy_gap") %} gap_strategies={{ event.payload.get("proof_gap_approved_replay_strategy_gap") }}{% endif %}
                     {% if event.payload.get("proof_gap_concentration_runway_status") %} concentration_runway={{ event.payload.get("proof_gap_concentration_runway_status") }}{% endif %}
                     {% if event.payload.get("proof_gap_concentration_non_best_avg_pnl") %} concentration_non_best_avg={{ event.payload.get("proof_gap_concentration_non_best_avg_pnl") }}{% endif %}
