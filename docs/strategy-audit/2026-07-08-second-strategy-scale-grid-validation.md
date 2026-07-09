@@ -715,3 +715,9 @@ resolved by client order ID as well. Open-order recovery preserves the original
 strategy, signal, entry limits, and stop plan; closed-order recovery also
 restores the exact fill and uses that stop plan when it queues protection for a
 newly recovered position.
+
+Option snapshot JSONL append is now crash-recoverable as well. Before writing a
+new mark, the collector removes any unterminated final record left by an
+interrupted write, then appends the serialized record and newline together.
+Later decision-bar marks therefore remain loadable after a partial-tail crash
+instead of being concatenated behind corrupt JSON.

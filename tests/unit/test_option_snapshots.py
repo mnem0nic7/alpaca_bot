@@ -73,6 +73,39 @@ def test_append_and_load_option_chain_snapshot_round_trips_contracts(tmp_path):
     assert snapshot.chains_by_symbol["ACHR"][0] == _contract()
 
 
+def test_append_option_chain_snapshot_discards_incomplete_jsonl_tail(tmp_path):
+    first_at = datetime(2026, 7, 7, 14, 30, tzinfo=timezone.utc)
+    snapshot_path = append_option_chain_snapshot(
+        snapshot_dir=tmp_path,
+        cycle_at=first_at,
+        chains_by_symbol={"ACHR": [_contract(ask=1.35)]},
+    )
+    with snapshot_path.open("ab") as snapshot_file:
+        snapshot_file.write(b'{"cycle_at":"2026-07-07T14:')
+
+    second_at = datetime(2026, 7, 7, 14, 45, tzinfo=timezone.utc)
+    append_option_chain_snapshot(
+        snapshot_dir=tmp_path,
+        cycle_at=second_at,
+        chains_by_symbol={"ACHR": [_contract(ask=1.55)]},
+    )
+
+    raw_lines = snapshot_path.read_bytes().splitlines()
+    assert len(raw_lines) == 2
+    assert [json.loads(line)["cycle_at"] for line in raw_lines] == [
+        first_at.isoformat(),
+        second_at.isoformat(),
+    ]
+    ledger = load_option_chain_snapshot_ledger(snapshot_path)
+    assert [snapshot.cycle_at for snapshot in ledger.snapshots] == [
+        first_at,
+        second_at,
+    ]
+    assert ledger.snapshots[-1].chains_by_symbol["ACHR"][0].ask == pytest.approx(
+        1.55
+    )
+
+
 def test_load_option_chain_snapshot_ledger_filters_by_session_date(tmp_path):
     append_option_chain_snapshot(
         snapshot_dir=tmp_path,

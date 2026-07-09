@@ -173,10 +173,35 @@ def append_option_chain_snapshot(
             for symbol, contracts in sorted(chains_by_symbol.items())
         },
     }
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, sort_keys=True, separators=(",", ":")))
-        handle.write("\n")
+    record = (
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    with path.open("a+b") as handle:
+        _truncate_incomplete_jsonl_tail(handle)
+        handle.write(record)
     return path
+
+
+def _truncate_incomplete_jsonl_tail(handle: Any) -> None:
+    handle.seek(0, os.SEEK_END)
+    size = handle.tell()
+    if size == 0:
+        return
+    handle.seek(-1, os.SEEK_END)
+    if handle.read(1) == b"\n":
+        return
+
+    cursor = size
+    while cursor > 0:
+        chunk_start = max(0, cursor - 8192)
+        handle.seek(chunk_start)
+        chunk = handle.read(cursor - chunk_start)
+        newline_at = chunk.rfind(b"\n")
+        if newline_at >= 0:
+            handle.truncate(chunk_start + newline_at + 1)
+            return
+        cursor = chunk_start
+    handle.truncate(0)
 
 
 def load_option_chain_snapshot_ledger(
