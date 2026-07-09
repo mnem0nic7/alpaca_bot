@@ -1200,6 +1200,18 @@ second_strategy_promotion_action_fields = [
         "approval_marker_command_deploy_script",
         "proof_second_strategy_promotion_action_approval_marker_command_deploy_script",
     ),
+    (
+        "approval_marker_overlay_status",
+        "proof_second_strategy_promotion_action_approval_marker_overlay_status",
+    ),
+    (
+        "approval_marker_overlay_marker",
+        "proof_second_strategy_promotion_action_approval_marker_overlay_marker",
+    ),
+    (
+        "approval_marker_overlay_env_file",
+        "proof_second_strategy_promotion_action_approval_marker_overlay_env_file",
+    ),
     ("broker_flat_status", "proof_second_strategy_promotion_action_broker_flat_status"),
     ("env_file", "proof_second_strategy_promotion_action_env_file"),
     ("write_access_status", "proof_second_strategy_promotion_action_write_access_status"),

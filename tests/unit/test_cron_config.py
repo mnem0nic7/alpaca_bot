@@ -1649,6 +1649,18 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "paper proof second strategy promotion action:" in lock_skip
     assert "latest_second_strategy_promotion_action_line" in lock_skip
     assert "proof_second_strategy_promotion_action_confirmation" in lock_skip
+    assert (
+        "proof_second_strategy_promotion_action_approval_marker_overlay_status"
+        in lock_skip
+    )
+    assert (
+        "proof_second_strategy_promotion_action_approval_marker_overlay_marker"
+        in lock_skip
+    )
+    assert (
+        "proof_second_strategy_promotion_action_approval_marker_overlay_env_file"
+        in lock_skip
+    )
     assert "paper proof scoring:" in lock_skip
     assert "paper proof status check skipped:" in lock_skip
     assert "proof_closed_trades" in lock_skip
@@ -2578,6 +2590,18 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert (
         '"approval_marker_command_evidence_root": (\n'
         '        "proof_second_strategy_promotion_action_approval_marker_command_evidence_root"'
+    ) in script
+    assert (
+        '"approval_marker_overlay_status": (\n'
+        '        "proof_second_strategy_promotion_action_approval_marker_overlay_status"'
+    ) in script
+    assert (
+        '"approval_marker_overlay_marker": (\n'
+        '        "proof_second_strategy_promotion_action_approval_marker_overlay_marker"'
+    ) in script
+    assert (
+        '"approval_marker_overlay_env_file": (\n'
+        '        "proof_second_strategy_promotion_action_approval_marker_overlay_env_file"'
     ) in script
     assert (
         '"broker_flat_status": (\n'

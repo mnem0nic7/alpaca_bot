@@ -331,6 +331,15 @@ PROOF_SECOND_STRATEGY_PROMOTION_ACTION_FIELDS = {
     "approval_marker_command_deploy_script": (
         "proof_second_strategy_promotion_action_approval_marker_command_deploy_script"
     ),
+    "approval_marker_overlay_status": (
+        "proof_second_strategy_promotion_action_approval_marker_overlay_status"
+    ),
+    "approval_marker_overlay_marker": (
+        "proof_second_strategy_promotion_action_approval_marker_overlay_marker"
+    ),
+    "approval_marker_overlay_env_file": (
+        "proof_second_strategy_promotion_action_approval_marker_overlay_env_file"
+    ),
     "broker_flat_status": (
         "proof_second_strategy_promotion_action_broker_flat_status"
     ),
