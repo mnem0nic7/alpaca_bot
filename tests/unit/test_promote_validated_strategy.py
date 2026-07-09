@@ -259,6 +259,11 @@ def test_promote_validated_strategy_dry_run_reports_gates_without_mutation(
     assert f"required_confirmation={_confirmation(evidence_root)}" in stdout
     assert "validation_current_status=ok" in stdout
     assert "write_access_status=ok" in stdout
+    assert "promotion_handoff_status=none" in stdout
+    assert "promotion_handoff_step=none" in stdout
+    assert "promotion_env_keys=PAPER_APPROVED_STRATEGIES," in stdout
+    assert "PROFIT_PROBE_STRATEGIES" in stdout
+    assert "DEPLOY_DECISION_DRY_RUN_STRATEGIES" in stdout
     assert "env_file_writable=true" in stdout
     assert "env_dir_writable=true" in stdout
     assert "broker_flat_status=ok" in stdout

@@ -276,6 +276,15 @@ PROOF_SECOND_STRATEGY_PROMOTION_ACTION_FIELDS = {
     "write_access_status": (
         "proof_second_strategy_promotion_action_write_access_status"
     ),
+    "promotion_handoff_status": (
+        "proof_second_strategy_promotion_action_handoff_status"
+    ),
+    "promotion_handoff_step": (
+        "proof_second_strategy_promotion_action_handoff_step"
+    ),
+    "promotion_env_keys": (
+        "proof_second_strategy_promotion_action_env_keys"
+    ),
     "env_file_writable": (
         "proof_second_strategy_promotion_action_env_file_writable"
     ),

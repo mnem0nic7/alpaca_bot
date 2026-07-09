@@ -21,6 +21,20 @@ CONFIRMATION="${PROMOTE_VALIDATED_STRATEGY_CONFIRM:-}"
 DRY_RUN="${PROMOTE_VALIDATED_STRATEGY_DRY_RUN:-true}"
 APPROVAL_ONLY="${PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY:-false}"
 LOG_PREFIX="[promote_validated_strategy $(date -u '+%Y-%m-%dT%H:%M:%SZ')]"
+PROMOTION_SCOPED_STRATEGY_KEYS=(
+  PROFIT_PROBE_STRATEGIES
+  PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES
+  PAPER_READINESS_EXPECT_ENABLED_STRATEGIES
+  PAPER_ACTIVITY_STRATEGIES
+  SESSION_GUARD_STRATEGIES
+  PROOF_STATUS_APPROVED_STRATEGIES
+  DEPLOY_EXPECT_ENABLED_STRATEGIES
+  DEPLOY_DECISION_DRY_RUN_STRATEGIES
+)
+PROMOTION_ENV_KEYS=(
+  PAPER_APPROVED_STRATEGIES
+  "${PROMOTION_SCOPED_STRATEGY_KEYS[@]}"
+)
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "$LOG_PREFIX env file not found: $ENV_FILE" >&2
@@ -343,6 +357,7 @@ require_promotion_write_access() {
       echo "$LOG_PREFIX promotion write access failed: $promotion_write_access_status" >&2
       ;;
   esac
+  echo "$LOG_PREFIX promotion handoff: status=$(promotion_handoff_status) step=$(promotion_handoff_step) env_keys=$(promotion_env_keys_csv)" >&2
   exit 1
 }
 
@@ -382,6 +397,45 @@ compact_dry_run_detail() {
   printf '%s\n' "$value"
 }
 
+promotion_env_keys_csv() {
+  local IFS=,
+  printf '%s' "${PROMOTION_ENV_KEYS[*]}"
+}
+
+promotion_handoff_status() {
+  case "$promotion_write_access_status" in
+    ok)
+      printf 'none'
+      ;;
+    env_file_not_writable|env_dir_not_writable)
+      printf 'ready_needs_privileged_env_write'
+      ;;
+    approval_marker_not_writable|approval_marker_dir_not_writable|approval_marker_parent_not_writable)
+      printf 'ready_needs_marker_write_access'
+      ;;
+    *)
+      printf 'blocked'
+      ;;
+  esac
+}
+
+promotion_handoff_step() {
+  case "$promotion_write_access_status" in
+    ok)
+      printf 'none'
+      ;;
+    env_file_not_writable|env_dir_not_writable)
+      printf 'env_allowlist_update'
+      ;;
+    approval_marker_not_writable|approval_marker_dir_not_writable|approval_marker_parent_not_writable)
+      printf 'approval_marker_write'
+      ;;
+    *)
+      printf 'write_access_probe'
+      ;;
+  esac
+}
+
 if [[ "$DRY_RUN" == "true" ]]; then
   validation_current_status="ok"
   validation_current_detail="ok"
@@ -396,7 +450,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   fi
   validation_current_detail="$(compact_dry_run_detail "${validation_current_detail:-ok}")"
   broker_flat_detail="$(compact_dry_run_detail "${broker_flat_detail:-ok}")"
-  printf '%s dry_run=true strategy=%s scale=%s trades=%s pnl=%s ci_low=%s p_mean_le_zero=%s validation_summary=%s validation_summary_sha256=%s confirmation_status=%s required_confirmation=%s validation_current_status=%s validation_current_detail=%s write_access_status=%s env_file_writable=%s env_dir_writable=%s approval_marker=%s approval_marker_writable=%s approval_marker_dir_writable=%s broker_flat_status=%s broker_flat_detail=%s\n' \
+  printf '%s dry_run=true strategy=%s scale=%s trades=%s pnl=%s ci_low=%s p_mean_le_zero=%s validation_summary=%s validation_summary_sha256=%s confirmation_status=%s required_confirmation=%s validation_current_status=%s validation_current_detail=%s write_access_status=%s promotion_handoff_status=%s promotion_handoff_step=%s promotion_env_keys=%s env_file_writable=%s env_dir_writable=%s approval_marker=%s approval_marker_writable=%s approval_marker_dir_writable=%s broker_flat_status=%s broker_flat_detail=%s\n' \
     "$LOG_PREFIX" \
     "$VALIDATED_STRATEGY" \
     "$VALIDATED_SCALE" \
@@ -411,6 +465,9 @@ if [[ "$DRY_RUN" == "true" ]]; then
     "$validation_current_status" \
     "${validation_current_detail:-ok}" \
     "$promotion_write_access_status" \
+    "$(promotion_handoff_status)" \
+    "$(promotion_handoff_step)" \
+    "$(promotion_env_keys_csv)" \
     "$promotion_env_file_writable" \
     "$promotion_env_dir_writable" \
     "$APPROVAL_MARKER" \
@@ -678,15 +735,7 @@ else
   echo "$LOG_PREFIX PAPER_APPROVED_STRATEGIES already includes $VALIDATED_STRATEGY"
 fi
 
-for scoped_strategy_key in \
-  PROFIT_PROBE_STRATEGIES \
-  PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES \
-  PAPER_READINESS_EXPECT_ENABLED_STRATEGIES \
-  PAPER_ACTIVITY_STRATEGIES \
-  SESSION_GUARD_STRATEGIES \
-  PROOF_STATUS_APPROVED_STRATEGIES \
-  DEPLOY_EXPECT_ENABLED_STRATEGIES \
-  DEPLOY_DECISION_DRY_RUN_STRATEGIES; do
+for scoped_strategy_key in "${PROMOTION_SCOPED_STRATEGY_KEYS[@]}"; do
   update_strategy_scope_value "$scoped_strategy_key"
 done
 

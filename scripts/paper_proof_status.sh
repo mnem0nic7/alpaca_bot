@@ -2052,6 +2052,18 @@ promotion_approval_marker_dir_writable = os.environ.get(
     "PROOF_STATUS_PROMOTION_APPROVAL_MARKER_DIR_WRITABLE",
     "unknown",
 )
+promotion_env_keys = [
+    "PAPER_APPROVED_STRATEGIES",
+    "PROFIT_PROBE_STRATEGIES",
+    "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES",
+    "PAPER_READINESS_EXPECT_ENABLED_STRATEGIES",
+    "PAPER_ACTIVITY_STRATEGIES",
+    "SESSION_GUARD_STRATEGIES",
+    "PROOF_STATUS_APPROVED_STRATEGIES",
+    "DEPLOY_EXPECT_ENABLED_STRATEGIES",
+    "DEPLOY_DECISION_DRY_RUN_STRATEGIES",
+]
+promotion_env_keys_csv = ",".join(promotion_env_keys)
 stream_start_grace_seconds = int(os.environ["PROOF_STATUS_STREAM_START_GRACE_SECONDS"])
 readiness_max_pass_age_minutes = int(
     os.environ["PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES"]
@@ -5152,6 +5164,25 @@ else:
 promotion_action_status = str(second_strategy_evidence["promotion_action_status"])
 if promotion_action_status == "ready" and promotion_write_access_status != "ok":
     promotion_action_status = "ready_needs_write_access"
+promotion_handoff_status = "none"
+promotion_handoff_step = "none"
+if second_strategy_evidence["promotion_action_status"] == "ready":
+    if promotion_write_access_status in {
+        "env_file_not_writable",
+        "env_dir_not_writable",
+    }:
+        promotion_handoff_status = "ready_needs_privileged_env_write"
+        promotion_handoff_step = "env_allowlist_update"
+    elif promotion_write_access_status in {
+        "approval_marker_not_writable",
+        "approval_marker_dir_not_writable",
+        "approval_marker_parent_not_writable",
+    }:
+        promotion_handoff_status = "ready_needs_marker_write_access"
+        promotion_handoff_step = "approval_marker_write"
+    elif promotion_write_access_status != "ok":
+        promotion_handoff_status = "blocked"
+        promotion_handoff_step = "write_access_probe"
 approval_marker_action_status = "none"
 if second_strategy_evidence["promotion_approval_marker_status"] == "approved":
     approval_marker_action_status = "approved"
@@ -6495,6 +6526,9 @@ print(
     f"broker_flat_status={promotion_broker_flat_status} "
     f"env_file={safe_status_value(proof_status_env_file)} "
     f"write_access_status={safe_status_value(promotion_write_access_status)} "
+    f"promotion_handoff_status={promotion_handoff_status} "
+    f"promotion_handoff_step={promotion_handoff_step} "
+    f"promotion_env_keys={promotion_env_keys_csv} "
     f"env_file_writable={safe_status_value(promotion_env_file_writable)} "
     f"env_dir_writable={safe_status_value(promotion_env_dir_writable)} "
     f"approval_marker={safe_status_value(second_strategy_evidence['promotion_approval_marker'])} "
