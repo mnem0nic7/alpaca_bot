@@ -6708,6 +6708,9 @@ if approval_marker_command_status == "ready":
             "APPROVE_VALIDATED_STRATEGY_MARKER_DRY_RUN=false",
             shlex.quote("./scripts/approve_validated_strategy_marker.sh"),
             shlex.quote(promotion_strategy),
+            "&&",
+            shlex.quote("./scripts/deploy.sh"),
+            shlex.quote(proof_status_env_file),
         ]
     )
 print(

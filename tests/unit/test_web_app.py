@@ -221,7 +221,8 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
                 "approve-ema_pullback-paper-promotion-sha256-"
                 "df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9 "
                 "APPROVE_VALIDATED_STRATEGY_MARKER_DRY_RUN=false "
-                "./scripts/approve_validated_strategy_marker.sh ema_pullback"
+                "./scripts/approve_validated_strategy_marker.sh ema_pullback "
+                "&& ./scripts/deploy.sh /etc/alpaca_bot/alpaca-bot.env"
             ),
             "proof_second_strategy_promotion_action_broker_flat_status": "ok",
             "proof_second_strategy_promotion_action_write_access_status": (
@@ -447,8 +448,8 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "command=APPROVE_VALIDATED_STRATEGY_MARKER_CONFIRM=" in quick_command
     assert "./scripts/approve_validated_strategy_marker.sh" in quick_command
     assert "ema_pullback" in quick_command
+    assert "&amp;&amp; ./scripts/deploy.sh /etc/alpaca_bot/alpaca-bot.env" in quick_command
     assert "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY" not in quick_command
-    assert "/etc/alpaca_bot/alpaca-bot.env" not in quick_command
     assert "/var/lib/alpaca-bot/nightly/second_strategy" in response.text
     assert "Scenario Evidence" in response.text
     assert "Scenario Problems" in response.text

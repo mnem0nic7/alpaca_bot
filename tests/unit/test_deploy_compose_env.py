@@ -330,7 +330,11 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
         '$PAPER_APPROVED_STRATEGIES_RESOLVED}"'
     ) in deploy_text
     assert 'expected_enabled_strategy_args+=(--expect-only-enabled-strategy "$name")' in deploy_text
+    assert 'expected_enabled_strategy_names+=("$name")' in deploy_text
     assert '"${expected_enabled_strategy_args[@]}"' in deploy_text
+    assert "reconcile_deploy_expected_paper_strategy_flags()" in deploy_text
+    assert "deploy enabled approved paper strategy flag" in deploy_text
+    assert 'enable-strategy "$name"' in deploy_text
     assert 'compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")' in deploy_text
     assert "remove_supervisor_container()" in deploy_text
     assert '"${compose[@]}" stop supervisor >/dev/null 2>&1 || true' in deploy_text
@@ -386,6 +390,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
         "if paper_proof_enabled; then\n"
         "    start_deploy_paper_drain\n"
         "    verify_deploy_preflight_paper_exposure\n"
+        "    reconcile_deploy_expected_paper_strategy_flags\n"
         "  fi\n"
         "  remove_supervisor_container"
     ) in deploy_text
@@ -411,6 +416,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert (
         "start_deploy_paper_drain\n"
         "    verify_deploy_preflight_paper_exposure\n"
+        "    reconcile_deploy_expected_paper_strategy_flags\n"
     ) in deploy_text
     assert deploy_text.index("verify_paper_decision_dry_run") < deploy_text.rindex("verify_paper_proof_ready")
     assert "${proof_summary:-missing summary}" in deploy_text
@@ -494,6 +500,51 @@ def _run_deploy_expected_trading_status(tmp_path: Path, status_line: str) -> str
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()
+
+
+def test_deploy_reconciles_expected_disabled_paper_strategy_flags(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("")
+    calls_file = tmp_path / "compose_calls"
+    env = os.environ.copy()
+    env.update(
+        {
+            "ENV_FILE": str(env_file),
+            "CALLS_FILE": str(calls_file),
+            "STATUS_LINE": (
+                "mode=paper strategy=v1-breakout status=close_only "
+                "kill_switch=false disabled_strategies=ema_pullback,vwap_cross"
+            ),
+            "TRADING_MODE": "paper",
+            "STRATEGY_VERSION": "v1-breakout",
+            "PAPER_PROOF_FREEZE": "true",
+        }
+    )
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            (
+                'DEPLOY_SH_SOURCE_ONLY=true source scripts/deploy.sh "$ENV_FILE"; '
+                'load_deploy_trading_status_line() { printf "%s\\n" "$STATUS_LINE"; }; '
+                'compose_stub() { printf "%s\\n" "$*" >> "$CALLS_FILE"; }; '
+                "compose=(compose_stub); "
+                "expected_enabled_strategy_names=(bull_flag ema_pullback); "
+                "reconcile_deploy_expected_paper_strategy_flags"
+            ),
+        ],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = calls_file.read_text()
+    assert "enable-strategy ema_pullback --mode paper --strategy-version v1-breakout" in calls
+    assert "enable-strategy bull_flag" not in calls
+    assert "vwap_cross" not in calls
+    assert "deploy enabled approved paper strategy flag: ema_pullback" in result.stderr
 
 
 def test_deploy_accepts_protected_paper_exposure_after_restart(tmp_path: Path) -> None:

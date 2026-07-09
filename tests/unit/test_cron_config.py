@@ -7431,6 +7431,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "approval_marker_command_deploy_script=./scripts/deploy.sh" in script
     assert 'approval_marker_quick_command = "unavailable"' in script
     assert "shlex.quote(promotion_confirmation)" in script
+    assert "shlex.quote(proof_status_env_file)" in script
     assert "paper proof second strategy approval quick command:" in script
     assert "command={approval_marker_quick_command}" in script
     assert "approval_marker_overlay_status={approval_marker_overlay_status}" in script

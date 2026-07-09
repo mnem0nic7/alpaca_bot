@@ -41,6 +41,7 @@ DEPLOY_EXPECT_ENABLED_STRATEGIES="${DEPLOY_EXPECT_ENABLED_STRATEGIES:-$PAPER_APP
 
 compose=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE")
 expected_enabled_strategy_args=()
+expected_enabled_strategy_names=()
 deploy_decision_dry_run_strategies=()
 
 require_var() {
@@ -57,6 +58,7 @@ build_expected_enabled_strategy_args() {
   local name
   local -a raw_names
   expected_enabled_strategy_args=()
+  expected_enabled_strategy_names=()
   IFS=',' read -r -a raw_names <<< "$csv"
   for raw in "${raw_names[@]}"; do
     name="$(printf '%s' "$raw" | tr -d '[:space:]')"
@@ -68,6 +70,7 @@ build_expected_enabled_strategy_args() {
       exit 1
     fi
     expected_enabled_strategy_args+=(--expect-only-enabled-strategy "$name")
+    expected_enabled_strategy_names+=("$name")
   done
   if [[ "${#expected_enabled_strategy_args[@]}" -eq 0 ]]; then
     echo "DEPLOY_EXPECT_ENABLED_STRATEGIES must contain at least one strategy" >&2
@@ -177,6 +180,66 @@ load_deploy_ops_expected_trading_status() {
   fi
 
   printf 'enabled\n'
+}
+
+deploy_csv_contains_name() {
+  local csv="$1"
+  local needle="$2"
+  local raw
+  local name
+  local -a names
+
+  [[ -n "$needle" ]] || return 1
+  IFS=',' read -r -a names <<< "$csv"
+  for raw in "${names[@]}"; do
+    name="$(printf '%s' "$raw" | tr -d '[:space:]')"
+    if [[ "$name" == "$needle" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+deploy_status_field() {
+  local status_line="$1"
+  local key="$2"
+  local part
+
+  for part in $status_line; do
+    if [[ "$part" == "$key="* ]]; then
+      printf '%s\n' "${part#*=}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+reconcile_deploy_expected_paper_strategy_flags() {
+  local disabled_strategies
+  local name
+  local status_line
+
+  if ! paper_proof_enabled; then
+    return 0
+  fi
+
+  status_line="$(load_deploy_trading_status_line)"
+  disabled_strategies="$(deploy_status_field "$status_line" disabled_strategies || true)"
+  if [[ -z "$disabled_strategies" || "$disabled_strategies" == "-" ]]; then
+    return 0
+  fi
+
+  for name in "${expected_enabled_strategy_names[@]}"; do
+    if deploy_csv_contains_name "$disabled_strategies" "$name"; then
+      "${compose[@]}" run -T --rm admin \
+        enable-strategy "$name" \
+        --mode "${TRADING_MODE}" \
+        --strategy-version "${STRATEGY_VERSION}" \
+        >/dev/null
+      echo "deploy enabled approved paper strategy flag: $name" >&2
+    fi
+  done
 }
 
 run_deploy_ops_check() {
@@ -652,6 +715,7 @@ if credentials_ready; then
   if paper_proof_enabled; then
     start_deploy_paper_drain
     verify_deploy_preflight_paper_exposure
+    reconcile_deploy_expected_paper_strategy_flags
   fi
   remove_supervisor_container
   "${compose[@]}" up -d --force-recreate supervisor
