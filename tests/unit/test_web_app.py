@@ -341,6 +341,10 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             list_by_event_types=list_audit_by_event_types,
         ),
     )
+    shell_quote = app.state.templates.env.filters["shell_quote"]
+    assert shell_quote("plain-value") == "plain-value"
+    assert shell_quote("value with space") == "'value with space'"
+    assert shell_quote("can't") == "'can'\"'\"'t'"
 
     with TestClient(app) as client:
         response = client.get("/")

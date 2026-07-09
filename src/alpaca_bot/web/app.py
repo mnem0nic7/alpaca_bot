@@ -4,6 +4,7 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import secrets
+import shlex
 from urllib.parse import parse_qsl
 
 from fastapi import FastAPI, Request, status
@@ -71,6 +72,10 @@ def _validate_symbol(raw: str) -> str | None:
     return cleaned if _SYMBOL_RE.match(cleaned) else None
 
 
+def _shell_quote(value: object) -> str:
+    return shlex.quote(str(value))
+
+
 def create_app(
     *,
     settings: Settings | None = None,
@@ -107,6 +112,7 @@ def create_app(
         settings=app_settings,
     )
     templates.env.globals["format_price"] = _format_price
+    templates.env.filters["shell_quote"] = _shell_quote
     csrf_secret = secrets.token_bytes(32)
     templates.env.globals["csrf_token_for"] = lambda request, action: csrf_token_for_session(
         request,
