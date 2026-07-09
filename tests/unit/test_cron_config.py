@@ -235,6 +235,9 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     assert "require_positive_integer NIGHTLY_TIMEOUT_SECONDS" in nightly_cycle
     assert "require_positive_integer SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS" in nightly_cycle
     assert "scripts/apply_candidate.sh" in nightly_cycle
+    assert "prepare_second_strategy_scan_snapshot" in nightly_cycle
+    assert 'mktemp "$ROOT_DIR/scripts/.second_strategy_basket_scan.snapshot.XXXXXX"' in nightly_cycle
+    assert 'trap cleanup_second_strategy_scan_snapshot EXIT' in nightly_cycle
     assert 'timeout "$NIGHTLY_TIMEOUT_SECONDS"' in nightly_cycle
     assert (
         'timeout "$NIGHTLY_TIMEOUT_SECONDS" docker compose --env-file '
@@ -246,6 +249,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
     ) in nightly_cycle
     assert "docker compose -f deploy/compose.yaml run --rm nightly" not in cron_text
     assert "scripts/second_strategy_basket_scan.sh" in nightly_cycle
+    assert '"$second_strategy_scan_snapshot" "$ENV_FILE"' in nightly_cycle
+    assert "second-strategy scan snapshot=" in nightly_cycle
     assert "/var/log/alpaca-bot-second-strategy.log" in nightly_cycle
     assert 'timeout "$SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS"' in nightly_cycle
     assert '>> "$SECOND_STRATEGY_LOG" 2>&1' in nightly_cycle

@@ -18,6 +18,26 @@ require_positive_integer() {
   fi
 }
 
+second_strategy_scan_snapshot=""
+cleanup_second_strategy_scan_snapshot() {
+  if [[ -n "$second_strategy_scan_snapshot" ]]; then
+    rm -f "$second_strategy_scan_snapshot"
+  fi
+}
+trap cleanup_second_strategy_scan_snapshot EXIT
+
+prepare_second_strategy_scan_snapshot() {
+  local source_script="$ROOT_DIR/scripts/second_strategy_basket_scan.sh"
+
+  [[ -f "$source_script" ]] || fail "missing second-strategy scan script: $source_script"
+  second_strategy_scan_snapshot="$(
+    mktemp "$ROOT_DIR/scripts/.second_strategy_basket_scan.snapshot.XXXXXX"
+  )"
+  cp "$source_script" "$second_strategy_scan_snapshot"
+  chmod --reference="$source_script" "$second_strategy_scan_snapshot" 2>/dev/null \
+    || chmod +x "$second_strategy_scan_snapshot"
+}
+
 [[ -f "$ENV_FILE" ]] || fail "missing env file: $ENV_FILE"
 
 cd "$ROOT_DIR"
@@ -44,7 +64,10 @@ echo "[nightly_cycle $(date -u '+%Y-%m-%dT%H:%M:%SZ')] nightly complete; applyin
 ./scripts/apply_candidate.sh "$ENV_FILE"
 echo "[nightly_cycle $(date -u '+%Y-%m-%dT%H:%M:%SZ')] candidate apply complete; starting second-strategy scan log=$SECOND_STRATEGY_LOG"
 
-if timeout "$SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS" ./scripts/second_strategy_basket_scan.sh "$ENV_FILE" >> "$SECOND_STRATEGY_LOG" 2>&1; then
+prepare_second_strategy_scan_snapshot
+echo "[nightly_cycle $(date -u '+%Y-%m-%dT%H:%M:%SZ')] second-strategy scan snapshot=$second_strategy_scan_snapshot"
+
+if timeout "$SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS" "$second_strategy_scan_snapshot" "$ENV_FILE" >> "$SECOND_STRATEGY_LOG" 2>&1; then
   echo "[nightly_cycle $(date -u '+%Y-%m-%dT%H:%M:%SZ')] second-strategy scan complete"
 else
   rc="$?"

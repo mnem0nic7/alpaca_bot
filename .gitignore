@@ -12,6 +12,7 @@ env/
 .mypy_cache/
 .ruff_cache/
 .tmp/
+scripts/.second_strategy_basket_scan.snapshot.*
 .coverage
 .coverage.*
 htmlcov/
