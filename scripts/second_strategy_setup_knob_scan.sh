@@ -34,6 +34,28 @@ discard_replay_artifacts() {
   fi
 }
 
+update_latest_link() {
+  local target="$1"
+  local link_path="$2"
+  local link_dir
+  local link_name
+  local tmp_link
+
+  link_dir="$(dirname "$link_path")"
+  link_name="$(basename "$link_path")"
+  mkdir -p "$link_dir"
+  tmp_link="$(mktemp "$link_dir/.${link_name}.tmp.XXXXXX")"
+  rm -f "$tmp_link"
+  if ! ln -s "$target" "$tmp_link"; then
+    rm -f "$tmp_link"
+    return 1
+  fi
+  if ! mv -Tf "$tmp_link" "$link_path"; then
+    rm -f "$tmp_link"
+    return 1
+  fi
+}
+
 extract_field() {
   local line="$1"
   local key="$2"
@@ -949,8 +971,7 @@ PY
     VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"
   fi
   if [[ -n "$VALIDATION_LATEST_LINK" ]]; then
-    mkdir -p "$(dirname "$VALIDATION_LATEST_LINK")"
-    ln -sfn "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"
+    update_latest_link "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"
     echo "latest_validation=$VALIDATION_LATEST_LINK"
   fi
 else
@@ -961,8 +982,7 @@ if [[ -z "$LATEST_LINK" && "$UPDATE_LATEST_LINKS" == "true" ]]; then
   LATEST_LINK="$OUTPUT_ROOT/latest"
 fi
 if [[ -n "$LATEST_LINK" ]]; then
-  mkdir -p "$(dirname "$LATEST_LINK")"
-  ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"
+  update_latest_link "$OUTPUT_DIR" "$LATEST_LINK"
   echo "latest=$LATEST_LINK"
 fi
 

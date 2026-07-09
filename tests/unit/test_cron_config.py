@@ -372,9 +372,10 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "validation_option_candidates" in script
     assert "option validation candidate(s) require supported option replay" in script
     assert 'LATEST_LINK="$OUTPUT_ROOT/latest"' in script
-    assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script
+    assert 'update_latest_link "$OUTPUT_DIR" "$LATEST_LINK"' in script
     assert 'VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"' in script
-    assert 'ln -sfn "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"' in script
+    assert 'update_latest_link "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"' in script
+    assert 'mv -Tf "$tmp_link" "$link_path"' in script
     assert '&& "$UPDATE_LATEST_LINKS" == "true"' in script
     assert '[[ "$prefilter_skipped" != "true" && -n "$LATEST_LINK" ]]' in script
     assert "Run metadata:" in script
@@ -505,8 +506,9 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert "independent validation had no variants to run" in script
     assert "promotion_approved" in script
     assert "wait -n" in script
-    assert 'ln -sfn "$OUTPUT_DIR" "$LATEST_LINK"' in script
-    assert 'ln -sfn "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"' in script
+    assert 'update_latest_link "$OUTPUT_DIR" "$LATEST_LINK"' in script
+    assert 'update_latest_link "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"' in script
+    assert 'mv -Tf "$tmp_link" "$link_path"' in script
     assert '&& "$UPDATE_LATEST_LINKS" == "true"' in script
     assert "close-only" not in script
     assert "alpaca-bot-session-eval" not in script
