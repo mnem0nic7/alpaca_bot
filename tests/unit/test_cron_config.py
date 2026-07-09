@@ -437,8 +437,17 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "wait_for_next_prefilter_job" in script
     assert "run_validation_job" in script
     assert "proof_horizon_candidates_file" in script
+    assert "selected = sorted(candidates, reverse=True)" in script
+    assert "sorted(candidates, reverse=True)[:1]" not in script
+    assert "proof_horizon_candidates={len(selected)}" in script
     assert "candidate_ci_low" in script
     assert "python3 -m alpaca_bot.replay.cli proof-horizon-basket" in script
+    assert "python3 -m alpaca_bot.replay.proof_horizon_selection" in script
+    assert 'proof_horizon_results_file="$PROOF_HORIZON_OUTPUT_DIR/results.tsv"' in script
+    assert "wait_for_next_proof_horizon_job" in script
+    assert "proof_horizon_results_parts_dir" in script
+    assert "SECOND_STRATEGY_PROOF_HORIZON_MIN_PASS_RATE" in script
+    assert "--min-eventual-pass-rate \"$PROOF_HORIZON_MIN_PASS_RATE\"" in script
     assert '--confidence-scale "$candidate=$candidate_scale"' in script
     assert '--confidence-scale "$candidate=$proof_candidate_scale"' not in script
     assert '--min-trades "$PROOF_HORIZON_MIN_TRADES"' in script
@@ -658,7 +667,7 @@ def test_second_strategy_basket_scan_resumes_positive_validation_for_proof_horiz
     assert "positive_edge_validation_rows=1" in result.stdout
     assert (
         "proof_horizon_candidate=ema_pullback scale=0.10 "
-        "trades=35 candidate_ci_low=0.25"
+        "rank=1 trades=35 candidate_ci_low=0.25"
     ) in result.stdout
     assert "second strategy basket proof horizon: disabled" in result.stdout
     assert (validation_dir / "candidates.tsv").read_text() == "ema_pullback\t0.10\n"
@@ -2869,6 +2878,18 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert (
         '"proof_horizon_min_pass_rate": (\n'
         '        "proof_second_strategy_promotion_action_proof_horizon_min_pass_rate"'
+    ) in script
+    assert (
+        '"proof_horizon_selection_reason": (\n'
+        '        "proof_second_strategy_promotion_action_proof_horizon_selection_reason"'
+    ) in script
+    assert (
+        '"proof_horizon_candidate_count": (\n'
+        '        "proof_second_strategy_promotion_action_proof_horizon_candidate_count"'
+    ) in script
+    assert (
+        '"proof_horizon_passing_candidate_count": (\n'
+        '        "proof_second_strategy_promotion_action_proof_horizon_passing_candidate_count"'
     ) in script
     assert (
         '"proof_horizon_candidate_scale": (\n'
@@ -7575,6 +7596,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "proof_horizon_detail = \"candidate_scale_mismatch\"" in script
     assert "proof_horizon_detail = \"candidate_scale_missing\"" in script
     assert "proof_horizon_detail = \"eventual_pass_rate_below_gate\"" in script
+    assert "preferred_name=preferred_promotion_candidate" in script
+    assert "preferred_scale=preferred_promotion_scale" in script
+    assert 'proof_horizon_payload.get("candidate_selection")' in script
+    assert 'proof_horizon_selection.get("selected_candidate")' in script
+    assert 'proof_horizon_selection.get("selected_candidate_scale")' in script
     assert (
         "proof_horizon_eventual_pass_rate\n"
         "                < second_strategy_min_proof_horizon_pass_rate"
@@ -7592,6 +7618,18 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert (
         "proof_horizon_min_pass_rate="
         "{format_optional_float(second_strategy_evidence['proof_horizon_min_pass_rate'], 4)}"
+    ) in script
+    assert (
+        "proof_horizon_selection_reason="
+        "{safe_status_value(second_strategy_evidence['proof_horizon_selection_reason'])}"
+    ) in script
+    assert (
+        "proof_horizon_candidate_count="
+        "{safe_status_value(second_strategy_evidence['proof_horizon_candidate_count'])}"
+    ) in script
+    assert (
+        "proof_horizon_passing_candidate_count="
+        "{safe_status_value(second_strategy_evidence['proof_horizon_passing_candidate_count'])}"
     ) in script
     assert "prefilter_summary_sha256={safe_status_value(second_strategy_setup_evidence['prefilter_summary_sha256'])}" in script
     assert "validation_summary_sha256={safe_status_value(second_strategy_setup_evidence['validation_summary_sha256'])}" in script

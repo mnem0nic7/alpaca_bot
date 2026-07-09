@@ -661,3 +661,12 @@ horizon to pass on at least 50% of historical start dates before promotion
 becomes actionable. A candidate with positive total proof-horizon P&L but a
 thin eventual pass rate now reports
 `proof_horizon_detail=eventual_pass_rate_below_gate`.
+
+Follow-up: proof-horizon automation now evaluates every independently validated
+stock row in validation rank order instead of stopping after the strongest
+isolated candidate. Each candidate-scale pair receives a separate immutable
+artifact. The published aggregate selects the first candidate that clears the
+full basket horizon, or retains the top-ranked failure when none clear it, and
+records candidate and passing counts for proof status and the dashboard. This
+prevents a weak basket fit from hiding a lower-ranked but better diversifier;
+it still cannot approve or enable a strategy.

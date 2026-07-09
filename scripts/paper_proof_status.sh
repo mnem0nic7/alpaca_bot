@@ -1472,8 +1472,15 @@ def parse_marker_approved_at(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def best_promotion_candidate_from_rows(rows: object) -> dict[str, object] | None:
-    candidates: list[tuple[float, float, int, dict[str, object]]] = []
+def best_promotion_candidate_from_rows(
+    rows: object,
+    *,
+    preferred_name: str | None = None,
+    preferred_scale: float | None = None,
+) -> dict[str, object] | None:
+    candidates: list[
+        tuple[float, float, int, str, float, dict[str, object]]
+    ] = []
     if not isinstance(rows, list):
         return None
     stock_strategy_names = set(STRATEGY_REGISTRY)
@@ -1496,14 +1503,37 @@ def best_promotion_candidate_from_rows(rows: object) -> dict[str, object] | None
         total_pnl = as_float_or_none(row.get("candidate_total_pnl"))
         ci_low = as_float_or_none(row.get("candidate_ci_low"))
         p_mean_le_zero = as_float_or_none(row.get("candidate_p_mean_le_zero"))
+        candidate_scale = as_float_or_none(row.get("candidate_scale"))
         if trades is None or total_pnl is None or ci_low is None or p_mean_le_zero is None:
             continue
         if trades < 30 or total_pnl <= 0.0 or ci_low <= 0.0 or p_mean_le_zero > 0.05:
             continue
-        candidates.append((ci_low, -p_mean_le_zero, trades, row))
+        candidates.append(
+            (
+                ci_low,
+                -p_mean_le_zero,
+                trades,
+                name,
+                candidate_scale if candidate_scale is not None else -math.inf,
+                row,
+            )
+        )
     if not candidates:
         return None
-    return sorted(candidates, reverse=True)[0][3]
+    ranked = sorted(candidates, key=lambda item: item[:5], reverse=True)
+    if preferred_name:
+        for _ci, _p, _trades, name, scale, row in ranked:
+            if name != preferred_name:
+                continue
+            if preferred_scale is not None and not math.isclose(
+                preferred_scale,
+                scale,
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            ):
+                continue
+            return row
+    return ranked[0][5]
 
 
 def approval_marker_status(
@@ -1737,7 +1767,37 @@ def load_second_strategy_evidence(
         if prefilter_payload
         else 0
     )
-    promotion_candidate = best_promotion_candidate_from_rows(validation_rows)
+    proof_horizon_selection = (
+        proof_horizon_payload.get("candidate_selection")
+        if isinstance(proof_horizon_payload, dict)
+        else None
+    )
+    preferred_promotion_candidate = None
+    preferred_promotion_scale = None
+    proof_horizon_selection_reason = "none"
+    proof_horizon_candidate_count: int | None = None
+    proof_horizon_passing_candidate_count: int | None = None
+    if isinstance(proof_horizon_selection, dict):
+        preferred_promotion_candidate = str(
+            proof_horizon_selection.get("selected_candidate") or ""
+        ).strip() or None
+        preferred_promotion_scale = as_float_or_none(
+            proof_horizon_selection.get("selected_candidate_scale")
+        )
+        proof_horizon_selection_reason = str(
+            proof_horizon_selection.get("selection_reason") or "none"
+        ).strip() or "none"
+        proof_horizon_candidate_count = as_int_or_none(
+            proof_horizon_selection.get("candidate_count")
+        )
+        proof_horizon_passing_candidate_count = as_int_or_none(
+            proof_horizon_selection.get("passing_candidate_count")
+        )
+    promotion_candidate = best_promotion_candidate_from_rows(
+        validation_rows,
+        preferred_name=preferred_promotion_candidate,
+        preferred_scale=preferred_promotion_scale,
+    )
     proof_horizon_strategy = "none"
     proof_horizon_status = "not_applicable"
     proof_horizon_detail = "no_promotion_candidate"
@@ -1954,6 +2014,11 @@ def load_second_strategy_evidence(
         "proof_horizon_total_pnl": proof_horizon_total_pnl,
         "proof_horizon_eventual_pass_rate": proof_horizon_eventual_pass_rate,
         "proof_horizon_min_pass_rate": second_strategy_min_proof_horizon_pass_rate,
+        "proof_horizon_selection_reason": proof_horizon_selection_reason,
+        "proof_horizon_candidate_count": proof_horizon_candidate_count,
+        "proof_horizon_passing_candidate_count": (
+            proof_horizon_passing_candidate_count
+        ),
         "proof_horizon_starts_eventually_passed": (
             proof_horizon_starts_eventually_passed
         ),
@@ -6873,6 +6938,9 @@ print(
     f"proof_horizon_total_pnl={format_optional_float(second_strategy_evidence['proof_horizon_total_pnl'], 2)} "
     f"proof_horizon_eventual_pass_rate={format_optional_float(second_strategy_evidence['proof_horizon_eventual_pass_rate'], 4)} "
     f"proof_horizon_min_pass_rate={format_optional_float(second_strategy_evidence['proof_horizon_min_pass_rate'], 4)} "
+    f"proof_horizon_selection_reason={safe_status_value(second_strategy_evidence['proof_horizon_selection_reason'])} "
+    f"proof_horizon_candidate_count={safe_status_value(second_strategy_evidence['proof_horizon_candidate_count'])} "
+    f"proof_horizon_passing_candidate_count={safe_status_value(second_strategy_evidence['proof_horizon_passing_candidate_count'])} "
     f"proof_horizon_confidence_scales={safe_status_value(second_strategy_evidence['proof_horizon_confidence_scales'])} "
     f"proof_horizon_candidate_scale={format_optional_float(second_strategy_evidence['proof_horizon_candidate_scale'], 4)} "
     f"proof_horizon_starts_eventually_passed={safe_status_value(second_strategy_evidence['proof_horizon_starts_eventually_passed'])} "
@@ -6980,6 +7048,9 @@ print(
     f"proof_horizon_total_pnl={format_optional_float(second_strategy_evidence['proof_horizon_total_pnl'], 2)} "
     f"proof_horizon_eventual_pass_rate={format_optional_float(second_strategy_evidence['proof_horizon_eventual_pass_rate'], 4)} "
     f"proof_horizon_min_pass_rate={format_optional_float(second_strategy_evidence['proof_horizon_min_pass_rate'], 4)} "
+    f"proof_horizon_selection_reason={safe_status_value(second_strategy_evidence['proof_horizon_selection_reason'])} "
+    f"proof_horizon_candidate_count={safe_status_value(second_strategy_evidence['proof_horizon_candidate_count'])} "
+    f"proof_horizon_passing_candidate_count={safe_status_value(second_strategy_evidence['proof_horizon_passing_candidate_count'])} "
     f"proof_horizon_confidence_scales={safe_status_value(second_strategy_evidence['proof_horizon_confidence_scales'])} "
     f"proof_horizon_candidate_scale={format_optional_float(second_strategy_evidence['proof_horizon_candidate_scale'], 4)} "
     f"proof_horizon_terminal_blockers={safe_status_value(second_strategy_evidence['proof_horizon_terminal_blockers'])} "

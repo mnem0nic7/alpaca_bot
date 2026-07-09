@@ -150,6 +150,7 @@ PROOF_HORIZON_MIN_ACTIVE_DAYS="${SECOND_STRATEGY_PROOF_HORIZON_MIN_ACTIVE_DAYS:-
 PROOF_HORIZON_MIN_PROFIT_FACTOR="${SECOND_STRATEGY_PROOF_HORIZON_MIN_PROFIT_FACTOR:-${PROOF_STATUS_SCALE_MIN_PROFIT_FACTOR:-${PAPER_SCALE_MIN_PROFIT_FACTOR:-1.20}}}"
 PROOF_HORIZON_MAX_SINGLE_WIN_PNL_SHARE="${SECOND_STRATEGY_PROOF_HORIZON_MAX_SINGLE_WIN_PNL_SHARE:-${PROOF_STATUS_SCALE_MAX_SINGLE_WIN_PNL_SHARE:-${PAPER_SCALE_MAX_SINGLE_WIN_PNL_SHARE:-0.50}}}"
 PROOF_HORIZON_MAX_EOD_LOSS_SHARE="${SECOND_STRATEGY_PROOF_HORIZON_MAX_EOD_LOSS_SHARE:-${PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE:-${PAPER_SCALE_MAX_EOD_LOSS_SHARE:-0.50}}}"
+PROOF_HORIZON_MIN_PASS_RATE="${SECOND_STRATEGY_PROOF_HORIZON_MIN_PASS_RATE:-${PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE:-0.50}}"
 RESUME_COMPLETED_JOBS="${SECOND_STRATEGY_RESUME_COMPLETED_JOBS:-true}"
 INCLUDE_OPTION_CANDIDATES="${SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES:-auto}"
 HOST_OPTION_CHAIN_SNAPSHOT_DIR="${SECOND_STRATEGY_HOST_OPTION_CHAIN_SNAPSHOT_DIR:-/var/lib/alpaca-bot/option-chain-snapshots}"
@@ -244,6 +245,8 @@ esac
   || fail "SECOND_STRATEGY_PROOF_HORIZON_MAX_SINGLE_WIN_PNL_SHARE must be a non-negative number"
 [[ "$PROOF_HORIZON_MAX_EOD_LOSS_SHARE" =~ ^[0-9]+([.][0-9]+)?$ ]] \
   || fail "SECOND_STRATEGY_PROOF_HORIZON_MAX_EOD_LOSS_SHARE must be a non-negative number"
+[[ "$PROOF_HORIZON_MIN_PASS_RATE" =~ ^(0([.][0-9]+)?|1([.]0+)?)$ ]] \
+  || fail "SECOND_STRATEGY_PROOF_HORIZON_MIN_PASS_RATE must be between 0 and 1"
 
 [[ -d "$SCENARIO_DIR" ]] || fail "missing scenario dir: $SCENARIO_DIR"
 if [[ -n "$PREFILTER_SUMMARY_JSON" && ! -f "$PREFILTER_SUMMARY_JSON" ]]; then
@@ -1597,20 +1600,25 @@ if isinstance(rows, list):
             continue
         candidates.append((ci_low, -p_mean_le_zero, trades, name, scale))
 
-selected = sorted(candidates, reverse=True)[:1]
+selected = sorted(candidates, reverse=True)
 output_path.write_text(
     "".join(f"{name}\t{scale}\n" for _ci, _p, _trades, name, scale in selected)
 )
 if selected:
-    _ci, _p, trades, name, scale = selected[0]
-    print(
-        "proof_horizon_candidate="
-        f"{name} scale={scale} trades={trades} candidate_ci_low={_ci:g}"
-    )
+    print(f"proof_horizon_candidates={len(selected)}")
+    for rank, (_ci, _p, trades, name, scale) in enumerate(selected, start=1):
+        print(
+            "proof_horizon_candidate="
+            f"{name} scale={scale} rank={rank} trades={trades} "
+            f"candidate_ci_low={_ci:g}"
+        )
 else:
+    print("proof_horizon_candidates=0")
     print("proof_horizon_candidate=none")
 PY
 
+  proof_horizon_results_file="$PROOF_HORIZON_OUTPUT_DIR/results.tsv"
+  proof_horizon_results_parts_dir="$PROOF_HORIZON_OUTPUT_DIR/result_parts"
   run_proof_horizon_job() {
     local candidate="$1"
     local candidate_scale="$2"
@@ -1622,14 +1630,18 @@ PY
     local tmp_report_path
     local tmp_json_path
     local tmp_stderr_path
+    local candidate_output_dir
+    local result_part
     local -a cmd
 
     safe_candidate="$(printf '%s' "$candidate" | tr -c 'A-Za-z0-9_' '_')"
     safe_scale="$(printf '%s' "$candidate_scale" | tr -c 'A-Za-z0-9_' '_')"
-    mkdir -p "$PROOF_HORIZON_OUTPUT_DIR"
-    report_path="$PROOF_HORIZON_OUTPUT_DIR/summary.md"
-    json_path="$PROOF_HORIZON_OUTPUT_DIR/summary.json"
-    stderr_path="$PROOF_HORIZON_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_proof_horizon.stderr"
+    candidate_output_dir="$PROOF_HORIZON_OUTPUT_DIR/candidates/${safe_candidate}_scale_${safe_scale}"
+    result_part="$proof_horizon_results_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
+    mkdir -p "$candidate_output_dir"
+    report_path="$candidate_output_dir/summary.md"
+    json_path="$candidate_output_dir/summary.json"
+    stderr_path="$candidate_output_dir/stderr.txt"
     tmp_report_path="$report_path.tmp.$BASHPID"
     tmp_json_path="$json_path.tmp.$BASHPID"
     tmp_stderr_path="$stderr_path.tmp.$BASHPID"
@@ -1656,31 +1668,69 @@ PY
       cmd+=(--starting-equity "$starting_equity")
     fi
 
-    echo "second strategy basket proof horizon: candidate=$candidate scale=$candidate_scale output_dir=$PROOF_HORIZON_OUTPUT_DIR sample_size=$PROOF_HORIZON_SAMPLE_SIZE sample_seed=$PROOF_HORIZON_SAMPLE_SEED min_trades=$PROOF_HORIZON_MIN_TRADES min_pnl=$PROOF_HORIZON_MIN_PNL min_active_days=$PROOF_HORIZON_MIN_ACTIVE_DAYS min_profit_factor=$PROOF_HORIZON_MIN_PROFIT_FACTOR max_single_win_pnl_share=$PROOF_HORIZON_MAX_SINGLE_WIN_PNL_SHARE max_eod_loss_share=$PROOF_HORIZON_MAX_EOD_LOSS_SHARE"
+    echo "second strategy basket proof horizon: candidate=$candidate scale=$candidate_scale output_dir=$candidate_output_dir sample_size=$PROOF_HORIZON_SAMPLE_SIZE sample_seed=$PROOF_HORIZON_SAMPLE_SEED min_trades=$PROOF_HORIZON_MIN_TRADES min_pnl=$PROOF_HORIZON_MIN_PNL min_active_days=$PROOF_HORIZON_MIN_ACTIVE_DAYS min_profit_factor=$PROOF_HORIZON_MIN_PROFIT_FACTOR max_single_win_pnl_share=$PROOF_HORIZON_MAX_SINGLE_WIN_PNL_SHARE max_eod_loss_share=$PROOF_HORIZON_MAX_EOD_LOSS_SHARE min_pass_rate=$PROOF_HORIZON_MIN_PASS_RATE"
     if "${cmd[@]}" 2> "$tmp_stderr_path"; then
       mv -f "$tmp_report_path" "$report_path"
       mv -f "$tmp_json_path" "$json_path"
       mv -f "$tmp_stderr_path" "$stderr_path"
-      echo "proof_horizon_summary=$report_path"
-      echo "proof_horizon_summary_json=$json_path"
+      printf '%s\t%s\tpassed\t%s\t%s\t%s\n' \
+        "$candidate" "$candidate_scale" "$report_path" "$json_path" "$stderr_path" \
+        > "$result_part"
       return 0
     fi
     rm -f "$tmp_report_path" "$tmp_json_path"
     if [[ -e "$tmp_stderr_path" ]]; then
       mv -f "$tmp_stderr_path" "$stderr_path"
     fi
+    printf '%s\t%s\tfailed\t%s\t%s\t%s\n' \
+      "$candidate" "$candidate_scale" "$report_path" "$json_path" "$stderr_path" \
+      > "$result_part"
     return 1
+  }
+
+  wait_for_next_proof_horizon_job() {
+    if ! wait -n; then
+      proof_horizon_failed_count=$((proof_horizon_failed_count + 1))
+    fi
+    proof_horizon_running_jobs=$((proof_horizon_running_jobs - 1))
   }
 
   if [[ "$RUN_PROOF_HORIZON" == "true" ]]; then
     if [[ -s "$proof_horizon_candidates_file" ]]; then
+      mkdir -p "$PROOF_HORIZON_OUTPUT_DIR" "$proof_horizon_results_parts_dir"
+      rm -f "$proof_horizon_results_parts_dir"/*.tsv
+      : > "$proof_horizon_results_file"
+      proof_horizon_running_jobs=0
       while IFS=$'\t' read -r proof_candidate proof_candidate_scale; do
         [[ -n "$proof_candidate" && -n "$proof_candidate_scale" ]] || continue
-        if ! run_proof_horizon_job "$proof_candidate" "$proof_candidate_scale"; then
+        run_proof_horizon_job "$proof_candidate" "$proof_candidate_scale" &
+        proof_horizon_running_jobs=$((proof_horizon_running_jobs + 1))
+        if [[ "$proof_horizon_running_jobs" -ge "$SCAN_JOBS" ]]; then
+          wait_for_next_proof_horizon_job
+        fi
+      done < "$proof_horizon_candidates_file"
+      while [[ "$proof_horizon_running_jobs" -gt 0 ]]; do
+        wait_for_next_proof_horizon_job
+      done
+      while IFS=$'\t' read -r proof_candidate proof_candidate_scale; do
+        [[ -n "$proof_candidate" && -n "$proof_candidate_scale" ]] || continue
+        safe_candidate="$(printf '%s' "$proof_candidate" | tr -c 'A-Za-z0-9_' '_')"
+        safe_scale="$(printf '%s' "$proof_candidate_scale" | tr -c 'A-Za-z0-9_' '_')"
+        result_part="$proof_horizon_results_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
+        if [[ -s "$result_part" ]]; then
+          cat "$result_part" >> "$proof_horizon_results_file"
+        else
           proof_horizon_failed_count=$((proof_horizon_failed_count + 1))
         fi
       done < "$proof_horizon_candidates_file"
       if [[ "$proof_horizon_failed_count" -eq 0 ]]; then
+        python3 -m alpaca_bot.replay.proof_horizon_selection \
+          --results "$proof_horizon_results_file" \
+          --output-dir "$PROOF_HORIZON_OUTPUT_DIR" \
+          --min-eventual-pass-rate "$PROOF_HORIZON_MIN_PASS_RATE" \
+          --default-min-pnl "$PROOF_HORIZON_MIN_PNL"
+        echo "proof_horizon_summary=$PROOF_HORIZON_OUTPUT_DIR/summary.md"
+        echo "proof_horizon_summary_json=$PROOF_HORIZON_OUTPUT_DIR/summary.json"
         if [[ -z "$PROOF_HORIZON_LATEST_LINK" && "$UPDATE_LATEST_LINKS" == "true" ]]; then
           PROOF_HORIZON_LATEST_LINK="$OUTPUT_ROOT/latest_proof_horizon"
         fi
