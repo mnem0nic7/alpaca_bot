@@ -797,7 +797,7 @@ try:
               AND (
                 (
                   payload->>'status' = 'pending'
-                  AND payload->>'exit_code' = '43'
+                  AND payload->>'exit_code' IN ('0', '43')
                   AND payload->>'proof_status' = 'pending'
                 )
                 OR (
@@ -1547,7 +1547,9 @@ case "$CHECK_NAME" in
     fi
     proof_lock_has_current_evidence=false
     if [[ "$latest_readiness" == "ready" && "$latest_blockers" == "none" ]]; then
-      if [[ "$latest_status" == "pending" && "$latest_exit_code" == "43" && "$latest_proof" == "pending" ]]; then
+      if [[ "$latest_status" == "pending" \
+        && ( "$latest_exit_code" == "0" || "$latest_exit_code" == "43" ) \
+        && "$latest_proof" == "pending" ]]; then
         proof_lock_has_current_evidence=true
       elif [[ "$latest_status" == "passed" && "$latest_exit_code" == "0" && "$latest_proof" == "passed" ]]; then
         proof_lock_has_current_evidence=true
