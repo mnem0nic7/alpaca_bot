@@ -140,6 +140,7 @@ def _run_promote(
     tmp_path: Path,
     confirmation: str | None = None,
     dry_run: bool | None = None,
+    approval_only: bool | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": f"{_make_fake_docker(tmp_path)}:/usr/bin:/bin",
@@ -148,6 +149,10 @@ def _run_promote(
         env["PROMOTE_VALIDATED_STRATEGY_CONFIRM"] = confirmation
     if dry_run is not None:
         env["PROMOTE_VALIDATED_STRATEGY_DRY_RUN"] = "true" if dry_run else "false"
+    if approval_only is not None:
+        env["PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY"] = (
+            "true" if approval_only else "false"
+        )
     return subprocess.run(
         [
             str(SCRIPT),
@@ -219,8 +224,47 @@ def test_promote_validated_strategy_dry_run_reports_gates_without_mutation(
     assert "broker_flat_status=ok" in stdout
     assert "dry_run_promotion_command=env PROMOTE_VALIDATED_STRATEGY_CONFIRM=" in stdout
     assert "PROMOTE_VALIDATED_STRATEGY_DRY_RUN=false" in stdout
+    assert (
+        "dry_run_approval_marker_command=env "
+        "PROMOTE_VALIDATED_STRATEGY_CONFIRM="
+    ) in stdout
+    assert "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY=true" in stdout
     assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
     assert not (evidence_root / "promotion_approval.json").exists()
+    docker_calls = (tmp_path / "docker_calls").read_text()
+    assert "--entrypoint python admin" in docker_calls
+    assert "enable-strategy" not in docker_calls
+    assert "disable-strategy" not in docker_calls
+    assert not (tmp_path / "deploy_calls").exists()
+
+
+def test_promote_validated_strategy_approval_only_writes_marker_without_promotion(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    deploy_script = _make_fake_deploy(tmp_path)
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=deploy_script,
+        tmp_path=tmp_path,
+        confirmation=_confirmation(evidence_root),
+        dry_run=False,
+        approval_only=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "wrote approval marker only" in result.stdout
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
+    approval_marker = json.loads((evidence_root / "promotion_approval.json").read_text())
+    summary_path = evidence_root / "latest_validation" / "summary.json"
+    assert approval_marker["strategy"] == "ema_pullback"
+    assert approval_marker["confirmation"] == _confirmation(evidence_root)
+    assert approval_marker["validation_summary"] == str(summary_path.resolve())
     docker_calls = (tmp_path / "docker_calls").read_text()
     assert "--entrypoint python admin" in docker_calls
     assert "enable-strategy" not in docker_calls

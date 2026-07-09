@@ -6346,6 +6346,7 @@ print(
     f"script=./scripts/promote_validated_strategy.sh "
     f"dry_run_default=true "
     f"mutation_requires_dry_run_false=true "
+    f"approval_marker_only_supported=true "
     f"env_file={safe_status_value(proof_status_env_file)} "
     f"write_access_status={safe_status_value(promotion_write_access_status)} "
     f"env_file_writable={safe_status_value(promotion_env_file_writable)} "

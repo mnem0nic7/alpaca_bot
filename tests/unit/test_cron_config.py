@@ -6936,6 +6936,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     ) in script
     assert "script=./scripts/promote_validated_strategy.sh" in script
     assert "write_access_status={safe_status_value(promotion_write_access_status)}" in script
+    assert "approval_marker_only_supported=true" in script
     assert "env_file_writable={safe_status_value(promotion_env_file_writable)}" in script
     assert "env_dir_writable={safe_status_value(promotion_env_dir_writable)}" in script
     assert "approval_marker={safe_status_value(second_strategy_evidence['promotion_approval_marker'])}" in script

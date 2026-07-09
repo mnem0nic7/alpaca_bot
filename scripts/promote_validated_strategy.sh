@@ -2,6 +2,8 @@
 # Promote a replay-validated stock strategy into the paper-approved allowlist,
 # enable its runtime flag, and redeploy. The action requires an explicit
 # operator confirmation string after evidence validation succeeds.
+# Set PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY=true to record the approval
+# marker only, without changing the env file, strategy flag, or deployment.
 #
 # Usage: promote_validated_strategy.sh [ENV_FILE] [STRATEGY_NAME] [EVIDENCE_ROOT] [DEPLOY_SCRIPT]
 set -euo pipefail
@@ -17,6 +19,7 @@ MAX_P_MEAN_LE_ZERO="${PROMOTE_VALIDATED_STRATEGY_MAX_P_MEAN_LE_ZERO:-0.05}"
 MIN_CANDIDATE_TRADES="${PROMOTE_VALIDATED_STRATEGY_MIN_CANDIDATE_TRADES:-30}"
 CONFIRMATION="${PROMOTE_VALIDATED_STRATEGY_CONFIRM:-}"
 DRY_RUN="${PROMOTE_VALIDATED_STRATEGY_DRY_RUN:-true}"
+APPROVAL_ONLY="${PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY:-false}"
 LOG_PREFIX="[promote_validated_strategy $(date -u '+%Y-%m-%dT%H:%M:%SZ')]"
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -41,6 +44,18 @@ case "${DRY_RUN,,}" in
     ;;
   *)
     echo "$LOG_PREFIX PROMOTE_VALIDATED_STRATEGY_DRY_RUN must be true or false" >&2
+    exit 1
+    ;;
+esac
+case "${APPROVAL_ONLY,,}" in
+  true|1|yes|y)
+    APPROVAL_ONLY=true
+    ;;
+  false|0|no|n|"")
+    APPROVAL_ONLY=false
+    ;;
+  *)
+    echo "$LOG_PREFIX PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY must be true or false" >&2
     exit 1
     ;;
 esac
@@ -331,6 +346,29 @@ require_promotion_write_access() {
   exit 1
 }
 
+require_approval_marker_write_access() {
+  local marker_dir
+  local marker_parent
+
+  marker_dir="$(dirname "$APPROVAL_MARKER")"
+  marker_parent="$(dirname "$marker_dir")"
+  if [[ -e "$APPROVAL_MARKER" && ! -w "$APPROVAL_MARKER" ]]; then
+    echo "$LOG_PREFIX approval marker is not writable: $APPROVAL_MARKER" >&2
+    exit 1
+  fi
+  if [[ -d "$marker_dir" ]]; then
+    if [[ ! -w "$marker_dir" ]]; then
+      echo "$LOG_PREFIX approval marker directory is not writable: $marker_dir" >&2
+      exit 1
+    fi
+    return 0
+  fi
+  if [[ ! -d "$marker_parent" || ! -w "$marker_parent" ]]; then
+    echo "$LOG_PREFIX approval marker parent directory is not writable: $marker_parent" >&2
+    exit 1
+  fi
+}
+
 run_broker_flat_check() {
   BROKER_FLAT_CONTEXT="promote validated strategy" \
     "$ROOT_DIR/scripts/broker_flat_check.sh" "$ENV_FILE"
@@ -388,6 +426,14 @@ if [[ "$DRY_RUN" == "true" ]]; then
     "$VALIDATED_STRATEGY" \
     "$EVIDENCE_ROOT" \
     "$DEPLOY_SCRIPT"
+  printf '%s dry_run_approval_marker_command=env PROMOTE_VALIDATED_STRATEGY_CONFIRM=%q PROMOTE_VALIDATED_STRATEGY_DRY_RUN=false PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY=true %q %q %q %q %q\n' \
+    "$LOG_PREFIX" \
+    "$required_confirmation" \
+    "$0" \
+    "$ENV_FILE" \
+    "$VALIDATED_STRATEGY" \
+    "$EVIDENCE_ROOT" \
+    "$DEPLOY_SCRIPT"
   if [[ "$confirmation_status" == "mismatch" ]]; then
     exit 2
   fi
@@ -402,18 +448,6 @@ if [[ "$confirmation_status" != "ok" ]]; then
   echo "$LOG_PREFIX refusing to promote without explicit confirmation" >&2
   echo "$LOG_PREFIX rerun with PROMOTE_VALIDATED_STRATEGY_CONFIRM=$required_confirmation" >&2
   exit 2
-fi
-
-require_promotion_write_access
-
-if ! run_broker_flat_check; then
-  echo "$LOG_PREFIX refusing promotion because paper broker is not flat" >&2
-  exit 1
-fi
-
-if ! verify_validation_summary_current; then
-  echo "$LOG_PREFIX validation summary changed after broker flat check; aborting promotion before mutation" >&2
-  exit 1
 fi
 
 read_env_value() {
@@ -564,6 +598,37 @@ with tempfile.NamedTemporaryFile(
 os.replace(tmp_path, marker)
 PY
 }
+
+if [[ "$APPROVAL_ONLY" == "true" ]]; then
+  require_approval_marker_write_access
+  if ! run_broker_flat_check; then
+    echo "$LOG_PREFIX refusing approval marker because paper broker is not flat" >&2
+    exit 1
+  fi
+  if ! verify_validation_summary_current; then
+    echo "$LOG_PREFIX validation summary changed after broker flat check; aborting approval marker write" >&2
+    exit 1
+  fi
+  if ! write_approval_marker; then
+    echo "$LOG_PREFIX failed to write approval marker" >&2
+    exit 1
+  fi
+  echo "$LOG_PREFIX wrote approval marker only: $APPROVAL_MARKER"
+  echo "$LOG_PREFIX approval marker recorded for $VALIDATED_STRATEGY from $VALIDATION_SUMMARY"
+  exit 0
+fi
+
+require_promotion_write_access
+
+if ! run_broker_flat_check; then
+  echo "$LOG_PREFIX refusing promotion because paper broker is not flat" >&2
+  exit 1
+fi
+
+if ! verify_validation_summary_current; then
+  echo "$LOG_PREFIX validation summary changed after broker flat check; aborting promotion before mutation" >&2
+  exit 1
+fi
 
 current_approved="$(read_env_value PAPER_APPROVED_STRATEGIES)"
 new_approved="$(append_csv_name "$current_approved" "$VALIDATED_STRATEGY")"
