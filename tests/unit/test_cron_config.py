@@ -6511,6 +6511,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "awaiting_clean_window_robustness" in script
     assert "awaiting_clean_window_evidence" in script
     assert "profit_probe_status == \"pending\" and profit_probe_exit_code == \"43\"" in script
+    assert "paper_profit_probe_reason = \"none\"" in script
+    assert "paper_profit_probe_reason = proof_reason" in script
+    assert "post_close_audit_status in {\"not_started\", \"not_due\"}" in script
     assert "post_close_audit_status in {\"missing\", \"failed\", \"stale\"}" in script
     assert "blockers.append(f\"post_close_audit_{post_close_audit_status}\")" in script
     assert "paper proof post-close audit:" in script
@@ -6525,6 +6528,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "required_since={post_close_required_since_text}" in script
     assert "session_guard={post_close_check_statuses['session_guard']}" in script
     assert "paper_profit_probe={post_close_check_statuses['paper_profit_probe']}" in script
+    assert "paper_profit_probe_reason={paper_profit_probe_reason}" in script
     assert "strategy_disabled" in script
     assert "watchlist_under_minimum" in script
     assert "sizing_drifted" in script

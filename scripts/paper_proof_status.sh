@@ -5350,6 +5350,27 @@ elif trade_count < min_trades:
 else:
     proof_reason = "awaiting_positive_pnl"
 
+paper_profit_probe_reason = "none"
+paper_profit_probe_parts = post_close_check_statuses["paper_profit_probe"].split(":")
+paper_profit_probe_status = paper_profit_probe_parts[0]
+paper_profit_probe_exit_code = (
+    paper_profit_probe_parts[1] if len(paper_profit_probe_parts) > 1 else ""
+)
+if paper_profit_probe_status == "pending" and paper_profit_probe_exit_code == "43":
+    paper_profit_probe_reason = proof_reason
+elif paper_profit_probe_status == "passed":
+    paper_profit_probe_reason = "profit_probe_passed"
+elif paper_profit_probe_status == "missing":
+    paper_profit_probe_reason = (
+        post_close_audit_status
+        if post_close_audit_status in {"not_started", "not_due"}
+        else "awaiting_post_close_probe"
+    )
+elif paper_profit_probe_status == "stale":
+    paper_profit_probe_reason = "stale_post_close_probe"
+elif paper_profit_probe_status != "none":
+    paper_profit_probe_reason = f"probe_{paper_profit_probe_status}"
+
 print(
     "paper proof summary: "
     f"readiness={readiness_status} "
@@ -5464,7 +5485,8 @@ print(
     f"due_after={post_close_due_after} "
     f"required_since={post_close_required_since_text} "
     f"session_guard={post_close_check_statuses['session_guard']} "
-    f"paper_profit_probe={post_close_check_statuses['paper_profit_probe']}"
+    f"paper_profit_probe={post_close_check_statuses['paper_profit_probe']} "
+    f"paper_profit_probe_reason={paper_profit_probe_reason}"
 )
 print(f"paper proof active strategies: {active_strategies or 'none'}")
 print(
