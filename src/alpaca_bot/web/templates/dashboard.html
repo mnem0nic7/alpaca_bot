@@ -357,6 +357,10 @@
             <p class="value mono">{{ proof_payload.get("proof_reason", proof_payload.get("reason", "unknown")) }}</p>
           </div>
           <div>
+            <p class="eyebrow">Overall Reason</p>
+            <p class="value mono {{ 'warn' if proof_payload.get('proof_overall_reason', 'unknown') not in ['profit_proven', 'unknown'] else '' }}">{{ proof_payload.get("proof_overall_reason", proof_payload.get("proof_reason", proof_payload.get("reason", "unknown"))) }}</p>
+          </div>
+          <div>
             <p class="eyebrow">Blockers</p>
             <p class="value mono {{ 'warn' if proof_blockers != 'none' else '' }}">{{ proof_blockers }}</p>
           </div>
@@ -546,6 +550,7 @@
                     {% if event.payload.get("min_pnl") %} pnl&gt;={{ event.payload.get("min_pnl") }}{% endif %}
                     {% if event.payload.get("reason") %} reason={{ event.payload.get("reason") }}{% endif %}
                     {% if event.payload.get("proof_status") %} proof_status={{ event.payload.get("proof_status") }}{% endif %}
+                    {% if event.payload.get("proof_overall_reason") %} overall_reason={{ event.payload.get("proof_overall_reason") }}{% endif %}
                     {% if event.payload.get("proof_blockers") %} blockers={{ event.payload.get("proof_blockers") }}{% endif %}
                     {% if event.payload.get("proof_closed_trades") %} closed={{ event.payload.get("proof_closed_trades") }}/{{ event.payload.get("proof_required_trades", "?") }}{% endif %}
                     {% if event.payload.get("proof_pnl") %} proof_pnl={{ event.payload.get("proof_pnl") }}{% endif %}

@@ -151,6 +151,7 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_status": "pending",
             "proof_readiness": "ready",
             "proof_reason": "awaiting_min_trades",
+            "proof_overall_reason": "awaiting_overall_blockers",
             "proof_blockers": "none",
             "proof_evidence_blockers": "sample_trades,strategy_diversification",
             "proof_sealed_evidence_blockers": "eod_loss_share",
@@ -467,6 +468,9 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "promotion_handoff=ready_needs_privileged_env_write" in response.text
     assert "approval_marker=missing" in response.text
     assert "awaiting_min_trades" in response.text
+    assert "Overall Reason" in response.text
+    assert "awaiting_overall_blockers" in response.text
+    assert "overall_reason=awaiting_overall_blockers" in response.text
     assert "12.34 / 0.01" in response.text
     assert "trades&gt;=10" in response.text
     assert "pnl&gt;=0.01" in response.text

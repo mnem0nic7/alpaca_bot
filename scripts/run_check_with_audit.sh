@@ -173,6 +173,7 @@ PROOF_SUMMARY_FIELDS = {
     "readiness": "proof_readiness",
     "proof": "proof_status",
     "reason": "proof_reason",
+    "overall_reason": "proof_overall_reason",
     "blockers": "proof_blockers",
     "evidence_blockers": "proof_evidence_blockers",
     "sealed_evidence_blockers": "proof_sealed_evidence_blockers",

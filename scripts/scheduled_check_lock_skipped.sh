@@ -763,6 +763,7 @@ try:
               COALESCE(payload->>'proof_clean_window_blockers', '') AS proof_clean_window_blockers,
               COALESCE(payload->>'proof_sealed_clean_window_blockers', '') AS proof_sealed_clean_window_blockers,
               COALESCE(payload->>'proof_reason', '') AS proof_reason,
+              COALESCE(payload->>'proof_overall_reason', '') AS proof_overall_reason,
               COALESCE(payload->>'proof_warnings', '') AS proof_warnings,
               COALESCE(payload->>'proof_progress_status', '') AS proof_progress_status,
               COALESCE(payload->>'proof_closed_trades', '') AS proof_closed_trades,
@@ -835,7 +836,7 @@ finally:
 if not row:
     raise SystemExit(0)
 
-created_raw = row[26]
+created_raw = row[27]
 created_utc = created_raw
 if created_utc.tzinfo is None:
     created_utc = created_utc.replace(tzinfo=timezone.utc)
@@ -843,7 +844,7 @@ else:
     created_utc = created_utc.astimezone(timezone.utc)
 age_seconds = (datetime.now(timezone.utc) - created_utc).total_seconds()
 age_minutes = str(max(0, int(age_seconds // 60)))
-payload = row[28] or {}
+payload = row[29] or {}
 if isinstance(payload, str):
     payload = json.loads(payload)
 execution_quality_fields = [
@@ -1250,7 +1251,7 @@ print(
 	    f"{row[6]}|{row[7]}|{row[8]}|{row[9]}|{row[10]}|{row[11]}|"
 	    f"{row[12]}|{row[13]}|{row[14]}|{row[15]}|{row[16]}|{row[17]}|"
 	    f"{row[18]}|{row[19]}|{row[20]}|{row[21]}|{row[22]}|"
-	    f"{row[23]}|{row[24]}|{row[25]}|{row[27]}|"
+	    f"{row[23]}|{row[24]}|{row[25]}|{row[26]}|{row[28]}|"
 	    f"{age_minutes}|{post_supervisor_line}|{concentration_line}|{active_day_line}|"
 	    f"{strategy_diversification_line}|{second_strategy_promotion_action_line}|"
 	    f"{blocker_gaps_line}|{execution_quality_line}"
@@ -1627,6 +1628,7 @@ case "$CHECK_NAME" in
     latest_clean_window_blockers=""
     latest_sealed_clean_window_blockers=""
     latest_proof_reason=""
+    latest_overall_reason=""
     latest_warnings=""
     latest_progress_status=""
     latest_closed_trades=""
@@ -1651,7 +1653,7 @@ case "$CHECK_NAME" in
     latest_second_strategy_promotion_action_line=""
     latest_blocker_gaps_line=""
     latest_execution_quality_line=""
-    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line latest_concentration_line latest_active_day_line latest_strategy_diversification_line latest_second_strategy_promotion_action_line latest_blocker_gaps_line latest_execution_quality_line <<< "$latest_proof_status"
+    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_overall_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line latest_concentration_line latest_active_day_line latest_strategy_diversification_line latest_second_strategy_promotion_action_line latest_blocker_gaps_line latest_execution_quality_line <<< "$latest_proof_status"
     proof_lock_is_recent=false
     if [[ "$latest_age_minutes" =~ ^[0-9]+$ ]] \
       && (( 10#$latest_age_minutes <= 10#$PROOF_STATUS_LOCK_MAX_AGE_MINUTES )); then
@@ -1671,7 +1673,7 @@ case "$CHECK_NAME" in
     fi
     if [[ "$proof_lock_is_recent" == "true" && "$proof_lock_has_current_evidence" == "true" ]]; then
       echo "scheduled check context: session_date=$session_date proof_start=$proof_start strategy=$proof_strategy strategies=$proof_strategy_csv min_trades=$proof_min_trades min_pnl=$proof_min_pnl session_guard_min_trades=$proof_session_guard_min_trades session_guard_min_pnl=$proof_session_guard_min_pnl reason=lock_busy_already_reported"
-      echo "paper proof summary: readiness=$latest_readiness proof=$latest_proof reason=${latest_proof_reason:-lock_busy_already_reported} blockers=$latest_blockers evidence_blockers=${latest_evidence_blockers:-none} sealed_evidence_blockers=${latest_sealed_evidence_blockers:-none} overall_blockers=${latest_overall_blockers:-unknown} clean_window_blockers=${latest_clean_window_blockers:-unknown} sealed_clean_window_blockers=${latest_sealed_clean_window_blockers:-unknown} warnings=${latest_warnings:-none}"
+      echo "paper proof summary: readiness=$latest_readiness proof=$latest_proof reason=${latest_proof_reason:-lock_busy_already_reported} overall_reason=${latest_overall_reason:-${latest_proof_reason:-lock_busy_already_reported}} blockers=$latest_blockers evidence_blockers=${latest_evidence_blockers:-none} sealed_evidence_blockers=${latest_sealed_evidence_blockers:-none} overall_blockers=${latest_overall_blockers:-unknown} clean_window_blockers=${latest_clean_window_blockers:-unknown} sealed_clean_window_blockers=${latest_sealed_clean_window_blockers:-unknown} warnings=${latest_warnings:-none}"
       echo "paper proof progress: status=${latest_progress_status:-$latest_proof} strategies=$proof_strategy_csv closed_trades=${latest_closed_trades:-unknown} required_trades=${latest_required_trades:-$proof_min_trades} pnl=${latest_pnl:-unknown} required_pnl=${latest_required_pnl:-$proof_min_pnl} window=lock_busy_already_reported first_exit_session=${latest_first_exit_session:-none} latest_exit_session=${latest_latest_exit_session:-none}"
       if [[ -n "$latest_blocker_gaps_line" ]]; then
         echo "$latest_blocker_gaps_line"

@@ -6368,11 +6368,23 @@ elif paper_profit_probe_status == "stale":
 elif paper_profit_probe_status != "none":
     paper_profit_probe_reason = f"probe_{paper_profit_probe_status}"
 
+if proof_status == "passed":
+    proof_overall_reason = "profit_proven"
+elif blockers:
+    proof_overall_reason = "readiness_blocked"
+elif scale_blockers:
+    proof_overall_reason = "awaiting_overall_blockers"
+elif evidence_blockers or sealed_evidence_blockers:
+    proof_overall_reason = "awaiting_profit_evidence"
+else:
+    proof_overall_reason = proof_reason
+
 print(
     "paper proof summary: "
     f"readiness={readiness_status} "
     f"proof={proof_status} "
     f"reason={proof_reason} "
+    f"overall_reason={proof_overall_reason} "
     f"blockers={','.join(blockers) if blockers else 'none'} "
     f"evidence_blockers={','.join(evidence_blockers) if evidence_blockers else 'none'} "
     f"sealed_evidence_blockers={','.join(sealed_evidence_blockers) if sealed_evidence_blockers else 'none'} "
