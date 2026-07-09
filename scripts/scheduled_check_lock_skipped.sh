@@ -1002,6 +1002,10 @@ second_strategy_promotion_action_fields = [
         "proof_second_strategy_promotion_action_approval_marker_command_status",
     ),
     (
+        "approval_marker_command_script",
+        "proof_second_strategy_promotion_action_approval_marker_command_script",
+    ),
+    (
         "approval_marker_command_confirm_env",
         "proof_second_strategy_promotion_action_approval_marker_command_confirm_env",
     ),

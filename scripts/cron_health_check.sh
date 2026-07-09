@@ -124,6 +124,7 @@ for script in \
   paper_proof_status.sh \
   nightly_cycle.sh \
   apply_candidate.sh \
+  approve_validated_strategy_marker.sh \
   promote_validated_strategy.sh \
   second_strategy_basket_scan.sh \
   runtime_image_health_check.sh

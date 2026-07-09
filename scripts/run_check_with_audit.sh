@@ -221,6 +221,9 @@ PROOF_SECOND_STRATEGY_PROMOTION_ACTION_FIELDS = {
     "approval_marker_command_status": (
         "proof_second_strategy_promotion_action_approval_marker_command_status"
     ),
+    "approval_marker_command_script": (
+        "proof_second_strategy_promotion_action_approval_marker_command_script"
+    ),
     "approval_marker_command_confirm_env": (
         "proof_second_strategy_promotion_action_approval_marker_command_confirm_env"
     ),

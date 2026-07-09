@@ -11,6 +11,11 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).parent.parent.parent / "scripts" / "promote_validated_strategy.sh"
+APPROVAL_WRAPPER = (
+    Path(__file__).parent.parent.parent
+    / "scripts"
+    / "approve_validated_strategy_marker.sh"
+)
 
 
 def _write_env(
@@ -168,6 +173,41 @@ def _run_promote(
     )
 
 
+def _run_approval_wrapper(
+    *,
+    env_file: Path,
+    evidence_root: Path,
+    deploy_script: Path,
+    tmp_path: Path,
+    confirmation: str | None = None,
+    dry_run: bool | None = None,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = {
+        "PATH": f"{_make_fake_docker(tmp_path)}:/usr/bin:/bin",
+        **(extra_env or {}),
+    }
+    if confirmation is not None:
+        env["APPROVE_VALIDATED_STRATEGY_MARKER_CONFIRM"] = confirmation
+    if dry_run is not None:
+        env["APPROVE_VALIDATED_STRATEGY_MARKER_DRY_RUN"] = (
+            "true" if dry_run else "false"
+        )
+    return subprocess.run(
+        [
+            str(APPROVAL_WRAPPER),
+            str(env_file),
+            "ema_pullback",
+            str(evidence_root),
+            str(deploy_script),
+        ],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+    )
+
+
 def test_promote_validated_strategy_requires_explicit_confirmation(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     evidence_root = tmp_path / "evidence"
@@ -231,6 +271,65 @@ def test_promote_validated_strategy_dry_run_reports_gates_without_mutation(
     assert "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY=true" in stdout
     assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
     assert not (evidence_root / "promotion_approval.json").exists()
+    docker_calls = (tmp_path / "docker_calls").read_text()
+    assert "--entrypoint python admin" in docker_calls
+    assert "enable-strategy" not in docker_calls
+    assert "disable-strategy" not in docker_calls
+    assert not (tmp_path / "deploy_calls").exists()
+
+
+def test_approval_marker_wrapper_defaults_to_dry_run_and_approval_only(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    deploy_script = _make_fake_deploy(tmp_path)
+
+    result = _run_approval_wrapper(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=deploy_script,
+        tmp_path=tmp_path,
+        extra_env={"PROMOTE_VALIDATED_STRATEGY_DRY_RUN": "false"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert APPROVAL_WRAPPER.stat().st_mode & stat.S_IEXEC
+    assert "dry_run=true" in result.stdout
+    assert "strategy=ema_pullback" in result.stdout
+    assert "dry_run_approval_marker_command=env " in result.stdout
+    assert "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY=true" in result.stdout
+    assert not (evidence_root / "promotion_approval.json").exists()
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
+    assert not (tmp_path / "deploy_calls").exists()
+
+
+def test_approval_marker_wrapper_writes_marker_without_promotion(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    deploy_script = _make_fake_deploy(tmp_path)
+
+    result = _run_approval_wrapper(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=deploy_script,
+        tmp_path=tmp_path,
+        confirmation=_confirmation(evidence_root),
+        dry_run=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "wrote approval marker only" in result.stdout
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
+    approval_marker = json.loads((evidence_root / "promotion_approval.json").read_text())
+    assert approval_marker["strategy"] == "ema_pullback"
+    assert approval_marker["confirmation"] == _confirmation(evidence_root)
     docker_calls = (tmp_path / "docker_calls").read_text()
     assert "--entrypoint python admin" in docker_calls
     assert "enable-strategy" not in docker_calls
