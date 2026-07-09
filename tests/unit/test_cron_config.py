@@ -5918,9 +5918,16 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_SECOND_STRATEGY_LOG" in script
     assert "PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES" in script
     assert "PROOF_STATUS_NIGHTLY_STALL_MINUTES" in script
+    assert "PROOF_STATUS_SECOND_STRATEGY_SCAN_STATUS" in script
+    assert "PROOF_STATUS_SECOND_STRATEGY_SCAN_DETAIL" in script
     assert "PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES must be a positive integer" in script
     assert "PROOF_STATUS_NIGHTLY_STALL_MINUTES must be a positive integer" in script
     assert "probe_nightly_cycle_status" in script
+    assert "probe_second_strategy_scan_status" in script
+    assert "status = \"failed\"" in script
+    assert 'second_strategy_scan_status="${event_status:-unknown}"' in script
+    assert "warnings.append(\"second_strategy_scan_failed\")" in script
+    assert script.count("/[a]wk/ { next }") >= 2
     assert "compact_status_value" in script
     assert "flock -n \"$PROOF_STATUS_NIGHTLY_LOCK_FILE\" true" in script
     assert "second_strategy_process_running" in script
@@ -6007,6 +6014,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "paper proof nightly automation:" in script
     assert "status={nightly_status}" in script
     assert "stage={nightly_stage or 'none'}" in script
+    assert "second_strategy_scan_status={second_strategy_scan_status}" in script
+    assert "second_strategy_scan_detail={second_strategy_scan_detail}" in script
     assert "paper proof runtime:" in script
     assert "ops_status={ops_health_status}" in script
     assert "ops_detail={ops_health_detail or 'none'}" in script

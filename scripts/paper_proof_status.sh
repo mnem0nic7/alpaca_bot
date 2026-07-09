@@ -302,6 +302,8 @@ nightly_log_age_minutes="none"
 nightly_active_log="none"
 nightly_stage="none"
 nightly_detail="none"
+second_strategy_scan_status="unknown"
+second_strategy_scan_detail="none"
 
 probe_nightly_cycle_status() {
   local process_line=""
@@ -327,6 +329,7 @@ probe_nightly_cycle_status() {
   process_line="$(
     ps -eo pid=,etimes=,args= \
       | awk '
+        /[a]wk/ { next }
         /flock -n .*alpaca-bot-nightly\.lock/ ||
         /[n]ightly_cycle\.sh/ ||
         /[a]lpaca-bot-nightly/ ||
@@ -362,6 +365,7 @@ probe_nightly_cycle_status() {
 
   if ps -eo args= \
       | awk '
+        /[a]wk/ { next }
         /bash -lc/ { next }
         /(^|[[:space:]])timeout[[:space:]][^[:space:]]+[[:space:]]+(\.\/)?scripts\/second_strategy_basket_scan\.sh([[:space:]]|$)/ ||
         /(^|[[:space:]])bash[[:space:]]+(\.\/)?scripts\/second_strategy_basket_scan\.sh([[:space:]]|$)/ ||
@@ -426,6 +430,52 @@ probe_nightly_cycle_status() {
 }
 
 probe_nightly_cycle_status
+
+probe_second_strategy_scan_status() {
+  local latest_event=""
+  local event_status=""
+  local event_detail=""
+
+  if [[ ! -f "$PROOF_STATUS_SECOND_STRATEGY_LOG" ]]; then
+    second_strategy_scan_status="missing_log"
+    second_strategy_scan_detail="none"
+    return 0
+  fi
+
+  latest_event="$(
+    tail -1000 "$PROOF_STATUS_SECOND_STRATEGY_LOG" 2>/dev/null \
+      | awk '
+        /^(latest|latest_validation)=/ || /positive_edge_validation_rows=/ {
+          status = "ok"
+          line = $0
+        }
+        /second strategy basket scan failed:/ ||
+        /candidate scan command\(s\) failed/ ||
+        /validation command\(s\) failed/ ||
+        /syntax error/ {
+          status = "failed"
+          line = $0
+        }
+        END {
+          if (status != "") {
+            printf "%s\t%s\n", status, line
+          }
+        }
+      ' \
+      || true
+  )"
+  if [[ -z "$latest_event" ]]; then
+    second_strategy_scan_status="unknown"
+    second_strategy_scan_detail="none"
+    return 0
+  fi
+
+  IFS=$'\t' read -r event_status event_detail <<< "$latest_event"
+  second_strategy_scan_status="${event_status:-unknown}"
+  second_strategy_scan_detail="$(compact_status_value "${event_detail:-none}")"
+}
+
+probe_second_strategy_scan_status
 
 proof_status_enabled_strategy_args=()
 build_proof_status_enabled_strategy_args() {
@@ -604,6 +654,8 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_NIGHTLY_STALL_MINUTES="$PROOF_STATUS_NIGHTLY_STALL_MINUTES" \
   -e PROOF_STATUS_NIGHTLY_STAGE="$nightly_stage" \
   -e PROOF_STATUS_NIGHTLY_DETAIL="$nightly_detail" \
+  -e PROOF_STATUS_SECOND_STRATEGY_SCAN_STATUS="$second_strategy_scan_status" \
+  -e PROOF_STATUS_SECOND_STRATEGY_SCAN_DETAIL="$second_strategy_scan_detail" \
   -e PROOF_STATUS_OPS_HEALTH_STATUS="$ops_health_status" \
   -e PROOF_STATUS_OPS_HEALTH_DETAIL="$ops_health_detail" \
   -e PROOF_STATUS_OPS_CLOSE_ONLY_HEALTH_STATUS="$ops_close_only_health_status" \
@@ -1612,6 +1664,12 @@ nightly_stall_minutes = os.environ.get(
 )
 nightly_stage = os.environ.get("PROOF_STATUS_NIGHTLY_STAGE", "none")
 nightly_detail = os.environ.get("PROOF_STATUS_NIGHTLY_DETAIL", "none")
+second_strategy_scan_status = os.environ.get(
+    "PROOF_STATUS_SECOND_STRATEGY_SCAN_STATUS", "unknown"
+)
+second_strategy_scan_detail = os.environ.get(
+    "PROOF_STATUS_SECOND_STRATEGY_SCAN_DETAIL", "none"
+)
 ops_health_status = os.environ.get("PROOF_STATUS_OPS_HEALTH_STATUS", "unknown")
 ops_health_detail = os.environ.get("PROOF_STATUS_OPS_HEALTH_DETAIL", "").strip()
 ops_close_only_health_status = os.environ.get(
@@ -5170,6 +5228,8 @@ if nightly_status.endswith("_stale"):
     warnings.append("nightly_stale")
 elif nightly_status.endswith("_stalled"):
     warnings.append("nightly_stalled")
+if second_strategy_scan_status == "failed":
+    warnings.append("second_strategy_scan_failed")
 if profit_lock_pause:
     warnings.append("profit_lock_pause")
 if proof_risk_lock_pause:
@@ -5264,6 +5324,8 @@ print(
     f"max_age_minutes={nightly_max_age_minutes} "
     f"stall_minutes={nightly_stall_minutes} "
     f"stage={nightly_stage or 'none'} "
+    f"second_strategy_scan_status={second_strategy_scan_status} "
+    f"second_strategy_scan_detail={second_strategy_scan_detail} "
     f"detail={nightly_detail or 'none'}"
 )
 print(
