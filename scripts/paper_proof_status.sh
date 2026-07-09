@@ -901,6 +901,24 @@ def safe_status_value(value: object, *, max_length: int = 160) -> str:
     return text[:max_length] or "none"
 
 
+def format_expired_signal_price_posture(
+    *,
+    above_limit: int,
+    below_stop: int,
+    within_stop_limit: int,
+    missing_context: int,
+) -> str:
+    total = above_limit + below_stop + within_stop_limit + missing_context
+    if total <= 0:
+        return "none"
+    return (
+        f"above_limit:{above_limit},"
+        f"below_stop:{below_stop},"
+        f"within_stop_limit:{within_stop_limit},"
+        f"missing_context:{missing_context}"
+    )
+
+
 def load_json_payload(path: Path) -> tuple[dict | None, str | None, str | None]:
     if not path.exists():
         return None, "missing", None
@@ -2620,6 +2638,7 @@ try:
         entry_order_filled_symbols = "none"
         entry_order_expired_symbols = "none"
         entry_order_expired_reasons = "none"
+        entry_order_expired_signal_price_posture = "none"
         posture_entry_order_count = 0
         posture_entry_order_filled_count = 0
         posture_entry_quality_would_reject_count = 0
@@ -2641,6 +2660,7 @@ try:
         current_session_entry_order_filled_symbols = "none"
         current_session_entry_order_expired_symbols = "none"
         current_session_entry_order_expired_reasons = "none"
+        current_session_entry_order_expired_signal_price_posture = "none"
         current_session_entry_order_active_symbols = "none"
         current_session_entry_order_maintenance_drained_symbols = "none"
         current_session_entry_order_short_window_drained_symbols = "none"
@@ -2663,6 +2683,7 @@ try:
         post_supervisor_entry_order_filled_symbols = "none"
         post_supervisor_entry_order_expired_symbols = "none"
         post_supervisor_entry_order_expired_reasons = "none"
+        post_supervisor_entry_order_expired_signal_price_posture = "none"
         post_supervisor_entry_order_active_symbols = "none"
         post_supervisor_entry_order_short_window_count = 0
         post_supervisor_entry_order_min_remaining_active_minutes = None
@@ -2775,8 +2796,37 @@ try:
                         AND a.payload->>'client_order_id' = o.client_order_id
                         AND COALESCE(a.payload->>'reason', '') NOT LIKE 'deploy maintenance%%'
                         AND COALESCE(a.payload->>'reason', '') <> 'short active dispatch window'
-                    ) AS strategy_expired
+                    ) AS strategy_expired,
+                    COALESCE(
+                      entry_context.signal_price_posture,
+                      'missing_context'
+                    ) AS signal_price_posture
                   FROM orders o
+                  LEFT JOIN LATERAL (
+                    SELECT
+                      CASE
+                        WHEN d.signal_bar_close IS NULL
+                          OR d.stop_price IS NULL
+                          OR d.limit_price IS NULL
+                          OR d.stop_price <= 0
+                          OR d.limit_price <= 0
+                          THEN 'missing_context'
+                        WHEN d.signal_bar_close > d.limit_price
+                          THEN 'above_limit'
+                        WHEN d.signal_bar_close < d.stop_price
+                          THEN 'below_stop'
+                        ELSE 'within_stop_limit'
+                      END AS signal_price_posture
+                    FROM decision_log d
+                    WHERE d.symbol = o.symbol
+                      AND d.trading_mode = o.trading_mode
+                      AND d.strategy_version = o.strategy_version
+                      AND d.strategy_name IS NOT DISTINCT FROM o.strategy_name
+                      AND d.cycle_at = o.created_at
+                      AND d.decision = 'accepted'
+                    ORDER BY d.id DESC
+                    LIMIT 1
+                  ) entry_context ON true
                   WHERE o.trading_mode = %s
                     AND o.strategy_version = %s
                     AND o.strategy_name = ANY(%s)
@@ -2856,7 +2906,31 @@ try:
                         AND (strategy_expired OR status = 'expired')
                     ),
                     'none'
-                  ) AS expired_reasons
+                  ) AS expired_reasons,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
+                      AND (strategy_expired OR status = 'expired')
+                      AND signal_price_posture = 'above_limit'
+                  )::int AS expired_signal_above_limit_entries,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
+                      AND (strategy_expired OR status = 'expired')
+                      AND signal_price_posture = 'below_stop'
+                  )::int AS expired_signal_below_stop_entries,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
+                      AND (strategy_expired OR status = 'expired')
+                      AND signal_price_posture = 'within_stop_limit'
+                  )::int AS expired_signal_within_stop_limit_entries,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
+                      AND (strategy_expired OR status = 'expired')
+                      AND signal_price_posture = 'missing_context'
+                  )::int AS expired_signal_missing_context_entries
                 FROM entry_orders
                 """,
                 (
@@ -2886,6 +2960,14 @@ try:
                 entry_order_filled_symbols = execution_quality_row[8] or "none"
                 entry_order_expired_symbols = execution_quality_row[9] or "none"
                 entry_order_expired_reasons = execution_quality_row[10] or "none"
+                entry_order_expired_signal_price_posture = (
+                    format_expired_signal_price_posture(
+                        above_limit=int(execution_quality_row[11] or 0),
+                        below_stop=int(execution_quality_row[12] or 0),
+                        within_stop_limit=int(execution_quality_row[13] or 0),
+                        missing_context=int(execution_quality_row[14] or 0),
+                    )
+                )
 
             cur.execute(
                 """
@@ -3098,8 +3180,37 @@ try:
                         AND a.payload->>'client_order_id' = o.client_order_id
                         AND COALESCE(a.payload->>'reason', '') NOT LIKE 'deploy maintenance%%'
                         AND COALESCE(a.payload->>'reason', '') <> 'short active dispatch window'
-                    ) AS strategy_expired
+                    ) AS strategy_expired,
+                    COALESCE(
+                      entry_context.signal_price_posture,
+                      'missing_context'
+                    ) AS signal_price_posture
                   FROM orders o
+                  LEFT JOIN LATERAL (
+                    SELECT
+                      CASE
+                        WHEN d.signal_bar_close IS NULL
+                          OR d.stop_price IS NULL
+                          OR d.limit_price IS NULL
+                          OR d.stop_price <= 0
+                          OR d.limit_price <= 0
+                          THEN 'missing_context'
+                        WHEN d.signal_bar_close > d.limit_price
+                          THEN 'above_limit'
+                        WHEN d.signal_bar_close < d.stop_price
+                          THEN 'below_stop'
+                        ELSE 'within_stop_limit'
+                      END AS signal_price_posture
+                    FROM decision_log d
+                    WHERE d.symbol = o.symbol
+                      AND d.trading_mode = o.trading_mode
+                      AND d.strategy_version = o.strategy_version
+                      AND d.strategy_name IS NOT DISTINCT FROM o.strategy_name
+                      AND d.cycle_at = o.created_at
+                      AND d.decision = 'accepted'
+                    ORDER BY d.id DESC
+                    LIMIT 1
+                  ) entry_context ON true
                   WHERE o.trading_mode = %s
                     AND o.strategy_version = %s
                     AND o.strategy_name = ANY(%s)
@@ -3226,7 +3337,31 @@ try:
                         AND remaining_active_minutes < %s
                     ),
                     'none'
-                  ) AS short_window_symbols
+                  ) AS short_window_symbols,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
+                      AND (strategy_expired OR status = 'expired')
+                      AND signal_price_posture = 'above_limit'
+                  )::int AS expired_signal_above_limit_entries,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
+                      AND (strategy_expired OR status = 'expired')
+                      AND signal_price_posture = 'below_stop'
+                  )::int AS expired_signal_below_stop_entries,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
+                      AND (strategy_expired OR status = 'expired')
+                      AND signal_price_posture = 'within_stop_limit'
+                  )::int AS expired_signal_within_stop_limit_entries,
+                  COUNT(*) FILTER (
+                    WHERE NOT maintenance_drained
+                      AND NOT short_window_drained
+                      AND (strategy_expired OR status = 'expired')
+                      AND signal_price_posture = 'missing_context'
+                  )::int AS expired_signal_missing_context_entries
                 FROM entry_order_windows
                 """,
                 (
@@ -3311,6 +3446,16 @@ try:
                     )
                 current_session_entry_order_short_window_symbols = (
                     current_session_execution_row[18] or "none"
+                )
+                current_session_entry_order_expired_signal_price_posture = (
+                    format_expired_signal_price_posture(
+                        above_limit=int(current_session_execution_row[19] or 0),
+                        below_stop=int(current_session_execution_row[20] or 0),
+                        within_stop_limit=int(
+                            current_session_execution_row[21] or 0
+                        ),
+                        missing_context=int(current_session_execution_row[22] or 0),
+                    )
                 )
 
             if (
@@ -3428,8 +3573,37 @@ try:
                             AND a.payload->>'client_order_id' = o.client_order_id
                             AND COALESCE(a.payload->>'reason', '') NOT LIKE 'deploy maintenance%%'
                             AND COALESCE(a.payload->>'reason', '') <> 'short active dispatch window'
-                        ) AS strategy_expired
+                        ) AS strategy_expired,
+                        COALESCE(
+                          entry_context.signal_price_posture,
+                          'missing_context'
+                        ) AS signal_price_posture
                       FROM orders o
+                      LEFT JOIN LATERAL (
+                        SELECT
+                          CASE
+                            WHEN d.signal_bar_close IS NULL
+                              OR d.stop_price IS NULL
+                              OR d.limit_price IS NULL
+                              OR d.stop_price <= 0
+                              OR d.limit_price <= 0
+                              THEN 'missing_context'
+                            WHEN d.signal_bar_close > d.limit_price
+                              THEN 'above_limit'
+                            WHEN d.signal_bar_close < d.stop_price
+                              THEN 'below_stop'
+                            ELSE 'within_stop_limit'
+                          END AS signal_price_posture
+                        FROM decision_log d
+                        WHERE d.symbol = o.symbol
+                          AND d.trading_mode = o.trading_mode
+                          AND d.strategy_version = o.strategy_version
+                          AND d.strategy_name IS NOT DISTINCT FROM o.strategy_name
+                          AND d.cycle_at = o.created_at
+                          AND d.decision = 'accepted'
+                        ORDER BY d.id DESC
+                        LIMIT 1
+                      ) entry_context ON true
                       WHERE o.trading_mode = %s
                         AND o.strategy_version = %s
                         AND o.strategy_name = ANY(%s)
@@ -3534,7 +3708,31 @@ try:
                             AND remaining_active_minutes < %s
                         ),
                         'none'
-                      ) AS short_window_symbols
+                      ) AS short_window_symbols,
+                      COUNT(*) FILTER (
+                        WHERE NOT maintenance_drained
+                          AND NOT short_window_drained
+                          AND (strategy_expired OR status = 'expired')
+                          AND signal_price_posture = 'above_limit'
+                      )::int AS expired_signal_above_limit_entries,
+                      COUNT(*) FILTER (
+                        WHERE NOT maintenance_drained
+                          AND NOT short_window_drained
+                          AND (strategy_expired OR status = 'expired')
+                          AND signal_price_posture = 'below_stop'
+                      )::int AS expired_signal_below_stop_entries,
+                      COUNT(*) FILTER (
+                        WHERE NOT maintenance_drained
+                          AND NOT short_window_drained
+                          AND (strategy_expired OR status = 'expired')
+                          AND signal_price_posture = 'within_stop_limit'
+                      )::int AS expired_signal_within_stop_limit_entries,
+                      COUNT(*) FILTER (
+                        WHERE NOT maintenance_drained
+                          AND NOT short_window_drained
+                          AND (strategy_expired OR status = 'expired')
+                          AND signal_price_posture = 'missing_context'
+                      )::int AS expired_signal_missing_context_entries
                     FROM entry_order_windows
                     """,
                     (
@@ -3608,6 +3806,16 @@ try:
                         )
                     post_supervisor_entry_order_short_window_symbols = (
                         post_supervisor_execution_row[14] or "none"
+                    )
+                    post_supervisor_entry_order_expired_signal_price_posture = (
+                        format_expired_signal_price_posture(
+                            above_limit=int(post_supervisor_execution_row[15] or 0),
+                            below_stop=int(post_supervisor_execution_row[16] or 0),
+                            within_stop_limit=int(
+                                post_supervisor_execution_row[17] or 0
+                            ),
+                            missing_context=int(post_supervisor_execution_row[18] or 0),
+                        )
                     )
 
         unpaired_filled_exit_count = 0
@@ -6046,6 +6254,7 @@ print(
     f"filled_symbols={entry_order_filled_symbols} "
     f"expired_symbols={entry_order_expired_symbols} "
     f"expired_reasons={entry_order_expired_reasons} "
+    f"expired_signal_price_posture={entry_order_expired_signal_price_posture} "
     f"current_posture_filled_symbols={posture_entry_order_filled_symbols}"
 )
 print(
@@ -6078,6 +6287,7 @@ print(
     f"filled_symbols={current_session_entry_order_filled_symbols} "
     f"expired_symbols={current_session_entry_order_expired_symbols} "
     f"expired_reasons={current_session_entry_order_expired_reasons} "
+    f"expired_signal_price_posture={current_session_entry_order_expired_signal_price_posture} "
     f"active_symbols={current_session_entry_order_active_symbols} "
     f"maintenance_drained_symbols={current_session_entry_order_maintenance_drained_symbols} "
     f"short_window_drained_symbols={current_session_entry_order_short_window_drained_symbols} "
@@ -6114,6 +6324,7 @@ print(
     f"filled_symbols={post_supervisor_entry_order_filled_symbols} "
     f"expired_symbols={post_supervisor_entry_order_expired_symbols} "
     f"expired_reasons={post_supervisor_entry_order_expired_reasons} "
+    f"expired_signal_price_posture={post_supervisor_entry_order_expired_signal_price_posture} "
     f"active_symbols={post_supervisor_entry_order_active_symbols} "
     f"short_window={post_supervisor_entry_order_short_window_count} "
     f"min_remaining_active_minutes={post_supervisor_entry_order_min_remaining_active_minutes_text} "
