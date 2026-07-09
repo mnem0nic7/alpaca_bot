@@ -16,6 +16,7 @@ APPROVAL_MARKER="${PROMOTE_VALIDATED_STRATEGY_APPROVAL_MARKER:-$EVIDENCE_ROOT/pr
 MAX_P_MEAN_LE_ZERO="${PROMOTE_VALIDATED_STRATEGY_MAX_P_MEAN_LE_ZERO:-0.05}"
 MIN_CANDIDATE_TRADES="${PROMOTE_VALIDATED_STRATEGY_MIN_CANDIDATE_TRADES:-30}"
 CONFIRMATION="${PROMOTE_VALIDATED_STRATEGY_CONFIRM:-}"
+DRY_RUN="${PROMOTE_VALIDATED_STRATEGY_DRY_RUN:-false}"
 LOG_PREFIX="[promote_validated_strategy $(date -u '+%Y-%m-%dT%H:%M:%SZ')]"
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -31,6 +32,18 @@ if [[ ! "$MIN_CANDIDATE_TRADES" =~ ^[0-9]+$ ]] || [[ "$MIN_CANDIDATE_TRADES" -lt
   echo "$LOG_PREFIX PROMOTE_VALIDATED_STRATEGY_MIN_CANDIDATE_TRADES must be a positive integer" >&2
   exit 1
 fi
+case "${DRY_RUN,,}" in
+  true|1|yes|y)
+    DRY_RUN=true
+    ;;
+  false|0|no|n|"")
+    DRY_RUN=false
+    ;;
+  *)
+    echo "$LOG_PREFIX PROMOTE_VALIDATED_STRATEGY_DRY_RUN must be true or false" >&2
+    exit 1
+    ;;
+esac
 
 set -a
 # shellcheck disable=SC1090
@@ -190,11 +203,13 @@ PY
 eval "$validation_env"
 
 required_confirmation="approve-${VALIDATED_STRATEGY}-paper-promotion-sha256-${VALIDATION_SUMMARY_SHA256}"
-if [[ "$CONFIRMATION" != "$required_confirmation" ]]; then
-  echo "$LOG_PREFIX evidence validated for $VALIDATED_STRATEGY scale=$VALIDATED_SCALE trades=$VALIDATED_TRADES pnl=$VALIDATED_TOTAL_PNL ci_low=$VALIDATED_CI_LOW p_mean_le_zero=$VALIDATED_P_MEAN_LE_ZERO validation_summary=$VALIDATION_SUMMARY validation_summary_sha256=$VALIDATION_SUMMARY_SHA256" >&2
-  echo "$LOG_PREFIX refusing to promote without explicit confirmation" >&2
-  echo "$LOG_PREFIX rerun with PROMOTE_VALIDATED_STRATEGY_CONFIRM=$required_confirmation" >&2
-  exit 2
+confirmation_status="missing"
+if [[ -n "$CONFIRMATION" ]]; then
+  if [[ "$CONFIRMATION" == "$required_confirmation" ]]; then
+    confirmation_status="ok"
+  else
+    confirmation_status="mismatch"
+  fi
 fi
 
 verify_validation_summary_current() {
@@ -234,42 +249,164 @@ if ! verify_validation_summary_current; then
   exit 1
 fi
 
-require_promotion_write_access() {
+promotion_write_access_status="ok"
+promotion_env_file_writable="false"
+promotion_env_dir_writable="false"
+promotion_approval_marker_writable="false"
+promotion_approval_marker_dir_writable="false"
+probe_promotion_write_access() {
   local env_dir
   local marker_dir
   local marker_parent
 
+  promotion_write_access_status="ok"
+  promotion_env_file_writable="false"
+  promotion_env_dir_writable="false"
+  promotion_approval_marker_writable="false"
+  promotion_approval_marker_dir_writable="false"
   env_dir="$(dirname "$ENV_FILE")"
-  if [[ ! -w "$ENV_FILE" ]]; then
-    echo "$LOG_PREFIX env file is not writable: $ENV_FILE" >&2
-    exit 1
-  fi
-  if [[ ! -w "$env_dir" ]]; then
-    echo "$LOG_PREFIX env file directory is not writable for atomic update: $env_dir" >&2
-    exit 1
-  fi
-
   marker_dir="$(dirname "$APPROVAL_MARKER")"
   marker_parent="$(dirname "$marker_dir")"
+
+  if [[ ! -w "$ENV_FILE" ]]; then
+    promotion_write_access_status="env_file_not_writable"
+  else
+    promotion_env_file_writable="true"
+  fi
+  if [[ ! -w "$env_dir" ]]; then
+    if [[ "$promotion_write_access_status" == "ok" ]]; then
+      promotion_write_access_status="env_dir_not_writable"
+    fi
+  else
+    promotion_env_dir_writable="true"
+  fi
+
   if [[ -e "$APPROVAL_MARKER" && ! -w "$APPROVAL_MARKER" ]]; then
-    echo "$LOG_PREFIX approval marker is not writable: $APPROVAL_MARKER" >&2
-    exit 1
+    if [[ "$promotion_write_access_status" == "ok" ]]; then
+      promotion_write_access_status="approval_marker_not_writable"
+    fi
+  else
+    promotion_approval_marker_writable="true"
   fi
   if [[ -d "$marker_dir" ]]; then
     if [[ ! -w "$marker_dir" ]]; then
-      echo "$LOG_PREFIX approval marker directory is not writable: $marker_dir" >&2
-      exit 1
+      if [[ "$promotion_write_access_status" == "ok" ]]; then
+        promotion_write_access_status="approval_marker_dir_not_writable"
+      fi
+    else
+      promotion_approval_marker_dir_writable="true"
     fi
   elif [[ ! -d "$marker_parent" || ! -w "$marker_parent" ]]; then
-    echo "$LOG_PREFIX approval marker parent directory is not writable: $marker_parent" >&2
-    exit 1
+    if [[ "$promotion_write_access_status" == "ok" ]]; then
+      promotion_write_access_status="approval_marker_parent_not_writable"
+    fi
   fi
 }
 
+require_promotion_write_access() {
+  probe_promotion_write_access
+  case "$promotion_write_access_status" in
+    ok)
+      return 0
+      ;;
+    env_file_not_writable)
+      echo "$LOG_PREFIX env file is not writable: $ENV_FILE" >&2
+      ;;
+    env_dir_not_writable)
+      echo "$LOG_PREFIX env file directory is not writable for atomic update: $(dirname "$ENV_FILE")" >&2
+      ;;
+    approval_marker_not_writable)
+      echo "$LOG_PREFIX approval marker is not writable: $APPROVAL_MARKER" >&2
+      ;;
+    approval_marker_dir_not_writable)
+      echo "$LOG_PREFIX approval marker directory is not writable: $(dirname "$APPROVAL_MARKER")" >&2
+      ;;
+    approval_marker_parent_not_writable)
+      echo "$LOG_PREFIX approval marker parent directory is not writable: $(dirname "$(dirname "$APPROVAL_MARKER")")" >&2
+      ;;
+    *)
+      echo "$LOG_PREFIX promotion write access failed: $promotion_write_access_status" >&2
+      ;;
+  esac
+  exit 1
+}
+
+run_broker_flat_check() {
+  BROKER_FLAT_CONTEXT="promote validated strategy" \
+    "$ROOT_DIR/scripts/broker_flat_check.sh" "$ENV_FILE"
+}
+
+compact_dry_run_detail() {
+  local value="$1"
+  value="${value//$'\r'/ }"
+  value="${value//$'\n'/; }"
+  value="${value//$'\t'/ }"
+  printf '%s\n' "$value"
+}
+
+if [[ "$DRY_RUN" == "true" ]]; then
+  validation_current_status="ok"
+  validation_current_detail="ok"
+  if ! validation_current_detail="$(verify_validation_summary_current 2>&1)"; then
+    validation_current_status="failed"
+  fi
+  probe_promotion_write_access
+  broker_flat_status="ok"
+  broker_flat_detail=""
+  if ! broker_flat_detail="$(run_broker_flat_check 2>&1)"; then
+    broker_flat_status="failed"
+  fi
+  validation_current_detail="$(compact_dry_run_detail "${validation_current_detail:-ok}")"
+  broker_flat_detail="$(compact_dry_run_detail "${broker_flat_detail:-ok}")"
+  printf '%s dry_run=true strategy=%s scale=%s trades=%s pnl=%s ci_low=%s p_mean_le_zero=%s validation_summary=%s validation_summary_sha256=%s confirmation_status=%s required_confirmation=%s validation_current_status=%s validation_current_detail=%s write_access_status=%s env_file_writable=%s env_dir_writable=%s approval_marker=%s approval_marker_writable=%s approval_marker_dir_writable=%s broker_flat_status=%s broker_flat_detail=%s\n' \
+    "$LOG_PREFIX" \
+    "$VALIDATED_STRATEGY" \
+    "$VALIDATED_SCALE" \
+    "$VALIDATED_TRADES" \
+    "$VALIDATED_TOTAL_PNL" \
+    "$VALIDATED_CI_LOW" \
+    "$VALIDATED_P_MEAN_LE_ZERO" \
+    "$VALIDATION_SUMMARY" \
+    "$VALIDATION_SUMMARY_SHA256" \
+    "$confirmation_status" \
+    "$required_confirmation" \
+    "$validation_current_status" \
+    "${validation_current_detail:-ok}" \
+    "$promotion_write_access_status" \
+    "$promotion_env_file_writable" \
+    "$promotion_env_dir_writable" \
+    "$APPROVAL_MARKER" \
+    "$promotion_approval_marker_writable" \
+    "$promotion_approval_marker_dir_writable" \
+    "$broker_flat_status" \
+    "${broker_flat_detail:-ok}"
+  printf '%s dry_run_promotion_command=env PROMOTE_VALIDATED_STRATEGY_CONFIRM=%q PROMOTE_VALIDATED_STRATEGY_DRY_RUN=false %q %q %q %q %q\n' \
+    "$LOG_PREFIX" \
+    "$required_confirmation" \
+    "$0" \
+    "$ENV_FILE" \
+    "$VALIDATED_STRATEGY" \
+    "$EVIDENCE_ROOT" \
+    "$DEPLOY_SCRIPT"
+  if [[ "$confirmation_status" == "mismatch" ]]; then
+    exit 2
+  fi
+  if [[ "$validation_current_status" != "ok" || "$broker_flat_status" != "ok" ]]; then
+    exit 1
+  fi
+  exit 0
+fi
+
+if [[ "$confirmation_status" != "ok" ]]; then
+  echo "$LOG_PREFIX evidence validated for $VALIDATED_STRATEGY scale=$VALIDATED_SCALE trades=$VALIDATED_TRADES pnl=$VALIDATED_TOTAL_PNL ci_low=$VALIDATED_CI_LOW p_mean_le_zero=$VALIDATED_P_MEAN_LE_ZERO validation_summary=$VALIDATION_SUMMARY validation_summary_sha256=$VALIDATION_SUMMARY_SHA256" >&2
+  echo "$LOG_PREFIX refusing to promote without explicit confirmation" >&2
+  echo "$LOG_PREFIX rerun with PROMOTE_VALIDATED_STRATEGY_CONFIRM=$required_confirmation" >&2
+  exit 2
+fi
+
 require_promotion_write_access
 
-if ! BROKER_FLAT_CONTEXT="promote validated strategy" \
-  "$ROOT_DIR/scripts/broker_flat_check.sh" "$ENV_FILE"; then
+if ! run_broker_flat_check; then
   echo "$LOG_PREFIX refusing promotion because paper broker is not flat" >&2
   exit 1
 fi
