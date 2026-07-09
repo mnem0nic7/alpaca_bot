@@ -170,7 +170,7 @@ _SINGLE_FIELD_FAMILIES: tuple[tuple[str, str, tuple[float | int, ...]], ...] = (
     ("A_initial_stop", "atr_stop_multiplier", (0.75, 1.0, 1.5, 2.0)),
     ("B_trail_atr", "trailing_stop_atr_multiplier", (0.0, 1.0, 1.5, 2.5, 3.5)),
     ("C_trail_trigger", "trailing_stop_profit_trigger_r", (0.5, 1.0, 1.5, 2.0)),
-    ("E_rel_vol", "relative_volume_threshold", (1.5, 2.0, 2.5, 3.0)),
+    ("E_rel_vol", "relative_volume_threshold", (1.5, 1.8, 2.0, 2.5, 3.0)),
     ("Y_rel_vol_lookback", "relative_volume_lookback_bars", (10, 15, 20, 30, 40)),
     (
         "Z_breakout_stop_buffer",

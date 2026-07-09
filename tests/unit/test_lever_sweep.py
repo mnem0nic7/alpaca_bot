@@ -379,6 +379,16 @@ def test_failed_breakdown_grid_uses_strategy_specific_volume_and_recapture_lever
     assert any("failed_breakdown_recapture_buffer_pct" in p.overrides for p in grid)
 
 
+def test_stock_grid_includes_relative_volume_1_8_candidate():
+    grid = build_ofat_grid(_settings(), strategy="bull_flag")
+
+    assert any(
+        point.label == "E_rel_vol:relative_volume_threshold=1.8"
+        and point.overrides == {"relative_volume_threshold": 1.8}
+        for point in grid
+    )
+
+
 def test_momentum_grid_includes_prior_high_lookback_lever():
     grid = build_ofat_grid(_settings(), strategy="momentum")
     labels = " ".join(p.label for p in grid)
