@@ -4974,6 +4974,18 @@ effective_entry_fill_rate_text = (
     if effective_entry_fill_rate is not None
     else "none"
 )
+entry_fill_rate_status = "insufficient_data"
+if effective_entry_fill_rate is not None:
+    if effective_entry_fill_rate < execution_min_entry_fill_rate:
+        entry_fill_rate_status = "below_minimum"
+    elif (
+        entry_order_fill_rate is not None
+        and entry_order_fill_rate < execution_min_entry_fill_rate
+        and posture_entry_fill_rate is not None
+    ):
+        entry_fill_rate_status = "historical_below_minimum_current_ok"
+    else:
+        entry_fill_rate_status = "ok"
 execution_quality_status = "ok"
 execution_quality_warnings = []
 if (
@@ -6877,6 +6889,7 @@ print(
     f"active={entry_order_active_count} "
     f"maintenance_drained={entry_order_maintenance_drained_count} "
     f"short_window_drained={entry_order_short_window_drained_count} "
+    f"entry_fill_rate_status={entry_fill_rate_status} "
     f"entry_fill_rate={entry_order_fill_rate_text} "
     f"min_entry_fill_rate={execution_min_entry_fill_rate:.2f} "
     f"current_posture_entry_orders={posture_entry_order_count} "

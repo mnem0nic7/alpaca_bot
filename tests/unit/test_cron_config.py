@@ -7197,6 +7197,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "entry_quality_rejected={decision_entry_quality_rejected}" in script
     assert "maintenance_drained={entry_order_maintenance_drained_count}" in script
     assert "short_window_drained={entry_order_short_window_drained_count}" in script
+    assert 'entry_fill_rate_status = "historical_below_minimum_current_ok"' in script
+    assert "entry_fill_rate_status={entry_fill_rate_status}" in script
     assert "entry_fill_rate={entry_order_fill_rate_text}" in script
     assert "current_posture_entry_fill_rate={posture_entry_fill_rate_text}" in script
     assert "current_posture_would_reject={posture_entry_quality_would_reject_count}" in script
