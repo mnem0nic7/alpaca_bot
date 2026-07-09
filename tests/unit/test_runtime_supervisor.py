@@ -1558,8 +1558,107 @@ def test_runtime_supervisor_only_enables_new_entries_once_per_completed_signal_b
         for reasons in repeated_report.strategy_entries_disabled_reasons.values()
     )
     assert reopened_report.strategy_entries_disabled_reasons == {}
+    assert len(market_data.daily_bar_calls) == 1
     assert "allowed_intent_types" not in dispatch_calls[1]
     assert dispatch_calls[1]["blocked_strategy_names"] == set()
+
+
+def test_runtime_supervisor_refetches_daily_bars_when_watchlist_changes(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+
+    class ChangingWatchlistStore:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def list_enabled(self, trading_mode: str) -> list[str]:
+            del trading_mode
+            self.calls += 1
+            if self.calls == 1:
+                return ["AAPL", "SPY"]
+            return ["MSFT", "SPY"]
+
+        def list_ignored(self, trading_mode: str) -> list[str]:
+            del trading_mode
+            return []
+
+    runtime = make_runtime_context(
+        settings,
+        watchlist_store=ChangingWatchlistStore(),
+    )
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=21),
+            "MSFT": make_bar_series("MSFT", end=now, count=21),
+            "SPY": make_bar_series("SPY", end=now, count=21),
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=20, days=True),
+            "MSFT": make_bar_series("MSFT", end=now, count=20, days=True),
+            "SPY": make_bar_series("SPY", end=now, count=20, days=True),
+        },
+    )
+
+    monkeypatch.setattr(module, "run_cycle", lambda **_: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **_: {"submitted_count": 0})
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+    supervisor.run_cycle_once(now=lambda: now + timedelta(minutes=1))
+
+    assert len(market_data.daily_bar_calls) == 2
+    assert market_data.daily_bar_calls[0]["symbols"] == ["AAPL", "SPY"]
+    assert market_data.daily_bar_calls[1]["symbols"] == ["MSFT", "SPY"]
+
+
+def test_runtime_supervisor_does_not_cache_partial_daily_bar_coverage(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    runtime = make_runtime_context(settings)
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=21),
+            "MSFT": make_bar_series("MSFT", end=now, count=21),
+            "SPY": make_bar_series("SPY", end=now, count=21),
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=20, days=True),
+            "SPY": make_bar_series("SPY", end=now, count=20, days=True),
+        },
+    )
+
+    monkeypatch.setattr(module, "run_cycle", lambda **_: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **_: {"submitted_count": 0})
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+    supervisor.run_cycle_once(now=lambda: now + timedelta(minutes=1))
+
+    assert len(market_data.daily_bar_calls) == 2
 
 
 def test_runtime_supervisor_restores_entry_cadence_from_existing_entry_orders(

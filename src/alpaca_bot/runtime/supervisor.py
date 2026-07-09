@@ -353,6 +353,8 @@ class RuntimeSupervisor:
         self._loss_limit_loaded_from_db: set[date] = set()
         # Latest completed signal bar for which new entry intents were enabled.
         self._last_entry_enabled_bar_at: dict[date, datetime] = {}
+        self._daily_bars_cache_key: tuple[date, tuple[str, ...]] | None = None
+        self._daily_bars_cache: dict[str, list[Bar]] | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "RuntimeSupervisor":
@@ -959,14 +961,10 @@ class RuntimeSupervisor:
         daily_bars_end = datetime.combine(session_date, datetime.min.time()).replace(
             tzinfo=self.settings.market_timezone
         )
-        daily_bars_by_symbol = self.market_data.get_daily_bars(
-            symbols=list(watchlist_symbols),
-            start=timestamp - timedelta(days=max(
-                self.settings.daily_sma_period * 3,
-                60,
-                self.settings.high_watermark_lookback_days + 10,
-            )),
-            end=daily_bars_end,
+        daily_bars_by_symbol = self._daily_bars_for_watchlist(
+            session_date=session_date,
+            timestamp=timestamp,
+            watchlist_symbols=watchlist_symbols,
         )
         # Regime filter: reuse already-fetched daily bars if regime_symbol is on the
         # watchlist, otherwise fetch separately to avoid a duplicate API call.
@@ -2196,6 +2194,40 @@ class RuntimeSupervisor:
             trading_mode=self.settings.trading_mode,
             strategy_version=self.settings.strategy_version,
         )
+
+    def _daily_bars_for_watchlist(
+        self,
+        *,
+        session_date: date,
+        timestamp: datetime,
+        watchlist_symbols: tuple[str, ...],
+    ) -> dict[str, list[Bar]]:
+        cache_key = (session_date, watchlist_symbols)
+        if (
+            self._daily_bars_cache_key == cache_key
+            and self._daily_bars_cache is not None
+        ):
+            return dict(self._daily_bars_cache)
+
+        daily_bars_end = datetime.combine(session_date, datetime.min.time()).replace(
+            tzinfo=self.settings.market_timezone
+        )
+        daily_bars = self.market_data.get_daily_bars(
+            symbols=list(watchlist_symbols),
+            start=timestamp
+            - timedelta(
+                days=max(
+                    self.settings.daily_sma_period * 3,
+                    60,
+                    self.settings.high_watermark_lookback_days + 10,
+                )
+            ),
+            end=daily_bars_end,
+        )
+        if set(watchlist_symbols).issubset(daily_bars):
+            self._daily_bars_cache_key = cache_key
+            self._daily_bars_cache = dict(daily_bars)
+        return dict(daily_bars)
 
     def _resolve_active_strategies(self) -> list[tuple[str, StrategySignalEvaluator]]:
         """Return (strategy_name, evaluator) for every enabled strategy."""
