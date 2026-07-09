@@ -165,6 +165,18 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_gap_concentration_runway_status": "needs_higher_non_best_pnl",
             "proof_gap_concentration_remaining_trade_required_avg_pnl": "0.53",
             "proof_gap_concentration_remaining_active_day_required_pnl": "4.77",
+            "proof_active_day_status": "blocked",
+            "proof_active_days": "2",
+            "proof_required_active_days": "5",
+            "proof_remaining_trades_per_required_active_day": "9.0",
+            "proof_active_day_next_possible_session": "2026-07-09",
+            "proof_earliest_active_days_met_session": "2026-07-13",
+            "proof_concentration_status": "blocked",
+            "proof_concentration_best_winning_trade": "DRUG:14.65@2026-07-08",
+            "proof_concentration_non_best_pnl": "0.34",
+            "proof_concentration_non_best_avg_trade_gap": "86",
+            "proof_concentration_single_win_pnl_share": "0.98",
+            "proof_concentration_max_single_win_pnl_share": "0.50",
             "proof_strategy_diversification_candidate_status": (
                 "validated_stock_candidate_unapproved"
             ),
@@ -425,8 +437,25 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     )
     assert "gap_trades=27" in response.text
     assert "gap_days=3" in response.text
+    assert "Active Day Runway" in response.text
+    assert "active=2/5" in response.text
+    assert "per_day=9.0" in response.text
+    assert "next=2026-07-09" in response.text
+    assert "earliest=2026-07-13" in response.text
+    assert "active_day=blocked" in response.text
+    assert "trades_per_day=9.0" in response.text
+    assert "next_active_day=2026-07-09" in response.text
+    assert "earliest_active_days=2026-07-13" in response.text
     assert "gap_strategies=1" in response.text
     assert "concentration_runway=needs_higher_non_best_pnl" in response.text
+    assert "Concentration Detail" in response.text
+    assert "best=DRUG:14.65@2026-07-08" in response.text
+    assert "share=0.98/0.50" in response.text
+    assert "non_best=0.34" in response.text
+    assert "trade_gap=86" in response.text
+    assert "concentration=blocked" in response.text
+    assert "concentration_share=0.98" in response.text
+    assert "concentration_trade_gap=86" in response.text
     assert "candidate=ema_pullback" in response.text
     assert "candidate_status=validated_stock_candidate_unapproved" in response.text
     assert "candidate_scale=0.10" in response.text
