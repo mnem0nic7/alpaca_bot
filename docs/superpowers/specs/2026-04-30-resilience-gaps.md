@@ -40,6 +40,13 @@ Seven resilience gaps were identified in a codebase audit. Three are critical (d
 
 ## Gap 3 — Trade update stream has no heartbeat (Critical)
 
+**Superseded 2026-07-09:** Live audit proved that order-event silence is not a
+websocket heartbeat: the stream delivered the complete NTRA entry/fill/stop
+sequence, then the five-minute timer declared the still-working connection
+stale. The silence alert/restart behavior has been removed. Thread-death
+restart, the SDK websocket ping/reconnect mechanism, and per-cycle broker REST
+reconciliation remain the authoritative liveness and recovery controls.
+
 **Root cause:** Stream thread is considered "healthy" iff `is_alive()` returns True. A clean close (WebSocket code 1000, no exception) makes `stream.run()` return normally, thread exits, `_stream_thread = None`, and the next `run_forever` iteration detects the dead thread and restarts with backoff. But there is no detection of a live thread with a stale connection that stopped delivering events.
 
 **Desired behaviour:** The supervisor tracks when the last trade update event was received. During market hours, if the stream thread is alive but no event has arrived in `STREAM_HEARTBEAT_TIMEOUT_SECONDS` seconds, log a CRITICAL warning and fire a notifier alert. Do not auto-restart on stale heartbeat alone (auto-restart only for dead threads) — this avoids false positives during genuinely quiet markets.

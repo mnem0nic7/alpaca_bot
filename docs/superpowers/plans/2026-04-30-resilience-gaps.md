@@ -253,6 +253,12 @@ In `tests/unit/test_cycle_intent_execution.py`:
 
 ## Task 3 — Gap 3: Stream heartbeat
 
+> Superseded 2026-07-09. Live runtime evidence showed that this design treated
+> normal event-driven silence as connection failure and churned a stream that
+> had delivered the full NTRA entry/fill/stop sequence. The silence watchdog
+> was removed; dead-thread restart, SDK websocket ping/reconnect, and per-cycle
+> REST reconciliation remain in place.
+
 **Files:**
 - `src/alpaca_bot/runtime/trade_update_stream.py`
 - `src/alpaca_bot/runtime/supervisor.py`

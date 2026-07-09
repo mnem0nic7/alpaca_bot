@@ -1059,11 +1059,14 @@ def test_runtime_supervisor_close_stops_background_trade_update_stream() -> None
 
     supervisor.startup(now=lambda: now)
     assert stream.run_started.wait(timeout=1.0)
+    stream_thread = supervisor._stream_thread
+    assert stream_thread is not None
 
     supervisor.close()
 
     assert stream.run_calls == 1
     assert stream.stop_calls == 1
+    assert not stream_thread.is_alive()
     assert supervisor._closed is True
 
 
@@ -5433,10 +5436,9 @@ def test_supervisor_exits_after_10_consecutive_cycle_failures(monkeypatch) -> No
     assert call_count == 10, f"Supervisor must exit exactly on the 10th failure, got {call_count}"
 
 
-def test_stream_heartbeat_stale_fires_audit_notifier_and_restart(monkeypatch) -> None:
-    """When the stream thread is alive but no event has arrived in >300s, supervisor must
-    append a stream_heartbeat_stale audit event, notify, and restart the stream."""
-    module, RuntimeSupervisor, _ = load_supervisor_api()
+def test_quiet_trade_stream_is_not_restarted_without_order_events(monkeypatch) -> None:
+    """A live event-driven stream can be quiet indefinitely between order updates."""
+    _, RuntimeSupervisor, _ = load_supervisor_api()
     settings = make_settings()
     runtime = make_runtime_context(settings)
     notifier_calls: list[dict[str, str]] = []
@@ -5446,103 +5448,12 @@ def test_stream_heartbeat_stale_fires_audit_notifier_and_restart(monkeypatch) ->
             notifier_calls.append({"subject": subject, "body": body})
 
     stream = FakeStream()
-    replacement_stream = FakeStream(block_until_stop=True)
-
-    def stream_factory(resolved_settings: Settings) -> FakeStream:
-        assert resolved_settings is settings
-        return replacement_stream
-
     supervisor = RuntimeSupervisor(
         settings=settings,
         runtime=runtime,
         broker=FakeBroker(market_is_open=True),
         market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
         stream=stream,
-        stream_factory=stream_factory,
-        close_runtime_fn=lambda _runtime: None,
-        connection_checker=lambda _conn: True,
-        notifier=RecordingNotifier(),
-    )
-    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
-
-    # Simulate: stream thread alive, last event was 310s ago
-    base_now = datetime(2026, 4, 30, 14, 30, tzinfo=timezone.utc)
-    stale_ts = base_now - timedelta(seconds=310)
-    supervisor._last_stream_event_at = stale_ts
-    # We need an alive thread — use a blocking event
-    alive_thread = threading.Thread(
-        target=lambda: stream._stop_requested.wait(timeout=5.0),
-        daemon=True,
-    )
-    alive_thread.start()
-    supervisor._stream_thread = alive_thread
-
-    iteration = 0
-
-    def fake_run_cycle_once(**kwargs):
-        nonlocal iteration
-        iteration += 1
-        if iteration >= 2:
-            raise SystemExit(0)
-        return SimpleNamespace(entries_disabled=False, cycle_result=None, dispatch_report=None, account_equity=0.0)
-
-    monkeypatch.setattr(supervisor, "run_cycle_once", fake_run_cycle_once)
-
-    try:
-        with pytest.raises(SystemExit):
-            supervisor.run_forever(
-                max_iterations=3,
-                sleep_fn=lambda _: None,
-                cycle_now=lambda: base_now,
-            )
-
-        audit_events = runtime.audit_event_store.appended
-        stale_events = [e for e in audit_events if e.event_type == "stream_heartbeat_stale"]
-        assert len(stale_events) >= 1, "stream_heartbeat_stale audit event must be appended"
-        restart_events = [
-            e for e in audit_events if e.event_type == "trade_update_stream_restarted"
-        ]
-        assert len(restart_events) == 1
-        assert restart_events[0].payload["reason"] == "heartbeat_stale"
-        assert stream.stop_calls == 1
-        assert replacement_stream.run_started.wait(timeout=1.0)
-        assert supervisor._last_stream_event_at == stale_ts
-        assert supervisor._last_stream_heartbeat_restart_at == base_now
-        assert supervisor._stream_heartbeat_alerted is True
-        assert any("heartbeat" in c["subject"].lower() or "stream" in c["subject"].lower() for c in notifier_calls), (
-            "Notifier must be fired when heartbeat is stale"
-        )
-    finally:
-        replacement_stream.stop()
-        if supervisor._stream_thread is not None:
-            supervisor._stream_thread.join(timeout=1.0)
-
-
-def test_stream_heartbeat_alert_fires_only_once_per_stale_window(monkeypatch) -> None:
-    """Heartbeat alert must not repeat on every cycle while the stream remains stale."""
-    module, RuntimeSupervisor, _ = load_supervisor_api()
-    settings = make_settings()
-    runtime = make_runtime_context(settings)
-    notifier_calls: list[dict[str, str]] = []
-
-    class RecordingNotifier:
-        def send(self, *, subject: str, body: str) -> None:
-            notifier_calls.append({"subject": subject, "body": body})
-
-    stream = FakeStream()
-    replacement_stream = FakeStream(block_until_stop=True)
-
-    def stream_factory(resolved_settings: Settings) -> FakeStream:
-        assert resolved_settings is settings
-        return replacement_stream
-
-    supervisor = RuntimeSupervisor(
-        settings=settings,
-        runtime=runtime,
-        broker=FakeBroker(market_is_open=True),
-        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
-        stream=stream,
-        stream_factory=stream_factory,
         close_runtime_fn=lambda _runtime: None,
         connection_checker=lambda _conn: True,
         notifier=RecordingNotifier(),
@@ -5550,9 +5461,7 @@ def test_stream_heartbeat_alert_fires_only_once_per_stale_window(monkeypatch) ->
     monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
 
     base_now = datetime(2026, 4, 30, 14, 30, tzinfo=timezone.utc)
-    stale_ts = base_now - timedelta(seconds=310)
-    supervisor._last_stream_event_at = stale_ts
-
+    supervisor._last_stream_event_at = base_now - timedelta(hours=2)
     alive_thread = threading.Thread(
         target=lambda: stream._stop_requested.wait(timeout=5.0),
         daemon=True,
@@ -5560,174 +5469,35 @@ def test_stream_heartbeat_alert_fires_only_once_per_stale_window(monkeypatch) ->
     alive_thread.start()
     supervisor._stream_thread = alive_thread
 
-    cycle_count = 0
-
     def fake_run_cycle_once(**kwargs):
-        nonlocal cycle_count
-        cycle_count += 1
-        if cycle_count >= 4:
-            raise SystemExit(0)
         return SimpleNamespace(entries_disabled=False, cycle_result=None, dispatch_report=None, account_equity=0.0)
 
     monkeypatch.setattr(supervisor, "run_cycle_once", fake_run_cycle_once)
 
     try:
-        with pytest.raises(SystemExit):
-            supervisor.run_forever(
-                max_iterations=5,
-                sleep_fn=lambda _: None,
-                cycle_now=lambda: base_now,
-            )
-
-        heartbeat_notifier_calls = [
-            c for c in notifier_calls
-            if "heartbeat" in c["subject"].lower() or "stream" in c["subject"].lower()
-        ]
-        assert len(heartbeat_notifier_calls) == 1, (
-            f"Heartbeat alert must fire exactly once per stale window, got {len(heartbeat_notifier_calls)}"
+        supervisor.run_forever(
+            max_iterations=1,
+            sleep_fn=lambda _: None,
+            cycle_now=lambda: base_now,
         )
+
         restart_events = [
-            e
-            for e in runtime.audit_event_store.appended
-            if e.event_type == "trade_update_stream_restarted"
+            event
+            for event in runtime.audit_event_store.appended
+            if event.event_type == "trade_update_stream_restarted"
         ]
-        assert len(restart_events) == 1
-        assert restart_events[0].payload["reason"] == "heartbeat_stale"
-        assert stream.stop_calls == 1
-        assert replacement_stream.run_started.wait(timeout=1.0)
-        assert supervisor._last_stream_event_at == stale_ts
-        assert supervisor._last_stream_heartbeat_restart_at == base_now
-        assert supervisor._stream_heartbeat_alerted is True
+        stale_events = [
+            event
+            for event in runtime.audit_event_store.appended
+            if event.event_type == "stream_heartbeat_stale"
+        ]
+        assert restart_events == []
+        assert stale_events == []
+        assert stream.stop_calls == 1  # orderly run_forever shutdown only
+        assert notifier_calls == []
     finally:
-        replacement_stream.stop()
-        if supervisor._stream_thread is not None:
-            supervisor._stream_thread.join(timeout=1.0)
-
-
-def test_stream_heartbeat_restart_is_rate_limited_during_quiet_window(
-    monkeypatch,
-) -> None:
-    module, RuntimeSupervisor, _ = load_supervisor_api()
-    settings = make_settings()
-    runtime = make_runtime_context(settings)
-    stream = FakeStream()
-    replacement_stream = FakeStream(block_until_stop=True)
-
-    def stream_factory(resolved_settings: Settings) -> FakeStream:
-        assert resolved_settings is settings
-        return replacement_stream
-
-    supervisor = RuntimeSupervisor(
-        settings=settings,
-        runtime=runtime,
-        broker=FakeBroker(market_is_open=True),
-        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
-        stream=stream,
-        stream_factory=stream_factory,
-        close_runtime_fn=lambda _runtime: None,
-        connection_checker=lambda _conn: True,
-    )
-    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
-
-    base_now = datetime(2026, 4, 30, 14, 30, tzinfo=timezone.utc)
-    supervisor._last_stream_event_at = base_now - timedelta(seconds=900)
-    supervisor._last_stream_heartbeat_restart_at = base_now - timedelta(seconds=60)
-    supervisor._stream_heartbeat_alerted = True
-
-    alive_thread = threading.Thread(
-        target=lambda: stream._stop_requested.wait(timeout=5.0),
-        daemon=True,
-    )
-    alive_thread.start()
-    supervisor._stream_thread = alive_thread
-
-    def fake_run_cycle_once(**kwargs):
-        return SimpleNamespace(entries_disabled=False, cycle_result=None, dispatch_report=None, account_equity=0.0)
-
-    monkeypatch.setattr(supervisor, "run_cycle_once", fake_run_cycle_once)
-
-    supervisor.run_forever(
-        max_iterations=1,
-        sleep_fn=lambda _: None,
-        cycle_now=lambda: base_now,
-    )
-
-    restart_events = [
-        e
-        for e in runtime.audit_event_store.appended
-        if e.event_type == "trade_update_stream_restarted"
-    ]
-    assert restart_events == []
-    assert not replacement_stream.run_started.is_set()
-    assert supervisor._stream_heartbeat_alerted is True
-
-    stream.stop()
-    alive_thread.join(timeout=1.0)
-
-
-def test_stream_start_rate_limits_initial_heartbeat_restart(monkeypatch) -> None:
-    module, RuntimeSupervisor, _ = load_supervisor_api()
-    settings = make_settings()
-    runtime = make_runtime_context(settings)
-    stream = FakeStream(block_until_stop=True)
-    replacement_stream = FakeStream(block_until_stop=True)
-
-    def stream_factory(resolved_settings: Settings) -> FakeStream:
-        assert resolved_settings is settings
-        return replacement_stream
-
-    supervisor = RuntimeSupervisor(
-        settings=settings,
-        runtime=runtime,
-        broker=FakeBroker(market_is_open=True),
-        market_data=FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={}),
-        stream=stream,
-        stream_factory=stream_factory,
-        close_runtime_fn=lambda _runtime: None,
-        connection_checker=lambda _conn: True,
-    )
-    monkeypatch.setattr(supervisor, "startup", lambda **kwargs: make_startup_report())
-
-    started_at = datetime(2026, 4, 30, 14, 30, tzinfo=timezone.utc)
-    supervisor._start_stream_thread(now=lambda: started_at)
-    assert stream.run_started.wait(timeout=1.0)
-    assert supervisor._last_stream_heartbeat_restart_at == started_at
-
-    event_at = started_at + timedelta(seconds=60)
-    supervisor._last_stream_event_at = event_at
-    check_at = event_at + timedelta(seconds=310)
-
-    def fake_run_cycle_once(**kwargs):
-        return SimpleNamespace(
-            entries_disabled=False,
-            cycle_result=None,
-            dispatch_report=None,
-            account_equity=0.0,
-        )
-
-    monkeypatch.setattr(supervisor, "run_cycle_once", fake_run_cycle_once)
-
-    supervisor.run_forever(
-        max_iterations=1,
-        sleep_fn=lambda _: None,
-        cycle_now=lambda: check_at,
-    )
-
-    stale_events = [
-        event
-        for event in runtime.audit_event_store.appended
-        if event.event_type == "stream_heartbeat_stale"
-    ]
-    restart_events = [
-        event
-        for event in runtime.audit_event_store.appended
-        if event.event_type == "trade_update_stream_restarted"
-    ]
-    assert len(stale_events) == 1
-    assert restart_events == []
-    assert not replacement_stream.run_started.is_set()
-    assert supervisor._last_stream_heartbeat_restart_at == started_at
-    assert supervisor._stream_heartbeat_alerted is True
+        stream.stop()
+        alive_thread.join(timeout=1.0)
 
 
 def test_stream_restart_replaces_stream_when_stop_does_not_join(monkeypatch) -> None:
@@ -5784,7 +5554,7 @@ def test_stream_restart_replaces_stream_when_stop_does_not_join(monkeypatch) -> 
         stale_thread = supervisor._stream_thread
         assert stale_thread is not None
 
-        supervisor._restart_stream_thread(timestamp=now, reason="heartbeat_stale")
+        supervisor._restart_stream_thread(timestamp=now, reason="thread_unresponsive")
 
         assert replacement_stream.run_started.wait(timeout=1.0)
         replacement_thread = supervisor._stream_thread
