@@ -266,7 +266,9 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_post_supervisor_execution_status": "observing",
             "proof_post_supervisor_execution_warnings": "none",
             "proof_post_supervisor_execution_entry_orders": "0",
+            "proof_post_supervisor_execution_entry_fill_rate": "none",
             "proof_post_supervisor_execution_capacity_rejected": "0",
+            "proof_post_supervisor_execution_entry_dispatch_delay": "none",
             "proof_post_supervisor_execution_short_window": "0",
         },
         created_at=now,
@@ -436,6 +438,7 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "fill=none" in response.text
     assert "entries=0" in response.text
     assert "caprej=0" in response.text
+    assert "delay=none" in response.text
     assert "short=0" in response.text
     assert "post_supervisor_since=2026-07-07T19:08:57+00:00" in response.text
     assert (
@@ -443,7 +446,9 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
         in response.text
     )
     assert (
-        "post_supervisor_exec=observing warnings=none since=2026-07-07T19:08:57+00:00"
+        "post_supervisor_exec=observing warnings=none "
+        "since=2026-07-07T19:08:57+00:00 entries=0 fill=none "
+        "caprej=0 delay=none short=0"
         in response.text
     )
     assert (
