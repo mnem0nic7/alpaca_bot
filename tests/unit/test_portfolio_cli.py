@@ -317,6 +317,7 @@ def test_proof_horizon_basket_cli_measures_basket_gate(tmp_path, monkeypatch):
     assert "| starts that eventually reached proof gate | 2 |" in text
     payload = json.loads(json_out.read_text())
     assert payload["strategy"] == "bull_flag+ema_pullback"
+    assert payload["confidence_scales"] == {"ema_pullback": 0.10}
     assert payload["trades"] == 4
     assert payload["starts_eventually_passed"] == 2
 

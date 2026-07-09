@@ -634,3 +634,9 @@ status now consumes that summary, reports
 `proof_horizon_status=failed` with `proof_horizon_detail=total_pnl_below_gate`,
 and suppresses the approval quick command as `review_proof_horizon` while this
 negative proof-horizon evidence is current.
+
+Follow-up: proof-horizon summaries now carry explicit `confidence_scales`.
+The current published summary records `ema_pullback=0.10`, and proof status
+checks that this scale matches the promotion candidate before using the horizon
+result. A horizon artifact for a different scale now reports a mismatch instead
+of gating approval for the wrong candidate row.

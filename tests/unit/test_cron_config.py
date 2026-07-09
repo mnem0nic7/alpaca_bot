@@ -2694,6 +2694,10 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
         '        "proof_second_strategy_promotion_action_proof_horizon_total_pnl"'
     ) in script
     assert (
+        '"proof_horizon_candidate_scale": (\n'
+        '        "proof_second_strategy_promotion_action_proof_horizon_candidate_scale"'
+    ) in script
+    assert (
         '"approval_marker_command_status": (\n'
         '        "proof_second_strategy_promotion_action_approval_marker_command_status"'
     ) in script
@@ -7379,6 +7383,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "promotion_action_status = \"ready_needs_proof_horizon\"" in script
     assert "promotion_action_status = \"review_proof_horizon\"" in script
     assert "proof_horizon_status == \"ok\"" in script
+    assert "proof_horizon_raw_confidence_scales = proof_horizon_payload.get(" in script
+    assert '"confidence_scales"' in script
+    assert "proof_horizon_detail = \"candidate_scale_mismatch\"" in script
+    assert "proof_horizon_detail = \"candidate_scale_missing\"" in script
     assert "\"prefilter_summary_sha256\": prefilter_summary_sha256 or \"none\"" in script
     assert "\"validation_summary_sha256\": validation_summary_sha256 or \"none\"" in script
     assert "\"proof_horizon_summary_sha256\": proof_horizon_summary_sha256 or \"none\"" in script
@@ -7496,6 +7504,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])}" in script
     assert "proof_horizon_status={second_strategy_evidence['proof_horizon_status']}" in script
     assert "proof_horizon_summary={safe_status_value(second_strategy_evidence['proof_horizon_summary'])}" in script
+    assert "proof_horizon_candidate_scale={format_optional_float(second_strategy_evidence['proof_horizon_candidate_scale'], 4)}" in script
     assert "candidate_ci_low={format_optional_float(second_strategy_evidence['promotion_candidate_ci_low'], 4)}" in script
     assert "PROOF_STATUS_ENV_FILE" in script
     assert "validation_verdicts={second_strategy_evidence['validation_verdicts']}" in script

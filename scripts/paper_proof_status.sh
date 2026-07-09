@@ -1740,10 +1740,15 @@ def load_second_strategy_evidence(
     proof_horizon_starts_eventually_passed: int | None = None
     proof_horizon_historical_starts: int | None = None
     proof_horizon_terminal_blockers = "none"
+    proof_horizon_confidence_scales = "none"
+    proof_horizon_candidate_scale: float | None = None
     if promotion_candidate is not None:
         promotion_candidate_name = str(
             promotion_candidate.get("candidate") or ""
         ).strip()
+        promotion_candidate_scale = as_float_or_none(
+            promotion_candidate.get("candidate_scale")
+        )
         proof_horizon_status = "missing"
         proof_horizon_detail = "latest_proof_horizon_summary_missing"
         if proof_horizon_error and proof_horizon_error != "missing":
@@ -1771,6 +1776,27 @@ def load_second_strategy_evidence(
             proof_horizon_terminal_blockers = summarize_counts(
                 proof_horizon_payload.get("terminal_blockers")
             )
+            proof_horizon_raw_confidence_scales = proof_horizon_payload.get(
+                "confidence_scales"
+            )
+            if isinstance(proof_horizon_raw_confidence_scales, dict):
+                scale_parts: list[str] = []
+                for name, value in sorted(
+                    proof_horizon_raw_confidence_scales.items(),
+                    key=lambda item: str(item[0]),
+                ):
+                    scale_name = str(name).strip()
+                    scale_value = as_float_or_none(value)
+                    if not re.fullmatch(r"[A-Za-z0-9_:-]+", scale_name):
+                        continue
+                    if scale_value is None:
+                        continue
+                    scale_parts.append(f"{scale_name}:{scale_value:g}")
+                    if scale_name == promotion_candidate_name:
+                        proof_horizon_candidate_scale = scale_value
+                proof_horizon_confidence_scales = (
+                    ",".join(scale_parts) if scale_parts else "none"
+                )
             proof_horizon_required_pnl = (
                 as_float_or_none(proof_horizon_payload.get("min_pnl")) or 0.01
             )
@@ -1795,6 +1821,33 @@ def load_second_strategy_evidence(
             elif promotion_candidate_name not in proof_horizon_strategy_parts:
                 proof_horizon_status = "mismatch"
                 proof_horizon_detail = "candidate_missing_from_strategy_label"
+            elif not isinstance(proof_horizon_raw_confidence_scales, dict):
+                proof_horizon_status = "mismatch"
+                proof_horizon_detail = "confidence_scales_missing"
+            elif (
+                promotion_candidate_scale is not None
+                and proof_horizon_candidate_scale is None
+                and not math.isclose(
+                    promotion_candidate_scale,
+                    1.0,
+                    rel_tol=1e-9,
+                    abs_tol=1e-9,
+                )
+            ):
+                proof_horizon_status = "mismatch"
+                proof_horizon_detail = "candidate_scale_missing"
+            elif (
+                promotion_candidate_scale is not None
+                and proof_horizon_candidate_scale is not None
+                and not math.isclose(
+                    promotion_candidate_scale,
+                    proof_horizon_candidate_scale,
+                    rel_tol=1e-9,
+                    abs_tol=1e-9,
+                )
+            ):
+                proof_horizon_status = "mismatch"
+                proof_horizon_detail = "candidate_scale_mismatch"
             elif (
                 proof_horizon_trades is None
                 or proof_horizon_total_pnl is None
@@ -1892,6 +1945,8 @@ def load_second_strategy_evidence(
         ),
         "proof_horizon_historical_starts": proof_horizon_historical_starts,
         "proof_horizon_terminal_blockers": proof_horizon_terminal_blockers,
+        "proof_horizon_confidence_scales": proof_horizon_confidence_scales,
+        "proof_horizon_candidate_scale": proof_horizon_candidate_scale,
         "prefilter_families": prefilter_families,
         "prefilter_positive_rows": prefilter_positive_rows,
         "prefilter_positive_families": prefilter_positive_families,
@@ -6800,6 +6855,8 @@ print(
     f"proof_horizon_trades={safe_status_value(second_strategy_evidence['proof_horizon_trades'])} "
     f"proof_horizon_total_pnl={format_optional_float(second_strategy_evidence['proof_horizon_total_pnl'], 2)} "
     f"proof_horizon_eventual_pass_rate={format_optional_float(second_strategy_evidence['proof_horizon_eventual_pass_rate'], 4)} "
+    f"proof_horizon_confidence_scales={safe_status_value(second_strategy_evidence['proof_horizon_confidence_scales'])} "
+    f"proof_horizon_candidate_scale={format_optional_float(second_strategy_evidence['proof_horizon_candidate_scale'], 4)} "
     f"proof_horizon_starts_eventually_passed={safe_status_value(second_strategy_evidence['proof_horizon_starts_eventually_passed'])} "
     f"proof_horizon_historical_starts={safe_status_value(second_strategy_evidence['proof_horizon_historical_starts'])} "
     f"proof_horizon_terminal_blockers={safe_status_value(second_strategy_evidence['proof_horizon_terminal_blockers'])} "
@@ -6904,6 +6961,8 @@ print(
     f"proof_horizon_summary_sha256={safe_status_value(second_strategy_evidence['proof_horizon_summary_sha256'])} "
     f"proof_horizon_total_pnl={format_optional_float(second_strategy_evidence['proof_horizon_total_pnl'], 2)} "
     f"proof_horizon_eventual_pass_rate={format_optional_float(second_strategy_evidence['proof_horizon_eventual_pass_rate'], 4)} "
+    f"proof_horizon_confidence_scales={safe_status_value(second_strategy_evidence['proof_horizon_confidence_scales'])} "
+    f"proof_horizon_candidate_scale={format_optional_float(second_strategy_evidence['proof_horizon_candidate_scale'], 4)} "
     f"proof_horizon_terminal_blockers={safe_status_value(second_strategy_evidence['proof_horizon_terminal_blockers'])} "
     f"candidate_scale={safe_status_value(second_strategy_evidence['promotion_candidate_scale'])} "
     f"candidate_trades={safe_status_value(second_strategy_evidence['promotion_candidate_trades'])} "

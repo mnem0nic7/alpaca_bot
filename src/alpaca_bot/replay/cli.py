@@ -1458,6 +1458,7 @@ class ProofHorizonSummary:
     slippage_bps: float
     max_open_positions: int
     starting_equity: float | None
+    confidence_scales: dict[str, float]
     min_trades: int
     min_pnl: float
     min_active_days: int
@@ -1578,6 +1579,7 @@ def _cmd_proof_horizon(args: argparse.Namespace) -> int:
         slippage_bps=slippage_bps,
         max_open_positions=max_open_positions,
         starting_equity=args.starting_equity,
+        confidence_scales={},
         min_trades=args.min_trades,
         min_pnl=args.min_pnl,
         min_active_days=args.min_active_days,
@@ -1719,6 +1721,7 @@ def _cmd_proof_horizon_basket(args: argparse.Namespace) -> int:
         slippage_bps=slippage_bps,
         max_open_positions=max_open_positions,
         starting_equity=args.starting_equity,
+        confidence_scales=confidence_scales,
         min_trades=args.min_trades,
         min_pnl=args.min_pnl,
         min_active_days=args.min_active_days,
@@ -1865,6 +1868,7 @@ def _cmd_proof_horizon_sweep(args: argparse.Namespace) -> int:
             slippage_bps=slippage_bps,
             max_open_positions=max_open_positions,
             starting_equity=args.starting_equity,
+            confidence_scales={},
             min_trades=args.min_trades,
             min_pnl=args.min_pnl,
             min_active_days=args.min_active_days,
@@ -2072,6 +2076,7 @@ def _proof_horizon_summary(
     slippage_bps: float,
     max_open_positions: int,
     starting_equity: float | None,
+    confidence_scales: dict[str, float] | None = None,
     min_trades: int,
     min_pnl: float,
     min_active_days: int,
@@ -2216,6 +2221,7 @@ def _proof_horizon_summary(
         slippage_bps=slippage_bps,
         max_open_positions=max_open_positions,
         starting_equity=starting_equity,
+        confidence_scales=dict(sorted((confidence_scales or {}).items())),
         min_trades=min_trades,
         min_pnl=min_pnl,
         min_active_days=min_active_days,
@@ -2339,6 +2345,11 @@ def _format_proof_horizon_markdown(summary: ProofHorizonSummary) -> str:
     ]
     if summary.starting_equity is not None:
         lines.append(f"- starting equity override: `${summary.starting_equity:,.2f}`")
+    if summary.confidence_scales:
+        scales = ", ".join(
+            f"{name}={scale:g}" for name, scale in summary.confidence_scales.items()
+        )
+        lines.append(f"- confidence scales: `{scales}`")
     robustness_gates = []
     if summary.min_profit_factor is not None:
         robustness_gates.append(
