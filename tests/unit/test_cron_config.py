@@ -529,6 +529,149 @@ def test_second_strategy_basket_scan_generates_empty_validation_specs(
     assert not (output_dir / "proof_horizon").exists()
 
 
+def test_second_strategy_basket_scan_resumes_positive_validation_for_proof_horizon_candidate(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("")
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+    output_dir = tmp_path / "output"
+    validation_dir = tmp_path / "validation"
+    validation_parts_dir = validation_dir / "status_parts"
+    validation_parts_dir.mkdir(parents=True)
+    prefilter_summary = tmp_path / "summary.json"
+    prefilter_summary.write_text(
+        json.dumps(
+            {
+                "base_strategy": "bull_flag",
+                "candidate_names": ["ema_pullback"],
+                "candidate_scales": ["0.10"],
+                "positive_edge_prefilter_rows": 1,
+                "rows": [
+                    {
+                        "candidate": "ema_pullback",
+                        "candidate_scale": "0.10",
+                        "status": "passed",
+                        "verdict": "positive-edge",
+                        "candidate_ci_low": 0.25,
+                        "candidate_p_mean_le_zero": 0.01,
+                        "candidate_total_pnl": 42.0,
+                    }
+                ],
+                "starting_equity": "10000",
+            }
+        )
+    )
+    validation_report = validation_dir / "ema_pullback_scale_0_10_validation.md"
+    validation_report.write_text("validation report\n")
+    validation_jsonl = validation_dir / "ema_pullback_scale_0_10_validation.jsonl"
+    validation_jsonl.write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "trades": 40,
+                        "profit_factor": 1.5,
+                        "total_pnl": 55.0,
+                        "mean_trade_pnl": 1.375,
+                        "ci_low": 0.2,
+                        "ci_high": 2.5,
+                        "p_positive": 0.01,
+                        "zero_cost_total_pnl": 60.0,
+                        "cost_drag": 5.0,
+                        "verdict": "positive-edge",
+                    }
+                ],
+                "trade_diagnostics": {
+                    "strategies": [
+                        {
+                            "strategy": "ema_pullback",
+                            "trades": 35,
+                            "total_pnl": 50.0,
+                            "mean_trade_pnl": 1.4286,
+                            "ci_low": 0.25,
+                            "ci_high": 2.75,
+                            "p_mean_le_zero": 0.01,
+                            "verdict": "positive-edge",
+                        }
+                    ]
+                },
+            }
+        )
+        + "\n"
+    )
+    validation_stderr = validation_dir / "ema_pullback_scale_0_10_validation.stderr"
+    validation_stderr.write_text("")
+    status_part = validation_parts_dir / "ema_pullback_scale_0_10.tsv"
+    status_part.write_text(
+        "\t".join(
+            [
+                "ema_pullback",
+                "0.10",
+                "passed",
+                str(validation_report),
+                str(validation_jsonl),
+                str(validation_stderr),
+            ]
+        )
+        + "\n"
+    )
+    fingerprint = (
+        f"validation|scenario={scenario_dir}|base=bull_flag|sample=160|"
+        "seed=second-strategy-independent-validation|slippage=2|"
+        "max_open=1|equity=10000|options=false|option_path=none|"
+        "option_contracts=0|option_replay=not_checked|"
+        "diagnostics=trade_attribution_v2"
+    )
+    status_part.with_suffix(status_part.suffix + ".fingerprint").write_text(
+        fingerprint + "\n"
+    )
+
+    result = subprocess.run(
+        ["scripts/second_strategy_basket_scan.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            **os.environ,
+            "SECOND_STRATEGY_SCENARIO_DIR": str(scenario_dir),
+            "SECOND_STRATEGY_OUTPUT_DIR": str(output_dir),
+            "SECOND_STRATEGY_VALIDATION_OUTPUT_DIR": str(validation_dir),
+            "SECOND_STRATEGY_PREFILTER_SUMMARY_JSON": str(prefilter_summary),
+            "SECOND_STRATEGY_UPDATE_LATEST_LINKS": "false",
+            "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES": "false",
+            "SECOND_STRATEGY_VALIDATE_POSITIVES": "true",
+            "SECOND_STRATEGY_RUN_PROOF_HORIZON": "false",
+            "SECOND_STRATEGY_CANDIDATE_SCALES": "0.10",
+            "SECOND_STRATEGY_SCAN_JOBS": "1",
+            "SECOND_STRATEGY_SLIPPAGE_BPS": "2",
+            "SECOND_STRATEGY_MAX_OPEN_POSITIONS": "1",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "second strategy basket validation: reusing completed "
+        "candidate=ema_pullback scale=0.10"
+    ) in result.stdout
+    assert "positive_edge_validation_rows=1" in result.stdout
+    assert (
+        "proof_horizon_candidate=ema_pullback scale=0.10 "
+        "trades=35 candidate_ci_low=0.25"
+    ) in result.stdout
+    assert "second strategy basket proof horizon: disabled" in result.stdout
+    assert (validation_dir / "candidates.tsv").read_text() == "ema_pullback\t0.10\n"
+    assert (
+        (validation_dir / "proof_horizon_candidates.tsv").read_text()
+        == "ema_pullback\t0.10\n"
+    )
+    validation_summary = json.loads((validation_dir / "summary.json").read_text())
+    assert validation_summary["positive_edge_validation_rows"] == 1
+    assert validation_summary["rows"][0]["candidate"] == "ema_pullback"
+    assert validation_summary["rows"][0]["verdict"] == "positive-edge"
+
+
 def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     script_path = Path("scripts/second_strategy_setup_knob_scan.sh")
     script = script_path.read_text()
@@ -2722,6 +2865,10 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert (
         '"proof_horizon_total_pnl": (\n'
         '        "proof_second_strategy_promotion_action_proof_horizon_total_pnl"'
+    ) in script
+    assert (
+        '"proof_horizon_min_pass_rate": (\n'
+        '        "proof_second_strategy_promotion_action_proof_horizon_min_pass_rate"'
     ) in script
     assert (
         '"proof_horizon_candidate_scale": (\n'
@@ -6407,6 +6554,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     ) in script
     assert "PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" in script
     assert "PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS must be a positive integer" in script
+    assert "PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE" in script
+    assert "PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE:-0.50" in script
+    assert (
+        "PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE must be "
+        "between 0 and 1"
+    ) in script
     assert "PROOF_STATUS_PROMOTION_APPROVAL_MARKER" in script
     assert "probe_promotion_write_access" in script
     assert "promotion_write_access_status=\"env_file_not_writable\"" in script
@@ -6432,6 +6585,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert (
         "-e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="
         "\"$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS\""
+    ) in script
+    assert (
+        "-e PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE="
+        "\"$PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE\""
     ) in script
     assert "-e PROOF_STATUS_PROMOTION_WRITE_ACCESS_STATUS=" in script
     assert "-e PROOF_STATUS_PROMOTION_ENV_FILE_WRITABLE=" in script
@@ -7417,12 +7574,25 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert '"confidence_scales"' in script
     assert "proof_horizon_detail = \"candidate_scale_mismatch\"" in script
     assert "proof_horizon_detail = \"candidate_scale_missing\"" in script
+    assert "proof_horizon_detail = \"eventual_pass_rate_below_gate\"" in script
+    assert (
+        "proof_horizon_eventual_pass_rate\n"
+        "                < second_strategy_min_proof_horizon_pass_rate"
+    ) in script
     assert "\"prefilter_summary_sha256\": prefilter_summary_sha256 or \"none\"" in script
     assert "\"validation_summary_sha256\": validation_summary_sha256 or \"none\"" in script
     assert "\"proof_horizon_summary_sha256\": proof_horizon_summary_sha256 or \"none\"" in script
     assert "prefilter_summary_sha256={safe_status_value(second_strategy_evidence['prefilter_summary_sha256'])}" in script
     assert "validation_summary_sha256={safe_status_value(second_strategy_evidence['validation_summary_sha256'])}" in script
     assert "proof_horizon_summary_sha256={safe_status_value(second_strategy_evidence['proof_horizon_summary_sha256'])}" in script
+    assert (
+        "\"proof_horizon_min_pass_rate\": "
+        "second_strategy_min_proof_horizon_pass_rate"
+    ) in script
+    assert (
+        "proof_horizon_min_pass_rate="
+        "{format_optional_float(second_strategy_evidence['proof_horizon_min_pass_rate'], 4)}"
+    ) in script
     assert "prefilter_summary_sha256={safe_status_value(second_strategy_setup_evidence['prefilter_summary_sha256'])}" in script
     assert "validation_summary_sha256={safe_status_value(second_strategy_setup_evidence['validation_summary_sha256'])}" in script
     assert "payload.get(\"schema_version\") != 2" in script
@@ -7534,6 +7704,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])}" in script
     assert "proof_horizon_status={second_strategy_evidence['proof_horizon_status']}" in script
     assert "proof_horizon_summary={safe_status_value(second_strategy_evidence['proof_horizon_summary'])}" in script
+    assert (
+        "proof_horizon_min_pass_rate="
+        "{format_optional_float(second_strategy_evidence['proof_horizon_min_pass_rate'], 4)}"
+    ) in script
     assert "proof_horizon_candidate_scale={format_optional_float(second_strategy_evidence['proof_horizon_candidate_scale'], 4)}" in script
     assert "candidate_ci_low={format_optional_float(second_strategy_evidence['promotion_candidate_ci_low'], 4)}" in script
     assert "PROOF_STATUS_ENV_FILE" in script

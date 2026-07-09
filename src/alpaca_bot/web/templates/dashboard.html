@@ -470,7 +470,7 @@
             <p class="value mono {{ 'warn' if proof_payload.get('proof_second_strategy_promotion_action_proof_horizon_status', 'unknown') not in ['ok', 'not_applicable', 'none', 'unknown'] else '' }}">
               {{ proof_payload.get("proof_second_strategy_promotion_action_proof_horizon_status", "unknown") }}
               pnl={{ proof_payload.get("proof_second_strategy_promotion_action_proof_horizon_total_pnl", "unknown") }}
-              pass_rate={{ proof_payload.get("proof_second_strategy_promotion_action_proof_horizon_eventual_pass_rate", "unknown") }}
+              pass_rate={{ proof_payload.get("proof_second_strategy_promotion_action_proof_horizon_eventual_pass_rate", "unknown") }}/{{ proof_payload.get("proof_second_strategy_promotion_action_proof_horizon_min_pass_rate", "unknown") }}
               scale={{ proof_payload.get("proof_second_strategy_promotion_action_proof_horizon_candidate_scale", "unknown") }}
               blockers={{ proof_payload.get("proof_second_strategy_promotion_action_proof_horizon_terminal_blockers", "unknown") }}
             </p>

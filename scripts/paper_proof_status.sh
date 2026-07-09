@@ -69,7 +69,8 @@ capture_env_overrides \
   PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE \
   PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT \
   PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT \
-  PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS
+  PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS \
+  PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE
 
 cd "$(dirname "$0")/.."
 
@@ -133,6 +134,7 @@ PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE="${PROOF_STATUS_EXECUTION_MAX_CA
 PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:-${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}}"
 PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-${SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/setup_knobs}}"
 PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="${PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS:-48}"
+PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE="${PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE:-0.50}"
 PROOF_STATUS_PROMOTION_APPROVAL_MARKER="${PROOF_STATUS_PROMOTION_APPROVAL_MARKER:-$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/promotion_approval.json}"
 PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER="${PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER:-$PROOF_STATUS_PROMOTION_APPROVAL_MARKER}"
 PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE="${PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE:-$ENV_FILE}"
@@ -234,6 +236,10 @@ if [[ ! "$PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; th
 fi
 if [[ ! "$PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
   echo "PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE must be a non-negative number" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE" =~ ^(0([.][0-9]+)?|1([.]0+)?)$ ]]; then
+  echo "PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE must be between 0 and 1" >&2
   exit 1
 fi
 if [[ ! "$PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
@@ -659,6 +665,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT" \
   -e PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="$PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT" \
   -e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" \
+  -e PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE="$PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE" \
   -e PROOF_STATUS_PROMOTION_WRITE_ACCESS_STATUS="$promotion_write_access_status" \
   -e PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER="$PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER" \
   -e PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE="$PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE" \
@@ -1863,6 +1870,12 @@ def load_second_strategy_evidence(
             elif proof_horizon_starts_eventually_passed <= 0:
                 proof_horizon_status = "failed"
                 proof_horizon_detail = "no_historical_start_passed"
+            elif (
+                proof_horizon_eventual_pass_rate
+                < second_strategy_min_proof_horizon_pass_rate
+            ):
+                proof_horizon_status = "failed"
+                proof_horizon_detail = "eventual_pass_rate_below_gate"
             else:
                 proof_horizon_status = "ok"
                 proof_horizon_detail = "fresh"
@@ -1940,6 +1953,7 @@ def load_second_strategy_evidence(
         "proof_horizon_trades": proof_horizon_trades,
         "proof_horizon_total_pnl": proof_horizon_total_pnl,
         "proof_horizon_eventual_pass_rate": proof_horizon_eventual_pass_rate,
+        "proof_horizon_min_pass_rate": second_strategy_min_proof_horizon_pass_rate,
         "proof_horizon_starts_eventually_passed": (
             proof_horizon_starts_eventually_passed
         ),
@@ -2267,6 +2281,9 @@ scale_min_profit_factor = float(os.environ["PROOF_STATUS_SCALE_MIN_PROFIT_FACTOR
 scale_max_eod_loss_share = float(os.environ["PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE"])
 scale_max_operational_exit_loss_share = float(
     os.environ["PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE"]
+)
+second_strategy_min_proof_horizon_pass_rate = float(
+    os.environ["PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE"]
 )
 execution_min_entry_fill_rate = float(
     os.environ["PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE"]
@@ -6855,6 +6872,7 @@ print(
     f"proof_horizon_trades={safe_status_value(second_strategy_evidence['proof_horizon_trades'])} "
     f"proof_horizon_total_pnl={format_optional_float(second_strategy_evidence['proof_horizon_total_pnl'], 2)} "
     f"proof_horizon_eventual_pass_rate={format_optional_float(second_strategy_evidence['proof_horizon_eventual_pass_rate'], 4)} "
+    f"proof_horizon_min_pass_rate={format_optional_float(second_strategy_evidence['proof_horizon_min_pass_rate'], 4)} "
     f"proof_horizon_confidence_scales={safe_status_value(second_strategy_evidence['proof_horizon_confidence_scales'])} "
     f"proof_horizon_candidate_scale={format_optional_float(second_strategy_evidence['proof_horizon_candidate_scale'], 4)} "
     f"proof_horizon_starts_eventually_passed={safe_status_value(second_strategy_evidence['proof_horizon_starts_eventually_passed'])} "
@@ -6961,6 +6979,7 @@ print(
     f"proof_horizon_summary_sha256={safe_status_value(second_strategy_evidence['proof_horizon_summary_sha256'])} "
     f"proof_horizon_total_pnl={format_optional_float(second_strategy_evidence['proof_horizon_total_pnl'], 2)} "
     f"proof_horizon_eventual_pass_rate={format_optional_float(second_strategy_evidence['proof_horizon_eventual_pass_rate'], 4)} "
+    f"proof_horizon_min_pass_rate={format_optional_float(second_strategy_evidence['proof_horizon_min_pass_rate'], 4)} "
     f"proof_horizon_confidence_scales={safe_status_value(second_strategy_evidence['proof_horizon_confidence_scales'])} "
     f"proof_horizon_candidate_scale={format_optional_float(second_strategy_evidence['proof_horizon_candidate_scale'], 4)} "
     f"proof_horizon_terminal_blockers={safe_status_value(second_strategy_evidence['proof_horizon_terminal_blockers'])} "

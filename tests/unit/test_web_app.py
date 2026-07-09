@@ -282,6 +282,9 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_second_strategy_promotion_action_proof_horizon_eventual_pass_rate": (
                 "0.0797"
             ),
+            "proof_second_strategy_promotion_action_proof_horizon_min_pass_rate": (
+                "0.5000"
+            ),
             "proof_second_strategy_promotion_action_proof_horizon_candidate_scale": (
                 "0.1000"
             ),
@@ -567,7 +570,7 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "candidate_p_zero=0.0090" in response.text
     assert "Candidate Proof Horizon" in response.text
     assert "pnl=-30.03" in response.text
-    assert "pass_rate=0.0797" in response.text
+    assert "pass_rate=0.0797/0.5000" in response.text
     assert "scale=0.1000" in response.text
     assert "blockers=positive_pnl:239,profit_factor:251" in response.text
     assert "promotion=ready_needs_write_access" in response.text

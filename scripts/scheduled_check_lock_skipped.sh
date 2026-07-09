@@ -1189,6 +1189,10 @@ second_strategy_promotion_action_fields = [
         "proof_second_strategy_promotion_action_proof_horizon_eventual_pass_rate",
     ),
     (
+        "proof_horizon_min_pass_rate",
+        "proof_second_strategy_promotion_action_proof_horizon_min_pass_rate",
+    ),
+    (
         "proof_horizon_confidence_scales",
         "proof_second_strategy_promotion_action_proof_horizon_confidence_scales",
     ),

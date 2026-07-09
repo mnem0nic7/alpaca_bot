@@ -655,3 +655,9 @@ minimum P&L, 5 active days, 1.20 profit factor, 0.50 max single-win P&L share,
 and 0.50 max EOD-loss share. The automation does not approve or enable any
 strategy; it prevents future validated candidates from looking actionable
 until the basket proof horizon is fresh for the same candidate scale.
+
+Follow-up: proof status now also requires the second-strategy basket proof
+horizon to pass on at least 50% of historical start dates before promotion
+becomes actionable. A candidate with positive total proof-horizon P&L but a
+thin eventual pass rate now reports
+`proof_horizon_detail=eventual_pass_rate_below_gate`.

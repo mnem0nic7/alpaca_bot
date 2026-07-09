@@ -328,6 +328,9 @@ PROOF_SECOND_STRATEGY_PROMOTION_ACTION_FIELDS = {
     "proof_horizon_eventual_pass_rate": (
         "proof_second_strategy_promotion_action_proof_horizon_eventual_pass_rate"
     ),
+    "proof_horizon_min_pass_rate": (
+        "proof_second_strategy_promotion_action_proof_horizon_min_pass_rate"
+    ),
     "proof_horizon_confidence_scales": (
         "proof_second_strategy_promotion_action_proof_horizon_confidence_scales"
     ),
