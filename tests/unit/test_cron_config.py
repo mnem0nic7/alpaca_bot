@@ -6741,6 +6741,14 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "approved_required={scale_min_strategies}" in script
     assert "gap={strategy_diversification_gap}" in script
     assert "candidate_status={strategy_diversification_candidate_status}" in script
+    assert (
+        "promotion_action_status="
+        "{strategy_diversification_promotion_action_status}"
+    ) in script
+    assert (
+        "promotion_write_access_status="
+        "{safe_status_value(promotion_write_access_status)}"
+    ) in script
     assert "approved_names={approved_active_strategies or 'none'}" in script
     assert "approved_replay_names={approved_replay_active_strategies or 'none'}" in script
     assert "unapproved_active={unapproved_active_strategies or 'none'}" in script

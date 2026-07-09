@@ -4182,6 +4182,10 @@ concentration_non_best_avg_trade_gap_text = (
     if concentration_non_best_avg_trade_gap is not None
     else "none"
 )
+promotion_action_status = str(second_strategy_evidence["promotion_action_status"])
+if promotion_action_status == "ready" and promotion_write_access_status != "ok":
+    promotion_action_status = "ready_needs_write_access"
+strategy_diversification_promotion_action_status = promotion_action_status
 if strategy_diversification_status == "ok":
     strategy_diversification_candidate_status = "met"
 elif unapproved_active_strategy_names:
@@ -5364,6 +5368,8 @@ print(
     f"approved_required={scale_min_strategies} "
     f"gap={strategy_diversification_gap} "
     f"candidate_status={strategy_diversification_candidate_status} "
+    f"promotion_action_status={strategy_diversification_promotion_action_status} "
+    f"promotion_write_access_status={safe_status_value(promotion_write_access_status)} "
     f"active_names={active_strategies or 'none'} "
     f"approved_names={approved_active_strategies or 'none'} "
     f"approved_replay_names={approved_replay_active_strategies or 'none'} "
@@ -5445,9 +5451,6 @@ promotion_confirmation = (
     if promotion_strategy != "none" and promotion_validation_summary_sha256 != "none"
     else "none"
 )
-promotion_action_status = str(second_strategy_evidence["promotion_action_status"])
-if promotion_action_status == "ready" and promotion_write_access_status != "ok":
-    promotion_action_status = "ready_needs_write_access"
 print(
     "paper proof second strategy promotion action: "
     f"status={promotion_action_status} "
