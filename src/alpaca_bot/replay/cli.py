@@ -1316,8 +1316,20 @@ def _cmd_portfolio_basket_audit(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
+    option_scenario_symbols = (
+        {
+            symbol
+            for snapshot in option_chain_ledger.snapshots
+            for symbol in snapshot.chains_by_symbol
+        }
+        if option_chain_ledger is not None
+        else None
+    )
     try:
-        paths = _select_scenario_paths(args)
+        paths = _select_scenario_paths(
+            args,
+            allowed_symbols=option_scenario_symbols,
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -1661,8 +1673,20 @@ def _cmd_proof_horizon_basket(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
+    option_scenario_symbols = (
+        {
+            symbol
+            for snapshot in option_chain_ledger.snapshots
+            for symbol in snapshot.chains_by_symbol
+        }
+        if option_chain_ledger is not None
+        else None
+    )
     try:
-        paths = _select_scenario_paths(args)
+        paths = _select_scenario_paths(
+            args,
+            allowed_symbols=option_scenario_symbols,
+        )
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -2511,8 +2535,19 @@ def _format_proof_horizon_sweep_markdown(
     return "\n".join(lines) + "\n"
 
 
-def _select_scenario_paths(args: argparse.Namespace) -> list[Path]:
+def _select_scenario_paths(
+    args: argparse.Namespace,
+    *,
+    allowed_symbols: set[str] | None = None,
+) -> list[Path]:
     paths = sorted(Path(args.scenario_dir).glob("*.json"))
+    if allowed_symbols is not None:
+        normalized_symbols = {symbol.upper() for symbol in allowed_symbols}
+        paths = [
+            path
+            for path in paths
+            if _scenario_symbol_from_path(path) in normalized_symbols
+        ]
     limit = int(getattr(args, "limit", 0) or 0)
     sample_size = int(getattr(args, "sample_size", 0) or 0)
     if limit < 0:
@@ -2531,6 +2566,13 @@ def _select_scenario_paths(args: argparse.Namespace) -> list[Path]:
     elif limit > 0:
         paths = paths[:limit]
     return paths
+
+
+def _scenario_symbol_from_path(path: Path) -> str:
+    stem = path.stem
+    if stem.endswith("_252d"):
+        stem = stem[:-5]
+    return stem.upper()
 
 
 def _scenario_sample_key(path: Path, seed: str) -> str:

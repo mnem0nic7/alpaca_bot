@@ -374,11 +374,14 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'OPTION_REPLAY_STATUS" == "supported' in script
     assert "option-chain snapshot path has no replayable contracts" in script
     assert "freeze_option_snapshot_input" in script
-    assert 'destination_root = Path(sys.argv[2]) / "option_chain_snapshots"' in script
-    assert 'temporary_path.replace(destination_path)' in script
+    assert "python3 -m alpaca_bot.replay.option_snapshots freeze" in script
+    assert '"$destination_root/option_chain_snapshots"' in script
+    assert "option_snapshot_session_count" in script
+    assert "SECOND_STRATEGY_OPTION_REPLAY_MIN_SESSIONS" in script
     assert 'frozen_option_snapshot="$(freeze_option_snapshot_input "$OPTION_CHAIN_SNAPSHOTS" "$OUTPUT_DIR")"' in script
-    assert 'OPTION_CHAIN_SNAPSHOTS="${frozen_option_snapshot%%$\'\\t\'*}"' in script
-    assert 'OPTION_SNAPSHOT_CONTRACTS="${frozen_option_snapshot#*$\'\\t\'}"' in script
+    assert "IFS=$'\\t' read -r OPTION_CHAIN_SNAPSHOTS OPTION_SNAPSHOT_CONTRACTS" in script
+    assert "OPTION_SNAPSHOT_SESSIONS" in script
+    assert "OPTION_SNAPSHOT_POINTS" in script
     assert "frozen option-chain snapshot has no replayable contracts" in script
     assert "option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS" in script
     assert "option_replay_status=$OPTION_REPLAY_STATUS" in script
@@ -630,7 +633,8 @@ def test_second_strategy_basket_scan_resumes_positive_validation_for_proof_horiz
         f"validation|scenario={scenario_dir}|base=bull_flag|sample=160|"
         "seed=second-strategy-independent-validation|slippage=2|"
         "max_open=1|equity=10000|options=false|option_path=none|"
-        "option_contracts=0|option_replay=not_checked|"
+        "option_contracts=0|option_sessions=0|option_points=0|"
+        "option_replay=not_checked|"
         "diagnostics=trade_attribution_v2"
     )
     status_part.with_suffix(status_part.suffix + ".fingerprint").write_text(
@@ -6581,6 +6585,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE must be "
         "between 0 and 1"
     ) in script
+    assert "PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS" in script
+    assert "PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS must be a positive integer" in script
     assert "PROOF_STATUS_PROMOTION_APPROVAL_MARKER" in script
     assert "probe_promotion_write_access" in script
     assert "promotion_write_access_status=\"env_file_not_writable\"" in script
@@ -7044,14 +7050,16 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert 'option_snapshot_status = "missing" if option_snapshot_due else "not_due"' in script
     assert 'option_snapshot_status = "stale" if option_snapshot_due else "not_due"' in script
     assert 'option_snapshot_status = "empty" if option_snapshot_due else "not_due"' in script
-    assert 'option_snapshot_replay_ready = option_snapshot_status == "ok"' in script
+    assert "option_snapshot_replay_ready = (" in script
+    assert "option_snapshot_status == \"ok\"" in script
+    assert "option_snapshot_replay_session_count >= option_replay_min_sessions" in script
     assert (
         "replay_supported_option_strategy_name_set = (\n"
         "            option_strategy_name_set if option_snapshot_replay_ready else set()"
     ) in script
     assert "replay_supported_strategy_name_set" in script
     assert "option_replay_status" in script
-    assert 'else f"snapshot_{option_snapshot_status}"' in script
+    assert 'option_replay_status = f"snapshot_{option_snapshot_status}"' in script
     assert "active_replay_supported_strategy_names" in script
     assert "disabled_replay_supported_strategy_names" in script
     assert "active_replay_unsupported_strategy_names" in script
@@ -7596,6 +7604,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "proof_horizon_detail = \"candidate_scale_mismatch\"" in script
     assert "proof_horizon_detail = \"candidate_scale_missing\"" in script
     assert "proof_horizon_detail = \"eventual_pass_rate_below_gate\"" in script
+    assert 'option_replay_status = "insufficient_sessions"' in script
+    assert "option_snapshot_replay_session_count >= option_replay_min_sessions" in script
+    assert "replay_sessions={option_snapshot_summary['replay_session_count']}" in script
+    assert "required_replay_sessions={option_replay_min_sessions}" in script
     assert "preferred_name=preferred_promotion_candidate" in script
     assert "preferred_scale=preferred_promotion_scale" in script
     assert 'proof_horizon_payload.get("candidate_selection")' in script

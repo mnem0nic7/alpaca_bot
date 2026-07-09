@@ -12,6 +12,7 @@ from alpaca_bot.replay.option_snapshots import (
     OptionChainSnapshotLedger,
     PointInTimeOptionChains,
     append_option_chain_snapshot,
+    freeze_option_chain_snapshots,
     load_option_chain_snapshot_ledger,
     make_point_in_time_option_evaluator,
 )
@@ -92,6 +93,56 @@ def test_load_option_chain_snapshot_ledger_filters_by_session_date(tmp_path):
     assert len(ledger.snapshots) == 1
     assert ledger.snapshots[0].cycle_at.date() == date(2026, 7, 8)
     assert ledger.snapshots[0].chains_by_symbol["ACHR"][0].ask == pytest.approx(1.50)
+
+
+def test_freeze_option_chain_snapshots_keeps_all_sessions_at_replay_boundaries(
+    tmp_path,
+):
+    source_dir = tmp_path / "source"
+    for session_offset in range(2):
+        session_day = 7 + session_offset
+        append_option_chain_snapshot(
+            snapshot_dir=source_dir,
+            cycle_at=datetime(
+                2026, 7, session_day, 14, 30, 30, tzinfo=timezone.utc
+            ),
+            chains_by_symbol={"ACHR": [_contract(ask=1.35)]},
+        )
+        append_option_chain_snapshot(
+            snapshot_dir=source_dir,
+            cycle_at=datetime(
+                2026, 7, session_day, 14, 44, tzinfo=timezone.utc
+            ),
+            chains_by_symbol={"ACHR": [_contract(ask=1.45)]},
+        )
+        path = append_option_chain_snapshot(
+            snapshot_dir=source_dir,
+            cycle_at=datetime(
+                2026, 7, session_day, 14, 46, tzinfo=timezone.utc
+            ),
+            chains_by_symbol={"ACHR": [_contract(ask=1.60)]},
+        )
+        with path.open("a", encoding="utf-8") as snapshot_file:
+            snapshot_file.write("{partial")
+
+    summary = freeze_option_chain_snapshots(
+        source_dir,
+        tmp_path / "frozen",
+        interval_minutes=15,
+    )
+
+    assert summary.session_count == 2
+    assert summary.snapshot_count == 4
+    assert summary.contract_count == 4
+    assert len(tuple(summary.path.glob("option-chain-snapshots-*.jsonl"))) == 2
+    ledger = load_option_chain_snapshot_ledger(summary.path)
+    assert len(ledger.snapshots) == 4
+    for session_day in (7, 8):
+        chain = ledger.chain_at_or_before(
+            symbol="ACHR",
+            as_of=datetime(2026, 7, session_day, 14, 45, tzinfo=timezone.utc),
+        )
+        assert chain[0].ask == pytest.approx(1.45)
 
 
 def test_ledger_returns_latest_chain_at_or_before_timestamp():

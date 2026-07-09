@@ -70,7 +70,8 @@ capture_env_overrides \
   PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT \
   PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT \
   PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS \
-  PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE
+  PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE \
+  PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS
 
 cd "$(dirname "$0")/.."
 
@@ -135,6 +136,7 @@ PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_OUTPUT_
 PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-${SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/setup_knobs}}"
 PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="${PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS:-48}"
 PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE="${PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE:-0.50}"
+PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS="${PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS:-$PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS}"
 PROOF_STATUS_PROMOTION_APPROVAL_MARKER="${PROOF_STATUS_PROMOTION_APPROVAL_MARKER:-$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/promotion_approval.json}"
 PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER="${PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER:-$PROOF_STATUS_PROMOTION_APPROVAL_MARKER}"
 PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE="${PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE:-$ENV_FILE}"
@@ -240,6 +242,11 @@ if [[ ! "$PROOF_STATUS_SCALE_MAX_OPERATIONAL_EXIT_LOSS_SHARE" =~ ^([0-9]+)(\.[0-
 fi
 if [[ ! "$PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE" =~ ^(0([.][0-9]+)?|1([.]0+)?)$ ]]; then
   echo "PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE must be between 0 and 1" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS" =~ ^[0-9]+$ ]] \
+  || [[ "$PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS" -lt 1 ]]; then
+  echo "PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS must be a positive integer" >&2
   exit 1
 fi
 if [[ ! "$PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
@@ -666,6 +673,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="$PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT" \
   -e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" \
   -e PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE="$PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE" \
+  -e PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS="$PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS" \
   -e PROOF_STATUS_PROMOTION_WRITE_ACCESS_STATUS="$promotion_write_access_status" \
   -e PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER="$PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER" \
   -e PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE="$PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE" \
@@ -860,6 +868,8 @@ def option_snapshot_ledger_summary(
         "latest_modified": "none",
         "latest_bytes": 0,
         "latest_contracts": 0,
+        "replay_session_count": 0,
+        "earliest_session": "none",
     }
     if not snapshot_dir:
         return summary
@@ -882,6 +892,13 @@ def option_snapshot_ledger_summary(
         return summary
     if not files:
         return summary
+    replay_sessions = sorted(
+        {
+            session
+            for file_path, _stat in files
+            if (session := option_snapshot_file_session(file_path)) != "unknown"
+        }
+    )
     selected_path, selected_stat = max(files, key=lambda item: item[1].st_mtime)
     if target_session is not None:
         target_snapshot_name = (
@@ -902,6 +919,8 @@ def option_snapshot_ledger_summary(
             ).isoformat(),
             "latest_bytes": selected_stat.st_size,
             "latest_contracts": option_snapshot_contract_count(selected_path),
+            "replay_session_count": len(replay_sessions),
+            "earliest_session": replay_sessions[0] if replay_sessions else "none",
         }
     )
     return summary
@@ -2350,6 +2369,9 @@ scale_max_operational_exit_loss_share = float(
 second_strategy_min_proof_horizon_pass_rate = float(
     os.environ["PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE"]
 )
+option_replay_min_sessions = int(
+    os.environ["PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS"]
+)
 execution_min_entry_fill_rate = float(
     os.environ["PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE"]
 )
@@ -2676,6 +2698,9 @@ try:
             option_snapshot_target_session,
         )
         option_snapshot_file_count = int(option_snapshot_summary["file_count"])
+        option_snapshot_replay_session_count = int(
+            option_snapshot_summary["replay_session_count"]
+        )
         if not settings.option_chain_snapshot_dir:
             option_snapshot_status = "unconfigured"
         elif not settings.option_chain_symbols:
@@ -2692,18 +2717,22 @@ try:
             option_snapshot_status = "empty" if option_snapshot_due else "not_due"
         else:
             option_snapshot_status = "ok"
-        option_snapshot_replay_ready = option_snapshot_status == "ok"
+        option_snapshot_replay_ready = (
+            option_snapshot_status == "ok"
+            and option_snapshot_replay_session_count >= option_replay_min_sessions
+        )
         replay_supported_option_strategy_name_set = (
             option_strategy_name_set if option_snapshot_replay_ready else set()
         )
         replay_supported_strategy_name_set = (
             stock_strategy_name_set | replay_supported_option_strategy_name_set
         )
-        option_replay_status = (
-            "supported"
-            if option_snapshot_replay_ready
-            else f"snapshot_{option_snapshot_status}"
-        )
+        if option_snapshot_replay_ready:
+            option_replay_status = "supported"
+        elif option_snapshot_status == "ok":
+            option_replay_status = "insufficient_sessions"
+        else:
+            option_replay_status = f"snapshot_{option_snapshot_status}"
         active_replay_supported_strategy_names = [
             name
             for name in active_strategy_names
@@ -6913,6 +6942,9 @@ print(
     f"latest_modified={safe_status_value(option_snapshot_summary['latest_modified'])} "
     f"latest_bytes={option_snapshot_summary['latest_bytes']} "
     f"latest_contracts={option_snapshot_summary['latest_contracts']} "
+    f"replay_sessions={option_snapshot_summary['replay_session_count']} "
+    f"required_replay_sessions={option_replay_min_sessions} "
+    f"earliest_session={safe_status_value(option_snapshot_summary['earliest_session'])} "
     f"symbols={len(settings.option_chain_symbols)}"
 )
 print(

@@ -670,3 +670,13 @@ full basket horizon, or retains the top-ranked failure when none clear it, and
 records candidate and passing counts for proof status and the dashboard. This
 prevents a weak basket fit from hiding a lower-ranked but better diversifier;
 it still cannot approve or enable a strategy.
+
+Follow-up: option candidates are no longer treated as replay-supported from a
+single current-session snapshot. Replay readiness now requires at least five
+snapshot sessions, matching the proof active-day floor. On 2026-07-09 the
+ledger correctly reports `replay_status=insufficient_sessions`, with two of
+five required sessions, so the twelve option families are excluded from the
+broad scan instead of producing zero-trade rows. Once coverage matures, the
+scanner freezes every available session at 15-minute decision boundaries and
+the basket CLI samples only symbols represented in that point-in-time ledger.
+This preserves usable marks across days without copying every intrabar poll.

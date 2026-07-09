@@ -1,10 +1,12 @@
 # tests/unit/test_portfolio_cli.py
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
+from alpaca_bot.domain.models import OptionContract
 from alpaca_bot.replay import cli as replay_cli
 from alpaca_bot.replay.cli import main
+from alpaca_bot.replay.option_snapshots import append_option_chain_snapshot
 from alpaca_bot.replay.report import ReplayTradeRecord
 
 ENVKEYS = {
@@ -119,6 +121,76 @@ def test_portfolio_audit_cli_writes_jsonl_per_k(tmp_path, monkeypatch):
     assert all(line["slippage_bps"] == 5 for line in lines)
     assert all(line["scenarios"] == 2 for line in lines)
     assert all(line["rows"][0]["strategy"] == "bull_flag" for line in lines)
+
+
+def test_option_basket_audit_samples_only_snapshot_covered_symbols(
+    tmp_path, monkeypatch
+):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+    _write_scenario(scen / "AAA_252d.json", "AAA")
+    _write_scenario(scen / "BBB_252d.json", "BBB")
+    snapshot_path = append_option_chain_snapshot(
+        snapshot_dir=tmp_path / "snapshots",
+        cycle_at=datetime(2026, 1, 2, 14, 30, tzinfo=timezone.utc),
+        chains_by_symbol={
+            "AAA": [
+                OptionContract(
+                    occ_symbol="AAA260117C00100000",
+                    underlying="AAA",
+                    option_type="call",
+                    strike=100.0,
+                    expiry=date(2026, 1, 17),
+                    bid=1.0,
+                    ask=1.2,
+                    delta=0.5,
+                    open_interest=100,
+                )
+            ]
+        },
+    )
+    captured_symbols: list[tuple[str, ...]] = []
+
+    def fake_portfolio_basket_pooled_trades(
+        scenarios,
+        settings,
+        strategy_names,
+        **kwargs,
+    ):
+        del settings, strategy_names, kwargs
+        captured_symbols.append(tuple(scenario.symbol for scenario in scenarios))
+        return []
+
+    monkeypatch.setattr(
+        replay_cli,
+        "portfolio_basket_pooled_trades",
+        fake_portfolio_basket_pooled_trades,
+    )
+
+    rc = main(
+        [
+            "portfolio-basket-audit",
+            "--scenario-dir",
+            str(scen),
+            "--strategy",
+            "bull_flag",
+            "--strategy",
+            "breakout_calls",
+            "--option-chain-snapshots",
+            str(snapshot_path),
+            "--slippage-bps",
+            "2",
+            "--max-open-positions",
+            "1",
+            "--output",
+            str(tmp_path / "report.md"),
+        ]
+    )
+
+    assert rc == 0
+    assert captured_symbols
+    assert set(captured_symbols) == {("AAA",)}
 
 
 def test_portfolio_audit_cli_overrides_starting_equity(tmp_path, monkeypatch):

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import argparse
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -78,6 +80,14 @@ class OptionChainSnapshotLedger:
             if snapshot.cycle_at <= as_of_utc:
                 return snapshot
         return None
+
+
+@dataclass(frozen=True)
+class FrozenOptionSnapshotSummary:
+    path: Path
+    contract_count: int
+    session_count: int
+    snapshot_count: int
 
 
 @dataclass
@@ -180,6 +190,108 @@ def load_option_chain_snapshot_ledger(
     for file_path in files:
         snapshots.extend(_load_snapshot_file(file_path))
     return OptionChainSnapshotLedger(tuple(snapshots))
+
+
+def freeze_option_chain_snapshots(
+    source_path: str | Path,
+    destination_root: str | Path,
+    *,
+    interval_minutes: int = 15,
+) -> FrozenOptionSnapshotSummary:
+    """Freeze all sessions, retaining the last mark before each replay boundary."""
+    if interval_minutes <= 0:
+        raise ValueError("interval_minutes must be positive")
+    source = Path(source_path)
+    destination = Path(destination_root)
+    try:
+        files = [
+            path
+            for path in _snapshot_files(source, session_date=None)
+            if path.is_file() and path.stat().st_size > 0
+        ]
+    except OSError as exc:
+        raise ValueError(f"could not inspect option-chain snapshots: {source}") from exc
+    if not files:
+        raise ValueError("no replayable option-chain snapshot file found")
+
+    destination.mkdir(parents=True, exist_ok=True)
+    expected_names = {path.name for path in files}
+    for stale_path in destination.glob("option-chain-snapshots-*.jsonl"):
+        if stale_path.name not in expected_names:
+            stale_path.unlink()
+
+    interval_microseconds = interval_minutes * 60 * 1_000_000
+    total_contracts = 0
+    total_sessions = 0
+    total_snapshots = 0
+    for file_path in files:
+        file_session = _snapshot_file_session(file_path)
+        if file_session is None:
+            raise ValueError(f"invalid option snapshot filename: {file_path}")
+        retained: dict[int, tuple[datetime, str, int]] = {}
+        with file_path.open(encoding="utf-8") as source_file:
+            for raw_line in source_file:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    payload = json.loads(line)
+                except json.JSONDecodeError:
+                    # The source may be actively appending its final line.
+                    break
+                try:
+                    cycle_at = _normalize_utc(
+                        datetime.fromisoformat(str(payload["cycle_at"]))
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ValueError(
+                        f"invalid option snapshot cycle_at: {file_path}"
+                    ) from exc
+                if cycle_at.date() != file_session:
+                    raise ValueError(
+                        "option-chain snapshot cycle_at date does not match filename"
+                    )
+                chains_by_symbol = payload.get("chains_by_symbol")
+                if not isinstance(chains_by_symbol, dict):
+                    raise ValueError("option-chain snapshot missing chains_by_symbol")
+                contract_count = 0
+                for contracts in chains_by_symbol.values():
+                    if not isinstance(contracts, list):
+                        raise ValueError(
+                            "option-chain snapshot contracts must be lists"
+                        )
+                    contract_count += len(contracts)
+                epoch_microseconds = (
+                    int(cycle_at.timestamp()) * 1_000_000 + cycle_at.microsecond
+                )
+                boundary = (
+                    epoch_microseconds + interval_microseconds - 1
+                ) // interval_microseconds
+                current = retained.get(boundary)
+                if current is None or cycle_at > current[0]:
+                    retained[boundary] = (cycle_at, line, contract_count)
+
+        ordered = sorted(retained.values(), key=lambda item: item[0])
+        if not ordered or sum(item[2] for item in ordered) <= 0:
+            continue
+        destination_path = destination / file_path.name
+        temporary_path = destination_path.with_name(
+            f"{destination_path.name}.tmp.{os.getpid()}"
+        )
+        temporary_path.write_text("".join(f"{item[1]}\n" for item in ordered))
+        temporary_path.replace(destination_path)
+        total_contracts += sum(item[2] for item in ordered)
+        total_sessions += 1
+        total_snapshots += len(ordered)
+
+    if total_sessions <= 0 or total_contracts <= 0:
+        raise ValueError("frozen option-chain snapshots have no replayable contracts")
+    return FrozenOptionSnapshotSummary(
+        path=destination,
+        contract_count=total_contracts,
+        session_count=total_sessions,
+        snapshot_count=total_snapshots,
+    )
 
 
 def _snapshot_files(path: Path, *, session_date: date | None) -> list[Path]:
@@ -289,3 +401,32 @@ def _normalize_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Option-chain snapshot utilities.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    freeze_parser = subparsers.add_parser("freeze")
+    freeze_parser.add_argument("source", type=Path)
+    freeze_parser.add_argument("destination", type=Path)
+    freeze_parser.add_argument("--interval-minutes", type=int, default=15)
+    args = parser.parse_args(argv)
+    if args.command == "freeze":
+        try:
+            summary = freeze_option_chain_snapshots(
+                args.source,
+                args.destination,
+                interval_minutes=args.interval_minutes,
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        print(
+            f"{summary.path}\t{summary.contract_count}\t"
+            f"{summary.session_count}\t{summary.snapshot_count}"
+        )
+        return 0
+    parser.error(f"unsupported command: {args.command}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
