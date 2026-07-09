@@ -156,8 +156,10 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_evidence_blockers": "sample_trades,strategy_diversification",
             "proof_sealed_evidence_blockers": "eod_loss_share",
             "proof_nightly_status": "idle",
+            "proof_nightly_age_minutes": "none",
             "proof_nightly_log_age_minutes": "411",
             "proof_nightly_max_age_minutes": "390",
+            "proof_nightly_stall_minutes": "90",
             "proof_nightly_stage": (
                 "apply_candidate_2026-07-09T00:16:04Z_"
                 "PAPER_PROOF_FREEZE=true__skipping_candidate_auto-apply."
@@ -508,7 +510,11 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "Nightly Automation" in response.text
     assert "scan=ok" in response.text
     assert "detail=fresh_second_strategy_evidence_supersedes_failed_scan" in response.text
-    assert "log_age=411/390" in response.text
+    assert "run_age=none" in response.text
+    assert "max_run=390" in response.text
+    assert "log_age=411" in response.text
+    assert "stall_after=90" in response.text
+    assert "log_age=411/390" not in response.text
     assert "PAPER_PROOF_FREEZE=true__skipping_candidate_auto-apply." in response.text
     assert "nightly=idle" in response.text
     assert "second_strategy_scan=ok" in response.text
@@ -516,7 +522,10 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
         "second_strategy_scan_detail="
         "fresh_second_strategy_evidence_supersedes_failed_scan"
     ) in response.text
+    assert "nightly_run_age=none" in response.text
+    assert "nightly_max_run=390" in response.text
     assert "nightly_log_age=411" in response.text
+    assert "nightly_stall_after=90" in response.text
     assert (
         "nightly_stage=apply_candidate_2026-07-09T00:16:04Z_"
         "PAPER_PROOF_FREEZE=true__skipping_candidate_auto-apply."
