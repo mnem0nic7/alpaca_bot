@@ -7712,6 +7712,11 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "capture_env_overrides" in script
     assert "restore_env_overrides" in script
     assert script.index('source "$ENV_FILE"') < script.index("\nrestore_env_overrides\n")
+    assert "RISK_PER_TRADE_PCT \\" in script
+    assert "MAX_POSITION_PCT \\" in script
+    assert "MAX_OPEN_POSITIONS \\" in script
+    assert "MAX_PORTFOLIO_EXPOSURE_PCT \\" in script
+    assert "MAX_LOSS_PER_TRADE_DOLLARS" in script
     assert 'PAPER_DECISION_DRY_RUN_STRATEGY="${PAPER_DECISION_DRY_RUN_STRATEGY:-bull_flag}"' in script
     assert 'PAPER_DECISION_DRY_RUN_ALLOW_DISABLED="${PAPER_DECISION_DRY_RUN_ALLOW_DISABLED:-false}"' in script
     assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}"' in script
@@ -7727,6 +7732,13 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "WatchlistStore(conn)" in script
     assert "StrategyFlagStore(conn)" in script
     assert 'PAPER_DECISION_DRY_RUN_ALLOW_DISABLED="$PAPER_DECISION_DRY_RUN_ALLOW_DISABLED"' in script
+    assert "container_env_args=()" in script
+    assert "add_container_env_override RISK_PER_TRADE_PCT" in script
+    assert "add_container_env_override MAX_POSITION_PCT" in script
+    assert "add_container_env_override MAX_OPEN_POSITIONS" in script
+    assert "add_container_env_override MAX_PORTFOLIO_EXPOSURE_PCT" in script
+    assert "add_container_env_override MAX_LOSS_PER_TRADE_DOLLARS" in script
+    assert '"${container_env_args[@]}"' in script
     assert "list_enabled(settings.trading_mode.value)" in script
     assert "list_ignored(settings.trading_mode.value)" in script
     assert "active_symbols = tuple(symbol for symbol in enabled_symbols if symbol not in ignored_symbols)" in script
@@ -7762,6 +7774,11 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "max_entry_intents=" in script
     assert "reject_stages={reject_stages}" in script
     assert "reject_reasons={reject_reasons}" in script
+    assert "risk_per_trade_pct={settings.risk_per_trade_pct:g}" in script
+    assert "max_position_pct={settings.max_position_pct:g}" in script
+    assert "max_open_positions={settings.max_open_positions}" in script
+    assert "max_portfolio_exposure_pct={settings.max_portfolio_exposure_pct:g}" in script
+    assert "max_loss_per_trade_dollars={settings.max_loss_per_trade_dollars:g}" in script
     assert "submit_order" not in script
     assert "bulk_insert" not in script
     assert ".save(" not in script

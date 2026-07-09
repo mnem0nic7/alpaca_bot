@@ -34,7 +34,12 @@ capture_env_overrides \
   PAPER_DECISION_DRY_RUN_SAMPLE_TIMES \
   PAPER_DECISION_DRY_RUN_AS_OF \
   PAPER_DECISION_DRY_RUN_SESSION_DATE \
-  PAPER_DECISION_DRY_RUN_EQUITY
+  PAPER_DECISION_DRY_RUN_EQUITY \
+  RISK_PER_TRADE_PCT \
+  MAX_POSITION_PCT \
+  MAX_OPEN_POSITIONS \
+  MAX_PORTFOLIO_EXPOSURE_PCT \
+  MAX_LOSS_PER_TRADE_DOLLARS
 
 cd "$(dirname "$0")/.."
 
@@ -91,6 +96,20 @@ if ! [[ "$PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 
+container_env_args=()
+add_container_env_override() {
+  local name="$1"
+  if [[ -n "${!name+x}" ]]; then
+    container_env_args+=("-e" "$name=${!name}")
+  fi
+}
+
+add_container_env_override RISK_PER_TRADE_PCT
+add_container_env_override MAX_POSITION_PCT
+add_container_env_override MAX_OPEN_POSITIONS
+add_container_env_override MAX_PORTFOLIO_EXPOSURE_PCT
+add_container_env_override MAX_LOSS_PER_TRADE_DOLLARS
+
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
 "${compose[@]}" run -T --rm \
@@ -104,6 +123,7 @@ compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
   -e PAPER_DECISION_DRY_RUN_AS_OF="$PAPER_DECISION_DRY_RUN_AS_OF" \
   -e PAPER_DECISION_DRY_RUN_SESSION_DATE="$PAPER_DECISION_DRY_RUN_SESSION_DATE" \
   -e PAPER_DECISION_DRY_RUN_EQUITY="$PAPER_DECISION_DRY_RUN_EQUITY" \
+  "${container_env_args[@]}" \
   --entrypoint python admin <<'PY'
 from __future__ import annotations
 
@@ -502,6 +522,11 @@ print(
     f"entry_intents={len(entry_intents)} "
     f"reject_stages={reject_stages} "
     f"reject_reasons={reject_reasons} "
+    f"risk_per_trade_pct={settings.risk_per_trade_pct:g} "
+    f"max_position_pct={settings.max_position_pct:g} "
+    f"max_open_positions={settings.max_open_positions} "
+    f"max_portfolio_exposure_pct={settings.max_portfolio_exposure_pct:g} "
+    f"max_loss_per_trade_dollars={settings.max_loss_per_trade_dollars:g} "
     f"equity={equity:.2f} "
     f"sample={sample}"
     f"{multi_sample_fields}"
