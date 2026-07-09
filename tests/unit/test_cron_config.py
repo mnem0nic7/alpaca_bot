@@ -5925,6 +5925,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "promotion_write_access_status=\"env_file_not_writable\"" in script
     assert "promotion_write_access_status=\"env_dir_not_writable\"" in script
     assert "promotion_write_access_status=\"approval_marker_dir_not_writable\"" in script
+    assert "promotion_write_access_status=\"approval_marker_parent_not_writable\"" in script
+    assert "promotion_approval_marker_writable=\"true\"" in script
+    assert "promotion_approval_marker_dir_writable=\"true\"" in script
     assert (
         'second_strategy_volume_args=(-v "$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:'
         '$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:ro")'
@@ -6837,6 +6840,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "promotion_action_status="
         "{strategy_diversification_promotion_action_status}"
     ) in script
+    assert "approval_marker_action_status={approval_marker_action_status}" in script
     assert (
         "promotion_write_access_status="
         "{safe_status_value(promotion_write_access_status)}"
@@ -6947,12 +6951,15 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert 'return f"{mismatch_key}_mismatch", strategy' in script
     assert "validation_summary_path.resolve()" in script
     assert "promotion_action_status" in script
+    assert "approval_marker_action_status" in script
     assert "paper proof second strategy promotion action:" in script
     assert "confirmation={promotion_confirmation}" in script
     assert "dry_run_default=true" in script
     assert "mutation_requires_dry_run_false=true" in script
     assert 'promotion_action_status == "ready"' in script
     assert 'promotion_action_status = "ready_needs_write_access"' in script
+    assert 'approval_marker_action_status = "ready"' in script
+    assert 'approval_marker_action_status = "ready_needs_marker_write_access"' in script
     assert "promotion_validation_summary_sha256 = safe_status_value(" in script
     assert (
         "f\"approve-{promotion_strategy}-paper-promotion-sha256-"
@@ -6961,6 +6968,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "script=./scripts/promote_validated_strategy.sh" in script
     assert "write_access_status={safe_status_value(promotion_write_access_status)}" in script
     assert "approval_marker_only_supported=true" in script
+    assert "approval_marker_action_status={approval_marker_action_status}" in script
     assert "env_file_writable={safe_status_value(promotion_env_file_writable)}" in script
     assert "env_dir_writable={safe_status_value(promotion_env_dir_writable)}" in script
     assert "approval_marker={safe_status_value(second_strategy_evidence['promotion_approval_marker'])}" in script

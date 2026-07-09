@@ -546,13 +546,11 @@ probe_promotion_write_access() {
     promotion_write_access_status="env_dir_not_writable"
   fi
 
-  if [[ -e "$PROOF_STATUS_PROMOTION_APPROVAL_MARKER" ]]; then
-    if [[ -w "$PROOF_STATUS_PROMOTION_APPROVAL_MARKER" ]]; then
-      promotion_approval_marker_writable="true"
-    elif [[ "$promotion_write_access_status" == "ok" ]]; then
+  if [[ -e "$PROOF_STATUS_PROMOTION_APPROVAL_MARKER" && ! -w "$PROOF_STATUS_PROMOTION_APPROVAL_MARKER" ]]; then
+    if [[ "$promotion_write_access_status" == "ok" ]]; then
       promotion_write_access_status="approval_marker_not_writable"
     fi
-  elif [[ -d "$marker_dir" ]]; then
+  else
     promotion_approval_marker_writable="true"
   fi
 
@@ -566,6 +564,8 @@ probe_promotion_write_access() {
     if [[ "$promotion_write_access_status" == "ok" ]]; then
       promotion_write_access_status="approval_marker_parent_not_writable"
     fi
+  else
+    promotion_approval_marker_dir_writable="true"
   fi
 }
 
@@ -5061,6 +5061,19 @@ else:
 promotion_action_status = str(second_strategy_evidence["promotion_action_status"])
 if promotion_action_status == "ready" and promotion_write_access_status != "ok":
     promotion_action_status = "ready_needs_write_access"
+approval_marker_action_status = "none"
+if second_strategy_evidence["promotion_approval_marker_status"] == "approved":
+    approval_marker_action_status = "approved"
+elif second_strategy_evidence["promotion_action_status"] == "ready":
+    if (
+        promotion_approval_marker_writable == "true"
+        and promotion_approval_marker_dir_writable == "true"
+    ):
+        approval_marker_action_status = "ready"
+    else:
+        approval_marker_action_status = "ready_needs_marker_write_access"
+elif second_strategy_evidence["promotion_action_status"] == "review_evidence":
+    approval_marker_action_status = "review_evidence"
 strategy_diversification_promotion_action_status = promotion_action_status
 if strategy_diversification_status == "ok":
     strategy_diversification_candidate_status = "met"
@@ -6271,6 +6284,7 @@ print(
     f"gap={strategy_diversification_gap} "
     f"candidate_status={strategy_diversification_candidate_status} "
     f"promotion_action_status={strategy_diversification_promotion_action_status} "
+    f"approval_marker_action_status={approval_marker_action_status} "
     f"promotion_write_access_status={safe_status_value(promotion_write_access_status)} "
     f"active_names={active_strategies or 'none'} "
     f"approved_names={approved_active_strategies or 'none'} "
@@ -6362,6 +6376,7 @@ print(
     f"dry_run_default=true "
     f"mutation_requires_dry_run_false=true "
     f"approval_marker_only_supported=true "
+    f"approval_marker_action_status={approval_marker_action_status} "
     f"env_file={safe_status_value(proof_status_env_file)} "
     f"write_access_status={safe_status_value(promotion_write_access_status)} "
     f"env_file_writable={safe_status_value(promotion_env_file_writable)} "
