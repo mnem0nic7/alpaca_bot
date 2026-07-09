@@ -64,6 +64,7 @@ output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"
 context_line="$(grep -E '^scheduled check context: ' "$output_file" | tail -n 1 || true)"
 proof_summary_line="$(grep -E '^paper proof summary: ' "$output_file" | tail -n 1 || true)"
 proof_progress_line="$(grep -E '^paper proof progress: ' "$output_file" | tail -n 1 || true)"
+proof_concentration_line="$(grep -E '^paper proof concentration: ' "$output_file" | tail -n 1 || true)"
 proof_scoring_line="$(grep -E '^paper proof scoring: ' "$output_file" | tail -n 1 || true)"
 proof_scenarios_line="$(grep -E '^paper proof scenarios: ' "$output_file" | tail -n 1 || true)"
 proof_current_execution_line="$(grep -E '^paper proof current-session execution: ' "$output_file" | tail -n 1 || true)"
@@ -78,6 +79,7 @@ export AUDIT_OUTPUT_TAIL="$output_tail"
 export AUDIT_CONTEXT_LINE="$context_line"
 export AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"
 export AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"
+export AUDIT_PROOF_CONCENTRATION_LINE="$proof_concentration_line"
 export AUDIT_PROOF_SCORING_LINE="$proof_scoring_line"
 export AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"
 export AUDIT_PROOF_CURRENT_EXECUTION_LINE="$proof_current_execution_line"
@@ -94,6 +96,7 @@ if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_CONTEXT_LINE \
     -e AUDIT_PROOF_SUMMARY_LINE \
     -e AUDIT_PROOF_PROGRESS_LINE \
+    -e AUDIT_PROOF_CONCENTRATION_LINE \
     -e AUDIT_PROOF_SCORING_LINE \
     -e AUDIT_PROOF_SCENARIOS_LINE \
     -e AUDIT_PROOF_CURRENT_EXECUTION_LINE \
@@ -129,6 +132,7 @@ CONTEXT_VALUE = re.compile(r"^[A-Za-z0-9_.:,+-]+$")
 PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")
 PROOF_SUMMARY_PREFIX = "paper proof summary: "
 PROOF_PROGRESS_PREFIX = "paper proof progress: "
+PROOF_CONCENTRATION_PREFIX = "paper proof concentration: "
 PROOF_SCORING_PREFIX = "paper proof scoring: "
 PROOF_SCENARIOS_PREFIX = "paper proof scenarios: "
 PROOF_CURRENT_EXECUTION_PREFIX = "paper proof current-session execution: "
@@ -155,6 +159,19 @@ PROOF_PROGRESS_FIELDS = {
     "required_pnl": "proof_required_pnl",
     "first_exit_session": "proof_first_exit_session",
     "latest_exit_session": "proof_latest_exit_session",
+}
+PROOF_CONCENTRATION_FIELDS = {
+    "status": "proof_concentration_status",
+    "best_winning_trade": "proof_concentration_best_winning_trade",
+    "best_winning_trade_pnl": "proof_concentration_best_winning_trade_pnl",
+    "total_pnl": "proof_concentration_total_pnl",
+    "non_best_trades": "proof_concentration_non_best_trades",
+    "non_best_pnl": "proof_concentration_non_best_pnl",
+    "non_best_avg_pnl": "proof_concentration_non_best_avg_pnl",
+    "net_pnl_needed": "proof_concentration_net_pnl_needed",
+    "non_best_avg_trade_gap": "proof_concentration_non_best_avg_trade_gap",
+    "single_win_pnl_share": "proof_concentration_single_win_pnl_share",
+    "max_single_win_pnl_share": "proof_concentration_max_single_win_pnl_share",
 }
 PROOF_SCORING_FIELDS = {
     "scoreable_closed_trades": "proof_scoreable_closed_trades",
@@ -364,6 +381,13 @@ try:
             os.environ.get("AUDIT_PROOF_PROGRESS_LINE", ""),
             prefix=PROOF_PROGRESS_PREFIX,
             field_map=PROOF_PROGRESS_FIELDS,
+        )
+    )
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_PROOF_CONCENTRATION_LINE", ""),
+            prefix=PROOF_CONCENTRATION_PREFIX,
+            field_map=PROOF_CONCENTRATION_FIELDS,
         )
     )
     payload.update(

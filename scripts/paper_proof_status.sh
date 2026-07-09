@@ -4348,17 +4348,24 @@ avg_trade_pnl = pnl / trade_count if trade_count else None
 win_rate = wins / trade_count * 100 if trade_count else None
 best_trade = max(trade_pnl_rows, key=lambda row: row[1]) if trade_pnl_rows else None
 worst_trade = min(trade_pnl_rows, key=lambda row: row[1]) if trade_pnl_rows else None
+best_winning_trade = max(
+    (row for row in trade_pnl_rows if row[1] > 0),
+    key=lambda row: row[1],
+    default=None,
+)
 non_best_trade_pnl_rows = list(trade_pnl_rows)
-if best_trade is not None and best_trade[1] > 0:
-    non_best_trade_pnl_rows.remove(best_trade)
+if best_winning_trade is not None:
+    non_best_trade_pnl_rows.remove(best_winning_trade)
+non_best_trade_count = len(non_best_trade_pnl_rows)
+non_best_trade_pnl = sum(trade_pnl for _, trade_pnl in non_best_trade_pnl_rows)
 non_best_avg_trade_pnl = (
-    sum(trade_pnl for _, trade_pnl in non_best_trade_pnl_rows)
-    / len(non_best_trade_pnl_rows)
+    non_best_trade_pnl / non_best_trade_count
     if non_best_trade_pnl_rows
     else None
 )
 win_rate_text = f"{win_rate:.1f}%" if win_rate is not None else "none"
 avg_trade_pnl_text = f"{avg_trade_pnl:.2f}" if avg_trade_pnl is not None else "none"
+non_best_trade_pnl_text = f"{non_best_trade_pnl:.2f}"
 non_best_avg_trade_pnl_text = (
     f"{non_best_avg_trade_pnl:.2f}"
     if non_best_avg_trade_pnl is not None
@@ -4369,6 +4376,11 @@ best_trade_text = (
 )
 worst_trade_text = (
     format_trade_pnl_atom(worst_trade[0], worst_trade[1]) if worst_trade else "none"
+)
+best_winning_trade_text = (
+    format_trade_pnl_atom(best_winning_trade[0], best_winning_trade[1])
+    if best_winning_trade is not None
+    else "none"
 )
 recent_trade_rows = sorted(
     trade_pnl_rows,
@@ -4391,10 +4403,7 @@ gross_profit = sum(trade_pnl for _, trade_pnl in trade_pnl_rows if trade_pnl > 0
 gross_loss = abs(sum(trade_pnl for _, trade_pnl in trade_pnl_rows if trade_pnl < 0))
 profit_factor = gross_profit / gross_loss if gross_loss > 0 else None
 profit_factor_text = f"{profit_factor:.2f}" if profit_factor is not None else "none"
-best_winning_trade_pnl = max(
-    (trade_pnl for _, trade_pnl in trade_pnl_rows if trade_pnl > 0),
-    default=0.0,
-)
+best_winning_trade_pnl = best_winning_trade[1] if best_winning_trade else 0.0
 single_win_pnl_share = (
     best_winning_trade_pnl / pnl
     if pnl > 0 and best_winning_trade_pnl > 0
@@ -5043,6 +5052,12 @@ concentration_non_best_avg_trade_gap_text = (
     if concentration_non_best_avg_trade_gap is not None
     else "none"
 )
+if single_win_pnl_share is None:
+    concentration_status = "not_applicable"
+elif single_win_pnl_share > scale_max_single_win_pnl_share:
+    concentration_status = "blocked"
+else:
+    concentration_status = "ok"
 promotion_action_status = str(second_strategy_evidence["promotion_action_status"])
 if promotion_action_status == "ready" and promotion_write_access_status != "ok":
     promotion_action_status = "ready_needs_write_access"
@@ -6572,6 +6587,20 @@ print(
     f"concentration_net_pnl_needed={concentration_net_pnl_needed:.2f} "
     f"concentration_non_best_avg_pnl={non_best_avg_trade_pnl_text} "
     f"concentration_non_best_avg_trade_gap={concentration_non_best_avg_trade_gap_text} "
+    f"single_win_pnl_share={single_win_pnl_share_text} "
+    f"max_single_win_pnl_share={scale_max_single_win_pnl_share:.2f}"
+)
+print(
+    "paper proof concentration: "
+    f"status={concentration_status} "
+    f"best_winning_trade={safe_status_value(best_winning_trade_text)} "
+    f"best_winning_trade_pnl={best_winning_trade_pnl:.2f} "
+    f"total_pnl={pnl:.2f} "
+    f"non_best_trades={non_best_trade_count} "
+    f"non_best_pnl={non_best_trade_pnl_text} "
+    f"non_best_avg_pnl={non_best_avg_trade_pnl_text} "
+    f"net_pnl_needed={concentration_net_pnl_needed:.2f} "
+    f"non_best_avg_trade_gap={concentration_non_best_avg_trade_gap_text} "
     f"single_win_pnl_share={single_win_pnl_share_text} "
     f"max_single_win_pnl_share={scale_max_single_win_pnl_share:.2f}"
 )

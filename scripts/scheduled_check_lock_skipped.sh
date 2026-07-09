@@ -729,6 +729,7 @@ load_latest_proof_status() {
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 import os
 
 from alpaca_bot.config import Settings
@@ -915,6 +916,29 @@ post_supervisor_line = (
     if post_supervisor_parts
     else ""
 )
+concentration_fields = [
+    ("status", "proof_concentration_status"),
+    ("best_winning_trade", "proof_concentration_best_winning_trade"),
+    ("best_winning_trade_pnl", "proof_concentration_best_winning_trade_pnl"),
+    ("total_pnl", "proof_concentration_total_pnl"),
+    ("non_best_trades", "proof_concentration_non_best_trades"),
+    ("non_best_pnl", "proof_concentration_non_best_pnl"),
+    ("non_best_avg_pnl", "proof_concentration_non_best_avg_pnl"),
+    ("net_pnl_needed", "proof_concentration_net_pnl_needed"),
+    ("non_best_avg_trade_gap", "proof_concentration_non_best_avg_trade_gap"),
+    ("single_win_pnl_share", "proof_concentration_single_win_pnl_share"),
+    ("max_single_win_pnl_share", "proof_concentration_max_single_win_pnl_share"),
+]
+concentration_parts = [
+    f"{name}={payload[key]}"
+    for name, key in concentration_fields
+    if payload.get(key) not in {None, ""}
+]
+concentration_line = (
+    "paper proof concentration: " + " ".join(concentration_parts)
+    if concentration_parts
+    else ""
+)
 print(
 	    "paper_proof_status_latest="
 	    f"{row[0]}|{row[1]}|{row[2]}|{row[3]}|{row[4]}|{row[5]}|"
@@ -922,7 +946,7 @@ print(
 	    f"{row[12]}|{row[13]}|{row[14]}|{row[15]}|{row[16]}|{row[17]}|"
 	    f"{row[18]}|{row[19]}|{row[20]}|{row[21]}|{row[22]}|"
 	    f"{row[23]}|{row[24]}|{row[25]}|{row[27]}|"
-	    f"{age_minutes}|{post_supervisor_line}"
+	    f"{age_minutes}|{post_supervisor_line}|{concentration_line}"
 	)
 PY
 )"
@@ -1314,7 +1338,8 @@ case "$CHECK_NAME" in
     latest_created_at=""
     latest_age_minutes=""
     latest_post_supervisor_execution_line=""
-    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line <<< "$latest_proof_status"
+    latest_concentration_line=""
+    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line latest_concentration_line <<< "$latest_proof_status"
     proof_lock_is_recent=false
     if [[ "$latest_age_minutes" =~ ^[0-9]+$ ]] \
       && (( 10#$latest_age_minutes <= 10#$PROOF_STATUS_LOCK_MAX_AGE_MINUTES )); then
@@ -1334,6 +1359,9 @@ case "$CHECK_NAME" in
       echo "scheduled check context: session_date=$session_date proof_start=$proof_start strategy=$proof_strategy strategies=$proof_strategy_csv min_trades=$proof_min_trades min_pnl=$proof_min_pnl session_guard_min_trades=$proof_session_guard_min_trades session_guard_min_pnl=$proof_session_guard_min_pnl reason=lock_busy_already_reported"
       echo "paper proof summary: readiness=$latest_readiness proof=$latest_proof reason=${latest_proof_reason:-lock_busy_already_reported} blockers=$latest_blockers evidence_blockers=${latest_evidence_blockers:-none} sealed_evidence_blockers=${latest_sealed_evidence_blockers:-none} overall_blockers=${latest_overall_blockers:-unknown} clean_window_blockers=${latest_clean_window_blockers:-unknown} sealed_clean_window_blockers=${latest_sealed_clean_window_blockers:-unknown} warnings=${latest_warnings:-none}"
       echo "paper proof progress: status=${latest_progress_status:-$latest_proof} strategies=$proof_strategy_csv closed_trades=${latest_closed_trades:-unknown} required_trades=${latest_required_trades:-$proof_min_trades} pnl=${latest_pnl:-unknown} required_pnl=${latest_required_pnl:-$proof_min_pnl} window=lock_busy_already_reported first_exit_session=${latest_first_exit_session:-none} latest_exit_session=${latest_latest_exit_session:-none}"
+      if [[ -n "$latest_concentration_line" ]]; then
+        echo "$latest_concentration_line"
+      fi
       if [[ -n "$latest_scoreable_closed_trades$latest_unpaired_filled_exits$latest_unpaired_symbols" ]]; then
         echo "paper proof scoring: strategies=$proof_strategy_csv scoreable_closed_trades=${latest_scoreable_closed_trades:-${latest_closed_trades:-unknown}} unpaired_filled_exits=${latest_unpaired_filled_exits:-unknown} unpaired_symbols=${latest_unpaired_symbols:-none}"
       fi
