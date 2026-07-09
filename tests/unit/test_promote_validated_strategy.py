@@ -318,6 +318,8 @@ def test_approval_marker_wrapper_defaults_to_dry_run_and_approval_only(
     assert APPROVAL_WRAPPER.stat().st_mode & stat.S_IEXEC
     assert "dry_run=true" in result.stdout
     assert "strategy=ema_pullback" in result.stdout
+    assert "promotion_handoff_status=ready_needs_approval_marker" in result.stdout
+    assert "promotion_handoff_step=approval_marker_write" in result.stdout
     assert "dry_run_approval_marker_command=env " in result.stdout
     assert "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY=true" in result.stdout
     assert not (evidence_root / "promotion_approval.json").exists()
@@ -350,6 +352,8 @@ def test_approval_marker_wrapper_accepts_strategy_only_with_default_env(
     assert result.returncode == 0, result.stderr
     assert "dry_run=true" in result.stdout
     assert "strategy=ema_pullback" in result.stdout
+    assert "promotion_handoff_status=ready_needs_approval_marker" in result.stdout
+    assert "promotion_handoff_step=approval_marker_write" in result.stdout
     assert "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY=true" in result.stdout
     assert not (evidence_root / "promotion_approval.json").exists()
     assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()

@@ -436,7 +436,32 @@ promotion_env_keys_csv() {
   printf '%s' "${PROMOTION_ENV_KEYS[*]}"
 }
 
+approval_marker_handoff_ready() {
+  local marker_dir
+  local marker_parent
+
+  marker_dir="$(dirname "$APPROVAL_MARKER")"
+  marker_parent="$(dirname "$marker_dir")"
+  if [[ -e "$APPROVAL_MARKER" ]]; then
+    [[ -w "$APPROVAL_MARKER" && -w "$marker_dir" ]]
+    return
+  fi
+  if [[ -d "$marker_dir" ]]; then
+    [[ -w "$marker_dir" ]]
+    return
+  fi
+  [[ -d "$marker_parent" && -w "$marker_parent" ]]
+}
+
 promotion_handoff_status() {
+  if [[ "$APPROVAL_ONLY" == "true" ]]; then
+    if approval_marker_handoff_ready; then
+      printf 'ready_needs_approval_marker'
+    else
+      printf 'ready_needs_marker_write_access'
+    fi
+    return
+  fi
   case "$promotion_write_access_status" in
     ok)
       printf 'none'
@@ -454,6 +479,14 @@ promotion_handoff_status() {
 }
 
 promotion_handoff_step() {
+  if [[ "$APPROVAL_ONLY" == "true" ]]; then
+    if approval_marker_handoff_ready; then
+      printf 'approval_marker_write'
+    else
+      printf 'approval_marker_write_access'
+    fi
+    return
+  fi
   case "$promotion_write_access_status" in
     ok)
       printf 'none'
