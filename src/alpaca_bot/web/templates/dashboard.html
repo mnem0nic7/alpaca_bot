@@ -98,7 +98,11 @@
       }
       .warn { color: var(--warn); }
       .muted { color: var(--muted); }
-      .mono { font-family: "SFMono-Regular", "Menlo", monospace; font-size: 0.88rem; }
+      .mono {
+        font-family: "SFMono-Regular", "Menlo", monospace;
+        font-size: 0.88rem;
+        overflow-wrap: anywhere;
+      }
       ul.events {
         list-style: none;
         padding: 0;
@@ -322,6 +326,7 @@
       {% set proof_post_supervisor_execution_status = proof_payload.get("proof_post_supervisor_execution_status", "unknown") %}
       {% set proof_post_supervisor_execution_warnings = proof_payload.get("proof_post_supervisor_execution_warnings", "unknown") %}
       {% set proof_has_gap_fields = proof_payload.get("proof_gap_sample_trades_remaining") or proof_payload.get("proof_gap_active_days_remaining") or proof_payload.get("proof_gap_approved_replay_strategy_gap") or proof_payload.get("proof_gap_concentration_runway_status") %}
+      {% set proof_has_promotion_fields = proof_payload.get("proof_strategy_diversification_candidate_status") or proof_payload.get("proof_second_strategy_promotion_action_status") %}
       <div class="panel" style="margin-bottom: 1rem;">
         <h2>Paper Proof</h2>
         <div class="status-grid">
@@ -378,6 +383,31 @@
               trade_avg={{ proof_payload.get("proof_gap_concentration_remaining_trade_required_avg_pnl", "unknown") }}
               day_avg={{ proof_payload.get("proof_gap_concentration_remaining_active_day_required_pnl", "unknown") }}
             </p>
+          </div>
+          {% endif %}
+          {% if proof_has_promotion_fields %}
+          <div>
+            <p class="eyebrow">Strategy Candidate</p>
+            <p class="value mono {{ 'warn' if proof_payload.get('proof_strategy_diversification_candidate_status', 'unknown') not in ['none', 'unknown'] else '' }}">
+              {{ proof_payload.get("proof_second_strategy_promotion_action_strategy", "unknown") }}
+              {{ proof_payload.get("proof_strategy_diversification_candidate_status", "unknown") }}
+            </p>
+          </div>
+          <div>
+            <p class="eyebrow">Promotion Handoff</p>
+            <p class="value mono {{ 'warn' if proof_payload.get('proof_second_strategy_promotion_action_handoff_status', proof_payload.get('proof_second_strategy_promotion_action_status', 'unknown')) not in ['complete', 'none', 'unknown'] else '' }}">
+              {{ proof_payload.get("proof_second_strategy_promotion_action_status", "unknown") }}
+              handoff={{ proof_payload.get("proof_second_strategy_promotion_action_handoff_status", "unknown") }}
+              marker={{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_status", "unknown") }}
+            </p>
+          </div>
+          <div>
+            <p class="eyebrow">Approval Script</p>
+            <p class="value mono">{{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_script", "unknown") }}</p>
+          </div>
+          <div>
+            <p class="eyebrow">Approval Confirmation</p>
+            <p class="value mono">{{ proof_payload.get("proof_second_strategy_promotion_action_confirmation", "unknown") }}</p>
           </div>
           {% endif %}
           <div>
@@ -457,6 +487,11 @@
                     {% if event.payload.get("proof_gap_active_days_remaining") %} gap_days={{ event.payload.get("proof_gap_active_days_remaining") }}{% endif %}
                     {% if event.payload.get("proof_gap_approved_replay_strategy_gap") %} gap_strategies={{ event.payload.get("proof_gap_approved_replay_strategy_gap") }}{% endif %}
                     {% if event.payload.get("proof_gap_concentration_runway_status") %} concentration_runway={{ event.payload.get("proof_gap_concentration_runway_status") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_promotion_action_strategy") %} candidate={{ event.payload.get("proof_second_strategy_promotion_action_strategy") }}{% endif %}
+                    {% if event.payload.get("proof_strategy_diversification_candidate_status") %} candidate_status={{ event.payload.get("proof_strategy_diversification_candidate_status") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_promotion_action_status") %} promotion={{ event.payload.get("proof_second_strategy_promotion_action_status") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_promotion_action_handoff_status") %} promotion_handoff={{ event.payload.get("proof_second_strategy_promotion_action_handoff_status") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_promotion_action_approval_marker_status") %} approval_marker={{ event.payload.get("proof_second_strategy_promotion_action_approval_marker_status") }}{% endif %}
                     {% if event.payload.get("proof_scenario_status") %} scenarios={{ event.payload.get("proof_scenario_status") }}:{{ event.payload.get("proof_scenario_active", "?") }}@{{ event.payload.get("proof_scenario_expected_session", "?") }}{% endif %}
                     {% if event.payload.get("proof_scenario_problems") and event.payload.get("proof_scenario_problems") != "none" %} scenario_problems={{ event.payload.get("proof_scenario_problems") }}{% endif %}
                     {% if event.payload.get("proof_current_execution_status") %} current_exec={{ event.payload.get("proof_current_execution_status") }} warnings={{ event.payload.get("proof_current_execution_warnings", "?") }} fill={{ event.payload.get("proof_current_execution_entry_fill_rate", "?") }} caprej={{ event.payload.get("proof_current_execution_capacity_rejected", "?") }} short={{ event.payload.get("proof_current_execution_short_window", "?") }}{% endif %}

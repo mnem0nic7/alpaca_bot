@@ -165,6 +165,22 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_gap_concentration_runway_status": "needs_higher_non_best_pnl",
             "proof_gap_concentration_remaining_trade_required_avg_pnl": "0.53",
             "proof_gap_concentration_remaining_active_day_required_pnl": "4.77",
+            "proof_strategy_diversification_candidate_status": (
+                "validated_stock_candidate_unapproved"
+            ),
+            "proof_second_strategy_promotion_action_status": "ready_needs_write_access",
+            "proof_second_strategy_promotion_action_strategy": "ema_pullback",
+            "proof_second_strategy_promotion_action_handoff_status": (
+                "ready_needs_privileged_env_write"
+            ),
+            "proof_second_strategy_promotion_action_approval_marker_status": "missing",
+            "proof_second_strategy_promotion_action_approval_marker_command_script": (
+                "./scripts/approve_validated_strategy_marker.sh"
+            ),
+            "proof_second_strategy_promotion_action_confirmation": (
+                "approve-ema_pullback-paper-promotion-sha256-"
+                "df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9"
+            ),
             "proof_scenario_status": "ok",
             "proof_scenario_active": "980",
             "proof_scenario_expected_session": "2026-06-26",
@@ -292,6 +308,21 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "pnl_needed=14.32" in response.text
     assert "trade_avg=0.53" in response.text
     assert "day_avg=4.77" in response.text
+    assert "Strategy Candidate" in response.text
+    assert "ema_pullback" in response.text
+    assert "validated_stock_candidate_unapproved" in response.text
+    assert "Promotion Handoff" in response.text
+    assert "ready_needs_write_access" in response.text
+    assert "handoff=ready_needs_privileged_env_write" in response.text
+    assert "marker=missing" in response.text
+    assert "Approval Script" in response.text
+    assert "./scripts/approve_validated_strategy_marker.sh" in response.text
+    assert "Approval Confirmation" in response.text
+    assert (
+        "approve-ema_pullback-paper-promotion-sha256-"
+        "df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9"
+        in response.text
+    )
     assert "Scenario Evidence" in response.text
     assert "Scenario Problems" in response.text
     assert "ok\n              980\n              @ 2026-06-26" in response.text
@@ -319,6 +350,11 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "gap_days=3" in response.text
     assert "gap_strategies=1" in response.text
     assert "concentration_runway=needs_higher_non_best_pnl" in response.text
+    assert "candidate=ema_pullback" in response.text
+    assert "candidate_status=validated_stock_candidate_unapproved" in response.text
+    assert "promotion=ready_needs_write_access" in response.text
+    assert "promotion_handoff=ready_needs_privileged_env_write" in response.text
+    assert "approval_marker=missing" in response.text
     assert "awaiting_min_trades" in response.text
     assert "12.34 / 0.01" in response.text
     assert "trades&gt;=10" in response.text
