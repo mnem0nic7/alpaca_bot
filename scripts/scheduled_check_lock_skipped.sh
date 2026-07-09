@@ -1165,6 +1165,34 @@ second_strategy_promotion_action_fields = [
     ("strategy", "proof_second_strategy_promotion_action_strategy"),
     ("confirmation", "proof_second_strategy_promotion_action_confirmation"),
     (
+        "proof_horizon_status",
+        "proof_second_strategy_promotion_action_proof_horizon_status",
+    ),
+    (
+        "proof_horizon_detail",
+        "proof_second_strategy_promotion_action_proof_horizon_detail",
+    ),
+    (
+        "proof_horizon_summary",
+        "proof_second_strategy_promotion_action_proof_horizon_summary",
+    ),
+    (
+        "proof_horizon_summary_sha256",
+        "proof_second_strategy_promotion_action_proof_horizon_summary_sha256",
+    ),
+    (
+        "proof_horizon_total_pnl",
+        "proof_second_strategy_promotion_action_proof_horizon_total_pnl",
+    ),
+    (
+        "proof_horizon_eventual_pass_rate",
+        "proof_second_strategy_promotion_action_proof_horizon_eventual_pass_rate",
+    ),
+    (
+        "proof_horizon_terminal_blockers",
+        "proof_second_strategy_promotion_action_proof_horizon_terminal_blockers",
+    ),
+    (
         "approval_marker_action_status",
         "proof_second_strategy_promotion_action_approval_marker_action_status",
     ),

@@ -464,6 +464,17 @@
               sha={{ proof_payload.get("proof_second_strategy_promotion_action_validation_summary_sha256", "unknown") }}
             </p>
           </div>
+          {% if proof_payload.get("proof_second_strategy_promotion_action_proof_horizon_status") %}
+          <div>
+            <p class="eyebrow">Candidate Proof Horizon</p>
+            <p class="value mono {{ 'warn' if proof_payload.get('proof_second_strategy_promotion_action_proof_horizon_status', 'unknown') not in ['ok', 'not_applicable', 'none', 'unknown'] else '' }}">
+              {{ proof_payload.get("proof_second_strategy_promotion_action_proof_horizon_status", "unknown") }}
+              pnl={{ proof_payload.get("proof_second_strategy_promotion_action_proof_horizon_total_pnl", "unknown") }}
+              pass_rate={{ proof_payload.get("proof_second_strategy_promotion_action_proof_horizon_eventual_pass_rate", "unknown") }}
+              blockers={{ proof_payload.get("proof_second_strategy_promotion_action_proof_horizon_terminal_blockers", "unknown") }}
+            </p>
+          </div>
+          {% endif %}
           <div>
             <p class="eyebrow">Promotion Handoff</p>
             <p class="value mono {{ 'warn' if proof_payload.get('proof_second_strategy_promotion_action_handoff_status', proof_payload.get('proof_second_strategy_promotion_action_status', 'unknown')) not in ['complete', 'none', 'unknown'] else '' }}">

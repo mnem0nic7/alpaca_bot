@@ -627,3 +627,10 @@ Conclusion: `ema_pullback` may be operationally wired, but the sampled
 `bull_flag + ema_pullback` basket does not currently solve the proof horizon.
 This is not approval to promote or enable the strategy, and no live paper
 configuration was changed.
+
+Follow-up: the proof-horizon sample was published under
+`/var/lib/alpaca-bot/nightly/second_strategy/latest_proof_horizon`. Proof
+status now consumes that summary, reports
+`proof_horizon_status=failed` with `proof_horizon_detail=total_pnl_below_gate`,
+and suppresses the approval quick command as `review_proof_horizon` while this
+negative proof-horizon evidence is current.

@@ -277,6 +277,14 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_second_strategy_promotion_action_candidate_total_pnl": "150.76",
             "proof_second_strategy_promotion_action_candidate_ci_low": "0.0707",
             "proof_second_strategy_promotion_action_candidate_p_mean_le_zero": "0.0090",
+            "proof_second_strategy_promotion_action_proof_horizon_status": "failed",
+            "proof_second_strategy_promotion_action_proof_horizon_total_pnl": "-30.03",
+            "proof_second_strategy_promotion_action_proof_horizon_eventual_pass_rate": (
+                "0.0797"
+            ),
+            "proof_second_strategy_promotion_action_proof_horizon_terminal_blockers": (
+                "positive_pnl:239,profit_factor:251"
+            ),
             "proof_scenario_status": "ok",
             "proof_scenario_active": "980",
             "proof_scenario_expected_session": "2026-06-26",
@@ -554,6 +562,10 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "candidate_pnl=150.76" in response.text
     assert "candidate_ci_low=0.0707" in response.text
     assert "candidate_p_zero=0.0090" in response.text
+    assert "Candidate Proof Horizon" in response.text
+    assert "pnl=-30.03" in response.text
+    assert "pass_rate=0.0797" in response.text
+    assert "blockers=positive_pnl:239,profit_factor:251" in response.text
     assert "promotion=ready_needs_write_access" in response.text
     assert "promotion_handoff=ready_needs_privileged_env_write" in response.text
     assert "approval_marker=missing" in response.text

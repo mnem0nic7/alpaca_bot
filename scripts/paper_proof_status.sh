@@ -1382,6 +1382,21 @@ def summarize_validation_verdicts(rows: object, *, limit: int = 10) -> str:
     return ",".join(parts) if parts else "none"
 
 
+def summarize_counts(mapping: object, *, limit: int = 8) -> str:
+    if not isinstance(mapping, dict):
+        return "none"
+    parts: list[str] = []
+    for key, value in sorted(mapping.items(), key=lambda item: str(item[0])):
+        name = safe_status_value(key)
+        count = as_int_or_none(value)
+        if name == "none" or count is None:
+            continue
+        parts.append(f"{name}:{count}")
+        if len(parts) >= limit:
+            break
+    return ",".join(parts) if parts else "none"
+
+
 def rows_missing_candidate_attribution(rows: object) -> bool:
     if not isinstance(rows, list):
         return False
@@ -1618,6 +1633,7 @@ def load_second_strategy_evidence(
     prefilter_summary_path = output_root / "latest" / "summary.json"
     validation_summary_path = output_root / "latest_validation" / "summary.json"
     approval_marker_path = output_root / "promotion_approval.json"
+    proof_horizon_summary_path = output_root / "latest_proof_horizon" / "summary.json"
     prefilter_payload, prefilter_error, prefilter_summary_sha256 = load_json_payload(
         prefilter_summary_path
     )
@@ -1627,6 +1643,11 @@ def load_second_strategy_evidence(
     approval_payload, approval_error, _approval_sha256 = load_json_payload(
         approval_marker_path
     )
+    (
+        proof_horizon_payload,
+        proof_horizon_error,
+        proof_horizon_summary_sha256,
+    ) = load_json_payload(proof_horizon_summary_path)
 
     prefilter_rows = prefilter_payload.get("rows", []) if prefilter_payload else []
     validation_rows = validation_payload.get("rows", []) if validation_payload else []
@@ -1648,6 +1669,10 @@ def load_second_strategy_evidence(
     validation_age_hours = file_age_hours(validation_summary_path, now_utc=now_utc)
     prefilter_summary_mtime_epoch = file_mtime_epoch(prefilter_summary_path)
     validation_summary_mtime_epoch = file_mtime_epoch(validation_summary_path)
+    proof_horizon_age_hours = file_age_hours(
+        proof_horizon_summary_path, now_utc=now_utc
+    )
+    proof_horizon_mtime_epoch = file_mtime_epoch(proof_horizon_summary_path)
     stale_parts: list[str] = []
     if (
         prefilter_age_hours is not None
@@ -1706,6 +1731,88 @@ def load_second_strategy_evidence(
         else 0
     )
     promotion_candidate = best_promotion_candidate_from_rows(validation_rows)
+    proof_horizon_strategy = "none"
+    proof_horizon_status = "not_applicable"
+    proof_horizon_detail = "no_promotion_candidate"
+    proof_horizon_trades: int | None = None
+    proof_horizon_total_pnl: float | None = None
+    proof_horizon_eventual_pass_rate: float | None = None
+    proof_horizon_starts_eventually_passed: int | None = None
+    proof_horizon_historical_starts: int | None = None
+    proof_horizon_terminal_blockers = "none"
+    if promotion_candidate is not None:
+        promotion_candidate_name = str(
+            promotion_candidate.get("candidate") or ""
+        ).strip()
+        proof_horizon_status = "missing"
+        proof_horizon_detail = "latest_proof_horizon_summary_missing"
+        if proof_horizon_error and proof_horizon_error != "missing":
+            proof_horizon_status = "invalid"
+            proof_horizon_detail = proof_horizon_error
+        elif proof_horizon_payload is not None:
+            proof_horizon_strategy = (
+                str(proof_horizon_payload.get("strategy") or "").strip() or "none"
+            )
+            proof_horizon_trades = as_int_or_none(
+                proof_horizon_payload.get("trades")
+            )
+            proof_horizon_total_pnl = as_float_or_none(
+                proof_horizon_payload.get("total_pnl")
+            )
+            proof_horizon_eventual_pass_rate = as_float_or_none(
+                proof_horizon_payload.get("eventual_pass_rate")
+            )
+            proof_horizon_starts_eventually_passed = as_int_or_none(
+                proof_horizon_payload.get("starts_eventually_passed")
+            )
+            proof_horizon_historical_starts = as_int_or_none(
+                proof_horizon_payload.get("historical_starts_checked")
+            )
+            proof_horizon_terminal_blockers = summarize_counts(
+                proof_horizon_payload.get("terminal_blockers")
+            )
+            proof_horizon_required_pnl = (
+                as_float_or_none(proof_horizon_payload.get("min_pnl")) or 0.01
+            )
+            proof_horizon_strategy_parts = [
+                part.strip()
+                for part in proof_horizon_strategy.split("+")
+                if part.strip()
+            ]
+            if (
+                proof_horizon_age_hours is not None
+                and proof_horizon_age_hours > max_age_hours
+            ):
+                proof_horizon_status = "stale"
+                proof_horizon_detail = "proof_horizon_too_old"
+            elif (
+                proof_horizon_mtime_epoch is not None
+                and validation_summary_mtime_epoch is not None
+                and proof_horizon_mtime_epoch < validation_summary_mtime_epoch
+            ):
+                proof_horizon_status = "stale"
+                proof_horizon_detail = "proof_horizon_older_than_validation"
+            elif promotion_candidate_name not in proof_horizon_strategy_parts:
+                proof_horizon_status = "mismatch"
+                proof_horizon_detail = "candidate_missing_from_strategy_label"
+            elif (
+                proof_horizon_trades is None
+                or proof_horizon_total_pnl is None
+                or proof_horizon_starts_eventually_passed is None
+                or proof_horizon_historical_starts is None
+                or proof_horizon_eventual_pass_rate is None
+            ):
+                proof_horizon_status = "invalid"
+                proof_horizon_detail = "required_metrics_missing"
+            elif proof_horizon_total_pnl < proof_horizon_required_pnl:
+                proof_horizon_status = "failed"
+                proof_horizon_detail = "total_pnl_below_gate"
+            elif proof_horizon_starts_eventually_passed <= 0:
+                proof_horizon_status = "failed"
+                proof_horizon_detail = "no_historical_start_passed"
+            else:
+                proof_horizon_status = "ok"
+                proof_horizon_detail = "fresh"
     approval_status, approval_strategy = approval_marker_status(
         approval_payload,
         approval_error,
@@ -1730,7 +1837,12 @@ def load_second_strategy_evidence(
     if promotion_approved and validation_positive_rows > 0:
         promotion_action_status = "approved"
     elif evidence_status == "ok" and promotion_candidate is not None:
-        promotion_action_status = "ready"
+        if proof_horizon_status == "ok":
+            promotion_action_status = "ready"
+        elif proof_horizon_status == "missing":
+            promotion_action_status = "ready_needs_proof_horizon"
+        else:
+            promotion_action_status = "review_proof_horizon"
     elif validation_positive_rows > 0:
         promotion_action_status = "review_evidence"
 
@@ -1758,13 +1870,28 @@ def load_second_strategy_evidence(
         "root": str(output_root),
         "prefilter_summary": str(prefilter_summary_path),
         "validation_summary": str(validation_summary_path),
+        "proof_horizon_summary": str(proof_horizon_summary_path),
         "prefilter_summary_sha256": prefilter_summary_sha256 or "none",
         "validation_summary_sha256": validation_summary_sha256 or "none",
+        "proof_horizon_summary_sha256": proof_horizon_summary_sha256 or "none",
         "prefilter_age_hours": prefilter_age_hours,
         "validation_age_hours": validation_age_hours,
+        "proof_horizon_age_hours": proof_horizon_age_hours,
         "prefilter_summary_mtime_epoch": prefilter_summary_mtime_epoch,
         "validation_summary_mtime_epoch": validation_summary_mtime_epoch,
+        "proof_horizon_mtime_epoch": proof_horizon_mtime_epoch,
         "max_age_hours": max_age_hours,
+        "proof_horizon_status": proof_horizon_status,
+        "proof_horizon_detail": proof_horizon_detail,
+        "proof_horizon_strategy": proof_horizon_strategy,
+        "proof_horizon_trades": proof_horizon_trades,
+        "proof_horizon_total_pnl": proof_horizon_total_pnl,
+        "proof_horizon_eventual_pass_rate": proof_horizon_eventual_pass_rate,
+        "proof_horizon_starts_eventually_passed": (
+            proof_horizon_starts_eventually_passed
+        ),
+        "proof_horizon_historical_starts": proof_horizon_historical_starts,
+        "proof_horizon_terminal_blockers": proof_horizon_terminal_blockers,
         "prefilter_families": prefilter_families,
         "prefilter_positive_rows": prefilter_positive_rows,
         "prefilter_positive_families": prefilter_positive_families,
@@ -5377,6 +5504,13 @@ elif second_strategy_evidence["promotion_action_status"] == "ready":
         approval_marker_action_status = "ready_needs_marker_write_access"
 elif second_strategy_evidence["promotion_action_status"] == "review_evidence":
     approval_marker_action_status = "review_evidence"
+elif second_strategy_evidence["promotion_action_status"] in {
+    "ready_needs_proof_horizon",
+    "review_proof_horizon",
+}:
+    approval_marker_action_status = str(
+        second_strategy_evidence["promotion_action_status"]
+    )
 strategy_diversification_promotion_action_status = promotion_action_status
 if strategy_diversification_status == "ok":
     strategy_diversification_candidate_status = "met"
@@ -6652,11 +6786,23 @@ print(
     f"root={safe_status_value(second_strategy_evidence['root'])} "
     f"prefilter_summary={safe_status_value(second_strategy_evidence['prefilter_summary'])} "
     f"validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])} "
+    f"proof_horizon_summary={safe_status_value(second_strategy_evidence['proof_horizon_summary'])} "
     f"prefilter_summary_sha256={safe_status_value(second_strategy_evidence['prefilter_summary_sha256'])} "
     f"validation_summary_sha256={safe_status_value(second_strategy_evidence['validation_summary_sha256'])} "
+    f"proof_horizon_summary_sha256={safe_status_value(second_strategy_evidence['proof_horizon_summary_sha256'])} "
     f"prefilter_age_hours={format_optional_float(second_strategy_evidence['prefilter_age_hours'])} "
     f"validation_age_hours={format_optional_float(second_strategy_evidence['validation_age_hours'])} "
+    f"proof_horizon_age_hours={format_optional_float(second_strategy_evidence['proof_horizon_age_hours'])} "
     f"max_age_hours={second_strategy_evidence['max_age_hours']} "
+    f"proof_horizon_status={second_strategy_evidence['proof_horizon_status']} "
+    f"proof_horizon_detail={safe_status_value(second_strategy_evidence['proof_horizon_detail'])} "
+    f"proof_horizon_strategy={safe_status_value(second_strategy_evidence['proof_horizon_strategy'])} "
+    f"proof_horizon_trades={safe_status_value(second_strategy_evidence['proof_horizon_trades'])} "
+    f"proof_horizon_total_pnl={format_optional_float(second_strategy_evidence['proof_horizon_total_pnl'], 2)} "
+    f"proof_horizon_eventual_pass_rate={format_optional_float(second_strategy_evidence['proof_horizon_eventual_pass_rate'], 4)} "
+    f"proof_horizon_starts_eventually_passed={safe_status_value(second_strategy_evidence['proof_horizon_starts_eventually_passed'])} "
+    f"proof_horizon_historical_starts={safe_status_value(second_strategy_evidence['proof_horizon_historical_starts'])} "
+    f"proof_horizon_terminal_blockers={safe_status_value(second_strategy_evidence['proof_horizon_terminal_blockers'])} "
     f"prefilter_families={len(second_strategy_evidence['prefilter_families'])} "
     f"prefilter_family_names={format_name_list(second_strategy_evidence['prefilter_families'])} "
     f"prefilter_positive_rows={second_strategy_evidence['prefilter_positive_rows']} "
@@ -6752,6 +6898,13 @@ print(
     f"approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']} "
     f"validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])} "
     f"validation_summary_sha256={safe_status_value(second_strategy_evidence['validation_summary_sha256'])} "
+    f"proof_horizon_status={second_strategy_evidence['proof_horizon_status']} "
+    f"proof_horizon_detail={safe_status_value(second_strategy_evidence['proof_horizon_detail'])} "
+    f"proof_horizon_summary={safe_status_value(second_strategy_evidence['proof_horizon_summary'])} "
+    f"proof_horizon_summary_sha256={safe_status_value(second_strategy_evidence['proof_horizon_summary_sha256'])} "
+    f"proof_horizon_total_pnl={format_optional_float(second_strategy_evidence['proof_horizon_total_pnl'], 2)} "
+    f"proof_horizon_eventual_pass_rate={format_optional_float(second_strategy_evidence['proof_horizon_eventual_pass_rate'], 4)} "
+    f"proof_horizon_terminal_blockers={safe_status_value(second_strategy_evidence['proof_horizon_terminal_blockers'])} "
     f"candidate_scale={safe_status_value(second_strategy_evidence['promotion_candidate_scale'])} "
     f"candidate_trades={safe_status_value(second_strategy_evidence['promotion_candidate_trades'])} "
     f"candidate_total_pnl={format_optional_float(second_strategy_evidence['promotion_candidate_total_pnl'], 2)} "

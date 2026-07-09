@@ -2686,6 +2686,14 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
         in script
     )
     assert (
+        '"proof_horizon_status": (\n'
+        '        "proof_second_strategy_promotion_action_proof_horizon_status"'
+    ) in script
+    assert (
+        '"proof_horizon_total_pnl": (\n'
+        '        "proof_second_strategy_promotion_action_proof_horizon_total_pnl"'
+    ) in script
+    assert (
         '"approval_marker_command_status": (\n'
         '        "proof_second_strategy_promotion_action_approval_marker_command_status"'
     ) in script
@@ -7366,10 +7374,17 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "hashlib.sha256(raw_bytes).hexdigest()" in script
     assert "validation_summary_sha256=validation_summary_sha256" in script
     assert "prefilter_payload, prefilter_error, prefilter_summary_sha256" in script
+    assert "proof_horizon_summary_path = output_root / \"latest_proof_horizon\" / \"summary.json\"" in script
+    assert "proof_horizon_status = \"not_applicable\"" in script
+    assert "promotion_action_status = \"ready_needs_proof_horizon\"" in script
+    assert "promotion_action_status = \"review_proof_horizon\"" in script
+    assert "proof_horizon_status == \"ok\"" in script
     assert "\"prefilter_summary_sha256\": prefilter_summary_sha256 or \"none\"" in script
     assert "\"validation_summary_sha256\": validation_summary_sha256 or \"none\"" in script
+    assert "\"proof_horizon_summary_sha256\": proof_horizon_summary_sha256 or \"none\"" in script
     assert "prefilter_summary_sha256={safe_status_value(second_strategy_evidence['prefilter_summary_sha256'])}" in script
     assert "validation_summary_sha256={safe_status_value(second_strategy_evidence['validation_summary_sha256'])}" in script
+    assert "proof_horizon_summary_sha256={safe_status_value(second_strategy_evidence['proof_horizon_summary_sha256'])}" in script
     assert "prefilter_summary_sha256={safe_status_value(second_strategy_setup_evidence['prefilter_summary_sha256'])}" in script
     assert "validation_summary_sha256={safe_status_value(second_strategy_setup_evidence['validation_summary_sha256'])}" in script
     assert "payload.get(\"schema_version\") != 2" in script
@@ -7479,6 +7494,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "approval_marker_dir_writable={safe_status_value(promotion_approval_marker_dir_writable)}" in script
     assert "approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']}" in script
     assert "validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])}" in script
+    assert "proof_horizon_status={second_strategy_evidence['proof_horizon_status']}" in script
+    assert "proof_horizon_summary={safe_status_value(second_strategy_evidence['proof_horizon_summary'])}" in script
     assert "candidate_ci_low={format_optional_float(second_strategy_evidence['promotion_candidate_ci_low'], 4)}" in script
     assert "PROOF_STATUS_ENV_FILE" in script
     assert "validation_verdicts={second_strategy_evidence['validation_verdicts']}" in script
