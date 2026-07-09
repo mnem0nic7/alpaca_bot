@@ -1642,6 +1642,7 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "post_supervisor_line" in lock_skip
     assert "paper proof post-supervisor execution:" in lock_skip
     assert "proof_post_supervisor_execution_expired_signal_price_posture" in lock_skip
+    assert "proof_post_supervisor_execution_expired_next_bar_fill_causes" in lock_skip
     assert 'echo "$latest_post_supervisor_execution_line"' in lock_skip
     assert '"$latest_status" == "pending" && "$latest_exit_code" == "43" && "$latest_proof" == "pending"' in lock_skip
     assert '"$latest_status" == "passed" && "$latest_exit_code" == "0" && "$latest_proof" == "passed"' in lock_skip
@@ -2377,6 +2378,8 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"expired_reasons": "proof_current_execution_expired_reasons"' in script
     assert "proof_current_execution_expired_signal_price_posture" in script
     assert "proof_post_supervisor_execution_expired_signal_price_posture" in script
+    assert "proof_current_execution_expired_next_bar_fill_causes" in script
+    assert "proof_post_supervisor_execution_expired_next_bar_fill_causes" in script
     assert '"active_symbols": "proof_current_execution_active_symbols"' in script
     assert (
         '"maintenance_drained_symbols": '
@@ -6431,6 +6434,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "WHEN d.signal_bar_close > d.limit_price" in script
     assert "WHEN d.signal_bar_close < d.stop_price" in script
     assert "format_expired_signal_price_posture" in script
+    assert "simulate_buy_stop_limit_fill" in script
+    assert "classify_expired_next_bar_fill_cause" in script
+    assert "load_scenario_intraday_bars" in script
+    assert "format_expired_next_bar_fill_causes" in script
     assert "short_window_drained" in script
     assert ") AS strategy_expired" in script
     assert "AND NOT strategy_expired" in script
@@ -6999,6 +7006,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "expired_signal_price_posture="
         "{entry_order_expired_signal_price_posture}"
     ) in script
+    assert (
+        "expired_next_bar_fill_causes="
+        "{entry_order_expired_next_bar_fill_causes}"
+    ) in script
     assert "current_posture_filled_symbols={posture_entry_order_filled_symbols}" in script
     assert "paper proof current-session execution:" in script
     assert "status={current_session_execution_status}" in script
@@ -7026,6 +7037,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert (
         "expired_signal_price_posture="
         "{current_session_entry_order_expired_signal_price_posture}"
+    ) in script
+    assert (
+        "expired_next_bar_fill_causes="
+        "{current_session_entry_order_expired_next_bar_fill_causes}"
     ) in script
     assert "active_symbols={current_session_entry_order_active_symbols}" in script
     assert (
@@ -7058,6 +7073,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert (
         "expired_signal_price_posture="
         "{post_supervisor_entry_order_expired_signal_price_posture}"
+    ) in script
+    assert (
+        "expired_next_bar_fill_causes="
+        "{post_supervisor_entry_order_expired_next_bar_fill_causes}"
     ) in script
     assert "short_window={post_supervisor_entry_order_short_window_count}" in script
     assert "settled_entry_fill_rate" in script

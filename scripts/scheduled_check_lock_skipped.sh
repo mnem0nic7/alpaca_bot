@@ -889,6 +889,10 @@ post_supervisor_fields = [
         "expired_signal_price_posture",
         "proof_post_supervisor_execution_expired_signal_price_posture",
     ),
+    (
+        "expired_next_bar_fill_causes",
+        "proof_post_supervisor_execution_expired_next_bar_fill_causes",
+    ),
     ("active_symbols", "proof_post_supervisor_execution_active_symbols"),
     ("short_window", "proof_post_supervisor_execution_short_window"),
     (

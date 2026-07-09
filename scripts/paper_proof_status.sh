@@ -694,7 +694,9 @@ from pathlib import Path
 
 from alpaca_bot.config import Settings, TradingMode
 from alpaca_bot.domain import CAPACITY_SENTINEL_SYMBOL
+from alpaca_bot.domain.models import Bar
 from alpaca_bot.execution.alpaca import AlpacaExecutionAdapter
+from alpaca_bot.replay.mechanics import simulate_buy_stop_limit_fill
 from alpaca_bot.storage.db import connect_postgres
 from alpaca_bot.storage.repositories import OrderStore
 from alpaca_bot.strategy import OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY
@@ -917,6 +919,221 @@ def format_expired_signal_price_posture(
         f"within_stop_limit:{within_stop_limit},"
         f"missing_context:{missing_context}"
     )
+
+
+def normalize_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def load_scenario_intraday_bars(
+    *,
+    symbol: str,
+    scenario_dir: Path,
+    cache: dict[str, list[Bar] | None],
+) -> list[Bar] | None:
+    symbol = symbol.upper()
+    if symbol in cache:
+        return cache[symbol]
+    path = scenario_dir / f"{symbol}_252d.json"
+    try:
+        payload = json.loads(path.read_text())
+        bars = [
+            Bar.from_dict(item)
+            for item in payload.get("intraday_bars") or []
+            if str(item.get("symbol", symbol)).upper() == symbol
+        ]
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        cache[symbol] = None
+        return None
+    bars.sort(key=lambda bar: normalize_utc(bar.timestamp))
+    cache[symbol] = bars
+    return bars
+
+
+def classify_expired_next_bar_fill_cause(
+    *,
+    symbol: str,
+    signal_timestamp: datetime | None,
+    created_at: datetime | None,
+    stop_price: float | None,
+    limit_price: float | None,
+    scenario_dir: Path,
+    settings: Settings,
+    cache: dict[str, list[Bar] | None],
+) -> str:
+    if signal_timestamp is None or stop_price is None or limit_price is None:
+        return "missing_context"
+    if stop_price <= 0 or limit_price <= 0:
+        return "missing_context"
+
+    bars = load_scenario_intraday_bars(
+        symbol=symbol,
+        scenario_dir=scenario_dir,
+        cache=cache,
+    )
+    if bars is None:
+        return "missing_scenario"
+    if not bars:
+        return "missing_bar"
+
+    signal_utc = normalize_utc(signal_timestamp)
+    active_bars: list[Bar] = []
+    for bar in bars:
+        bar_utc = normalize_utc(bar.timestamp)
+        if bar_utc <= signal_utc:
+            continue
+        bar_local = bar_utc.astimezone(settings.market_timezone)
+        flatten_local = datetime.combine(
+            bar_local.date(),
+            settings.flatten_time,
+            tzinfo=settings.market_timezone,
+        )
+        if bar_local >= flatten_local:
+            break
+        active_bars.append(bar)
+        if len(active_bars) >= settings.entry_order_active_bars:
+            break
+
+    if not active_bars:
+        return "missing_bar"
+
+    limit_miss = False
+    for bar in active_bars:
+        bar_utc = normalize_utc(bar.timestamp)
+        if (
+            simulate_buy_stop_limit_fill(
+                bar=bar,
+                stop_price=stop_price,
+                limit_price=limit_price,
+            )
+            is not None
+        ):
+            if created_at is not None and normalize_utc(created_at) > bar_utc:
+                return "would_fill_if_on_time"
+            return "would_fill"
+        if bar.open > limit_price or bar.high >= stop_price:
+            limit_miss = True
+
+    return "limit_miss" if limit_miss else "no_trigger"
+
+
+def format_expired_next_bar_fill_causes(counts: dict[str, int]) -> str:
+    ordered = (
+        "would_fill",
+        "would_fill_if_on_time",
+        "no_trigger",
+        "limit_miss",
+        "missing_bar",
+        "missing_context",
+        "missing_scenario",
+    )
+    total = sum(counts.values())
+    if total <= 0:
+        return "none"
+    return ",".join(f"{name}:{counts.get(name, 0)}" for name in ordered)
+
+
+def load_expired_next_bar_fill_cause_summary(
+    cur,
+    *,
+    trading_mode: str,
+    strategy_version: str,
+    strategy_names: list[str],
+    market_timezone: str,
+    scenario_dir: Path,
+    settings: Settings,
+    scenario_cache: dict[str, list[Bar] | None],
+    proof_start: date | None = None,
+    proof_end: date | None = None,
+    session_date: date | None = None,
+    since: datetime | None = None,
+) -> str:
+    date_predicates: list[str] = []
+    params: list[object] = [trading_mode, strategy_version, strategy_names]
+    if session_date is not None:
+        date_predicates.append(
+            "AND DATE(COALESCE(o.signal_timestamp, o.created_at) AT TIME ZONE %s) = %s"
+        )
+        params.extend([market_timezone, session_date])
+    else:
+        if proof_start is None or proof_end is None:
+            return "none"
+        date_predicates.append(
+            "AND DATE(COALESCE(o.signal_timestamp, o.created_at) AT TIME ZONE %s) >= %s"
+        )
+        params.extend([market_timezone, proof_start])
+        date_predicates.append(
+            "AND DATE(COALESCE(o.signal_timestamp, o.created_at) AT TIME ZONE %s) <= %s"
+        )
+        params.extend([market_timezone, proof_end])
+    if since is not None:
+        date_predicates.append("AND o.created_at >= %s")
+        params.append(since)
+
+    cur.execute(
+        f"""
+        WITH entry_orders AS (
+          SELECT
+            o.symbol,
+            o.status,
+            o.signal_timestamp,
+            o.created_at,
+            o.stop_price,
+            o.limit_price,
+            EXISTS (
+              SELECT 1
+              FROM audit_events a
+              WHERE a.event_type = 'entry_order_expired_next_bar'
+                AND a.payload->>'client_order_id' = o.client_order_id
+                AND COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'
+            ) AS maintenance_drained,
+            EXISTS (
+              SELECT 1
+              FROM audit_events a
+              WHERE a.event_type = 'entry_order_expired_next_bar'
+                AND a.payload->>'client_order_id' = o.client_order_id
+                AND COALESCE(a.payload->>'reason', '') = 'short active dispatch window'
+            ) AS short_window_drained,
+            EXISTS (
+              SELECT 1
+              FROM audit_events a
+              WHERE a.event_type = 'entry_order_expired_next_bar'
+                AND a.payload->>'client_order_id' = o.client_order_id
+                AND COALESCE(a.payload->>'reason', '') NOT LIKE 'deploy maintenance%%'
+                AND COALESCE(a.payload->>'reason', '') <> 'short active dispatch window'
+            ) AS strategy_expired
+          FROM orders o
+          WHERE o.trading_mode = %s
+            AND o.strategy_version = %s
+            AND o.strategy_name = ANY(%s)
+            AND o.intent_type = 'entry'
+            {' '.join(date_predicates)}
+        )
+        SELECT symbol, signal_timestamp, created_at, stop_price, limit_price
+        FROM entry_orders
+        WHERE NOT maintenance_drained
+          AND NOT short_window_drained
+          AND (strategy_expired OR status = 'expired')
+        """,
+        tuple(params),
+    )
+    rows = cur.fetchall()
+    counts: dict[str, int] = {}
+    for symbol, signal_timestamp, created_at, stop_price, limit_price in rows:
+        cause = classify_expired_next_bar_fill_cause(
+            symbol=str(symbol),
+            signal_timestamp=signal_timestamp,
+            created_at=created_at,
+            stop_price=float(stop_price) if stop_price is not None else None,
+            limit_price=float(limit_price) if limit_price is not None else None,
+            scenario_dir=scenario_dir,
+            settings=settings,
+            cache=scenario_cache,
+        )
+        counts[cause] = counts.get(cause, 0) + 1
+    return format_expired_next_bar_fill_causes(counts)
 
 
 def load_json_payload(path: Path) -> tuple[dict | None, str | None, str | None]:
@@ -2639,6 +2856,7 @@ try:
         entry_order_expired_symbols = "none"
         entry_order_expired_reasons = "none"
         entry_order_expired_signal_price_posture = "none"
+        entry_order_expired_next_bar_fill_causes = "none"
         posture_entry_order_count = 0
         posture_entry_order_filled_count = 0
         posture_entry_quality_would_reject_count = 0
@@ -2661,6 +2879,7 @@ try:
         current_session_entry_order_expired_symbols = "none"
         current_session_entry_order_expired_reasons = "none"
         current_session_entry_order_expired_signal_price_posture = "none"
+        current_session_entry_order_expired_next_bar_fill_causes = "none"
         current_session_entry_order_active_symbols = "none"
         current_session_entry_order_maintenance_drained_symbols = "none"
         current_session_entry_order_short_window_drained_symbols = "none"
@@ -2684,10 +2903,12 @@ try:
         post_supervisor_entry_order_expired_symbols = "none"
         post_supervisor_entry_order_expired_reasons = "none"
         post_supervisor_entry_order_expired_signal_price_posture = "none"
+        post_supervisor_entry_order_expired_next_bar_fill_causes = "none"
         post_supervisor_entry_order_active_symbols = "none"
         post_supervisor_entry_order_short_window_count = 0
         post_supervisor_entry_order_min_remaining_active_minutes = None
         post_supervisor_entry_order_short_window_symbols = "none"
+        scenario_bar_cache: dict[str, list[Bar] | None] = {}
         if proof_end >= proof_start:
             cur.execute(
                 """
@@ -2966,6 +3187,20 @@ try:
                         below_stop=int(execution_quality_row[12] or 0),
                         within_stop_limit=int(execution_quality_row[13] or 0),
                         missing_context=int(execution_quality_row[14] or 0),
+                    )
+                )
+                entry_order_expired_next_bar_fill_causes = (
+                    load_expired_next_bar_fill_cause_summary(
+                        cur,
+                        trading_mode=trading_mode.value,
+                        strategy_version=strategy_version,
+                        strategy_names=proof_strategy_names,
+                        market_timezone=market_timezone,
+                        proof_start=proof_start,
+                        proof_end=proof_end,
+                        scenario_dir=scenario_dir,
+                        settings=settings,
+                        scenario_cache=scenario_bar_cache,
                     )
                 )
 
@@ -3457,6 +3692,19 @@ try:
                         missing_context=int(current_session_execution_row[22] or 0),
                     )
                 )
+                current_session_entry_order_expired_next_bar_fill_causes = (
+                    load_expired_next_bar_fill_cause_summary(
+                        cur,
+                        trading_mode=trading_mode.value,
+                        strategy_version=strategy_version,
+                        strategy_names=proof_strategy_names,
+                        market_timezone=market_timezone,
+                        session_date=current_market_date,
+                        scenario_dir=scenario_dir,
+                        settings=settings,
+                        scenario_cache=scenario_bar_cache,
+                    )
+                )
 
             if (
                 latest_supervisor_started_at is not None
@@ -3815,6 +4063,20 @@ try:
                                 post_supervisor_execution_row[17] or 0
                             ),
                             missing_context=int(post_supervisor_execution_row[18] or 0),
+                        )
+                    )
+                    post_supervisor_entry_order_expired_next_bar_fill_causes = (
+                        load_expired_next_bar_fill_cause_summary(
+                            cur,
+                            trading_mode=trading_mode.value,
+                            strategy_version=strategy_version,
+                            strategy_names=proof_strategy_names,
+                            market_timezone=market_timezone,
+                            session_date=current_market_date,
+                            since=post_supervisor_execution_since,
+                            scenario_dir=scenario_dir,
+                            settings=settings,
+                            scenario_cache=scenario_bar_cache,
                         )
                     )
 
@@ -6255,6 +6517,7 @@ print(
     f"expired_symbols={entry_order_expired_symbols} "
     f"expired_reasons={entry_order_expired_reasons} "
     f"expired_signal_price_posture={entry_order_expired_signal_price_posture} "
+    f"expired_next_bar_fill_causes={entry_order_expired_next_bar_fill_causes} "
     f"current_posture_filled_symbols={posture_entry_order_filled_symbols}"
 )
 print(
@@ -6288,6 +6551,7 @@ print(
     f"expired_symbols={current_session_entry_order_expired_symbols} "
     f"expired_reasons={current_session_entry_order_expired_reasons} "
     f"expired_signal_price_posture={current_session_entry_order_expired_signal_price_posture} "
+    f"expired_next_bar_fill_causes={current_session_entry_order_expired_next_bar_fill_causes} "
     f"active_symbols={current_session_entry_order_active_symbols} "
     f"maintenance_drained_symbols={current_session_entry_order_maintenance_drained_symbols} "
     f"short_window_drained_symbols={current_session_entry_order_short_window_drained_symbols} "
@@ -6325,6 +6589,7 @@ print(
     f"expired_symbols={post_supervisor_entry_order_expired_symbols} "
     f"expired_reasons={post_supervisor_entry_order_expired_reasons} "
     f"expired_signal_price_posture={post_supervisor_entry_order_expired_signal_price_posture} "
+    f"expired_next_bar_fill_causes={post_supervisor_entry_order_expired_next_bar_fill_causes} "
     f"active_symbols={post_supervisor_entry_order_active_symbols} "
     f"short_window={post_supervisor_entry_order_short_window_count} "
     f"min_remaining_active_minutes={post_supervisor_entry_order_min_remaining_active_minutes_text} "
