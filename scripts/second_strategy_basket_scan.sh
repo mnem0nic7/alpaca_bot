@@ -3,6 +3,18 @@ set -euo pipefail
 
 ENV_FILE="${1:-${SECOND_STRATEGY_ENV_FILE:-/etc/alpaca_bot/alpaca-bot.env}}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUTPUT_DIR="${SECOND_STRATEGY_OUTPUT_DIR:-}"
+VALIDATION_OUTPUT_DIR="${SECOND_STRATEGY_VALIDATION_OUTPUT_DIR:-}"
+
+emit_scan_result() {
+  local rc="$?"
+  local status="ok"
+  if [[ "$rc" -ne 0 ]]; then
+    status="failed"
+  fi
+  echo "second strategy basket scan result: status=$status rc=$rc output_dir=${OUTPUT_DIR:-none} validation_output_dir=${VALIDATION_OUTPUT_DIR:-none}"
+}
+trap emit_scan_result EXIT
 
 fail() {
   echo "second strategy basket scan failed: $*" >&2

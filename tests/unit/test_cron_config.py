@@ -328,6 +328,7 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'VALIDATE_POSITIVES="${SECOND_STRATEGY_VALIDATE_POSITIVES:-true}"' in script
     assert 'VALIDATE_ALL_POSITIVE_ROWS="${SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS:-true}"' in script
     assert 'VALIDATION_CANDIDATES="${SECOND_STRATEGY_VALIDATION_CANDIDATES:-}"' in script
+    assert "second strategy basket scan result: status=$status rc=$rc" in script
     assert 'MAX_VALIDATION_CANDIDATES="${SECOND_STRATEGY_MAX_VALIDATION_CANDIDATES:-0}"' in script
     assert 'SCAN_JOBS="${SECOND_STRATEGY_SCAN_JOBS:-2}"' in script
     assert 'VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"' in script
@@ -461,6 +462,7 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert "SECOND_STRATEGY_SETUP_VALIDATE_POSITIVES" in script
     assert "SECOND_STRATEGY_SETUP_MAX_VALIDATION_CANDIDATES" in script
     assert "second-strategy-setup-knob-independent-validation" in script
+    assert "second strategy setup-knob scan result: status=$status rc=$rc" in script
     assert "candidate_names = []" in script
     assert "candidate not in candidate_names" in script
     assert 'f"- candidate_names: `' in script
@@ -5929,6 +5931,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_NIGHTLY_STALL_MINUTES must be a positive integer" in script
     assert "probe_nightly_cycle_status" in script
     assert "probe_second_strategy_scan_status" in script
+    assert "/second strategy basket scan result:/" in script
+    assert "$0 ~ /status=failed/" in script
     assert "status = \"failed\"" in script
     assert 'second_strategy_scan_status="${event_status:-unknown}"' in script
     assert "warnings.append(\"second_strategy_scan_failed\")" in script

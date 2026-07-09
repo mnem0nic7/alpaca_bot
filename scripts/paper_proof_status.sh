@@ -445,6 +445,16 @@ probe_second_strategy_scan_status() {
   latest_event="$(
     tail -1000 "$PROOF_STATUS_SECOND_STRATEGY_LOG" 2>/dev/null \
       | awk '
+        /second strategy basket scan result:/ {
+          if ($0 ~ /status=ok/) {
+            status = "ok"
+          } else if ($0 ~ /status=failed/) {
+            status = "failed"
+          } else {
+            status = "unknown"
+          }
+          line = $0
+        }
         /^(latest|latest_validation)=/ || /positive_edge_validation_rows=/ {
           status = "ok"
           line = $0
