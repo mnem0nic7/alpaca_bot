@@ -427,6 +427,9 @@ PROOF_EXECUTION_QUALITY_FIELDS = {
         "proof_execution_quality_expired_next_bar_fill_causes"
     ),
     "entry_dispatch_delay": "proof_execution_quality_entry_dispatch_delay",
+    "current_posture_entry_dispatch_delay": (
+        "proof_execution_quality_current_posture_entry_dispatch_delay"
+    ),
     "current_posture_filled_symbols": (
         "proof_execution_quality_current_posture_filled_symbols"
     ),

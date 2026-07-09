@@ -905,6 +905,10 @@ execution_quality_fields = [
     ),
     ("entry_dispatch_delay", "proof_execution_quality_entry_dispatch_delay"),
     (
+        "current_posture_entry_dispatch_delay",
+        "proof_execution_quality_current_posture_entry_dispatch_delay",
+    ),
+    (
         "current_posture_filled_symbols",
         "proof_execution_quality_current_posture_filled_symbols",
     ),

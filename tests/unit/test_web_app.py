@@ -217,6 +217,9 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_execution_quality_entry_dispatch_delay": (
                 "count:14,late:1,max_s:710.5"
             ),
+            "proof_execution_quality_current_posture_entry_dispatch_delay": (
+                "count:8,late:0,max_s:102.2"
+            ),
             "proof_current_execution_status": "observing",
             "proof_current_execution_warnings": "none",
             "proof_current_execution_entry_fill_rate": "none",
@@ -370,6 +373,7 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "fill=0.21" in response.text
     assert "effective=0.33" in response.text
     assert "delay=count:14,late:1,max_s:710.5" in response.text
+    assert "posture_delay=count:8,late:0,max_s:102.2" in response.text
     assert "Current Execution" in response.text
     assert "Post-Supervisor Execution" in response.text
     assert response.text.count('class="value mono ">\n              observing') == 2
@@ -390,7 +394,8 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     )
     assert (
         "exec_quality=ok warnings=historical_entry_fill_rate fill=0.21 "
-        "effective=0.33 delay=count:14,late:1,max_s:710.5"
+        "effective=0.33 delay=count:14,late:1,max_s:710.5 "
+        "posture_delay=count:8,late:0,max_s:102.2"
         in response.text
     )
     assert "gap_trades=27" in response.text

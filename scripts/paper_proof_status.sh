@@ -1140,6 +1140,7 @@ def format_entry_dispatch_delay_summary(
     rows: list[tuple[object, object, object]],
     *,
     settings: Settings,
+    include_late: bool = True,
 ) -> str:
     delays: list[tuple[str, float]] = []
     active_bar_offset_seconds = settings.entry_timeframe_minutes * 60
@@ -1157,6 +1158,8 @@ def format_entry_dispatch_delay_summary(
         delay_seconds = (
             normalize_utc(created_at) - active_bar_start
         ).total_seconds()
+        if not include_late and delay_seconds > late_threshold_seconds:
+            continue
         delays.append((str(symbol), delay_seconds))
     if not delays:
         return "none"
@@ -1197,6 +1200,7 @@ def load_entry_dispatch_delay_summary(
     proof_end: date | None = None,
     session_date: date | None = None,
     since: datetime | None = None,
+    current_posture_only: bool = False,
 ) -> str:
     date_predicates: list[str] = []
     params: list[object] = [trading_mode, strategy_version, strategy_names]
@@ -1219,6 +1223,38 @@ def load_entry_dispatch_delay_summary(
     if since is not None:
         date_predicates.append("AND o.created_at >= %s")
         params.append(since)
+    posture_join = ""
+    posture_predicates = ""
+    if current_posture_only:
+        posture_join = """
+          JOIN decision_log d
+            ON d.symbol = o.symbol
+           AND d.trading_mode = o.trading_mode
+           AND d.strategy_version = o.strategy_version
+           AND d.strategy_name IS NOT DISTINCT FROM o.strategy_name
+           AND d.cycle_at = o.created_at
+           AND d.decision = 'accepted'
+        """
+        posture_predicates = """
+            AND d.entry_level IS NOT NULL
+            AND d.entry_level > 0
+            AND d.signal_bar_close IS NOT NULL
+            AND (d.signal_bar_close / NULLIF(d.entry_level, 0) - 1) >= %s
+            AND (d.signal_bar_close / NULLIF(d.entry_level, 0) - 1) <= %s
+            AND NOT (
+              d.stop_price IS NOT NULL
+              AND d.initial_stop_price IS NOT NULL
+              AND d.limit_price IS NOT NULL
+              AND d.limit_price > 0
+              AND d.signal_bar_close > d.limit_price
+            )
+        """
+        params.extend(
+            [
+                settings.entry_min_close_to_entry_pct,
+                settings.entry_max_close_to_entry_pct,
+            ]
+        )
 
     cur.execute(
         f"""
@@ -1242,11 +1278,13 @@ def load_entry_dispatch_delay_summary(
                 AND COALESCE(a.payload->>'reason', '') = 'short active dispatch window'
             ) AS short_window_drained
           FROM orders o
+          {posture_join}
           WHERE o.trading_mode = %s
             AND o.strategy_version = %s
             AND o.strategy_name = ANY(%s)
             AND o.intent_type = 'entry'
             {' '.join(date_predicates)}
+            {posture_predicates}
         )
         SELECT symbol, signal_timestamp, created_at
         FROM entry_orders
@@ -1256,7 +1294,11 @@ def load_entry_dispatch_delay_summary(
         """,
         tuple(params),
     )
-    return format_entry_dispatch_delay_summary(cur.fetchall(), settings=settings)
+    return format_entry_dispatch_delay_summary(
+        cur.fetchall(),
+        settings=settings,
+        include_late=not current_posture_only,
+    )
 
 
 def load_json_payload(path: Path) -> tuple[dict | None, str | None, str | None]:
@@ -3020,6 +3062,7 @@ try:
         entry_order_expired_signal_price_posture = "none"
         entry_order_expired_next_bar_fill_causes = "none"
         entry_order_dispatch_delay_summary = "none"
+        posture_entry_order_dispatch_delay_summary = "none"
         posture_entry_order_count = 0
         posture_entry_order_filled_count = 0
         posture_entry_quality_would_reject_count = 0
@@ -3378,6 +3421,19 @@ try:
                         proof_start=proof_start,
                         proof_end=proof_end,
                         settings=settings,
+                    )
+                )
+                posture_entry_order_dispatch_delay_summary = (
+                    load_entry_dispatch_delay_summary(
+                        cur,
+                        trading_mode=trading_mode.value,
+                        strategy_version=strategy_version,
+                        strategy_names=proof_strategy_names,
+                        market_timezone=market_timezone,
+                        proof_start=proof_start,
+                        proof_end=proof_end,
+                        settings=settings,
+                        current_posture_only=True,
                     )
                 )
 
@@ -6946,6 +7002,7 @@ print(
     f"expired_signal_price_posture={entry_order_expired_signal_price_posture} "
     f"expired_next_bar_fill_causes={entry_order_expired_next_bar_fill_causes} "
     f"entry_dispatch_delay={entry_order_dispatch_delay_summary} "
+    f"current_posture_entry_dispatch_delay={posture_entry_order_dispatch_delay_summary} "
     f"current_posture_filled_symbols={posture_entry_order_filled_symbols}"
 )
 print(
