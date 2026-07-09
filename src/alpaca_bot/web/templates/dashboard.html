@@ -379,6 +379,7 @@
             <p class="value mono {{ 'warn' if proof_payload.get('proof_nightly_status', 'unknown') not in ['idle', 'unknown'] or proof_payload.get('proof_second_strategy_scan_status', 'unknown') not in ['ok', 'unknown'] else '' }}">
               {{ proof_payload.get("proof_nightly_status", "unknown") }}
               scan={{ proof_payload.get("proof_second_strategy_scan_status", "unknown") }}
+              detail={{ proof_payload.get("proof_second_strategy_scan_detail", "unknown") }}
               log_age={{ proof_payload.get("proof_nightly_log_age_minutes", "unknown") }}/{{ proof_payload.get("proof_nightly_max_age_minutes", "?") }}
               stage={{ proof_payload.get("proof_nightly_stage", "unknown") }}
             </p>
@@ -576,6 +577,7 @@
                     {% if event.payload.get("proof_blockers") %} blockers={{ event.payload.get("proof_blockers") }}{% endif %}
                     {% if event.payload.get("proof_nightly_status") %} nightly={{ event.payload.get("proof_nightly_status") }}{% endif %}
                     {% if event.payload.get("proof_second_strategy_scan_status") %} second_strategy_scan={{ event.payload.get("proof_second_strategy_scan_status") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_scan_detail") %} second_strategy_scan_detail={{ event.payload.get("proof_second_strategy_scan_detail") }}{% endif %}
                     {% if event.payload.get("proof_nightly_log_age_minutes") %} nightly_log_age={{ event.payload.get("proof_nightly_log_age_minutes") }}{% endif %}
                     {% if event.payload.get("proof_nightly_stage") %} nightly_stage={{ event.payload.get("proof_nightly_stage") }}{% endif %}
                     {% if event.payload.get("proof_closed_trades") %} closed={{ event.payload.get("proof_closed_trades") }}/{{ event.payload.get("proof_required_trades", "?") }}{% endif %}

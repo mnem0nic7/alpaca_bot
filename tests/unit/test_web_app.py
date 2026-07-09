@@ -163,7 +163,9 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
                 "PAPER_PROOF_FREEZE=true__skipping_candidate_auto-apply."
             ),
             "proof_second_strategy_scan_status": "ok",
-            "proof_second_strategy_scan_detail": "fresh_second_strategy_evidence",
+            "proof_second_strategy_scan_detail": (
+                "fresh_second_strategy_evidence_supersedes_failed_scan"
+            ),
             "proof_closed_trades": "3",
             "proof_required_trades": "10",
             "proof_pnl": "12.34",
@@ -505,10 +507,15 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "overall_reason=awaiting_overall_blockers" in response.text
     assert "Nightly Automation" in response.text
     assert "scan=ok" in response.text
+    assert "detail=fresh_second_strategy_evidence_supersedes_failed_scan" in response.text
     assert "log_age=411/390" in response.text
     assert "PAPER_PROOF_FREEZE=true__skipping_candidate_auto-apply." in response.text
     assert "nightly=idle" in response.text
     assert "second_strategy_scan=ok" in response.text
+    assert (
+        "second_strategy_scan_detail="
+        "fresh_second_strategy_evidence_supersedes_failed_scan"
+    ) in response.text
     assert "nightly_log_age=411" in response.text
     assert (
         "nightly_stage=apply_candidate_2026-07-09T00:16:04Z_"
