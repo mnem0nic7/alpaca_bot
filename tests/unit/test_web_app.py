@@ -369,6 +369,16 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "ok\n              980\n              @ 2026-06-26" in response.text
     assert "scenarios=ok:980@2026-06-26" in response.text
     assert "Execution Quality" in response.text
+    assert (
+        'class="value mono ">\n              ok\n              '
+        "warnings=historical_entry_fill_rate"
+        in response.text
+    )
+    assert (
+        'class="value mono warn">\n              ok\n              '
+        "warnings=historical_entry_fill_rate"
+        not in response.text
+    )
     assert "ok\n              warnings=historical_entry_fill_rate" in response.text
     assert "fill=0.21" in response.text
     assert "effective=0.33" in response.text

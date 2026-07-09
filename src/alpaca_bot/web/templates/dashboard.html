@@ -323,6 +323,7 @@
       {% set proof_sealed_evidence_blockers = proof_payload.get("proof_sealed_evidence_blockers", "unknown") %}
       {% set proof_execution_quality_status = proof_payload.get("proof_execution_quality_status", "unknown") %}
       {% set proof_execution_quality_warnings = proof_payload.get("proof_execution_quality_warnings", "unknown") %}
+      {% set proof_execution_quality_active_warnings = proof_execution_quality_warnings|replace("historical_entry_fill_rate", "")|replace(",", "")|trim %}
       {% set proof_current_execution_status = proof_payload.get("proof_current_execution_status", "unknown") %}
       {% set proof_current_execution_warnings = proof_payload.get("proof_current_execution_warnings", "unknown") %}
       {% set proof_post_supervisor_execution_status = proof_payload.get("proof_post_supervisor_execution_status", "unknown") %}
@@ -440,7 +441,7 @@
           </div>
           <div>
             <p class="eyebrow">Execution Quality</p>
-            <p class="value mono {{ 'warn' if proof_execution_quality_status not in ['ok', 'unknown'] or proof_execution_quality_warnings not in ['none', 'unknown'] else '' }}">
+            <p class="value mono {{ 'warn' if proof_execution_quality_status not in ['ok', 'unknown'] or proof_execution_quality_active_warnings not in ['', 'none', 'unknown'] else '' }}">
               {{ proof_execution_quality_status }}
               warnings={{ proof_execution_quality_warnings }}
               fill={{ proof_payload.get('proof_execution_quality_entry_fill_rate', 'unknown') }}
