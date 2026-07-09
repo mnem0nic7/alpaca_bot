@@ -245,6 +245,14 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
         'DEPLOY_MAINTENANCE_REASON="${DEPLOY_MAINTENANCE_REASON:-deploy maintenance drain}"'
         in deploy_text
     )
+    assert (
+        'DEPLOY_AUDIT_PAPER_PROOF_STATUS="${DEPLOY_AUDIT_PAPER_PROOF_STATUS:-true}"'
+        in deploy_text
+    )
+    assert (
+        'DEPLOY_REQUIRE_PAPER_PROOF_STATUS_AUDIT="${DEPLOY_REQUIRE_PAPER_PROOF_STATUS_AUDIT:-true}"'
+        in deploy_text
+    )
     assert "DEPLOY_READINESS_REFRESH_RETRIES must be a positive integer" in deploy_text
     assert (
         "DEPLOY_READINESS_REFRESH_RETRY_SECONDS must be a non-negative integer"
@@ -256,6 +264,11 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
         in deploy_text
     )
     assert "DEPLOY_DRAIN_PAPER_ENTRIES must be true or false" in deploy_text
+    assert "DEPLOY_AUDIT_PAPER_PROOF_STATUS must be true or false" in deploy_text
+    assert (
+        "DEPLOY_REQUIRE_PAPER_PROOF_STATUS_AUDIT must be true or false"
+        in deploy_text
+    )
     assert 'DEPLOY_DECISION_DRY_RUN_STRATEGY="${DEPLOY_DECISION_DRY_RUN_STRATEGY:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}}"' in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_STRATEGIES="${DEPLOY_DECISION_DRY_RUN_STRATEGIES:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$DEPLOY_DECISION_DRY_RUN_STRATEGY}}}"' in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_MIN_RECORDS="${DEPLOY_DECISION_DRY_RUN_MIN_RECORDS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}}"' in deploy_text
@@ -320,6 +333,10 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "deploy_accepts_protected_paper_exposure()" in deploy_text
     assert "deploy_accepts_post_resume_entry_exposure()" in deploy_text
     assert "deploy_paper_exposure_safe()" in deploy_text
+    assert "run_deploy_paper_proof_status()" in deploy_text
+    assert '"$ROOT_DIR/scripts/run_check_with_audit.sh"' in deploy_text
+    assert "paper_proof_status \\" in deploy_text
+    assert 'RUN_CHECK_REQUIRE_AUDIT="$DEPLOY_REQUIRE_PAPER_PROOF_STATUS_AUDIT"' in deploy_text
     assert "start_deploy_paper_drain()" in deploy_text
     assert "finish_deploy_paper_drain()" in deploy_text
     assert "restore_deploy_paper_drain_on_exit()" in deploy_text
@@ -339,6 +356,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "/var/lock/alpaca-bot-paper-readiness.lock" in deploy_text
     assert '"$ROOT_DIR/scripts/paper_readiness_if_needed.sh"' in deploy_text
     assert '"$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE"' in deploy_text
+    assert 'proof_status_output="$(run_deploy_paper_proof_status)"' in deploy_text
     assert "paper proof summary:" in deploy_text
     assert "paper proof exposure protection:" in deploy_text
     assert "|| true" in deploy_text

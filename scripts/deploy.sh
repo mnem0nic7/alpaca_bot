@@ -13,6 +13,8 @@ DEPLOY_PREFLIGHT_EXPOSURE_RETRIES="${DEPLOY_PREFLIGHT_EXPOSURE_RETRIES:-1}"
 DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS="${DEPLOY_PREFLIGHT_EXPOSURE_RETRY_SECONDS:-30}"
 DEPLOY_DRAIN_PAPER_ENTRIES="${DEPLOY_DRAIN_PAPER_ENTRIES:-true}"
 DEPLOY_MAINTENANCE_REASON="${DEPLOY_MAINTENANCE_REASON:-deploy maintenance drain}"
+DEPLOY_AUDIT_PAPER_PROOF_STATUS="${DEPLOY_AUDIT_PAPER_PROOF_STATUS:-true}"
+DEPLOY_REQUIRE_PAPER_PROOF_STATUS_AUDIT="${DEPLOY_REQUIRE_PAPER_PROOF_STATUS_AUDIT:-true}"
 deploy_resume_after_drain=false
 
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -449,6 +451,26 @@ verify_deploy_preflight_paper_exposure() {
   done
 }
 
+run_deploy_paper_proof_status() {
+  case "${DEPLOY_AUDIT_PAPER_PROOF_STATUS,,}" in
+    true)
+      RUN_CHECK_REQUIRE_AUDIT="$DEPLOY_REQUIRE_PAPER_PROOF_STATUS_AUDIT" \
+        "$ROOT_DIR/scripts/run_check_with_audit.sh" \
+        paper_proof_status \
+        "$ENV_FILE" \
+        "$ROOT_DIR/scripts/paper_proof_status.sh" \
+        "$ENV_FILE"
+      ;;
+    false)
+      "$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE"
+      ;;
+    *)
+      echo "DEPLOY_AUDIT_PAPER_PROOF_STATUS must be true or false" >&2
+      exit 1
+      ;;
+  esac
+}
+
 remove_supervisor_container() {
   local project_name
   local fallback_project_name
@@ -471,7 +493,7 @@ verify_paper_proof_ready() {
   local proof_status_output
   local proof_summary
 
-  proof_status_output="$("$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE")"
+  proof_status_output="$(run_deploy_paper_proof_status)"
   printf '%s\n' "$proof_status_output"
   proof_summary="$(
     printf '%s\n' "$proof_status_output" \
@@ -483,7 +505,7 @@ verify_paper_proof_ready() {
   if [[ "$proof_summary" == *"readiness_audit_stale"* ]]; then
     echo "paper proof readiness stale after deploy; refreshing once" >&2
     refresh_paper_readiness
-    proof_status_output="$("$ROOT_DIR/scripts/paper_proof_status.sh" "$ENV_FILE")"
+    proof_status_output="$(run_deploy_paper_proof_status)"
     printf '%s\n' "$proof_status_output"
     proof_summary="$(
       printf '%s\n' "$proof_status_output" \
@@ -553,6 +575,20 @@ case "${DEPLOY_DRAIN_PAPER_ENTRIES,,}" in
   true|false) ;;
   *)
     echo "DEPLOY_DRAIN_PAPER_ENTRIES must be true or false" >&2
+    exit 1
+    ;;
+esac
+case "${DEPLOY_AUDIT_PAPER_PROOF_STATUS,,}" in
+  true|false) ;;
+  *)
+    echo "DEPLOY_AUDIT_PAPER_PROOF_STATUS must be true or false" >&2
+    exit 1
+    ;;
+esac
+case "${DEPLOY_REQUIRE_PAPER_PROOF_STATUS_AUDIT,,}" in
+  true|false) ;;
+  *)
+    echo "DEPLOY_REQUIRE_PAPER_PROOF_STATUS_AUDIT must be true or false" >&2
     exit 1
     ;;
 esac
