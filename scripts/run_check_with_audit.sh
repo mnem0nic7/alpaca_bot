@@ -75,6 +75,14 @@ proof_post_supervisor_execution_line="$(grep -E '^paper proof post-supervisor ex
 decision_dry_run_line="$(grep -E '^paper decision dry run ok: ' "$output_file" | tail -n 1 || true)"
 decision_dry_run_strategies_line="$(grep -E '^paper readiness decision dry run strategies ok: ' "$output_file" | tail -n 1 || true)"
 
+if [[ "$CHECK_NAME" == "paper_proof_status" && "$status" == "passed" ]]; then
+  case "$proof_summary_line" in
+    *" proof=pending "*|*" proof=pending")
+      status="pending"
+      ;;
+  esac
+fi
+
 export AUDIT_CHECK_NAME="$CHECK_NAME"
 export AUDIT_STATUS="$status"
 export AUDIT_EXIT_CODE="$rc"

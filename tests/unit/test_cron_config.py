@@ -2351,6 +2351,49 @@ def test_run_check_with_audit_marks_proof_status_lock_skip_as_skipped(
     assert audit_status_file.read_text().strip() == "skipped"
 
 
+def test_run_check_with_audit_marks_pending_proof_summary_as_pending(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    audit_status_file = tmp_path / "audit_status"
+    docker = fake_bin / "docker"
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "printf '%s\\n' \"$AUDIT_STATUS\" > \"$AUDIT_STATUS_FILE\"\n"
+        "exit 0\n"
+    )
+    docker.chmod(0o755)
+
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("")
+
+    result = subprocess.run(
+        [
+            "scripts/run_check_with_audit.sh",
+            "paper_proof_status",
+            str(env_file),
+            "bash",
+            "-c",
+            (
+                "echo 'paper proof summary: readiness=ready proof=pending "
+                "reason=awaiting_min_trades blockers=none'"
+            ),
+        ],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "AUDIT_STATUS_FILE": str(audit_status_file),
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0
+    assert audit_status_file.read_text().strip() == "pending"
+
+
 def test_run_check_with_audit_records_scheduled_check_result() -> None:
     script_path = Path("scripts/run_check_with_audit.sh")
     script = script_path.read_text()
@@ -2598,6 +2641,8 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'status="skipped"' in script
     assert '43)' in script
     assert 'status="pending"' in script
+    assert 'proof_summary_line' in script
+    assert 'proof=pending' in script
     assert '"$@" > "$output_file" 2>&1' in script
     assert 'cat "$output_file"' in script
     assert 'docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm' in script
