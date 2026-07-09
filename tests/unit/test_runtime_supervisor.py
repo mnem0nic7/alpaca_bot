@@ -1253,6 +1253,151 @@ def test_runtime_supervisor_run_cycle_once_gathers_runtime_inputs_and_dispatches
     ]
 
 
+def test_runtime_supervisor_dispatches_existing_pending_orders_before_market_data(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 45, tzinfo=timezone.utc)
+    pending_entry = OrderRecord(
+        client_order_id="pending-entry",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=1,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=now - timedelta(minutes=1),
+        updated_at=now - timedelta(minutes=1),
+        signal_timestamp=now - timedelta(minutes=15),
+    )
+    runtime = make_runtime_context(
+        settings,
+        order_store=RecordingOrderStore([pending_entry]),
+    )
+    events: list[str] = []
+
+    class OrderedMarketData(FakeMarketData):
+        def get_stock_bars(self, **kwargs):
+            events.append("stock_bars")
+            return super().get_stock_bars(**kwargs)
+
+    market_data = OrderedMarketData(
+        intraday_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=21),
+            "MSFT": make_bar_series("MSFT", end=now, count=21),
+            "SPY": make_bar_series("SPY", end=now, count=21),
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=20, days=True),
+            "MSFT": make_bar_series("MSFT", end=now, count=20, days=True),
+            "SPY": make_bar_series("SPY", end=now, count=20, days=True),
+        },
+    )
+    dispatch_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+
+    def fake_dispatch_pending_orders(**kwargs):
+        events.append("dispatch")
+        dispatch_calls.append(kwargs)
+        return {"submitted_count": 1 if len(dispatch_calls) == 1 else 0}
+
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        fake_dispatch_pending_orders,
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    assert events.index("dispatch") < events.index("stock_bars")
+    assert len(dispatch_calls) == 2
+    assert "allowed_intent_types" not in dispatch_calls[0]
+    assert dispatch_calls[0]["blocked_strategy_names"] == set()
+    assert report.dispatch_report["submitted_count"] == 1
+
+
+def test_runtime_supervisor_early_dispatch_respects_close_only(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 45, tzinfo=timezone.utc)
+    pending_entry = OrderRecord(
+        client_order_id="pending-entry",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=1,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=now - timedelta(minutes=1),
+        updated_at=now - timedelta(minutes=1),
+        signal_timestamp=now - timedelta(minutes=15),
+    )
+    runtime = make_runtime_context(
+        settings,
+        trading_status_store=RecordingTradingStatusStore(
+            loaded_status=make_trading_status(
+                settings,
+                status=TradingStatusValue.CLOSE_ONLY,
+                updated_at=now,
+            )
+        ),
+        order_store=RecordingOrderStore([pending_entry]),
+    )
+    dispatch_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(module, "run_cycle", lambda **kwargs: SimpleNamespace(intents=[]))
+    monkeypatch.setattr(
+        module,
+        "dispatch_pending_orders",
+        lambda **kwargs: dispatch_calls.append(kwargs) or {"submitted_count": 0},
+    )
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=FakeMarketData(
+            intraday_bars_by_symbol={
+                "AAPL": make_bar_series("AAPL", end=now, count=21),
+                "MSFT": make_bar_series("MSFT", end=now, count=21),
+                "SPY": make_bar_series("SPY", end=now, count=21),
+            },
+            daily_bars_by_symbol={
+                "AAPL": make_bar_series("AAPL", end=now, count=20, days=True),
+                "MSFT": make_bar_series("MSFT", end=now, count=20, days=True),
+                "SPY": make_bar_series("SPY", end=now, count=20, days=True),
+            },
+        ),
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    supervisor.run_cycle_once(now=lambda: now)
+
+    assert len(dispatch_calls) == 2
+    assert dispatch_calls[0]["allowed_intent_types"] == {"stop", "exit"}
+    assert dispatch_calls[1]["allowed_intent_types"] == {"stop", "exit"}
+
+
 def test_runtime_supervisor_only_enables_new_entries_once_per_completed_signal_bar(
     monkeypatch,
 ) -> None:

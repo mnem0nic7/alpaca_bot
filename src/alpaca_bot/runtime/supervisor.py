@@ -193,6 +193,16 @@ class SupervisorCycleReport:
 
 
 @dataclass(frozen=True)
+class SupervisorDispatchReport:
+    submitted_count: int
+
+    def __getitem__(self, key: str) -> int:
+        if key != "submitted_count":
+            raise KeyError(key)
+        return self.submitted_count
+
+
+@dataclass(frozen=True)
 class SupervisorLoopReport:
     iterations: int
     active_iterations: int
@@ -204,6 +214,32 @@ _OCC_RE = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
 
 def _is_occ_symbol(symbol: str) -> bool:
     return bool(_OCC_RE.match(symbol))
+
+
+def _dispatch_report_submitted_count(report: object | None) -> int:
+    if report is None:
+        return 0
+    if isinstance(report, dict):
+        return int(report.get("submitted_count") or 0)
+    return int(getattr(report, "submitted_count", 0) or 0)
+
+
+def _combine_dispatch_reports(
+    first: object | None,
+    second: object,
+) -> object:
+    if first is None:
+        return second
+    total = _dispatch_report_submitted_count(first) + _dispatch_report_submitted_count(
+        second
+    )
+    if total == _dispatch_report_submitted_count(second):
+        return second
+    if isinstance(second, dict):
+        combined = dict(second)
+        combined["submitted_count"] = total
+        return combined
+    return SupervisorDispatchReport(submitted_count=total)
 
 
 def _option_snapshot_path_session(value: object) -> date | None:
@@ -744,6 +780,32 @@ class RuntimeSupervisor:
         ):
             entries_disabled_reasons.append("paper_readiness_check_missing")
         entries_disabled = bool(entries_disabled_reasons)
+        active_strategies = list(self._resolve_active_strategies())
+        pending_submit_orders = self._list_pending_submit_orders()
+        pre_cycle_dispatch_report = None
+        if status is not TradingStatusValue.HALTED and pending_submit_orders:
+            early_blocked_strategy_names = self._strategy_dispatch_blocked_names(
+                strategy_names=[name for name, _ in active_strategies],
+                entries_disabled_reasons=entries_disabled_reasons,
+                session_date=session_date,
+                session_type=session_type,
+                session_confidence_scores=session_confidence_scores,
+                losing_streak_excluded=_losing_streak_excluded,
+            )
+            pre_cycle_dispatch_kwargs = {
+                "settings": self.settings,
+                "runtime": self.runtime,
+                "broker": self.broker,
+                "now": timestamp,
+                "blocked_strategy_names": early_blocked_strategy_names,
+                "notifier": self._notifier,
+                "session_type": session_type,
+            }
+            if entries_disabled:
+                pre_cycle_dispatch_kwargs["allowed_intent_types"] = {"stop", "exit"}
+            pre_cycle_dispatch_report = self._order_dispatcher(
+                **pre_cycle_dispatch_kwargs
+            )
         open_positions = self._load_open_positions()
         self._close_stale_carryover_positions(
             session_date=session_date,
@@ -831,7 +893,10 @@ class RuntimeSupervisor:
                 return SupervisorCycleReport(
                     entries_disabled=entries_disabled,
                     cycle_result=_SN(intents=[]),
-                    dispatch_report={"submitted_count": 0},
+                    dispatch_report=_combine_dispatch_reports(
+                        pre_cycle_dispatch_report,
+                        {"submitted_count": 0},
+                    ),
                     account_equity=account.equity,
                     entries_disabled_reasons=tuple(entries_disabled_reasons),
                 )
@@ -994,9 +1059,6 @@ class RuntimeSupervisor:
             now=timestamp,
             daily_bars_for_vol=_regime_bars_for_vol,
         )
-
-        # Resolve registered strategies (breakout, etc.)
-        active_strategies = list(self._resolve_active_strategies())
 
         # Fetch option chains before strategy evaluation only when options are
         # tradable. Snapshot-only observation runs after stock dispatch so it
@@ -1295,7 +1357,10 @@ class RuntimeSupervisor:
             )
         if entries_disabled:
             dispatch_kwargs["allowed_intent_types"] = {"stop", "exit"}
-        dispatch_report = self._order_dispatcher(**dispatch_kwargs)
+        dispatch_report = _combine_dispatch_reports(
+            pre_cycle_dispatch_report,
+            self._order_dispatcher(**dispatch_kwargs),
+        )
 
         option_broker = getattr(self, "_option_broker", None)
         option_dispatch_report = None
@@ -2598,6 +2663,48 @@ class RuntimeSupervisor:
             )
         except Exception:
             logger.exception("Notifier failed to send option dispatch failure alert")
+
+    def _strategy_dispatch_blocked_names(
+        self,
+        *,
+        strategy_names: list[str],
+        entries_disabled_reasons: list[str],
+        session_date: date,
+        session_type: SessionType | None,
+        session_confidence_scores: dict[str, float],
+        losing_streak_excluded: set[str],
+    ) -> set[str]:
+        blocked: set[str] = set()
+        is_extended = session_type in {
+            SessionType.PRE_MARKET,
+            SessionType.AFTER_HOURS,
+        }
+        for strategy_name in strategy_names:
+            strategy_disabled_reasons = list(entries_disabled_reasons)
+            strategy_session_state = self._load_session_state(
+                session_date=session_date,
+                strategy_name=strategy_name,
+            )
+            if (
+                strategy_session_state is not None
+                and strategy_session_state.session_date != session_date
+            ):
+                strategy_session_state = None
+            if (
+                strategy_session_state is not None
+                and strategy_session_state.entries_disabled
+                and not is_extended
+            ):
+                strategy_disabled_reasons.append(
+                    "strategy_session_state_entries_disabled"
+                )
+            if session_confidence_scores.get(strategy_name) is None:
+                strategy_disabled_reasons.append("confidence_score_absent")
+            if strategy_name in losing_streak_excluded:
+                strategy_disabled_reasons.append("losing_streak_excluded")
+            if strategy_disabled_reasons:
+                blocked.add(strategy_name)
+        return blocked
 
     def _fetch_option_chains_for_snapshot_symbols(
         self,
