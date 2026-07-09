@@ -126,6 +126,7 @@ PROOF_STATUS_EXECUTION_MAX_CAPACITY_REJECT_RATE="${PROOF_STATUS_EXECUTION_MAX_CA
 PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:-${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}}"
 PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-${SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/setup_knobs}}"
 PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="${PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS:-48}"
+PROOF_STATUS_PROMOTION_APPROVAL_MARKER="${PROOF_STATUS_PROMOTION_APPROVAL_MARKER:-$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/promotion_approval.json}"
 
 if [[ -z "${STRATEGY_VERSION:-}" ]]; then
   echo "missing STRATEGY_VERSION in $ENV_FILE" >&2
@@ -453,6 +454,56 @@ build_proof_status_enabled_strategy_args() {
 
 build_proof_status_enabled_strategy_args "$PROOF_STATUS_APPROVED_STRATEGIES"
 
+promotion_write_access_status="ok"
+promotion_env_file_writable="false"
+promotion_env_dir_writable="false"
+promotion_approval_marker_writable="false"
+promotion_approval_marker_dir_writable="false"
+probe_promotion_write_access() {
+  local env_dir
+  local marker_dir
+  local marker_parent
+
+  env_dir="$(dirname "$ENV_FILE")"
+  marker_dir="$(dirname "$PROOF_STATUS_PROMOTION_APPROVAL_MARKER")"
+  marker_parent="$(dirname "$marker_dir")"
+
+  if [[ -w "$ENV_FILE" ]]; then
+    promotion_env_file_writable="true"
+  else
+    promotion_write_access_status="env_file_not_writable"
+  fi
+  if [[ -w "$env_dir" ]]; then
+    promotion_env_dir_writable="true"
+  elif [[ "$promotion_write_access_status" == "ok" ]]; then
+    promotion_write_access_status="env_dir_not_writable"
+  fi
+
+  if [[ -e "$PROOF_STATUS_PROMOTION_APPROVAL_MARKER" ]]; then
+    if [[ -w "$PROOF_STATUS_PROMOTION_APPROVAL_MARKER" ]]; then
+      promotion_approval_marker_writable="true"
+    elif [[ "$promotion_write_access_status" == "ok" ]]; then
+      promotion_write_access_status="approval_marker_not_writable"
+    fi
+  elif [[ -d "$marker_dir" ]]; then
+    promotion_approval_marker_writable="true"
+  fi
+
+  if [[ -d "$marker_dir" ]]; then
+    if [[ -w "$marker_dir" ]]; then
+      promotion_approval_marker_dir_writable="true"
+    elif [[ "$promotion_write_access_status" == "ok" ]]; then
+      promotion_write_access_status="approval_marker_dir_not_writable"
+    fi
+  elif [[ ! -d "$marker_parent" || ! -w "$marker_parent" ]]; then
+    if [[ "$promotion_write_access_status" == "ok" ]]; then
+      promotion_write_access_status="approval_marker_parent_not_writable"
+    fi
+  fi
+}
+
+probe_promotion_write_access
+
 cron_health_status="ok"
 if ! cron_health_detail="$(./scripts/cron_health_check.sh 2>&1)"; then
   cron_health_status="failed"
@@ -532,6 +583,11 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT" \
   -e PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="$PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT" \
   -e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" \
+  -e PROOF_STATUS_PROMOTION_WRITE_ACCESS_STATUS="$promotion_write_access_status" \
+  -e PROOF_STATUS_PROMOTION_ENV_FILE_WRITABLE="$promotion_env_file_writable" \
+  -e PROOF_STATUS_PROMOTION_ENV_DIR_WRITABLE="$promotion_env_dir_writable" \
+  -e PROOF_STATUS_PROMOTION_APPROVAL_MARKER_WRITABLE="$promotion_approval_marker_writable" \
+  -e PROOF_STATUS_PROMOTION_APPROVAL_MARKER_DIR_WRITABLE="$promotion_approval_marker_dir_writable" \
   -e PROOF_STATUS_ENV_FILE="$ENV_FILE" \
   -e PROOF_STATUS_START_DATE="$PROOF_STATUS_START_DATE" \
   -e PROOF_STATUS_END_DATE="$PROOF_STATUS_END_DATE" \
@@ -1507,6 +1563,26 @@ second_strategy_setup_output_root = Path(
 )
 second_strategy_max_age_hours = int(
     os.environ["PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS"]
+)
+promotion_write_access_status = os.environ.get(
+    "PROOF_STATUS_PROMOTION_WRITE_ACCESS_STATUS",
+    "unknown",
+)
+promotion_env_file_writable = os.environ.get(
+    "PROOF_STATUS_PROMOTION_ENV_FILE_WRITABLE",
+    "unknown",
+)
+promotion_env_dir_writable = os.environ.get(
+    "PROOF_STATUS_PROMOTION_ENV_DIR_WRITABLE",
+    "unknown",
+)
+promotion_approval_marker_writable = os.environ.get(
+    "PROOF_STATUS_PROMOTION_APPROVAL_MARKER_WRITABLE",
+    "unknown",
+)
+promotion_approval_marker_dir_writable = os.environ.get(
+    "PROOF_STATUS_PROMOTION_APPROVAL_MARKER_DIR_WRITABLE",
+    "unknown",
 )
 stream_start_grace_seconds = int(os.environ["PROOF_STATUS_STREAM_START_GRACE_SECONDS"])
 readiness_max_pass_age_minutes = int(
@@ -5369,14 +5445,22 @@ promotion_confirmation = (
     if promotion_strategy != "none" and promotion_validation_summary_sha256 != "none"
     else "none"
 )
+promotion_action_status = str(second_strategy_evidence["promotion_action_status"])
+if promotion_action_status == "ready" and promotion_write_access_status != "ok":
+    promotion_action_status = "ready_needs_write_access"
 print(
     "paper proof second strategy promotion action: "
-    f"status={second_strategy_evidence['promotion_action_status']} "
+    f"status={promotion_action_status} "
     f"strategy={promotion_strategy} "
     f"confirmation={promotion_confirmation} "
     f"script=./scripts/promote_validated_strategy.sh "
     f"env_file={safe_status_value(proof_status_env_file)} "
+    f"write_access_status={safe_status_value(promotion_write_access_status)} "
+    f"env_file_writable={safe_status_value(promotion_env_file_writable)} "
+    f"env_dir_writable={safe_status_value(promotion_env_dir_writable)} "
     f"approval_marker={safe_status_value(second_strategy_evidence['promotion_approval_marker'])} "
+    f"approval_marker_writable={safe_status_value(promotion_approval_marker_writable)} "
+    f"approval_marker_dir_writable={safe_status_value(promotion_approval_marker_dir_writable)} "
     f"approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']} "
     f"validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])} "
     f"validation_summary_sha256={safe_status_value(second_strategy_evidence['validation_summary_sha256'])} "

@@ -5877,6 +5877,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     ) in script
     assert "PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" in script
     assert "PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS must be a positive integer" in script
+    assert "PROOF_STATUS_PROMOTION_APPROVAL_MARKER" in script
+    assert "probe_promotion_write_access" in script
+    assert "promotion_write_access_status=\"env_file_not_writable\"" in script
+    assert "promotion_write_access_status=\"env_dir_not_writable\"" in script
+    assert "promotion_write_access_status=\"approval_marker_dir_not_writable\"" in script
     assert (
         'second_strategy_volume_args=(-v "$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:'
         '$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT:ro")'
@@ -5895,6 +5900,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "-e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="
         "\"$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS\""
     ) in script
+    assert "-e PROOF_STATUS_PROMOTION_WRITE_ACCESS_STATUS=" in script
+    assert "-e PROOF_STATUS_PROMOTION_ENV_FILE_WRITABLE=" in script
+    assert "-e PROOF_STATUS_PROMOTION_APPROVAL_MARKER_DIR_WRITABLE=" in script
     assert "PROOF_STATUS_STREAM_START_GRACE_SECONDS" in script
     assert "PROOF_STATUS_STREAM_START_GRACE_SECONDS must be a non-negative integer" in script
     assert "PROOF_STATUS_READINESS_MAX_PASS_AGE_MINUTES" in script
@@ -6841,13 +6849,20 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "promotion_action_status" in script
     assert "paper proof second strategy promotion action:" in script
     assert "confirmation={promotion_confirmation}" in script
+    assert 'promotion_action_status == "ready"' in script
+    assert 'promotion_action_status = "ready_needs_write_access"' in script
     assert "promotion_validation_summary_sha256 = safe_status_value(" in script
     assert (
         "f\"approve-{promotion_strategy}-paper-promotion-sha256-"
         "{promotion_validation_summary_sha256}\""
     ) in script
     assert "script=./scripts/promote_validated_strategy.sh" in script
+    assert "write_access_status={safe_status_value(promotion_write_access_status)}" in script
+    assert "env_file_writable={safe_status_value(promotion_env_file_writable)}" in script
+    assert "env_dir_writable={safe_status_value(promotion_env_dir_writable)}" in script
     assert "approval_marker={safe_status_value(second_strategy_evidence['promotion_approval_marker'])}" in script
+    assert "approval_marker_writable={safe_status_value(promotion_approval_marker_writable)}" in script
+    assert "approval_marker_dir_writable={safe_status_value(promotion_approval_marker_dir_writable)}" in script
     assert "approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']}" in script
     assert "validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])}" in script
     assert "candidate_ci_low={format_optional_float(second_strategy_evidence['promotion_candidate_ci_low'], 4)}" in script
