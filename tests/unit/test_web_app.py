@@ -213,6 +213,16 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_second_strategy_promotion_action_approval_marker_command_status": (
                 "ready"
             ),
+            "proof_second_strategy_promotion_action_approval_marker_quick_command_status": (
+                "ready"
+            ),
+            "proof_second_strategy_promotion_action_approval_marker_quick_command": (
+                "APPROVE_VALIDATED_STRATEGY_MARKER_CONFIRM="
+                "approve-ema_pullback-paper-promotion-sha256-"
+                "df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9 "
+                "APPROVE_VALIDATED_STRATEGY_MARKER_DRY_RUN=false "
+                "./scripts/approve_validated_strategy_marker.sh ema_pullback"
+            ),
             "proof_second_strategy_promotion_action_broker_flat_status": "ok",
             "proof_second_strategy_promotion_action_write_access_status": (
                 "env_file_not_writable"
@@ -433,6 +443,8 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
         "Scenario Evidence",
         maxsplit=1,
     )[0]
+    assert "status=ready" in quick_command
+    assert "command=APPROVE_VALIDATED_STRATEGY_MARKER_CONFIRM=" in quick_command
     assert "./scripts/approve_validated_strategy_marker.sh" in quick_command
     assert "ema_pullback" in quick_command
     assert "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY" not in quick_command
