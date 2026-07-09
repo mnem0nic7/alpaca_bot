@@ -1364,3 +1364,35 @@ prefilter row. `ema_pullback`, `vwap_cross`, and `failed_breakdown` are the
 closest rejected rows by lower-bound confidence, but all still cross zero.
 Do not change `PAPER_APPROVED_STRATEGIES`; it remains `bull_flag`. Do not
 re-enable `vwap_cross`.
+
+### 2026-07-09 EMA price-action confirmation screen
+
+The complete second-strategy refresh left `ema_pullback` as the only stock
+candidate with positive independent-validation attribution at the lowest risk
+scale, but it failed the historical proof-horizon gate. A bounded follow-up
+tested whether the implementation was admitting weak EMA reclaims rather than
+opening another generic parameter sweep.
+
+The discovery screen used 160 scenarios selected deterministically from the
+999-scenario universe with seed `ema-quality-discovery-20260709-v1`. It replayed
+the full `bull_flag+ema_pullback` K=1 portfolio path with 2 bps/side slippage,
+`$69,006.57` starting equity, the live paper settings, and
+`ema_pullback=0.10` confidence sizing. The three preregistered filters were:
+
+- `confirmed_reclaim`: signal close above the prior pullback bar's high.
+- `strong_close`: bullish signal bar closing in the top quarter of its range.
+- `confirmed_strong`: both conditions.
+
+Result:
+
+| EMA rule | basket trades | basket P&L | EMA trades | EMA P&L | EMA mean/trade | EMA 95% CI | p(mean<=0) | verdict |
+|---|---:|---:|---:|---:|---:|---|---:|---|
+| baseline | 404 | 145.83 | 318 | 43.04 | 0.1354 | [-0.3007, 0.6690] | 0.3155 | `no-evidence` |
+| `confirmed_reclaim` | 382 | 130.48 | 294 | 27.22 | 0.0926 | [-0.3703, 0.6046] | 0.3685 | `no-evidence` |
+| `strong_close` | 382 | 162.47 | 297 | 41.34 | 0.1392 | [-0.3110, 0.6777] | 0.3160 | `no-evidence` |
+| `confirmed_strong` | 365 | 135.86 | 277 | 14.38 | 0.0519 | [-0.4390, 0.6127] | 0.4565 | `no-evidence` |
+
+No rule improved the EMA confidence interval over baseline, and the strict
+combined rule reduced the point estimate materially. Because no discovery row
+earned `positive-edge`, no untouched validation run was warranted. Do not add
+these filters, approve `ema_pullback`, or change the paper strategy posture.
