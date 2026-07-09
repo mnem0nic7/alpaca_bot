@@ -398,6 +398,17 @@
             </p>
           </div>
           <div>
+            <p class="eyebrow">Candidate Evidence</p>
+            <p class="value mono">
+              scale={{ proof_payload.get("proof_second_strategy_promotion_action_candidate_scale", "unknown") }}
+              trades={{ proof_payload.get("proof_second_strategy_promotion_action_candidate_trades", "unknown") }}
+              pnl={{ proof_payload.get("proof_second_strategy_promotion_action_candidate_total_pnl", "unknown") }}
+              ci_low={{ proof_payload.get("proof_second_strategy_promotion_action_candidate_ci_low", "unknown") }}
+              p_zero={{ proof_payload.get("proof_second_strategy_promotion_action_candidate_p_mean_le_zero", "unknown") }}
+              sha={{ proof_payload.get("proof_second_strategy_promotion_action_validation_summary_sha256", "unknown") }}
+            </p>
+          </div>
+          <div>
             <p class="eyebrow">Promotion Handoff</p>
             <p class="value mono {{ 'warn' if proof_payload.get('proof_second_strategy_promotion_action_handoff_status', proof_payload.get('proof_second_strategy_promotion_action_status', 'unknown')) not in ['complete', 'none', 'unknown'] else '' }}">
               {{ proof_payload.get("proof_second_strategy_promotion_action_status", "unknown") }}
@@ -518,6 +529,11 @@
                     {% if event.payload.get("proof_gap_concentration_runway_status") %} concentration_runway={{ event.payload.get("proof_gap_concentration_runway_status") }}{% endif %}
                     {% if event.payload.get("proof_second_strategy_promotion_action_strategy") %} candidate={{ event.payload.get("proof_second_strategy_promotion_action_strategy") }}{% endif %}
                     {% if event.payload.get("proof_strategy_diversification_candidate_status") %} candidate_status={{ event.payload.get("proof_strategy_diversification_candidate_status") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_promotion_action_candidate_scale") %} candidate_scale={{ event.payload.get("proof_second_strategy_promotion_action_candidate_scale") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_promotion_action_candidate_trades") %} candidate_trades={{ event.payload.get("proof_second_strategy_promotion_action_candidate_trades") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_promotion_action_candidate_total_pnl") %} candidate_pnl={{ event.payload.get("proof_second_strategy_promotion_action_candidate_total_pnl") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_promotion_action_candidate_ci_low") %} candidate_ci_low={{ event.payload.get("proof_second_strategy_promotion_action_candidate_ci_low") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_promotion_action_candidate_p_mean_le_zero") %} candidate_p_zero={{ event.payload.get("proof_second_strategy_promotion_action_candidate_p_mean_le_zero") }}{% endif %}
                     {% if event.payload.get("proof_second_strategy_promotion_action_status") %} promotion={{ event.payload.get("proof_second_strategy_promotion_action_status") }}{% endif %}
                     {% if event.payload.get("proof_second_strategy_promotion_action_handoff_status") %} promotion_handoff={{ event.payload.get("proof_second_strategy_promotion_action_handoff_status") }}{% endif %}
                     {% if event.payload.get("proof_second_strategy_promotion_action_approval_marker_status") %} approval_marker={{ event.payload.get("proof_second_strategy_promotion_action_approval_marker_status") }}{% endif %}

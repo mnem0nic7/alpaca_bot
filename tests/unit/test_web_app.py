@@ -205,6 +205,14 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
                 "approve-ema_pullback-paper-promotion-sha256-"
                 "df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9"
             ),
+            "proof_second_strategy_promotion_action_validation_summary_sha256": (
+                "df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9"
+            ),
+            "proof_second_strategy_promotion_action_candidate_scale": "0.10",
+            "proof_second_strategy_promotion_action_candidate_trades": "292",
+            "proof_second_strategy_promotion_action_candidate_total_pnl": "150.76",
+            "proof_second_strategy_promotion_action_candidate_ci_low": "0.0707",
+            "proof_second_strategy_promotion_action_candidate_p_mean_le_zero": "0.0090",
             "proof_scenario_status": "ok",
             "proof_scenario_active": "980",
             "proof_scenario_expected_session": "2026-06-26",
@@ -346,6 +354,13 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "Strategy Candidate" in response.text
     assert "ema_pullback" in response.text
     assert "validated_stock_candidate_unapproved" in response.text
+    assert "Candidate Evidence" in response.text
+    assert "scale=0.10" in response.text
+    assert "trades=292" in response.text
+    assert "pnl=150.76" in response.text
+    assert "ci_low=0.0707" in response.text
+    assert "p_zero=0.0090" in response.text
+    assert "sha=df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9" in response.text
     assert "Promotion Handoff" in response.text
     assert "ready_needs_write_access" in response.text
     assert "handoff=ready_needs_privileged_env_write" in response.text
@@ -414,6 +429,11 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "concentration_runway=needs_higher_non_best_pnl" in response.text
     assert "candidate=ema_pullback" in response.text
     assert "candidate_status=validated_stock_candidate_unapproved" in response.text
+    assert "candidate_scale=0.10" in response.text
+    assert "candidate_trades=292" in response.text
+    assert "candidate_pnl=150.76" in response.text
+    assert "candidate_ci_low=0.0707" in response.text
+    assert "candidate_p_zero=0.0090" in response.text
     assert "promotion=ready_needs_write_access" in response.text
     assert "promotion_handoff=ready_needs_privileged_env_write" in response.text
     assert "approval_marker=missing" in response.text
