@@ -4331,6 +4331,7 @@ def test_run_cycle_once_cancels_stale_live_entry_before_evaluation(monkeypatch) 
         if getattr(order, "client_order_id", None) == entry_order.client_order_id
     ]
     assert expired[-1].status == "expired"
+    assert expired[-1].reason == "next_bar_expired"
     assert "AAPL" not in cycle_calls[0]["working_order_symbols"]
     assert any(
         event.event_type == "entry_order_expired_next_bar"

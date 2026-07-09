@@ -2019,6 +2019,7 @@ class RuntimeSupervisor:
                             strategy_name=order.strategy_name,
                             created_at=order.created_at,
                             updated_at=timestamp,
+                            reason="next_bar_expired",
                             stop_price=order.stop_price,
                             limit_price=order.limit_price,
                             initial_stop_price=order.initial_stop_price,

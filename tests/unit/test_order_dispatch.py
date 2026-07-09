@@ -671,6 +671,7 @@ def test_dispatch_skips_entry_orders_with_stale_signal_date() -> None:
     assert len(order_store.saved) == 1
     assert order_store.saved[0].status == "expired"
     assert order_store.saved[0].client_order_id == stale_entry.client_order_id
+    assert order_store.saved[0].reason == "stale_signal"
     # Audit event must be appended
     assert len(audit_store.appended) == 1
     assert audit_store.appended[0].event_type == "order_expired_stale_signal"
@@ -819,6 +820,7 @@ def test_dispatch_expires_pending_entry_after_next_bar_window() -> None:
     assert len(order_store.saved) == 1
     assert order_store.saved[0].status == "expired"
     assert order_store.saved[0].client_order_id == stale_entry.client_order_id
+    assert order_store.saved[0].reason == "next_bar_expired"
     assert audit_store.appended[0].event_type == "entry_order_expired_next_bar"
     assert audit_store.appended[0].symbol == "AAPL"
     assert report["submitted_count"] == 0
@@ -861,6 +863,7 @@ def test_dispatch_expires_pending_entry_with_too_little_active_window_left() -> 
     assert len(order_store.saved) == 1
     assert order_store.saved[0].status == "expired"
     assert order_store.saved[0].client_order_id == late_entry.client_order_id
+    assert order_store.saved[0].reason == "short_active_window"
     assert audit_store.appended[0].event_type == "entry_order_expired_next_bar"
     assert audit_store.appended[0].payload["reason"] == "short active dispatch window"
     assert audit_store.appended[0].payload["remaining_active_seconds"] == pytest.approx(
