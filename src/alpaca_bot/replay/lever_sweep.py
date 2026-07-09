@@ -210,6 +210,22 @@ _EMA_PULLBACK_FIELD_FAMILIES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
     ("AH_ema_period", "ema_period", (5, 7, 9, 12, 20)),
 )
 
+_BULL_FLAG_FIELD_FAMILIES: tuple[
+    tuple[str, str, tuple[float, ...]], ...
+] = (
+    ("AP_bull_flag_min_run", "bull_flag_min_run_pct", (0.015, 0.02, 0.03)),
+    (
+        "AQ_bull_flag_range",
+        "bull_flag_consolidation_range_pct",
+        (0.4, 0.5, 0.6),
+    ),
+    (
+        "AR_bull_flag_volume",
+        "bull_flag_consolidation_volume_ratio",
+        (0.5, 0.6, 0.7),
+    ),
+)
+
 _BREAKOUT_FIELD_FAMILIES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
     ("X_breakout_lookback", "breakout_lookback_bars", (10, 15, 20, 30, 40)),
 )
@@ -409,6 +425,8 @@ def _single_field_families(
         return _SINGLE_FIELD_FAMILIES + _MOMENTUM_FIELD_FAMILIES
     if strategy == "ema_pullback":
         return _SINGLE_FIELD_FAMILIES + _EMA_PULLBACK_FIELD_FAMILIES
+    if strategy == "bull_flag":
+        return _SINGLE_FIELD_FAMILIES + _BULL_FLAG_FIELD_FAMILIES
     if strategy == "breakout":
         return _SINGLE_FIELD_FAMILIES + _BREAKOUT_FIELD_FAMILIES
     if strategy == "orb":
@@ -689,6 +707,23 @@ def build_coarse_grid(
                 "AH_ema_period:ema_period=7",
                 {"ema_period": 7},
             )
+        )
+    if strategy == "bull_flag":
+        coarse.extend(
+            [
+                (
+                    "AP_bull_flag_min_run:bull_flag_min_run_pct=0.015",
+                    {"bull_flag_min_run_pct": 0.015},
+                ),
+                (
+                    "AQ_bull_flag_range:bull_flag_consolidation_range_pct=0.6",
+                    {"bull_flag_consolidation_range_pct": 0.6},
+                ),
+                (
+                    "AR_bull_flag_volume:bull_flag_consolidation_volume_ratio=0.7",
+                    {"bull_flag_consolidation_volume_ratio": 0.7},
+                ),
+            ]
         )
     if strategy == "breakout":
         coarse.append(

@@ -459,6 +459,20 @@ def test_stock_strategy_grids_include_strategy_specific_setup_levers():
             ),
             ("AO_bb_squeeze_min_bars:bb_squeeze_min_bars=3", {"bb_squeeze_min_bars": 3}),
         ],
+        "bull_flag": [
+            (
+                "AP_bull_flag_min_run:bull_flag_min_run_pct=0.015",
+                {"bull_flag_min_run_pct": 0.015},
+            ),
+            (
+                "AQ_bull_flag_range:bull_flag_consolidation_range_pct=0.6",
+                {"bull_flag_consolidation_range_pct": 0.6},
+            ),
+            (
+                "AR_bull_flag_volume:bull_flag_consolidation_volume_ratio=0.7",
+                {"bull_flag_consolidation_volume_ratio": 0.7},
+            ),
+        ],
     }
 
     for strategy, expected in cases.items():
@@ -479,6 +493,7 @@ def test_stock_strategy_coarse_grids_include_strategy_specific_setup_levers():
         "vwap_reversion": {"vwap_dip_threshold_pct": 0.02},
         "gap_and_go": {"gap_threshold_pct": 0.01},
         "bb_squeeze": {"bb_squeeze_threshold_pct": 0.05},
+        "bull_flag": {"bull_flag_min_run_pct": 0.015},
     }
 
     for strategy, expected_override in cases.items():
