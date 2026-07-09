@@ -2276,7 +2276,7 @@ if second_strategy_scan_status == "failed" and second_strategy_evidence["status"
     ):
         second_strategy_scan_status = "ok"
         second_strategy_scan_detail = (
-            "fresh_second_strategy_evidence_after_failed_log"
+            "fresh_second_strategy_evidence_supersedes_failed_scan"
         )
 
 market_timezone = settings.market_timezone.key

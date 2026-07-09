@@ -6358,7 +6358,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "file_mtime_epoch" in script
     assert '"prefilter_summary_mtime_epoch": prefilter_summary_mtime_epoch' in script
     assert '"validation_summary_mtime_epoch": validation_summary_mtime_epoch' in script
-    assert "fresh_second_strategy_evidence_after_failed_log" in script
+    assert "fresh_second_strategy_evidence_supersedes_failed_scan" in script
+    assert "fresh_second_strategy_evidence_after_failed_log" not in script
     assert "status = \"failed\"" in script
     assert 'second_strategy_scan_status="${event_status:-unknown}"' in script
     assert "warnings.append(\"second_strategy_scan_failed\")" in script
