@@ -274,6 +274,11 @@ if ! BROKER_FLAT_CONTEXT="promote validated strategy" \
   exit 1
 fi
 
+if ! verify_validation_summary_current; then
+  echo "$LOG_PREFIX validation summary changed after broker flat check; aborting promotion before mutation" >&2
+  exit 1
+fi
+
 read_env_value() {
   local key="$1"
   awk -v key="$key" '

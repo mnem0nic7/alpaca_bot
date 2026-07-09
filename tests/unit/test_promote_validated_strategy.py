@@ -97,6 +97,7 @@ def _make_fake_docker(tmp_path: Path) -> Path:
     fake_bin.mkdir()
     docker = fake_bin / "docker"
     broker_not_flat = tmp_path / "broker_not_flat"
+    mutate_summary_after_broker = tmp_path / "mutate_summary_after_broker"
     docker.write_text(
         "#!/usr/bin/env bash\n"
         f"printf '%s\\n' \"$*\" >> {tmp_path / 'docker_calls'}\n"
@@ -105,6 +106,12 @@ def _make_fake_docker(tmp_path: Path) -> Path:
         f"    if [[ -f '{broker_not_flat}' ]]; then\n"
         "      printf 'promote validated strategy failed: broker has 1 open stock positions: ARQT\\n' >&2\n"
         "      exit 1\n"
+        "    fi\n"
+        f"    if [[ -f '{mutate_summary_after_broker}' ]]; then\n"
+        f"      summary_path=\"$(cat '{mutate_summary_after_broker}')\"\n"
+        "      printf '%s\\n' "
+        "'{\"positive_edge_validation_rows\": 0, "
+        "\"promotion_approved\": false, \"rows\": []}' > \"$summary_path\"\n"
         "    fi\n"
         "    printf 'promote validated strategy broker exposure ok: open_orders=0 open_positions=0\\n'\n"
         "    exit 0\n"
@@ -202,6 +209,36 @@ def test_promote_validated_strategy_requires_flat_broker_before_mutation(
     docker_calls = (tmp_path / "docker_calls").read_text()
     assert "--entrypoint python admin" in docker_calls
     assert "enable-strategy" not in docker_calls
+    assert not (tmp_path / "deploy_calls").exists()
+
+
+def test_promote_validated_strategy_rechecks_evidence_after_broker_check(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    confirmation = _confirmation(evidence_root)
+    deploy_script = _make_fake_deploy(tmp_path)
+    summary_path = evidence_root / "latest_validation" / "summary.json"
+    (tmp_path / "mutate_summary_after_broker").write_text(f"{summary_path}\n")
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=deploy_script,
+        tmp_path=tmp_path,
+        confirmation=confirmation,
+    )
+
+    assert result.returncode == 1
+    assert "validation summary changed after broker flat check" in result.stderr
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
+    docker_calls = (tmp_path / "docker_calls").read_text()
+    assert "--entrypoint python admin" in docker_calls
+    assert "enable-strategy" not in docker_calls
+    assert not (evidence_root / "promotion_approval.json").exists()
     assert not (tmp_path / "deploy_calls").exists()
 
 
