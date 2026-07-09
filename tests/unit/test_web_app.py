@@ -178,9 +178,13 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_gap_active_days_remaining": "3",
             "proof_gap_approved_replay_strategy_gap": "1",
             "proof_gap_concentration_net_pnl_needed": "14.32",
+            "proof_gap_concentration_non_best_avg_pnl": "0.17",
+            "proof_gap_concentration_non_best_avg_trade_gap": "86",
             "proof_gap_concentration_runway_status": "needs_higher_non_best_pnl",
             "proof_gap_concentration_remaining_trade_required_avg_pnl": "0.53",
             "proof_gap_concentration_remaining_active_day_required_pnl": "4.77",
+            "proof_gap_single_win_pnl_share": "0.98",
+            "proof_gap_max_single_win_pnl_share": "0.50",
             "proof_active_day_status": "blocked",
             "proof_active_days": "2",
             "proof_required_active_days": "5",
@@ -480,6 +484,16 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "earliest_active_days=2026-07-13" in response.text
     assert "gap_strategies=1" in response.text
     assert "concentration_runway=needs_higher_non_best_pnl" in response.text
+    assert "concentration_non_best_avg=0.17" in response.text
+    assert "concentration_gap_trades=86" in response.text
+    assert "concentration_gap_share=0.98" in response.text
+    assert "Concentration Runway" in response.text
+    assert "pnl_needed=14.32" in response.text
+    assert "non_best_avg=0.17" in response.text
+    assert "trade_gap=86" in response.text
+    assert "trade_avg=0.53" in response.text
+    assert "day_avg=4.77" in response.text
+    assert "share=0.98/0.50" in response.text
     assert "Concentration Detail" in response.text
     assert "best=DRUG:14.65@2026-07-08" in response.text
     assert "share=0.98/0.50" in response.text

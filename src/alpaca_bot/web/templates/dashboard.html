@@ -420,8 +420,11 @@
             <p class="value mono {{ 'warn' if proof_payload.get('proof_gap_concentration_runway_status', 'unknown') not in ['met', 'not_applicable', 'unknown'] else '' }}">
               {{ proof_payload.get("proof_gap_concentration_runway_status", "unknown") }}
               pnl_needed={{ proof_payload.get("proof_gap_concentration_net_pnl_needed", "unknown") }}
+              non_best_avg={{ proof_payload.get("proof_gap_concentration_non_best_avg_pnl", "unknown") }}
+              trade_gap={{ proof_payload.get("proof_gap_concentration_non_best_avg_trade_gap", "unknown") }}
               trade_avg={{ proof_payload.get("proof_gap_concentration_remaining_trade_required_avg_pnl", "unknown") }}
               day_avg={{ proof_payload.get("proof_gap_concentration_remaining_active_day_required_pnl", "unknown") }}
+              share={{ proof_payload.get("proof_gap_single_win_pnl_share", "unknown") }}/{{ proof_payload.get("proof_gap_max_single_win_pnl_share", "?") }}
             </p>
           </div>
           {% if proof_has_concentration_detail_fields %}
@@ -600,6 +603,9 @@
                     {% if event.payload.get("proof_earliest_active_days_met_session") %} earliest_active_days={{ event.payload.get("proof_earliest_active_days_met_session") }}{% endif %}
                     {% if event.payload.get("proof_gap_approved_replay_strategy_gap") %} gap_strategies={{ event.payload.get("proof_gap_approved_replay_strategy_gap") }}{% endif %}
                     {% if event.payload.get("proof_gap_concentration_runway_status") %} concentration_runway={{ event.payload.get("proof_gap_concentration_runway_status") }}{% endif %}
+                    {% if event.payload.get("proof_gap_concentration_non_best_avg_pnl") %} concentration_non_best_avg={{ event.payload.get("proof_gap_concentration_non_best_avg_pnl") }}{% endif %}
+                    {% if event.payload.get("proof_gap_concentration_non_best_avg_trade_gap") %} concentration_gap_trades={{ event.payload.get("proof_gap_concentration_non_best_avg_trade_gap") }}{% endif %}
+                    {% if event.payload.get("proof_gap_single_win_pnl_share") %} concentration_gap_share={{ event.payload.get("proof_gap_single_win_pnl_share") }}{% endif %}
                     {% if event.payload.get("proof_concentration_status") %} concentration={{ event.payload.get("proof_concentration_status") }}{% endif %}
                     {% if event.payload.get("proof_concentration_single_win_pnl_share") %} concentration_share={{ event.payload.get("proof_concentration_single_win_pnl_share") }}{% endif %}
                     {% if event.payload.get("proof_concentration_non_best_avg_trade_gap") %} concentration_trade_gap={{ event.payload.get("proof_concentration_non_best_avg_trade_gap") }}{% endif %}
