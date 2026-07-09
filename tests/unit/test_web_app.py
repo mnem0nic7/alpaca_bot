@@ -428,6 +428,15 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "APPROVE_VALIDATED_STRATEGY_MARKER_DRY_RUN=false" in response.text
     assert "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY=true" in response.text
     assert "/etc/alpaca_bot/alpaca-bot.env" in response.text
+    assert "Approval Quick Command" in response.text
+    quick_command = response.text.split("Approval Quick Command", maxsplit=1)[1].split(
+        "Scenario Evidence",
+        maxsplit=1,
+    )[0]
+    assert "./scripts/approve_validated_strategy_marker.sh" in quick_command
+    assert "ema_pullback" in quick_command
+    assert "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY" not in quick_command
+    assert "/etc/alpaca_bot/alpaca-bot.env" not in quick_command
     assert "/var/lib/alpaca-bot/nightly/second_strategy" in response.text
     assert "Scenario Evidence" in response.text
     assert "Scenario Problems" in response.text

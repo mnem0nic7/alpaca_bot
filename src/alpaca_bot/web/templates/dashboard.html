@@ -501,6 +501,15 @@
               {{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_deploy_script", "unknown")|shell_quote }}
             </p>
           </div>
+          <div>
+            <p class="eyebrow">Approval Quick Command</p>
+            <p class="value mono">
+              {{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_confirm_env", "APPROVE_VALIDATED_STRATEGY_MARKER_CONFIRM") }}={{ proof_payload.get("proof_second_strategy_promotion_action_confirmation", "unknown")|shell_quote }}
+              {{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_dry_run_env", "APPROVE_VALIDATED_STRATEGY_MARKER_DRY_RUN") }}={{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_dry_run_value", "false")|shell_quote }}
+              {{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_script", "./scripts/approve_validated_strategy_marker.sh")|shell_quote }}
+              {{ proof_payload.get("proof_second_strategy_promotion_action_strategy", "unknown")|shell_quote }}
+            </p>
+          </div>
           {% endif %}
           <div>
             <p class="eyebrow">Scenario Evidence</p>
