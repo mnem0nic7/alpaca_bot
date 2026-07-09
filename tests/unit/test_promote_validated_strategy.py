@@ -182,6 +182,7 @@ def _run_approval_wrapper(
     confirmation: str | None = None,
     dry_run: bool | None = None,
     extra_env: dict[str, str] | None = None,
+    args: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": f"{_make_fake_docker(tmp_path)}:/usr/bin:/bin",
@@ -194,7 +195,8 @@ def _run_approval_wrapper(
             "true" if dry_run else "false"
         )
     return subprocess.run(
-        [
+        args
+        or [
             str(APPROVAL_WRAPPER),
             str(env_file),
             "ema_pullback",
@@ -305,6 +307,37 @@ def test_approval_marker_wrapper_defaults_to_dry_run_and_approval_only(
     assert "dry_run=true" in result.stdout
     assert "strategy=ema_pullback" in result.stdout
     assert "dry_run_approval_marker_command=env " in result.stdout
+    assert "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY=true" in result.stdout
+    assert not (evidence_root / "promotion_approval.json").exists()
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
+    assert not (tmp_path / "deploy_calls").exists()
+
+
+def test_approval_marker_wrapper_accepts_strategy_only_with_default_env(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    deploy_script = _make_fake_deploy(tmp_path)
+
+    result = _run_approval_wrapper(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=deploy_script,
+        tmp_path=tmp_path,
+        args=[str(APPROVAL_WRAPPER), "ema_pullback"],
+        extra_env={
+            "APPROVE_VALIDATED_STRATEGY_MARKER_ENV_FILE": str(env_file),
+            "SECOND_STRATEGY_OUTPUT_ROOT": str(evidence_root),
+            "APPROVE_VALIDATED_STRATEGY_MARKER_DEPLOY_SCRIPT": str(deploy_script),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "dry_run=true" in result.stdout
+    assert "strategy=ema_pullback" in result.stdout
     assert "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY=true" in result.stdout
     assert not (evidence_root / "promotion_approval.json").exists()
     assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
