@@ -209,13 +209,13 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_scenario_active": "980",
             "proof_scenario_expected_session": "2026-06-26",
             "proof_scenario_problems": "none",
-            "proof_current_execution_status": "needs_work",
-            "proof_current_execution_warnings": "capacity_rejections,short_entry_windows",
-            "proof_current_execution_entry_fill_rate": "0.17",
-            "proof_current_execution_capacity_rejected": "1961",
-            "proof_current_execution_short_window": "1",
+            "proof_current_execution_status": "observing",
+            "proof_current_execution_warnings": "none",
+            "proof_current_execution_entry_fill_rate": "none",
+            "proof_current_execution_capacity_rejected": "0",
+            "proof_current_execution_short_window": "0",
             "proof_post_supervisor_execution_since": "2026-07-07T19:08:57+00:00",
-            "proof_post_supervisor_execution_status": "ok",
+            "proof_post_supervisor_execution_status": "observing",
             "proof_post_supervisor_execution_warnings": "none",
             "proof_post_supervisor_execution_entry_orders": "0",
             "proof_post_supervisor_execution_capacity_rejected": "0",
@@ -359,21 +359,20 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "scenarios=ok:980@2026-06-26" in response.text
     assert "Current Execution" in response.text
     assert "Post-Supervisor Execution" in response.text
-    assert "needs_work\n              warnings=capacity_rejections,short_entry_windows" in response.text
-    assert "fill=0.17" in response.text
-    assert "caprej=1961" in response.text
-    assert "short=1" in response.text
-    assert "ok\n              warnings=none" in response.text
+    assert response.text.count('class="value mono ">\n              observing') == 2
+    assert 'class="value mono warn">\n              observing' not in response.text
+    assert "observing\n              warnings=none" in response.text
+    assert "fill=none" in response.text
     assert "entries=0" in response.text
     assert "caprej=0" in response.text
     assert "short=0" in response.text
     assert "post_supervisor_since=2026-07-07T19:08:57+00:00" in response.text
     assert (
-        "current_exec=needs_work warnings=capacity_rejections,short_entry_windows"
+        "current_exec=observing warnings=none"
         in response.text
     )
     assert (
-        "post_supervisor_exec=ok warnings=none since=2026-07-07T19:08:57+00:00"
+        "post_supervisor_exec=observing warnings=none since=2026-07-07T19:08:57+00:00"
         in response.text
     )
     assert "gap_trades=27" in response.text

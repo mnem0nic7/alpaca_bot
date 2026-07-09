@@ -325,6 +325,7 @@
       {% set proof_current_execution_warnings = proof_payload.get("proof_current_execution_warnings", "unknown") %}
       {% set proof_post_supervisor_execution_status = proof_payload.get("proof_post_supervisor_execution_status", "unknown") %}
       {% set proof_post_supervisor_execution_warnings = proof_payload.get("proof_post_supervisor_execution_warnings", "unknown") %}
+      {% set proof_neutral_execution_statuses = ["ok", "observing", "not_started", "unknown"] %}
       {% set proof_has_gap_fields = proof_payload.get("proof_gap_sample_trades_remaining") or proof_payload.get("proof_gap_active_days_remaining") or proof_payload.get("proof_gap_approved_replay_strategy_gap") or proof_payload.get("proof_gap_concentration_runway_status") %}
       {% set proof_has_promotion_fields = proof_payload.get("proof_strategy_diversification_candidate_status") or proof_payload.get("proof_second_strategy_promotion_action_status") %}
       <div class="panel" style="margin-bottom: 1rem;">
@@ -437,7 +438,7 @@
           </div>
           <div>
             <p class="eyebrow">Current Execution</p>
-            <p class="value mono {{ 'warn' if proof_current_execution_status not in ['ok', 'unknown'] else '' }}">
+            <p class="value mono {{ 'warn' if proof_current_execution_status not in proof_neutral_execution_statuses else '' }}">
               {{ proof_current_execution_status }}
               warnings={{ proof_current_execution_warnings }}
               fill={{ proof_payload.get('proof_current_execution_entry_fill_rate', 'unknown') }}
@@ -447,7 +448,7 @@
           </div>
           <div>
             <p class="eyebrow">Post-Supervisor Execution</p>
-            <p class="value mono {{ 'warn' if proof_post_supervisor_execution_status not in ['ok', 'unknown'] else '' }}">
+            <p class="value mono {{ 'warn' if proof_post_supervisor_execution_status not in proof_neutral_execution_statuses else '' }}">
               {{ proof_post_supervisor_execution_status }}
               warnings={{ proof_post_supervisor_execution_warnings }}
               entries={{ proof_payload.get('proof_post_supervisor_execution_entry_orders', 'unknown') }}
