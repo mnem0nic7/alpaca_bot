@@ -65,6 +65,8 @@ context_line="$(grep -E '^scheduled check context: ' "$output_file" | tail -n 1 
 proof_summary_line="$(grep -E '^paper proof summary: ' "$output_file" | tail -n 1 || true)"
 proof_progress_line="$(grep -E '^paper proof progress: ' "$output_file" | tail -n 1 || true)"
 proof_concentration_line="$(grep -E '^paper proof concentration: ' "$output_file" | tail -n 1 || true)"
+proof_strategy_diversification_line="$(grep -E '^paper proof strategy diversification: ' "$output_file" | tail -n 1 || true)"
+proof_second_strategy_promotion_action_line="$(grep -E '^paper proof second strategy promotion action: ' "$output_file" | tail -n 1 || true)"
 proof_scoring_line="$(grep -E '^paper proof scoring: ' "$output_file" | tail -n 1 || true)"
 proof_scenarios_line="$(grep -E '^paper proof scenarios: ' "$output_file" | tail -n 1 || true)"
 proof_current_execution_line="$(grep -E '^paper proof current-session execution: ' "$output_file" | tail -n 1 || true)"
@@ -80,6 +82,8 @@ export AUDIT_CONTEXT_LINE="$context_line"
 export AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"
 export AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"
 export AUDIT_PROOF_CONCENTRATION_LINE="$proof_concentration_line"
+export AUDIT_PROOF_STRATEGY_DIVERSIFICATION_LINE="$proof_strategy_diversification_line"
+export AUDIT_PROOF_SECOND_STRATEGY_PROMOTION_ACTION_LINE="$proof_second_strategy_promotion_action_line"
 export AUDIT_PROOF_SCORING_LINE="$proof_scoring_line"
 export AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"
 export AUDIT_PROOF_CURRENT_EXECUTION_LINE="$proof_current_execution_line"
@@ -97,6 +101,8 @@ if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_PROOF_SUMMARY_LINE \
     -e AUDIT_PROOF_PROGRESS_LINE \
     -e AUDIT_PROOF_CONCENTRATION_LINE \
+    -e AUDIT_PROOF_STRATEGY_DIVERSIFICATION_LINE \
+    -e AUDIT_PROOF_SECOND_STRATEGY_PROMOTION_ACTION_LINE \
     -e AUDIT_PROOF_SCORING_LINE \
     -e AUDIT_PROOF_SCENARIOS_LINE \
     -e AUDIT_PROOF_CURRENT_EXECUTION_LINE \
@@ -133,6 +139,10 @@ PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")
 PROOF_SUMMARY_PREFIX = "paper proof summary: "
 PROOF_PROGRESS_PREFIX = "paper proof progress: "
 PROOF_CONCENTRATION_PREFIX = "paper proof concentration: "
+PROOF_STRATEGY_DIVERSIFICATION_PREFIX = "paper proof strategy diversification: "
+PROOF_SECOND_STRATEGY_PROMOTION_ACTION_PREFIX = (
+    "paper proof second strategy promotion action: "
+)
 PROOF_SCORING_PREFIX = "paper proof scoring: "
 PROOF_SCENARIOS_PREFIX = "paper proof scenarios: "
 PROOF_CURRENT_EXECUTION_PREFIX = "paper proof current-session execution: "
@@ -172,6 +182,85 @@ PROOF_CONCENTRATION_FIELDS = {
     "non_best_avg_trade_gap": "proof_concentration_non_best_avg_trade_gap",
     "single_win_pnl_share": "proof_concentration_single_win_pnl_share",
     "max_single_win_pnl_share": "proof_concentration_max_single_win_pnl_share",
+}
+PROOF_STRATEGY_DIVERSIFICATION_FIELDS = {
+    "status": "proof_strategy_diversification_status",
+    "active": "proof_strategy_diversification_active",
+    "required": "proof_strategy_diversification_required",
+    "approved_active": "proof_strategy_diversification_approved_active",
+    "approved_replay_active": "proof_strategy_diversification_approved_replay_active",
+    "approved_required": "proof_strategy_diversification_approved_required",
+    "gap": "proof_strategy_diversification_gap",
+    "candidate_status": "proof_strategy_diversification_candidate_status",
+    "promotion_action_status": (
+        "proof_strategy_diversification_promotion_action_status"
+    ),
+    "approval_marker_action_status": (
+        "proof_strategy_diversification_approval_marker_action_status"
+    ),
+    "promotion_write_access_status": (
+        "proof_strategy_diversification_promotion_write_access_status"
+    ),
+    "active_names": "proof_strategy_diversification_active_names",
+    "approved_names": "proof_strategy_diversification_approved_names",
+    "approved_replay_names": "proof_strategy_diversification_approved_replay_names",
+    "validated_unapproved_stock_candidates": (
+        "proof_strategy_diversification_validated_unapproved_stock_candidates"
+    ),
+    "validated_unapproved_option_candidates": (
+        "proof_strategy_diversification_validated_unapproved_option_candidates"
+    ),
+}
+PROOF_SECOND_STRATEGY_PROMOTION_ACTION_FIELDS = {
+    "status": "proof_second_strategy_promotion_action_status",
+    "strategy": "proof_second_strategy_promotion_action_strategy",
+    "confirmation": "proof_second_strategy_promotion_action_confirmation",
+    "approval_marker_action_status": (
+        "proof_second_strategy_promotion_action_approval_marker_action_status"
+    ),
+    "env_file": "proof_second_strategy_promotion_action_env_file",
+    "write_access_status": (
+        "proof_second_strategy_promotion_action_write_access_status"
+    ),
+    "env_file_writable": (
+        "proof_second_strategy_promotion_action_env_file_writable"
+    ),
+    "env_dir_writable": (
+        "proof_second_strategy_promotion_action_env_dir_writable"
+    ),
+    "approval_marker": (
+        "proof_second_strategy_promotion_action_approval_marker"
+    ),
+    "approval_marker_writable": (
+        "proof_second_strategy_promotion_action_approval_marker_writable"
+    ),
+    "approval_marker_dir_writable": (
+        "proof_second_strategy_promotion_action_approval_marker_dir_writable"
+    ),
+    "approval_marker_status": (
+        "proof_second_strategy_promotion_action_approval_marker_status"
+    ),
+    "validation_summary": (
+        "proof_second_strategy_promotion_action_validation_summary"
+    ),
+    "validation_summary_sha256": (
+        "proof_second_strategy_promotion_action_validation_summary_sha256"
+    ),
+    "candidate_scale": (
+        "proof_second_strategy_promotion_action_candidate_scale"
+    ),
+    "candidate_trades": (
+        "proof_second_strategy_promotion_action_candidate_trades"
+    ),
+    "candidate_total_pnl": (
+        "proof_second_strategy_promotion_action_candidate_total_pnl"
+    ),
+    "candidate_ci_low": (
+        "proof_second_strategy_promotion_action_candidate_ci_low"
+    ),
+    "candidate_p_mean_le_zero": (
+        "proof_second_strategy_promotion_action_candidate_p_mean_le_zero"
+    ),
 }
 PROOF_SCORING_FIELDS = {
     "scoreable_closed_trades": "proof_scoreable_closed_trades",
@@ -388,6 +477,20 @@ try:
             os.environ.get("AUDIT_PROOF_CONCENTRATION_LINE", ""),
             prefix=PROOF_CONCENTRATION_PREFIX,
             field_map=PROOF_CONCENTRATION_FIELDS,
+        )
+    )
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_PROOF_STRATEGY_DIVERSIFICATION_LINE", ""),
+            prefix=PROOF_STRATEGY_DIVERSIFICATION_PREFIX,
+            field_map=PROOF_STRATEGY_DIVERSIFICATION_FIELDS,
+        )
+    )
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_PROOF_SECOND_STRATEGY_PROMOTION_ACTION_LINE", ""),
+            prefix=PROOF_SECOND_STRATEGY_PROMOTION_ACTION_PREFIX,
+            field_map=PROOF_SECOND_STRATEGY_PROMOTION_ACTION_FIELDS,
         )
     )
     payload.update(
