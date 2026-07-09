@@ -543,3 +543,59 @@ Follow-up: the basket and setup-knob scanners now publish replay reports,
 JSONL, stderr, and summary files through temp-file replacement. In-progress or
 failed reruns should no longer expose zero-byte or partially-written evidence
 artifacts over the last completed result.
+
+## 2026-07-09 Log-Recovery Validation State
+
+After recovering the latest validation log/artifact state, proof status now
+points at:
+
+```text
+/var/lib/alpaca-bot/nightly/second_strategy/manual_log_recovery_20260709T014126Z/validation/summary.md
+/var/lib/alpaca-bot/nightly/second_strategy/manual_log_recovery_20260709T014126Z/validation/summary.json
+```
+
+The independent validation used the same
+`second-strategy-independent-validation` seed, 160 scenarios, 2 bps/side
+slippage, K=1, and starting equity `68995.52`. It validated only
+`ema_pullback`, across confidence scales `0.10`, `0.25`, and `0.50`.
+
+| candidate | scale | candidate trades | candidate P&L | candidate 95% CI mean/trade | candidate p(mean<=0) | candidate verdict | basket verdict |
+|---|---:|---:|---:|---|---:|---|---|
+| `ema_pullback` | 0.10 | 292 | `$150.76` | [0.0707, 1.0662] | 0.0090 | `positive-edge` | `no-evidence` |
+| `ema_pullback` | 0.25 | 292 | `$188.21` | [0.0326, 1.2629] | 0.0190 | `positive-edge` | `no-evidence` |
+| `ema_pullback` | 0.50 | 292 | `$179.74` | [-0.0075, 1.2366] | 0.0290 | `no-evidence` | `no-evidence` |
+
+The proof status therefore reports
+`candidate_status=validated_stock_candidate_unapproved`,
+`validated_unapproved_stock_candidates=ema_pullback`, and
+`promotion_action_status=ready_needs_approval_marker`.
+
+This is not approval to change `PAPER_APPROVED_STRATEGIES`, enable the strategy,
+or deploy. It means the remaining diversification blocker is now an explicit
+operator approval gate for `ema_pullback`.
+
+## Disabled-Candidate Decision Dry Run
+
+Before any approval marker exists, the disabled candidate was evaluated through
+the same read-only decision dry-run path that promotion uses, with disabled
+strategy evaluation explicitly allowed:
+
+```bash
+PAPER_DECISION_DRY_RUN_STRATEGY=ema_pullback \
+PAPER_DECISION_DRY_RUN_ALLOW_DISABLED=true \
+PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED=false \
+PAPER_DECISION_DRY_RUN_SESSION_DATE=2026-07-08 \
+  ./scripts/paper_decision_dry_run.sh /etc/alpaca_bot/alpaca-bot.env
+```
+
+Result:
+
+```text
+paper decision dry run ok: strategy=ema_pullback strategy_disabled=true allow_disabled=true as_of=2026-07-08T15:30:00-04:00 active=977 ignored=9 fractionable=975 intraday=977/977 completed_intraday=977/977 daily=977/977 thin_completed_lt10=0 decision_records=950 accepted=1 rejected=19 skipped_no_signal=930 entry_intents=1 reject_stages=capacity:19 reject_reasons=capacity_full:19 max_open_positions=1 equity=69006.55 sample=XP:25.974@15.44 sample_times=10:30,11:30,12:30,13:30,14:30,15:30 evaluations=6 min_decision_records=906 max_accepted=1 max_entry_intents=1
+```
+
+Conclusion: the disabled `ema_pullback` strategy can evaluate cleanly against
+the active paper watchlist and produce an entry intent in the promotion dry-run
+path. This removes an operational wiring concern, but it still does not grant
+approval. Do not write the approval marker or promote the strategy without
+explicit operator approval.
