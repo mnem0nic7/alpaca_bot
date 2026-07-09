@@ -253,6 +253,94 @@ def test_proof_horizon_cli_measures_cumulative_gate(tmp_path, monkeypatch):
     assert payload["first_threshold_failures_later_recovered"] == 1
 
 
+def test_proof_horizon_basket_cli_measures_basket_gate(tmp_path, monkeypatch):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+    sessions = ["2026-01-02", "2026-01-05", "2026-01-06"]
+    _write_multi_session_scenario(scen / "AAA.json", "AAA", sessions)
+    _write_multi_session_scenario(scen / "BBB.json", "BBB", sessions)
+    captured: dict[str, object] = {}
+
+    def fake_portfolio_basket_pooled_trades(
+        scenarios,
+        settings,
+        strategy_names,
+        *,
+        strategy_equity_scales=None,
+        option_chain_ledger=None,
+        on_progress=None,
+    ):
+        captured["scenarios"] = len(scenarios)
+        captured["max_open_positions"] = settings.max_open_positions
+        captured["strategy_names"] = tuple(strategy_names)
+        captured["scales"] = dict(strategy_equity_scales or {})
+        captured["option_chain_ledger"] = option_chain_ledger
+        return [
+            _trade("AAA", "2026-01-02T20:00:00+00:00", -1.00),
+            _trade("BBB", "2026-01-02T20:00:00+00:00", 2.00),
+            _trade("AAA", "2026-01-05T20:00:00+00:00", 2.00),
+            _trade("BBB", "2026-01-06T20:00:00+00:00", 1.00),
+        ]
+
+    monkeypatch.setattr(
+        replay_cli,
+        "portfolio_basket_pooled_trades",
+        fake_portfolio_basket_pooled_trades,
+    )
+    out = tmp_path / "proof-basket.md"
+    json_out = tmp_path / "proof-basket.json"
+
+    rc = main([
+        "proof-horizon-basket",
+        "--scenario-dir", str(scen),
+        "--strategy", "bull_flag",
+        "--strategy", "ema_pullback",
+        "--confidence-scale", "ema_pullback=0.10",
+        "--slippage-bps", "2",
+        "--max-open-positions", "1",
+        "--min-trades", "2",
+        "--min-pnl", "0.01",
+        "--min-active-days", "1",
+        "--output", str(out),
+        "--json", str(json_out),
+    ])
+
+    assert rc == 0
+    assert captured["scenarios"] == 2
+    assert captured["max_open_positions"] == 1
+    assert captured["strategy_names"] == ("bull_flag", "ema_pullback")
+    assert captured["scales"] == {"ema_pullback": 0.10}
+    assert captured["option_chain_ledger"] is None
+    text = out.read_text()
+    assert "# Proof horizon audit - bull_flag+ema_pullback" in text
+    assert "| starts that eventually reached proof gate | 2 |" in text
+    payload = json.loads(json_out.read_text())
+    assert payload["strategy"] == "bull_flag+ema_pullback"
+    assert payload["trades"] == 4
+    assert payload["starts_eventually_passed"] == 2
+
+
+def test_proof_horizon_basket_cli_requires_multiple_strategies(
+    tmp_path, monkeypatch, capsys
+):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+
+    rc = main([
+        "proof-horizon-basket",
+        "--scenario-dir", str(scen),
+        "--strategy", "bull_flag",
+    ])
+
+    assert rc == 1
+    assert (
+        "proof-horizon-basket requires at least two --strategy values"
+        in capsys.readouterr().err
+    )
+
+
 def test_proof_horizon_cli_applies_active_day_gate(tmp_path, monkeypatch):
     _set_env(monkeypatch)
     scen = tmp_path / "scen"

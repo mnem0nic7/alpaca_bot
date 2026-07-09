@@ -599,3 +599,31 @@ the active paper watchlist and produce an entry intent in the promotion dry-run
 path. This removes an operational wiring concern, but it still does not grant
 approval. Do not write the approval marker or promote the strategy without
 explicit operator approval.
+
+## Basket Proof-Horizon Prefilter
+
+Before treating approval as enough to clear the paper-proof path, a read-only
+`bull_flag + ema_pullback` basket proof-horizon sample was run against the
+actual proof gates. The diagnostic used 160 scenarios, seed
+`bull-flag-ema-proof-horizon-prefilter-20260709`, 2 bps/side slippage, K=1, and
+`ema_pullback` confidence scale `0.10`.
+
+| metric | result |
+|---|---:|
+| trades | 375 |
+| total P&L | `$-30.03` |
+| active trade days | 226 |
+| historical starts checked | 276 |
+| starts passing all proof gates | 22 |
+| starts not proven by data end | 254 |
+| eventual pass rate | 7.97% |
+| first-threshold pass rate | 4.25% |
+
+Terminal blockers were still dominated by `profit_factor` (251 starts),
+`positive_pnl` (239), and `eod_loss_share` (167). The sample also had 17 starts
+blocked by insufficient trades and 4 by insufficient active days.
+
+Conclusion: `ema_pullback` may be operationally wired, but the sampled
+`bull_flag + ema_pullback` basket does not currently solve the proof horizon.
+This is not approval to promote or enable the strategy, and no live paper
+configuration was changed.

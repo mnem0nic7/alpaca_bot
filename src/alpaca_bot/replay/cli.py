@@ -480,6 +480,122 @@ def main(argv: list[str] | None = None) -> int:
     horizon_p.add_argument("--output", metavar="FILE", default="-")
     horizon_p.add_argument("--json", dest="json_path", metavar="FILE", default=None)
 
+    # --- proof-horizon-basket subcommand ---
+    horizon_basket_p = subparsers.add_parser(
+        "proof-horizon-basket",
+        help=(
+            "Replay a strategy basket once, then measure how quickly each "
+            "historical start date reaches the live proof gate"
+        ),
+    )
+    horizon_basket_p.add_argument("--scenario-dir", required=True, metavar="DIR")
+    horizon_basket_p.add_argument(
+        "--strategy",
+        action="append",
+        choices=sorted(set(STRATEGY_REGISTRY) | set(OPTION_STRATEGY_FACTORIES)),
+        required=True,
+        metavar="NAME",
+        help="strategy in the basket (repeatable; order matches runtime priority)",
+    )
+    horizon_basket_p.add_argument(
+        "--slippage-bps",
+        type=float,
+        default=None,
+        metavar="BPS",
+        help="cost level for replay fills (default: REPLAY_SLIPPAGE_BPS)",
+    )
+    horizon_basket_p.add_argument(
+        "--max-open-positions",
+        type=int,
+        default=None,
+        metavar="K",
+        help="portfolio top-K cap (default: settings.max_open_positions)",
+    )
+    horizon_basket_p.add_argument(
+        "--starting-equity",
+        type=float,
+        default=None,
+        metavar="DOLLARS",
+        help="override every scenario's starting equity",
+    )
+    horizon_basket_p.add_argument(
+        "--confidence-scale",
+        action="append",
+        default=None,
+        metavar="STRATEGY=SCALE",
+        help=(
+            "scale sizing equity for a basket strategy, matching runtime "
+            "confidence sizing (repeatable; default: 1.0 for every strategy)"
+        ),
+    )
+    horizon_basket_p.add_argument(
+        "--option-chain-snapshots",
+        default=None,
+        metavar="PATH",
+        help=(
+            "option-chain snapshot JSONL file or directory required when the "
+            "basket includes option strategies"
+        ),
+    )
+    horizon_basket_p.add_argument(
+        "--min-trades",
+        type=int,
+        default=10,
+        metavar="N",
+        help="closed-trade threshold for proof pass (default: 10)",
+    )
+    horizon_basket_p.add_argument(
+        "--min-pnl",
+        type=float,
+        default=0.01,
+        metavar="DOLLARS",
+        help="cumulative P&L threshold for proof pass (default: 0.01)",
+    )
+    horizon_basket_p.add_argument(
+        "--min-active-days",
+        type=int,
+        default=1,
+        metavar="N",
+        help="active trade day threshold for proof pass (default: 1)",
+    )
+    horizon_basket_p.add_argument(
+        "--min-profit-factor",
+        type=float,
+        default=None,
+        metavar="N",
+        help="minimum profit factor for proof pass (default: disabled)",
+    )
+    horizon_basket_p.add_argument(
+        "--max-single-win-pnl-share",
+        type=float,
+        default=None,
+        metavar="SHARE",
+        help="maximum share of positive P&L from one winning trade (default: disabled)",
+    )
+    horizon_basket_p.add_argument(
+        "--max-eod-loss-share",
+        type=float,
+        default=None,
+        metavar="SHARE",
+        help="maximum share of losing trades exited at EOD (default: disabled)",
+    )
+    horizon_basket_p.add_argument(
+        "--limit", type=int, default=0, metavar="N",
+        help="use only the first N scenario files (0 = all)",
+    )
+    horizon_basket_p.add_argument(
+        "--sample-size", type=int, default=0, metavar="N",
+        help="deterministically sample N scenario files across the directory (0 = disabled)",
+    )
+    horizon_basket_p.add_argument(
+        "--sample-seed", default="0", metavar="SEED",
+        help="seed for --sample-size scenario selection (default: 0)",
+    )
+    horizon_basket_p.add_argument("--output", metavar="FILE", default="-")
+    horizon_basket_p.add_argument(
+        "--json", dest="json_path", metavar="FILE", default=None
+    )
+
     # --- proof-horizon-sweep subcommand ---
     horizon_sweep_p = subparsers.add_parser(
         "proof-horizon-sweep",
@@ -683,6 +799,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_portfolio_basket_audit(args)
     if args.subcommand == "proof-horizon":
         return _cmd_proof_horizon(args)
+    if args.subcommand == "proof-horizon-basket":
+        return _cmd_proof_horizon_basket(args)
     if args.subcommand == "proof-horizon-sweep":
         return _cmd_proof_horizon_sweep(args)
     if args.subcommand == "exit-diagnostics":
@@ -1457,6 +1575,147 @@ def _cmd_proof_horizon(args: argparse.Namespace) -> int:
         trades=trades,
         settings=replay_settings,
         strategy=args.strategy,
+        slippage_bps=slippage_bps,
+        max_open_positions=max_open_positions,
+        starting_equity=args.starting_equity,
+        min_trades=args.min_trades,
+        min_pnl=args.min_pnl,
+        min_active_days=args.min_active_days,
+        min_profit_factor=args.min_profit_factor,
+        max_single_win_pnl_share=args.max_single_win_pnl_share,
+        max_eod_loss_share=args.max_eod_loss_share,
+    )
+    _write_output(_format_proof_horizon_markdown(summary), args.output)
+    if args.json_path is not None:
+        Path(args.json_path).write_text(json.dumps(dataclasses.asdict(summary)) + "\n")
+    return 0
+
+
+def _cmd_proof_horizon_basket(args: argparse.Namespace) -> int:
+    settings = Settings.from_env()
+    basket_names = tuple(args.strategy or ())
+    if len(basket_names) < 2:
+        print(
+            "proof-horizon-basket requires at least two --strategy values",
+            file=sys.stderr,
+        )
+        return 1
+    if args.min_trades <= 0:
+        print("--min-trades must be greater than 0", file=sys.stderr)
+        return 1
+    if args.min_active_days <= 0:
+        print("--min-active-days must be greater than 0", file=sys.stderr)
+        return 1
+    if args.min_profit_factor is not None and args.min_profit_factor < 0.0:
+        print("--min-profit-factor must be non-negative", file=sys.stderr)
+        return 1
+    if (
+        args.max_single_win_pnl_share is not None
+        and args.max_single_win_pnl_share < 0.0
+    ):
+        print("--max-single-win-pnl-share must be non-negative", file=sys.stderr)
+        return 1
+    if args.max_eod_loss_share is not None and args.max_eod_loss_share < 0.0:
+        print("--max-eod-loss-share must be non-negative", file=sys.stderr)
+        return 1
+    if args.max_open_positions is not None and args.max_open_positions <= 0:
+        print("--max-open-positions must be greater than 0", file=sys.stderr)
+        return 1
+    if args.starting_equity is not None and args.starting_equity <= 0.0:
+        print("--starting-equity must be greater than 0", file=sys.stderr)
+        return 1
+    if args.slippage_bps is not None and args.slippage_bps < 0.0:
+        print("--slippage-bps must be non-negative", file=sys.stderr)
+        return 1
+
+    option_names = [
+        name for name in basket_names if name in OPTION_STRATEGY_FACTORIES
+    ]
+    option_chain_ledger = None
+    if option_names:
+        if not args.option_chain_snapshots:
+            print(
+                "proof-horizon-basket option strategies require "
+                "--option-chain-snapshots",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            option_chain_ledger = load_option_chain_snapshot_ledger(
+                args.option_chain_snapshots,
+            )
+        except Exception as exc:
+            print(f"could not load option-chain snapshots: {exc}", file=sys.stderr)
+            return 1
+        if not option_chain_ledger.snapshots:
+            print("option-chain snapshot ledger is empty", file=sys.stderr)
+            return 1
+    try:
+        confidence_scales = _parse_confidence_scales(
+            args.confidence_scale,
+            basket_names=basket_names,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    try:
+        paths = _select_scenario_paths(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if not paths:
+        print(f"No scenario files in {args.scenario_dir}", file=sys.stderr)
+        return 1
+    scenarios = [ReplayRunner.load_scenario(p) for p in paths]
+    if args.starting_equity is not None:
+        scenarios = [
+            dataclasses.replace(scenario, starting_equity=args.starting_equity)
+            for scenario in scenarios
+        ]
+    scenarios = _with_regime_daily_bars_from_dir(
+        scenarios,
+        scenario_dir=Path(args.scenario_dir),
+        settings=settings,
+    )
+    duplicate_symbols = _duplicate_scenario_symbols(scenarios)
+    if duplicate_symbols:
+        print(
+            "proof-horizon-basket requires one scenario per symbol; duplicate "
+            f"scenario symbols: {', '.join(duplicate_symbols)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    slippage_bps = (
+        float(args.slippage_bps)
+        if args.slippage_bps is not None
+        else float(settings.replay_slippage_bps)
+    )
+    max_open_positions = int(args.max_open_positions or settings.max_open_positions)
+    replay_settings = dataclasses.replace(
+        settings,
+        max_open_positions=max_open_positions,
+        replay_slippage_bps=slippage_bps,
+    )
+    basket_label = "+".join(basket_names)
+
+    def emit_progress(msg: str) -> None:
+        print(f"[proof-horizon-basket] {msg}", file=sys.stderr)
+
+    trades = portfolio_basket_pooled_trades(
+        scenarios,
+        replay_settings,
+        basket_names,
+        strategy_equity_scales=confidence_scales,
+        option_chain_ledger=option_chain_ledger,
+        on_progress=emit_progress,
+    )
+    summary = _proof_horizon_summary(
+        scenarios=scenarios,
+        trades=trades,
+        settings=replay_settings,
+        strategy=basket_label,
         slippage_bps=slippage_bps,
         max_open_positions=max_open_positions,
         starting_equity=args.starting_equity,
