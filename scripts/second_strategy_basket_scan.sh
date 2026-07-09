@@ -139,6 +139,17 @@ VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"
 VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"
 VALIDATION_OUTPUT_DIR="${SECOND_STRATEGY_VALIDATION_OUTPUT_DIR:-$OUTPUT_DIR/validation}"
 VALIDATION_LATEST_LINK="${SECOND_STRATEGY_VALIDATION_LATEST_LINK:-}"
+RUN_PROOF_HORIZON="${SECOND_STRATEGY_RUN_PROOF_HORIZON:-true}"
+PROOF_HORIZON_OUTPUT_DIR="${SECOND_STRATEGY_PROOF_HORIZON_OUTPUT_DIR:-$OUTPUT_DIR/proof_horizon}"
+PROOF_HORIZON_LATEST_LINK="${SECOND_STRATEGY_PROOF_HORIZON_LATEST_LINK:-}"
+PROOF_HORIZON_SAMPLE_SIZE="${SECOND_STRATEGY_PROOF_HORIZON_SAMPLE_SIZE:-160}"
+PROOF_HORIZON_SAMPLE_SEED="${SECOND_STRATEGY_PROOF_HORIZON_SAMPLE_SEED:-second-strategy-proof-horizon}"
+PROOF_HORIZON_MIN_TRADES="${SECOND_STRATEGY_PROOF_HORIZON_MIN_TRADES:-${PROOF_STATUS_SCALE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}}"
+PROOF_HORIZON_MIN_PNL="${SECOND_STRATEGY_PROOF_HORIZON_MIN_PNL:-${PROOF_STATUS_MIN_PNL:-${PROFIT_PROBE_MIN_PNL:-0.01}}}"
+PROOF_HORIZON_MIN_ACTIVE_DAYS="${SECOND_STRATEGY_PROOF_HORIZON_MIN_ACTIVE_DAYS:-${PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS:-${PAPER_SCALE_MIN_ACTIVE_DAYS:-5}}}"
+PROOF_HORIZON_MIN_PROFIT_FACTOR="${SECOND_STRATEGY_PROOF_HORIZON_MIN_PROFIT_FACTOR:-${PROOF_STATUS_SCALE_MIN_PROFIT_FACTOR:-${PAPER_SCALE_MIN_PROFIT_FACTOR:-1.20}}}"
+PROOF_HORIZON_MAX_SINGLE_WIN_PNL_SHARE="${SECOND_STRATEGY_PROOF_HORIZON_MAX_SINGLE_WIN_PNL_SHARE:-${PROOF_STATUS_SCALE_MAX_SINGLE_WIN_PNL_SHARE:-${PAPER_SCALE_MAX_SINGLE_WIN_PNL_SHARE:-0.50}}}"
+PROOF_HORIZON_MAX_EOD_LOSS_SHARE="${SECOND_STRATEGY_PROOF_HORIZON_MAX_EOD_LOSS_SHARE:-${PROOF_STATUS_SCALE_MAX_EOD_LOSS_SHARE:-${PAPER_SCALE_MAX_EOD_LOSS_SHARE:-0.50}}}"
 RESUME_COMPLETED_JOBS="${SECOND_STRATEGY_RESUME_COMPLETED_JOBS:-true}"
 INCLUDE_OPTION_CANDIDATES="${SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES:-auto}"
 HOST_OPTION_CHAIN_SNAPSHOT_DIR="${SECOND_STRATEGY_HOST_OPTION_CHAIN_SNAPSHOT_DIR:-/var/lib/alpaca-bot/option-chain-snapshots}"
@@ -207,6 +218,32 @@ case "${UPDATE_LATEST_LINKS,,}" in
     fail "SECOND_STRATEGY_UPDATE_LATEST_LINKS must be true or false"
     ;;
 esac
+case "${RUN_PROOF_HORIZON,,}" in
+  true|1|yes|y)
+    RUN_PROOF_HORIZON=true
+    ;;
+  false|0|no|n|"")
+    RUN_PROOF_HORIZON=false
+    ;;
+  *)
+    fail "SECOND_STRATEGY_RUN_PROOF_HORIZON must be true or false"
+    ;;
+esac
+
+[[ "$PROOF_HORIZON_SAMPLE_SIZE" =~ ^[0-9]+$ ]] \
+  || fail "SECOND_STRATEGY_PROOF_HORIZON_SAMPLE_SIZE must be a non-negative integer"
+[[ "$PROOF_HORIZON_MIN_TRADES" =~ ^[0-9]+$ && "$PROOF_HORIZON_MIN_TRADES" -gt 0 ]] \
+  || fail "SECOND_STRATEGY_PROOF_HORIZON_MIN_TRADES must be a positive integer"
+[[ "$PROOF_HORIZON_MIN_ACTIVE_DAYS" =~ ^[0-9]+$ && "$PROOF_HORIZON_MIN_ACTIVE_DAYS" -gt 0 ]] \
+  || fail "SECOND_STRATEGY_PROOF_HORIZON_MIN_ACTIVE_DAYS must be a positive integer"
+[[ "$PROOF_HORIZON_MIN_PNL" =~ ^-?[0-9]+([.][0-9]+)?$ ]] \
+  || fail "SECOND_STRATEGY_PROOF_HORIZON_MIN_PNL must be a number"
+[[ "$PROOF_HORIZON_MIN_PROFIT_FACTOR" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  || fail "SECOND_STRATEGY_PROOF_HORIZON_MIN_PROFIT_FACTOR must be a non-negative number"
+[[ "$PROOF_HORIZON_MAX_SINGLE_WIN_PNL_SHARE" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  || fail "SECOND_STRATEGY_PROOF_HORIZON_MAX_SINGLE_WIN_PNL_SHARE must be a non-negative number"
+[[ "$PROOF_HORIZON_MAX_EOD_LOSS_SHARE" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  || fail "SECOND_STRATEGY_PROOF_HORIZON_MAX_EOD_LOSS_SHARE must be a non-negative number"
 
 [[ -d "$SCENARIO_DIR" ]] || fail "missing scenario dir: $SCENARIO_DIR"
 if [[ -n "$PREFILTER_SUMMARY_JSON" && ! -f "$PREFILTER_SUMMARY_JSON" ]]; then
@@ -1014,6 +1051,7 @@ PY
 fi
 
 validation_failed_count=0
+proof_horizon_failed_count=0
 if [[ "${VALIDATE_POSITIVES,,}" == "true" ]]; then
   validation_specs_file="$VALIDATION_OUTPUT_DIR/candidates.tsv"
   if [[ -n "$VALIDATION_CANDIDATES" ]]; then
@@ -1494,6 +1532,170 @@ print(f"validation_summary_json={summary_json_path}")
 print(f"positive_edge_validation_rows={validation_positive_edges}")
 PY
 
+  proof_horizon_candidates_file="$VALIDATION_OUTPUT_DIR/proof_horizon_candidates.tsv"
+  python3 - "$validation_summary_json_file" "$proof_horizon_candidates_file" <<'PY'
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import sys
+
+from alpaca_bot.strategy import OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY
+
+summary_path = Path(sys.argv[1])
+output_path = Path(sys.argv[2])
+
+
+def as_float(row: dict[str, object], key: str) -> float | None:
+    try:
+        return float(row.get(key))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def as_int(row: dict[str, object], key: str) -> int | None:
+    try:
+        return int(row.get(key))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+payload = json.loads(summary_path.read_text())
+rows = payload.get("rows")
+candidates: list[tuple[float, float, int, str, str]] = []
+stock_strategy_names = set(STRATEGY_REGISTRY)
+option_strategy_names = set(OPTION_STRATEGY_NAMES)
+if isinstance(rows, list):
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("candidate") or "").strip()
+        if name not in stock_strategy_names or name in option_strategy_names:
+            continue
+        if row.get("status") != "passed":
+            continue
+        if row.get("verdict") != "positive-edge":
+            continue
+        if row.get("candidate_verdict") != "positive-edge":
+            continue
+        if row.get("candidate_contribution_status") != "positive_pnl":
+            continue
+        trades = as_int(row, "candidate_trades")
+        total_pnl = as_float(row, "candidate_total_pnl")
+        ci_low = as_float(row, "candidate_ci_low")
+        p_mean_le_zero = as_float(row, "candidate_p_mean_le_zero")
+        scale = str(row.get("candidate_scale") or "").strip()
+        if (
+            trades is None
+            or total_pnl is None
+            or ci_low is None
+            or p_mean_le_zero is None
+            or not scale
+        ):
+            continue
+        if trades < 30 or total_pnl <= 0.0 or ci_low <= 0.0 or p_mean_le_zero > 0.05:
+            continue
+        candidates.append((ci_low, -p_mean_le_zero, trades, name, scale))
+
+selected = sorted(candidates, reverse=True)[:1]
+output_path.write_text(
+    "".join(f"{name}\t{scale}\n" for _ci, _p, _trades, name, scale in selected)
+)
+if selected:
+    _ci, _p, trades, name, scale = selected[0]
+    print(
+        "proof_horizon_candidate="
+        f"{name} scale={scale} trades={trades} candidate_ci_low={_ci:g}"
+    )
+else:
+    print("proof_horizon_candidate=none")
+PY
+
+  run_proof_horizon_job() {
+    local candidate="$1"
+    local candidate_scale="$2"
+    local safe_candidate
+    local safe_scale
+    local report_path
+    local json_path
+    local stderr_path
+    local tmp_report_path
+    local tmp_json_path
+    local tmp_stderr_path
+    local -a cmd
+
+    safe_candidate="$(printf '%s' "$candidate" | tr -c 'A-Za-z0-9_' '_')"
+    safe_scale="$(printf '%s' "$candidate_scale" | tr -c 'A-Za-z0-9_' '_')"
+    mkdir -p "$PROOF_HORIZON_OUTPUT_DIR"
+    report_path="$PROOF_HORIZON_OUTPUT_DIR/summary.md"
+    json_path="$PROOF_HORIZON_OUTPUT_DIR/summary.json"
+    stderr_path="$PROOF_HORIZON_OUTPUT_DIR/${safe_candidate}_scale_${safe_scale}_proof_horizon.stderr"
+    tmp_report_path="$report_path.tmp.$BASHPID"
+    tmp_json_path="$json_path.tmp.$BASHPID"
+    tmp_stderr_path="$stderr_path.tmp.$BASHPID"
+    cmd=(
+      python3 -m alpaca_bot.replay.cli proof-horizon-basket
+      --scenario-dir "$SCENARIO_DIR"
+      --strategy "$BASE_STRATEGY"
+      --strategy "$candidate"
+      --sample-size "$PROOF_HORIZON_SAMPLE_SIZE"
+      --sample-seed "$PROOF_HORIZON_SAMPLE_SEED"
+      --slippage-bps "$SLIPPAGE_BPS"
+      --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
+      --confidence-scale "$candidate=$candidate_scale"
+      --min-trades "$PROOF_HORIZON_MIN_TRADES"
+      --min-pnl "$PROOF_HORIZON_MIN_PNL"
+      --min-active-days "$PROOF_HORIZON_MIN_ACTIVE_DAYS"
+      --min-profit-factor "$PROOF_HORIZON_MIN_PROFIT_FACTOR"
+      --max-single-win-pnl-share "$PROOF_HORIZON_MAX_SINGLE_WIN_PNL_SHARE"
+      --max-eod-loss-share "$PROOF_HORIZON_MAX_EOD_LOSS_SHARE"
+      --output "$tmp_report_path"
+      --json "$tmp_json_path"
+    )
+    if [[ -n "$starting_equity" && "$starting_equity" != "none" ]]; then
+      cmd+=(--starting-equity "$starting_equity")
+    fi
+
+    echo "second strategy basket proof horizon: candidate=$candidate scale=$candidate_scale output_dir=$PROOF_HORIZON_OUTPUT_DIR sample_size=$PROOF_HORIZON_SAMPLE_SIZE sample_seed=$PROOF_HORIZON_SAMPLE_SEED min_trades=$PROOF_HORIZON_MIN_TRADES min_pnl=$PROOF_HORIZON_MIN_PNL min_active_days=$PROOF_HORIZON_MIN_ACTIVE_DAYS min_profit_factor=$PROOF_HORIZON_MIN_PROFIT_FACTOR max_single_win_pnl_share=$PROOF_HORIZON_MAX_SINGLE_WIN_PNL_SHARE max_eod_loss_share=$PROOF_HORIZON_MAX_EOD_LOSS_SHARE"
+    if "${cmd[@]}" 2> "$tmp_stderr_path"; then
+      mv -f "$tmp_report_path" "$report_path"
+      mv -f "$tmp_json_path" "$json_path"
+      mv -f "$tmp_stderr_path" "$stderr_path"
+      echo "proof_horizon_summary=$report_path"
+      echo "proof_horizon_summary_json=$json_path"
+      return 0
+    fi
+    rm -f "$tmp_report_path" "$tmp_json_path"
+    if [[ -e "$tmp_stderr_path" ]]; then
+      mv -f "$tmp_stderr_path" "$stderr_path"
+    fi
+    return 1
+  }
+
+  if [[ "$RUN_PROOF_HORIZON" == "true" ]]; then
+    if [[ -s "$proof_horizon_candidates_file" ]]; then
+      while IFS=$'\t' read -r proof_candidate proof_candidate_scale; do
+        [[ -n "$proof_candidate" && -n "$proof_candidate_scale" ]] || continue
+        if ! run_proof_horizon_job "$proof_candidate" "$proof_candidate_scale"; then
+          proof_horizon_failed_count=$((proof_horizon_failed_count + 1))
+        fi
+      done < "$proof_horizon_candidates_file"
+      if [[ "$proof_horizon_failed_count" -eq 0 ]]; then
+        if [[ -z "$PROOF_HORIZON_LATEST_LINK" && "$UPDATE_LATEST_LINKS" == "true" ]]; then
+          PROOF_HORIZON_LATEST_LINK="$OUTPUT_ROOT/latest_proof_horizon"
+        fi
+        if [[ -n "$PROOF_HORIZON_LATEST_LINK" ]]; then
+          update_latest_link "$PROOF_HORIZON_OUTPUT_DIR" "$PROOF_HORIZON_LATEST_LINK"
+          echo "latest_proof_horizon=$PROOF_HORIZON_LATEST_LINK"
+        fi
+      fi
+    else
+      echo "second strategy basket proof horizon: no promotable validation candidate"
+    fi
+  else
+    echo "second strategy basket proof horizon: disabled"
+  fi
+
   if [[ -z "$VALIDATION_LATEST_LINK" && "$UPDATE_LATEST_LINKS" == "true" ]]; then
     VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"
   fi
@@ -1518,4 +1720,7 @@ if [[ "$failed_count" -gt 0 ]]; then
 fi
 if [[ "$validation_failed_count" -gt 0 ]]; then
   fail "$validation_failed_count validation command(s) failed; see $VALIDATION_OUTPUT_DIR"
+fi
+if [[ "$proof_horizon_failed_count" -gt 0 ]]; then
+  fail "$proof_horizon_failed_count proof horizon command(s) failed; see $PROOF_HORIZON_OUTPUT_DIR"
 fi

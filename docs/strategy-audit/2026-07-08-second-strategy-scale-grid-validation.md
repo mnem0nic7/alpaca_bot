@@ -640,3 +640,18 @@ The current published summary records `ema_pullback=0.10`, and proof status
 checks that this scale matches the promotion candidate before using the horizon
 result. A horizon artifact for a different scale now reports a mismatch instead
 of gating approval for the wrong candidate row.
+
+## 2026-07-09 Proof-Horizon Automation
+
+The second-strategy basket scanner now runs the promotion-candidate proof
+horizon automatically after independent validation finds a promotable stock
+row. The scanner uses the same validation-row ordering as the promotion/status
+path, writes the read-only `proof-horizon-basket` report under the scan output
+directory, and advances `/var/lib/alpaca-bot/nightly/second_strategy/latest_proof_horizon`
+only after a complete `summary.json` exists.
+
+Defaults mirror the live scale proof gates: 160 scenarios, 30 trades, `$0.01`
+minimum P&L, 5 active days, 1.20 profit factor, 0.50 max single-win P&L share,
+and 0.50 max EOD-loss share. The automation does not approve or enable any
+strategy; it prevents future validated candidates from looking actionable
+until the basket proof horizon is fresh for the same candidate scale.

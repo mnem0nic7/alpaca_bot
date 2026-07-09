@@ -335,6 +335,14 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'SCAN_JOBS="${SECOND_STRATEGY_SCAN_JOBS:-2}"' in script
     assert 'VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_VALIDATION_SAMPLE_SIZE:-160}"' in script
     assert 'VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_VALIDATION_SAMPLE_SEED:-second-strategy-independent-validation}"' in script
+    assert 'RUN_PROOF_HORIZON="${SECOND_STRATEGY_RUN_PROOF_HORIZON:-true}"' in script
+    assert 'PROOF_HORIZON_OUTPUT_DIR="${SECOND_STRATEGY_PROOF_HORIZON_OUTPUT_DIR:-$OUTPUT_DIR/proof_horizon}"' in script
+    assert 'PROOF_HORIZON_LATEST_LINK="${SECOND_STRATEGY_PROOF_HORIZON_LATEST_LINK:-}"' in script
+    assert 'PROOF_HORIZON_SAMPLE_SIZE="${SECOND_STRATEGY_PROOF_HORIZON_SAMPLE_SIZE:-160}"' in script
+    assert 'PROOF_HORIZON_SAMPLE_SEED="${SECOND_STRATEGY_PROOF_HORIZON_SAMPLE_SEED:-second-strategy-proof-horizon}"' in script
+    assert "SECOND_STRATEGY_RUN_PROOF_HORIZON must be true or false" in script
+    assert "SECOND_STRATEGY_PROOF_HORIZON_MIN_TRADES must be a positive integer" in script
+    assert "SECOND_STRATEGY_PROOF_HORIZON_MIN_PROFIT_FACTOR must be a non-negative number" in script
     assert 'RESUME_COMPLETED_JOBS="${SECOND_STRATEGY_RESUME_COMPLETED_JOBS:-true}"' in script
     assert "SECOND_STRATEGY_RESUME_COMPLETED_JOBS must be true or false" in script
     assert 'INCLUDE_OPTION_CANDIDATES="${SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES:-auto}"' in script
@@ -383,6 +391,8 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'update_latest_link "$OUTPUT_DIR" "$LATEST_LINK"' in script
     assert 'VALIDATION_LATEST_LINK="$OUTPUT_ROOT/latest_validation"' in script
     assert 'update_latest_link "$VALIDATION_OUTPUT_DIR" "$VALIDATION_LATEST_LINK"' in script
+    assert 'PROOF_HORIZON_LATEST_LINK="$OUTPUT_ROOT/latest_proof_horizon"' in script
+    assert 'update_latest_link "$PROOF_HORIZON_OUTPUT_DIR" "$PROOF_HORIZON_LATEST_LINK"' in script
     assert 'mv -Tf "$tmp_link" "$link_path"' in script
     assert '&& "$UPDATE_LATEST_LINKS" == "true"' in script
     assert '[[ "$prefilter_skipped" != "true" && -n "$LATEST_LINK" ]]' in script
@@ -426,6 +436,19 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert '[[ -s "$report" && -s "$jsonl" && -e "$stderr" ]]' in script
     assert "wait_for_next_prefilter_job" in script
     assert "run_validation_job" in script
+    assert "proof_horizon_candidates_file" in script
+    assert "candidate_ci_low" in script
+    assert "python3 -m alpaca_bot.replay.cli proof-horizon-basket" in script
+    assert '--confidence-scale "$candidate=$candidate_scale"' in script
+    assert '--confidence-scale "$candidate=$proof_candidate_scale"' not in script
+    assert '--min-trades "$PROOF_HORIZON_MIN_TRADES"' in script
+    assert '--min-pnl "$PROOF_HORIZON_MIN_PNL"' in script
+    assert '--min-active-days "$PROOF_HORIZON_MIN_ACTIVE_DAYS"' in script
+    assert '--min-profit-factor "$PROOF_HORIZON_MIN_PROFIT_FACTOR"' in script
+    assert '--max-single-win-pnl-share "$PROOF_HORIZON_MAX_SINGLE_WIN_PNL_SHARE"' in script
+    assert '--max-eod-loss-share "$PROOF_HORIZON_MAX_EOD_LOSS_SHARE"' in script
+    assert "latest_proof_horizon=$PROOF_HORIZON_LATEST_LINK" in script
+    assert "second strategy basket proof horizon: no promotable validation candidate" in script
     assert "wait_for_next_validation_job" in script
     assert "wait -n" in script
     assert "status_parts" in script
@@ -491,12 +514,19 @@ def test_second_strategy_basket_scan_generates_empty_validation_specs(
     assert "second strategy basket validation: output_dir=" in result.stdout
     assert "candidates=0" in result.stdout
     assert "positive_edge_validation_rows=0" in result.stdout
+    assert "proof_horizon_candidate=none" in result.stdout
+    assert (
+        "second strategy basket proof horizon: no promotable validation candidate"
+        in result.stdout
+    )
     assert "from proof status" not in result.stdout
     assert (validation_dir / "candidates.tsv").read_text() == ""
+    assert (validation_dir / "proof_horizon_candidates.tsv").read_text() == ""
     validation_summary = json.loads((validation_dir / "summary.json").read_text())
     assert validation_summary["candidate_names"] == []
     assert validation_summary["positive_edge_validation_rows"] == 0
     assert not (tmp_path / "latest").exists()
+    assert not (output_dir / "proof_horizon").exists()
 
 
 def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
