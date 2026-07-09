@@ -5913,6 +5913,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "probe_nightly_cycle_status" in script
     assert "compact_status_value" in script
     assert "flock -n \"$PROOF_STATUS_NIGHTLY_LOCK_FILE\" true" in script
+    assert "second_strategy_process_running" in script
+    assert "PROOF_STATUS_NIGHTLY_ACTIVE_LOG" in script
+    assert "active_log={nightly_active_log}" in script
+    assert "second strategy basket scan" in script
+    assert "positive_edge_validation_rows" in script
     assert "/[n]ightly_cycle\\.sh/" in script
     assert "/[a]lpaca-bot-nightly/" in script
     assert 'nightly_source="legacy_inline"' in script

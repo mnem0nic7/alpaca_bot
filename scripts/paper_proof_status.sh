@@ -298,15 +298,20 @@ nightly_pid="none"
 nightly_source="none"
 nightly_age_minutes="none"
 nightly_log_age_minutes="none"
+nightly_active_log="none"
 nightly_stage="none"
 nightly_detail="none"
 
 probe_nightly_cycle_status() {
   local process_line=""
+  local second_strategy_process_running="false"
   local age_seconds=""
   local command_text=""
   local now_seconds=""
   local log_mtime_seconds=""
+  local second_strategy_log_mtime_seconds=""
+  local active_log=""
+  local active_log_mtime_seconds=""
   local log_age_seconds=""
   local latest_stage_line=""
 
@@ -354,22 +359,58 @@ probe_nightly_cycle_status() {
     nightly_source="unknown"
   fi
 
+  if ps -eo args= \
+      | awk '
+        /bash -lc/ { next }
+        /(^|[[:space:]])timeout[[:space:]][^[:space:]]+[[:space:]]+(\.\/)?scripts\/second_strategy_basket_scan\.sh([[:space:]]|$)/ ||
+        /(^|[[:space:]])bash[[:space:]]+(\.\/)?scripts\/second_strategy_basket_scan\.sh([[:space:]]|$)/ ||
+        /(^|[[:space:]])(\.\/)?scripts\/second_strategy_basket_scan\.sh([[:space:]]|$)/ {
+          found = 1
+          exit
+        }
+        END { exit found ? 0 : 1 }
+      '; then
+    second_strategy_process_running="true"
+  fi
+
+  now_seconds="$(date +%s)"
   if [[ -f "$PROOF_STATUS_NIGHTLY_LOG" ]]; then
-    now_seconds="$(date +%s)"
     log_mtime_seconds="$(stat -c %Y "$PROOF_STATUS_NIGHTLY_LOG" 2>/dev/null || true)"
-    if [[ "$log_mtime_seconds" =~ ^[0-9]+$ ]]; then
-      log_age_seconds=$((now_seconds - log_mtime_seconds))
+    active_log="$PROOF_STATUS_NIGHTLY_LOG"
+    active_log_mtime_seconds="$log_mtime_seconds"
+  fi
+  if [[ "$second_strategy_process_running" == "true" && -f "$PROOF_STATUS_SECOND_STRATEGY_LOG" ]]; then
+    second_strategy_log_mtime_seconds="$(stat -c %Y "$PROOF_STATUS_SECOND_STRATEGY_LOG" 2>/dev/null || true)"
+    if [[ "$second_strategy_log_mtime_seconds" =~ ^[0-9]+$ ]] \
+      && { [[ ! "$active_log_mtime_seconds" =~ ^[0-9]+$ ]] \
+        || (( second_strategy_log_mtime_seconds >= active_log_mtime_seconds )); }; then
+      active_log="$PROOF_STATUS_SECOND_STRATEGY_LOG"
+      active_log_mtime_seconds="$second_strategy_log_mtime_seconds"
+    fi
+  fi
+  if [[ -n "$active_log" ]]; then
+    nightly_active_log="$(compact_status_value "$active_log")"
+    if [[ "$active_log_mtime_seconds" =~ ^[0-9]+$ ]]; then
+      log_age_seconds=$((now_seconds - active_log_mtime_seconds))
       if [[ "$log_age_seconds" -lt 0 ]]; then
         log_age_seconds=0
       fi
       nightly_log_age_minutes=$(((log_age_seconds + 59) / 60))
     fi
     latest_stage_line="$(
-      tail -200 "$PROOF_STATUS_NIGHTLY_LOG" 2>/dev/null \
-        | grep -E 'nightly_cycle|proof guard checking|proof guard rejected|combo [0-9]+/[0-9]+|DB run_id|PAPER_PROOF_FREEZE|Params unchanged|second-strategy' \
+      tail -200 "$active_log" 2>/dev/null \
+        | grep -E 'nightly_cycle|proof guard checking|proof guard rejected|combo [0-9]+/[0-9]+|DB run_id|PAPER_PROOF_FREEZE|Params unchanged|second-strategy|second strategy basket scan|positive_edge_validation_rows|latest_validation' \
         | tail -n 1 \
         || true
     )"
+    if [[ -z "$latest_stage_line" && "$active_log" != "$PROOF_STATUS_NIGHTLY_LOG" && -f "$PROOF_STATUS_NIGHTLY_LOG" ]]; then
+      latest_stage_line="$(
+        tail -200 "$PROOF_STATUS_NIGHTLY_LOG" 2>/dev/null \
+          | grep -E 'nightly_cycle|proof guard checking|proof guard rejected|combo [0-9]+/[0-9]+|DB run_id|PAPER_PROOF_FREEZE|Params unchanged|second-strategy' \
+          | tail -n 1 \
+          || true
+      )"
+    fi
     nightly_stage="$(compact_status_value "$latest_stage_line")"
   fi
 
@@ -502,6 +543,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_NIGHTLY_SOURCE="$nightly_source" \
   -e PROOF_STATUS_NIGHTLY_AGE_MINUTES="$nightly_age_minutes" \
   -e PROOF_STATUS_NIGHTLY_LOG_AGE_MINUTES="$nightly_log_age_minutes" \
+  -e PROOF_STATUS_NIGHTLY_ACTIVE_LOG="$nightly_active_log" \
   -e PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES="$PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES" \
   -e PROOF_STATUS_NIGHTLY_STALL_MINUTES="$PROOF_STATUS_NIGHTLY_STALL_MINUTES" \
   -e PROOF_STATUS_NIGHTLY_STAGE="$nightly_stage" \
@@ -1485,6 +1527,7 @@ nightly_age_minutes = os.environ.get("PROOF_STATUS_NIGHTLY_AGE_MINUTES", "none")
 nightly_log_age_minutes = os.environ.get(
     "PROOF_STATUS_NIGHTLY_LOG_AGE_MINUTES", "none"
 )
+nightly_active_log = os.environ.get("PROOF_STATUS_NIGHTLY_ACTIVE_LOG", "none")
 nightly_max_age_minutes = os.environ.get(
     "PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES", "none"
 )
@@ -5137,6 +5180,7 @@ print(
     f"source={nightly_source} "
     f"age_minutes={nightly_age_minutes} "
     f"log_age_minutes={nightly_log_age_minutes} "
+    f"active_log={nightly_active_log} "
     f"max_age_minutes={nightly_max_age_minutes} "
     f"stall_minutes={nightly_stall_minutes} "
     f"stage={nightly_stage or 'none'} "
