@@ -260,6 +260,18 @@ def _cycle_creates_pending_dispatch_work(
     )
 
 
+def _is_before_regular_entry_window(
+    *,
+    timestamp: datetime,
+    settings: Settings,
+    session_type: SessionType | None,
+) -> bool:
+    if session_type is not SessionType.REGULAR:
+        return False
+    local_time = timestamp.astimezone(settings.market_timezone).time()
+    return local_time < settings.entry_window_start
+
+
 def _option_snapshot_path_session(value: object) -> date | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -833,28 +845,48 @@ class RuntimeSupervisor:
             timestamp=timestamp,
         )
         working_order_symbols = {order.symbol for order in broker_open_orders}
-        working_order_symbols.update(
-            order.symbol
-            for order in self._list_active_entry_orders(
-                excluded_broker_order_ids=expired_entry_broker_ids
-            )
+        active_entry_orders = self._list_active_entry_orders(
+            excluded_broker_order_ids=expired_entry_broker_ids
         )
+        working_order_symbols.update(order.symbol for order in active_entry_orders)
         # Include symbols with active local stop-sell orders so evaluate_cycle()
         # never emits an entry for a symbol already covered by a stop.  Without this,
         # a symbol whose local stop was cleared by reconciliation (RC-2) could get a
         # new entry submitted, triggering Alpaca wash-trade rejection (RC-5).
         _stop_lock = getattr(self.runtime, "store_lock", None)
         with _stop_lock if _stop_lock is not None else contextlib.nullcontext():
-            _active_stop_sell_orders = self.runtime.order_store.list_by_status(
+            _active_stop_orders = self.runtime.order_store.list_by_status(
                 trading_mode=self.settings.trading_mode,
                 strategy_version=self.settings.strategy_version,
                 statuses=list(ACTIVE_STOP_STATUSES),
             )
         working_order_symbols.update(
             o.symbol
-            for o in _active_stop_sell_orders
+            for o in _active_stop_orders
             if o.intent_type == "stop" and o.side == "sell"
         )
+        if self._should_skip_pre_entry_flat_cycle(
+            timestamp=timestamp,
+            session_type=session_type,
+            broker_open_orders=broker_open_orders,
+            broker_open_positions=broker_open_positions,
+            open_positions=open_positions,
+            active_entry_orders=active_entry_orders,
+            active_stop_orders=_active_stop_orders,
+            pre_cycle_dispatch_report=pre_cycle_dispatch_report,
+        ):
+            from types import SimpleNamespace as _SN
+
+            return SupervisorCycleReport(
+                entries_disabled=entries_disabled,
+                cycle_result=_SN(intents=[]),
+                dispatch_report=_combine_dispatch_reports(
+                    pre_cycle_dispatch_report,
+                    {"submitted_count": 0},
+                ),
+                account_equity=account.equity,
+                entries_disabled_reasons=tuple(entries_disabled_reasons),
+            )
         # Per-symbol loss limit: compute blocked symbols from today's realized PnL.
         # Applied per-strategy below via strategy_working_symbols — NOT added to
         # working_order_symbols to avoid inflating global_occupied_slots with
@@ -2027,6 +2059,75 @@ class RuntimeSupervisor:
             )
             for position in self._load_position_records()
         ]
+
+    def _should_skip_pre_entry_flat_cycle(
+        self,
+        *,
+        timestamp: datetime,
+        session_type: SessionType | None,
+        broker_open_orders: list[object],
+        broker_open_positions: list[object],
+        open_positions: list[OpenPosition],
+        active_entry_orders: list[object],
+        active_stop_orders: list[object],
+        pre_cycle_dispatch_report: object | None,
+    ) -> bool:
+        if not _is_before_regular_entry_window(
+            timestamp=timestamp,
+            settings=self.settings,
+            session_type=session_type,
+        ):
+            return False
+        if _dispatch_report_submitted_count(pre_cycle_dispatch_report) > 0:
+            return False
+        if (
+            broker_open_orders
+            or broker_open_positions
+            or open_positions
+            or active_entry_orders
+            or active_stop_orders
+        ):
+            return False
+        try:
+            if self._list_pending_submit_orders():
+                return False
+        except Exception:
+            logger.warning(
+                "Failed to inspect pending orders before pre-entry fast path; running full cycle",
+                exc_info=True,
+            )
+            return False
+        return not self._has_pending_or_open_option_work()
+
+    def _has_pending_or_open_option_work(self) -> bool:
+        option_order_store = getattr(self.runtime, "option_order_store", None)
+        if option_order_store is None:
+            return False
+        store_lock = getattr(self.runtime, "store_lock", None)
+        try:
+            with store_lock if store_lock is not None else contextlib.nullcontext():
+                if hasattr(option_order_store, "list_by_status"):
+                    pending = option_order_store.list_by_status(
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                        statuses=["pending_submit"],
+                    )
+                    if pending:
+                        return True
+                if hasattr(option_order_store, "list_open_option_positions"):
+                    open_positions = option_order_store.list_open_option_positions(
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                    )
+                    if open_positions:
+                        return True
+        except Exception:
+            logger.warning(
+                "Failed to inspect option orders before pre-entry fast path; running full cycle",
+                exc_info=True,
+            )
+            return True
+        return False
 
     def _expire_stale_entry_orders(
         self,

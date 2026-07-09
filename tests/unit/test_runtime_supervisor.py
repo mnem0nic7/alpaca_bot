@@ -1330,6 +1330,203 @@ def test_runtime_supervisor_dispatches_existing_pending_orders_before_market_dat
     assert report.dispatch_report["submitted_count"] == 1
 
 
+def test_runtime_supervisor_skips_market_data_before_entry_window_when_flat() -> None:
+    module, RuntimeSupervisor, SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 13, 45, tzinfo=timezone.utc)
+    runtime = make_runtime_context(settings)
+    market_data = FakeMarketData(intraday_bars_by_symbol={}, daily_bars_by_symbol={})
+    cycle_calls: list[dict[str, object]] = []
+    dispatch_calls: list[dict[str, object]] = []
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: cycle_calls.append(kwargs)
+        or SimpleNamespace(intents=[]),
+        order_dispatcher=lambda **kwargs: dispatch_calls.append(kwargs)
+        or {"submitted_count": 0},
+    )
+
+    report = supervisor.run_cycle_once(
+        now=lambda: now,
+        session_type=module.SessionType.REGULAR,
+    )
+
+    assert isinstance(report, SupervisorCycleReport)
+    assert report.entries_disabled is False
+    assert report.dispatch_report == {"submitted_count": 0}
+    assert cycle_calls == []
+    assert dispatch_calls == []
+    assert market_data.stock_bar_calls == []
+    assert market_data.daily_bar_calls == []
+
+
+def test_runtime_supervisor_runs_full_cycle_before_entry_window_with_position() -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 13, 45, tzinfo=timezone.utc)
+    runtime = make_runtime_context(
+        settings,
+        position_store=RecordingPositionStore(
+            [
+                PositionRecord(
+                    symbol="AAPL",
+                    trading_mode=TradingMode.PAPER,
+                    strategy_version="v1-breakout",
+                    quantity=25,
+                    entry_price=111.02,
+                    stop_price=109.89,
+                    initial_stop_price=109.89,
+                    opened_at=datetime(2026, 4, 24, 13, 35, tzinfo=timezone.utc),
+                    updated_at=datetime(2026, 4, 24, 13, 35, tzinfo=timezone.utc),
+                )
+            ]
+        ),
+    )
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=21),
+            "MSFT": make_bar_series("MSFT", end=now, count=21),
+            "SPY": make_bar_series("SPY", end=now, count=21),
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=20, days=True),
+            "MSFT": make_bar_series("MSFT", end=now, count=20, days=True),
+            "SPY": make_bar_series("SPY", end=now, count=20, days=True),
+        },
+    )
+    cycle_calls: list[dict[str, object]] = []
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(
+            open_positions=[
+                BrokerPosition(
+                    symbol="AAPL",
+                    quantity=25,
+                    entry_price=111.02,
+                    market_value=2775.5,
+                )
+            ],
+        ),
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: cycle_calls.append(kwargs)
+        or SimpleNamespace(intents=[]),
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+
+    supervisor.run_cycle_once(now=lambda: now, session_type=module.SessionType.REGULAR)
+
+    assert market_data.stock_bar_calls
+    assert market_data.daily_bar_calls
+    assert cycle_calls
+
+
+def test_runtime_supervisor_runs_full_cycle_before_entry_window_with_pending_order() -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 13, 45, tzinfo=timezone.utc)
+    pending_entry = OrderRecord(
+        client_order_id="pending-entry",
+        symbol="AAPL",
+        side="buy",
+        intent_type="entry",
+        status="pending_submit",
+        quantity=1,
+        trading_mode=TradingMode.PAPER,
+        strategy_version="v1-breakout",
+        strategy_name="bull_flag",
+        created_at=now - timedelta(minutes=1),
+        updated_at=now - timedelta(minutes=1),
+        signal_timestamp=now - timedelta(minutes=15),
+    )
+    runtime = make_runtime_context(
+        settings,
+        order_store=RecordingOrderStore([pending_entry]),
+    )
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=21),
+            "MSFT": make_bar_series("MSFT", end=now, count=21),
+            "SPY": make_bar_series("SPY", end=now, count=21),
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=20, days=True),
+            "MSFT": make_bar_series("MSFT", end=now, count=20, days=True),
+            "SPY": make_bar_series("SPY", end=now, count=20, days=True),
+        },
+    )
+    dispatch_calls: list[dict[str, object]] = []
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: SimpleNamespace(intents=[]),
+        order_dispatcher=lambda **kwargs: dispatch_calls.append(kwargs)
+        or {"submitted_count": 0},
+    )
+
+    supervisor.run_cycle_once(now=lambda: now, session_type=module.SessionType.REGULAR)
+
+    assert len(dispatch_calls) == 2
+    assert market_data.stock_bar_calls
+    assert market_data.daily_bar_calls
+
+
+def test_runtime_supervisor_runs_full_cycle_at_entry_window_start_when_flat() -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 14, 0, tzinfo=timezone.utc)
+    runtime = make_runtime_context(settings)
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=21),
+            "MSFT": make_bar_series("MSFT", end=now, count=21),
+            "SPY": make_bar_series("SPY", end=now, count=21),
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=20, days=True),
+            "MSFT": make_bar_series("MSFT", end=now, count=20, days=True),
+            "SPY": make_bar_series("SPY", end=now, count=20, days=True),
+        },
+    )
+    cycle_calls: list[dict[str, object]] = []
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=FakeBroker(),
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+        cycle_runner=lambda **kwargs: cycle_calls.append(kwargs)
+        or SimpleNamespace(intents=[]),
+        order_dispatcher=lambda **kwargs: {"submitted_count": 0},
+    )
+
+    supervisor.run_cycle_once(now=lambda: now, session_type=module.SessionType.REGULAR)
+
+    assert market_data.stock_bar_calls
+    assert market_data.daily_bar_calls
+    assert cycle_calls
+
+
 def test_runtime_supervisor_early_dispatch_respects_close_only(
     monkeypatch,
 ) -> None:
