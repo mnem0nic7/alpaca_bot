@@ -174,8 +174,32 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
                 "ready_needs_privileged_env_write"
             ),
             "proof_second_strategy_promotion_action_approval_marker_status": "missing",
+            "proof_second_strategy_promotion_action_env_file": (
+                "/etc/alpaca_bot/alpaca-bot.env"
+            ),
             "proof_second_strategy_promotion_action_approval_marker_command_script": (
                 "./scripts/approve_validated_strategy_marker.sh"
+            ),
+            "proof_second_strategy_promotion_action_approval_marker_command_confirm_env": (
+                "APPROVE_VALIDATED_STRATEGY_MARKER_CONFIRM"
+            ),
+            "proof_second_strategy_promotion_action_approval_marker_command_dry_run_env": (
+                "APPROVE_VALIDATED_STRATEGY_MARKER_DRY_RUN"
+            ),
+            "proof_second_strategy_promotion_action_approval_marker_command_dry_run_value": (
+                "false"
+            ),
+            "proof_second_strategy_promotion_action_approval_marker_command_approval_only_env": (
+                "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY"
+            ),
+            "proof_second_strategy_promotion_action_approval_marker_command_approval_only_value": (
+                "true"
+            ),
+            "proof_second_strategy_promotion_action_approval_marker_command_evidence_root": (
+                "/var/lib/alpaca-bot/nightly/second_strategy"
+            ),
+            "proof_second_strategy_promotion_action_approval_marker_command_deploy_script": (
+                "./scripts/deploy.sh"
             ),
             "proof_second_strategy_promotion_action_confirmation": (
                 "approve-ema_pullback-paper-promotion-sha256-"
@@ -323,6 +347,12 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
         "df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9"
         in response.text
     )
+    assert "Approval Command" in response.text
+    assert "APPROVE_VALIDATED_STRATEGY_MARKER_CONFIRM=" in response.text
+    assert "APPROVE_VALIDATED_STRATEGY_MARKER_DRY_RUN=false" in response.text
+    assert "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY=true" in response.text
+    assert "/etc/alpaca_bot/alpaca-bot.env" in response.text
+    assert "/var/lib/alpaca-bot/nightly/second_strategy" in response.text
     assert "Scenario Evidence" in response.text
     assert "Scenario Problems" in response.text
     assert "ok\n              980\n              @ 2026-06-26" in response.text

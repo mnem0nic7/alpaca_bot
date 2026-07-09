@@ -409,6 +409,19 @@
             <p class="eyebrow">Approval Confirmation</p>
             <p class="value mono">{{ proof_payload.get("proof_second_strategy_promotion_action_confirmation", "unknown") }}</p>
           </div>
+          <div>
+            <p class="eyebrow">Approval Command</p>
+            <p class="value mono">
+              {{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_confirm_env", "APPROVE_VALIDATED_STRATEGY_MARKER_CONFIRM") }}={{ proof_payload.get("proof_second_strategy_promotion_action_confirmation", "unknown") }}
+              {{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_dry_run_env", "APPROVE_VALIDATED_STRATEGY_MARKER_DRY_RUN") }}={{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_dry_run_value", "false") }}
+              {{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_approval_only_env", "PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY") }}={{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_approval_only_value", "true") }}
+              {{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_script", "./scripts/approve_validated_strategy_marker.sh") }}
+              {{ proof_payload.get("proof_second_strategy_promotion_action_env_file", "unknown") }}
+              {{ proof_payload.get("proof_second_strategy_promotion_action_strategy", "unknown") }}
+              {{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_evidence_root", "unknown") }}
+              {{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_deploy_script", "unknown") }}
+            </p>
+          </div>
           {% endif %}
           <div>
             <p class="eyebrow">Scenario Evidence</p>
