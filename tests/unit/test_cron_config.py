@@ -6109,9 +6109,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "readiness_audit_status" in script
     assert "readiness_due_time = time(9, 25)" in script
     assert "readiness_required_since_text = readiness_required_since.isoformat()" in script
+    assert "readiness_target_session_completed = (" in script
+    assert "latest_completed_session >= readiness_target_session" in script
+    assert "readiness_stale_blocks_proof = readiness_due and not readiness_target_session_completed" in script
     assert 'readiness_audit_status = "missing" if readiness_due else "not_due"' in script
     assert "readiness_stale_status = \"stale\"" in script
     assert "readiness_stale_status = \"stale_by_age\"" in script
+    assert "if readiness_stale_status and readiness_stale_blocks_proof:" in script
     assert "readiness_due and readiness_audit_status not in {\"ok\", \"not_due\"}" in script
     assert "readiness_audit_{readiness_audit_status}" in script
     assert "readiness_decision_dry_run_status" in script
@@ -6136,6 +6140,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "status={readiness_audit_status}" in script
     assert "target_session={readiness_target_session.isoformat()}" in script
     assert "due={str(readiness_due).lower()}" in script
+    assert "target_session_completed={str(readiness_target_session_completed).lower()}" in script
+    assert "stale_blocks_proof={str(readiness_stale_blocks_proof).lower()}" in script
     assert "due_after={readiness_due_after}" in script
     assert "required_since={readiness_required_since_text}" in script
     assert "check_status={readiness_audit_check_status}" in script

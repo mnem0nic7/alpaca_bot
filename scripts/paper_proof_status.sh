@@ -1839,6 +1839,11 @@ readiness_due = current_market_datetime.date() > readiness_target_session or (
     current_market_datetime.date() == readiness_target_session
     and current_market_datetime.time() >= readiness_due_time
 )
+readiness_target_session_completed = (
+    latest_completed_session is not None
+    and latest_completed_session >= readiness_target_session
+)
+readiness_stale_blocks_proof = readiness_due and not readiness_target_session_completed
 option_snapshot_due_time = time(10, 0)
 option_snapshot_target_session = None
 if current_market_date >= proof_start and (
@@ -4521,10 +4526,8 @@ if readiness_audit_row:
     elif readiness_audit_age_minutes > readiness_max_pass_age_minutes:
         readiness_stale_status = "stale_by_age"
     if readiness_audit_check_status == "passed":
-        if readiness_stale_status and readiness_due:
+        if readiness_stale_status and readiness_stale_blocks_proof:
             readiness_audit_status = readiness_stale_status
-        elif readiness_stale_status:
-            readiness_audit_status = "not_due"
         else:
             readiness_audit_status = "ok"
     elif readiness_audit_check_status == "pending":
@@ -5404,6 +5407,8 @@ print(
     f"status={readiness_audit_status} "
     f"target_session={readiness_target_session.isoformat()} "
     f"due={str(readiness_due).lower()} "
+    f"target_session_completed={str(readiness_target_session_completed).lower()} "
+    f"stale_blocks_proof={str(readiness_stale_blocks_proof).lower()} "
     f"due_after={readiness_due_after} "
     f"required_since={readiness_required_since_text} "
     f"check_status={readiness_audit_check_status} "
