@@ -4,6 +4,7 @@ set -euo pipefail
 CHECK_NAME="${1:-}"
 LOCK_FILE="${2:-}"
 ENV_FILE="${3:-/etc/alpaca_bot/alpaca-bot.env}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 _preserved_env_names=()
 _preserved_env_values=()
@@ -28,6 +29,8 @@ restore_env_overrides() {
 
 capture_env_overrides \
   PAPER_APPROVED_STRATEGIES \
+  PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE \
+  PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER \
   PAPER_ACTIVITY_STRATEGY \
   PAPER_ACTIVITY_STRATEGIES \
   PAPER_ACTIVITY_LOCK_MAX_AGE_MINUTES \
@@ -73,6 +76,19 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 session_date="$(TZ=America/New_York date +%F)"
+
+resolve_paper_approved_strategy_csv() {
+  local primary="$1"
+  local fallback="${PAPER_APPROVED_STRATEGIES:-$primary}"
+  local resolved
+
+  if resolved="$(bash "$ROOT_DIR/scripts/resolve_paper_approved_strategies.sh" "$ENV_FILE" "$fallback" 2>/dev/null)" \
+    && [[ -n "$resolved" ]]; then
+    printf '%s\n' "$resolved"
+    return
+  fi
+  printf '%s\n' "$fallback"
+}
 
 normalize_strategy_csv() {
   local primary="$1"
@@ -1422,7 +1438,7 @@ case "$CHECK_NAME" in
       echo "PAPER_READINESS_DECISION_DRY_RUN_STRATEGY must not be empty" >&2
       exit 1
     fi
-    PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY}}"
+    PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-$(resolve_paper_approved_strategy_csv "$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY")}"
     readiness_session_date="$(load_readiness_session_date)"
     expected_decision_dry_run_session="$(load_previous_readiness_session_date "$readiness_session_date")"
     latest_readiness="$(load_latest_readiness_status "$readiness_session_date")"
@@ -1484,7 +1500,7 @@ case "$CHECK_NAME" in
     ;;
   paper_activity)
     activity_strategy="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
-    activity_strategies="${PAPER_ACTIVITY_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$activity_strategy}}"
+    activity_strategies="${PAPER_ACTIVITY_STRATEGIES:-$(resolve_paper_approved_strategy_csv "$activity_strategy")}"
     activity_strategy_csv="$(normalize_strategy_csv "$activity_strategy" "$activity_strategies" "PAPER_ACTIVITY_STRATEGIES")"
     activity_lock_max_age="${PAPER_ACTIVITY_LOCK_MAX_AGE_MINUTES:-30}"
     if [[ ! "$activity_lock_max_age" =~ ^[0-9]+$ || "$activity_lock_max_age" -le 0 ]]; then
@@ -1533,7 +1549,7 @@ case "$CHECK_NAME" in
     fi
     guard_proof_start="${SESSION_GUARD_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}}"
     guard_strategy="${SESSION_GUARD_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
-    guard_strategies="${SESSION_GUARD_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$guard_strategy}}"
+    guard_strategies="${SESSION_GUARD_STRATEGIES:-$(resolve_paper_approved_strategy_csv "$guard_strategy")}"
     guard_strategy_csv="$(normalize_strategy_csv "$guard_strategy" "$guard_strategies" "SESSION_GUARD_STRATEGIES")"
     guard_min_trades="${SESSION_GUARD_MIN_TRADES:-10}"
     guard_min_pnl="${SESSION_GUARD_FAIL_BELOW_PNL:-0}"
@@ -1575,7 +1591,7 @@ case "$CHECK_NAME" in
     fi
     probe_proof_start="${PROFIT_PROBE_START_DATE:-2026-07-07}"
     probe_strategy="${PROFIT_PROBE_STRATEGY:-bull_flag}"
-    probe_strategies="${PROFIT_PROBE_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$probe_strategy}}"
+    probe_strategies="${PROFIT_PROBE_STRATEGIES:-$(resolve_paper_approved_strategy_csv "$probe_strategy")}"
     probe_strategy_csv="$(normalize_strategy_csv "$probe_strategy" "$probe_strategies" "PROFIT_PROBE_STRATEGIES")"
     probe_min_trades="${PROFIT_PROBE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}"
     if [[ "$probe_min_trades" =~ ^[0-9]+$ \
@@ -1617,7 +1633,7 @@ case "$CHECK_NAME" in
   paper_proof_status)
     proof_start="${PROOF_STATUS_START_DATE:-${PROFIT_PROBE_START_DATE:-2026-07-07}}"
     proof_strategy="${PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
-    proof_strategies="${PROOF_STATUS_APPROVED_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$proof_strategy}}"
+    proof_strategies="${PROOF_STATUS_APPROVED_STRATEGIES:-$(resolve_paper_approved_strategy_csv "$proof_strategy")}"
     proof_strategy_csv="$(normalize_strategy_csv "$proof_strategy" "$proof_strategies" "PROOF_STATUS_APPROVED_STRATEGIES")"
     proof_min_trades="${PROOF_STATUS_MIN_TRADES:-${PROFIT_PROBE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}}"
     if [[ "$proof_min_trades" =~ ^[0-9]+$ \

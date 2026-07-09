@@ -107,6 +107,8 @@ services:
       INTRADAY_CONSECUTIVE_LOSS_GATE: ${INTRADAY_CONSECUTIVE_LOSS_GATE:-0}
       PAPER_PROOF_FREEZE: ${PAPER_PROOF_FREEZE:-false}
       PAPER_APPROVED_STRATEGIES: ${PAPER_APPROVED_STRATEGIES:-bull_flag}
+      PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER: ${PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER:-/var/lib/alpaca-bot/nightly/second_strategy/promotion_approval.json}
+      PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE: ${PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE:-/etc/alpaca_bot/alpaca-bot.env}
       PAPER_SCALE_MIN_TRADES: ${PAPER_SCALE_MIN_TRADES:-30}
       PAPER_SCALE_MIN_STRATEGIES: ${PAPER_SCALE_MIN_STRATEGIES:-2}
       PAPER_SCALE_MIN_ACTIVE_DAYS: ${PAPER_SCALE_MIN_ACTIVE_DAYS:-5}
@@ -149,6 +151,7 @@ services:
       REPLAY_SLIPPAGE_BPS: ${REPLAY_SLIPPAGE_BPS:-5.0}
     volumes:
       - /var/lib/alpaca-bot/option-chain-snapshots:/data/option-chain-snapshots
+      - /var/lib/alpaca-bot/nightly/second_strategy:/var/lib/alpaca-bot/nightly/second_strategy:ro
 
   web:
     image: alpaca-bot:latest
@@ -180,6 +183,8 @@ services:
       start_period: 10s
     ports:
       - "127.0.0.1:18080:8080"
+    volumes:
+      - /var/lib/alpaca-bot/nightly/second_strategy:/var/lib/alpaca-bot/nightly/second_strategy:ro
 
   # Note: the supervisor self-migrates at startup via bootstrap_runtime → MigrationRunner.apply_all().
   # This service exists for manual one-shot migration runs via deploy.sh (profiles: [ops]).
@@ -208,6 +213,7 @@ services:
     environment: *alpaca_bot_env
     volumes:
       - /var/lib/alpaca-bot/option-chain-snapshots:/data/option-chain-snapshots
+      - /var/lib/alpaca-bot/nightly/second_strategy:/var/lib/alpaca-bot/nightly/second_strategy:ro
     profiles: ["ops"]
 
   # Run on-demand: docker compose --env-file /etc/alpaca_bot/alpaca-bot.env -f deploy/compose.yaml run --rm nightly

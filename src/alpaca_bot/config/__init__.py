@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, time
+from datetime import date, datetime, time, timedelta, timezone
 from enum import StrEnum
+import hashlib
+import json
 import os
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 
@@ -71,6 +74,174 @@ def _parse_csv_names(name: str, value: str) -> tuple[str, ...]:
     if not names:
         raise ValueError(f"{name} must contain at least one name")
     return names
+
+
+def _append_unique_name(names: tuple[str, ...], name: str) -> tuple[str, ...]:
+    if not name or name in names:
+        return names
+    return (*names, name)
+
+
+def _as_float(value: object) -> float | None:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_int(value: object) -> int | None:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_marker_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _load_json_object(path: Path) -> dict[str, object] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _marker_approved_strategy(values: dict[str, str]) -> str | None:
+    marker_text = values.get("PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER", "").strip()
+    if not marker_text:
+        return None
+    marker_path = Path(marker_text)
+    marker_payload = _load_json_object(marker_path)
+    if marker_payload is None or marker_payload.get("schema_version") != 2:
+        return None
+
+    strategy = str(marker_payload.get("strategy") or "").strip()
+    if not strategy or any(not (char.isalnum() or char in "_:-") for char in strategy):
+        return None
+    if str(marker_payload.get("strategy_version") or "").strip() != values.get(
+        "STRATEGY_VERSION", ""
+    ).strip():
+        return None
+
+    expected_env_file = values.get(
+        "PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE", ""
+    ).strip()
+    marker_env_file = str(marker_payload.get("env_file") or "").strip()
+    if expected_env_file and marker_env_file != expected_env_file:
+        return None
+
+    validation_summary_text = str(marker_payload.get("validation_summary") or "").strip()
+    if not validation_summary_text:
+        return None
+    validation_summary_path = Path(validation_summary_text)
+    validation_payload = _load_json_object(validation_summary_path)
+    if validation_payload is None:
+        return None
+    try:
+        validation_summary_bytes = validation_summary_path.read_bytes()
+        validation_modified_at = datetime.fromtimestamp(
+            validation_summary_path.stat().st_mtime,
+            timezone.utc,
+        )
+    except OSError:
+        return None
+    validation_sha256 = hashlib.sha256(validation_summary_bytes).hexdigest()
+    if (
+        str(marker_payload.get("validation_summary_sha256") or "").strip()
+        != validation_sha256
+    ):
+        return None
+    confirmation = str(marker_payload.get("confirmation") or "").strip()
+    if confirmation != f"approve-{strategy}-paper-promotion-sha256-{validation_sha256}":
+        return None
+
+    approved_at = _parse_marker_datetime(marker_payload.get("approved_at"))
+    now = datetime.now(timezone.utc)
+    if (
+        approved_at is None
+        or approved_at > now + timedelta(minutes=5)
+        or approved_at < validation_modified_at
+    ):
+        return None
+
+    rows = validation_payload.get("rows")
+    if not isinstance(rows, list):
+        return None
+    marker_values = {
+        "candidate_scale": str(marker_payload.get("candidate_scale") or ""),
+        "candidate_trades": _as_int(marker_payload.get("candidate_trades")),
+        "candidate_total_pnl": _as_float(marker_payload.get("candidate_total_pnl")),
+        "candidate_ci_low": _as_float(marker_payload.get("candidate_ci_low")),
+        "candidate_p_mean_le_zero": _as_float(
+            marker_payload.get("candidate_p_mean_le_zero")
+        ),
+    }
+    if any(value is None or value == "" for value in marker_values.values()):
+        return None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("candidate") or "").strip() != strategy:
+            continue
+        if row.get("status") != "passed":
+            continue
+        if row.get("verdict") != "positive-edge":
+            continue
+        if row.get("candidate_verdict") != "positive-edge":
+            continue
+        if row.get("candidate_contribution_status") != "positive_pnl":
+            continue
+        row_trades = _as_int(row.get("candidate_trades"))
+        row_total_pnl = _as_float(row.get("candidate_total_pnl"))
+        row_ci_low = _as_float(row.get("candidate_ci_low"))
+        row_p_mean_le_zero = _as_float(row.get("candidate_p_mean_le_zero"))
+        if (
+            row_trades is None
+            or row_total_pnl is None
+            or row_ci_low is None
+            or row_p_mean_le_zero is None
+            or row_trades < 30
+            or row_total_pnl <= 0.0
+            or row_ci_low <= 0.0
+            or row_p_mean_le_zero > 0.05
+        ):
+            continue
+        if str(row.get("candidate_scale") or "") != marker_values["candidate_scale"]:
+            continue
+        if row_trades != marker_values["candidate_trades"]:
+            continue
+        if abs(row_total_pnl - float(marker_values["candidate_total_pnl"])) > 1e-9:
+            continue
+        if abs(row_ci_low - float(marker_values["candidate_ci_low"])) > 1e-9:
+            continue
+        if (
+            abs(
+                row_p_mean_le_zero
+                - float(marker_values["candidate_p_mean_le_zero"])
+            )
+            > 1e-9
+        ):
+            continue
+        return strategy
+    return None
+
+
+def _paper_approved_strategies(values: dict[str, str]) -> tuple[str, ...]:
+    approved = _parse_csv_names(
+        "PAPER_APPROVED_STRATEGIES",
+        values.get("PAPER_APPROVED_STRATEGIES", "bull_flag"),
+    )
+    return _append_unique_name(approved, _marker_approved_strategy(values) or "")
 
 
 def _get_required(environ: dict[str, str], name: str) -> str:
@@ -280,10 +451,7 @@ class Settings:
             paper_proof_freeze=_parse_bool(
                 "PAPER_PROOF_FREEZE", values.get("PAPER_PROOF_FREEZE", "false")
             ),
-            paper_approved_strategies=_parse_csv_names(
-                "PAPER_APPROVED_STRATEGIES",
-                values.get("PAPER_APPROVED_STRATEGIES", "bull_flag"),
-            ),
+            paper_approved_strategies=_paper_approved_strategies(values),
             paper_readiness_max_pass_age_minutes=int(
                 values.get("PAPER_READINESS_MAX_PASS_AGE_MINUTES", "180")
             ),

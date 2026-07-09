@@ -33,6 +33,8 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "OPTION_STRATEGY_ROLLING_LOSS_DAYS",
         "PAPER_PROOF_FREEZE",
         "PAPER_APPROVED_STRATEGIES",
+        "PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER",
+        "PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE",
         "PAPER_SCALE_MIN_TRADES",
         "PAPER_SCALE_MIN_STRATEGIES",
         "PAPER_SCALE_MIN_ACTIVE_DAYS",
@@ -96,6 +98,14 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "PAPER_APPROVED_STRATEGIES: "
         "${PAPER_APPROVED_STRATEGIES:-bull_flag}"
     ) in compose_text
+    assert (
+        "PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER: "
+        "${PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER:-/var/lib/alpaca-bot/nightly/second_strategy/promotion_approval.json}"
+    ) in compose_text
+    assert (
+        "PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE: "
+        "${PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE:-/etc/alpaca_bot/alpaca-bot.env}"
+    ) in compose_text
     assert "PAPER_SCALE_MIN_TRADES: ${PAPER_SCALE_MIN_TRADES:-30}" in compose_text
     assert "PAPER_SCALE_MIN_STRATEGIES: ${PAPER_SCALE_MIN_STRATEGIES:-2}" in compose_text
     assert "PAPER_SCALE_MIN_ACTIVE_DAYS: ${PAPER_SCALE_MIN_ACTIVE_DAYS:-5}" in compose_text
@@ -153,6 +163,10 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
     assert "OPTION_CHAIN_SNAPSHOT_DIR: ${OPTION_CHAIN_SNAPSHOT_DIR:-}" in compose_text
     assert (
         "/var/lib/alpaca-bot/option-chain-snapshots:/data/option-chain-snapshots"
+        in compose_text
+    )
+    assert (
+        "/var/lib/alpaca-bot/nightly/second_strategy:/var/lib/alpaca-bot/nightly/second_strategy:ro"
         in compose_text
     )
     admin_block = compose_text[
@@ -270,7 +284,9 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
         in deploy_text
     )
     assert 'DEPLOY_DECISION_DRY_RUN_STRATEGY="${DEPLOY_DECISION_DRY_RUN_STRATEGY:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}}"' in deploy_text
-    assert 'DEPLOY_DECISION_DRY_RUN_STRATEGIES="${DEPLOY_DECISION_DRY_RUN_STRATEGIES:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$DEPLOY_DECISION_DRY_RUN_STRATEGY}}}"' in deploy_text
+    assert "resolve_paper_approved_strategies.sh" in deploy_text
+    assert 'PAPER_APPROVED_STRATEGIES_RESOLVED="${PAPER_APPROVED_STRATEGIES:-$DEPLOY_DECISION_DRY_RUN_STRATEGY}"' in deploy_text
+    assert 'DEPLOY_DECISION_DRY_RUN_STRATEGIES="${DEPLOY_DECISION_DRY_RUN_STRATEGIES:-${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-$PAPER_APPROVED_STRATEGIES_RESOLVED}}"' in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_MIN_RECORDS="${DEPLOY_DECISION_DRY_RUN_MIN_RECORDS:-${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}}"' in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${DEPLOY_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}}"' in deploy_text
     assert 'DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES="${DEPLOY_DECISION_DRY_RUN_SAMPLE_TIMES:-${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}}"' in deploy_text
@@ -311,7 +327,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "DEPLOY_EXPECT_ENABLED_STRATEGIES" in deploy_text
     assert (
         'DEPLOY_EXPECT_ENABLED_STRATEGIES="${DEPLOY_EXPECT_ENABLED_STRATEGIES:-'
-        '${PAPER_APPROVED_STRATEGIES:-bull_flag}}"'
+        '$PAPER_APPROVED_STRATEGIES_RESOLVED}"'
     ) in deploy_text
     assert 'expected_enabled_strategy_args+=(--expect-only-enabled-strategy "$name")' in deploy_text
     assert '"${expected_enabled_strategy_args[@]}"' in deploy_text
@@ -596,6 +612,14 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "PAPER_SCALE_MIN_TRADES=30" in env_text
     assert "PAPER_SCALE_MIN_STRATEGIES=2" in env_text
     assert "PAPER_APPROVED_STRATEGIES=bull_flag" in env_text
+    assert (
+        "PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER="
+        "/var/lib/alpaca-bot/nightly/second_strategy/promotion_approval.json"
+    ) in env_text
+    assert (
+        "PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE="
+        "/etc/alpaca_bot/alpaca-bot.env"
+    ) in env_text
     assert "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES=bull_flag" in env_text
     assert "PAPER_ACTIVITY_STRATEGIES=bull_flag" in env_text
     assert "SESSION_GUARD_STRATEGIES=bull_flag" in env_text

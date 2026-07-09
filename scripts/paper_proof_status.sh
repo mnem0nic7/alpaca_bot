@@ -25,6 +25,8 @@ restore_env_overrides() {
 }
 
 capture_env_overrides \
+  PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE \
+  PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER \
   PROFIT_PROBE_STRATEGY \
   PROFIT_PROBE_MIN_TRADES \
   PROFIT_PROBE_MIN_PNL \
@@ -83,7 +85,12 @@ set +a
 restore_env_overrides
 
 PROOF_STATUS_STRATEGY="${PROOF_STATUS_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"
-PROOF_STATUS_APPROVED_STRATEGIES="${PROOF_STATUS_APPROVED_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PROOF_STATUS_STRATEGY}}"
+PAPER_APPROVED_STRATEGIES_RESOLVED="${PAPER_APPROVED_STRATEGIES:-$PROOF_STATUS_STRATEGY}"
+if resolved_approved_strategies="$(bash ./scripts/resolve_paper_approved_strategies.sh "$ENV_FILE" "$PROOF_STATUS_STRATEGY" 2>/dev/null)" \
+  && [[ -n "$resolved_approved_strategies" ]]; then
+  PAPER_APPROVED_STRATEGIES_RESOLVED="$resolved_approved_strategies"
+fi
+PROOF_STATUS_APPROVED_STRATEGIES="${PROOF_STATUS_APPROVED_STRATEGIES:-$PAPER_APPROVED_STRATEGIES_RESOLVED}"
 PROOF_STATUS_MIN_TRADES="${PROOF_STATUS_MIN_TRADES:-${PROFIT_PROBE_MIN_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}}"
 PROOF_STATUS_MIN_PNL="${PROOF_STATUS_MIN_PNL:-${PROFIT_PROBE_MIN_PNL:-0.01}}"
 PROOF_STATUS_SESSION_GUARD_MIN_TRADES="${PROOF_STATUS_SESSION_GUARD_MIN_TRADES:-${SESSION_GUARD_MIN_TRADES:-10}}"
@@ -127,6 +134,8 @@ PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_OUTPUT_
 PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-${SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/setup_knobs}}"
 PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="${PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS:-48}"
 PROOF_STATUS_PROMOTION_APPROVAL_MARKER="${PROOF_STATUS_PROMOTION_APPROVAL_MARKER:-$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/promotion_approval.json}"
+PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER="${PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER:-$PROOF_STATUS_PROMOTION_APPROVAL_MARKER}"
+PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE="${PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE:-$ENV_FILE}"
 
 if [[ -z "${STRATEGY_VERSION:-}" ]]; then
   echo "missing STRATEGY_VERSION in $ENV_FILE" >&2
@@ -651,6 +660,8 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="$PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT" \
   -e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" \
   -e PROOF_STATUS_PROMOTION_WRITE_ACCESS_STATUS="$promotion_write_access_status" \
+  -e PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER="$PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER" \
+  -e PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE="$PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE" \
   -e PROOF_STATUS_PROMOTION_ENV_FILE_WRITABLE="$promotion_env_file_writable" \
   -e PROOF_STATUS_PROMOTION_ENV_DIR_WRITABLE="$promotion_env_dir_writable" \
   -e PROOF_STATUS_PROMOTION_APPROVAL_MARKER_WRITABLE="$promotion_approval_marker_writable" \
@@ -2078,6 +2089,14 @@ promotion_write_access_status = os.environ.get(
     "PROOF_STATUS_PROMOTION_WRITE_ACCESS_STATUS",
     "unknown",
 )
+paper_approval_marker = os.environ.get(
+    "PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER",
+    "",
+).strip()
+paper_approval_env_file = os.environ.get(
+    "PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE",
+    "",
+).strip()
 promotion_env_file_writable = os.environ.get(
     "PROOF_STATUS_PROMOTION_ENV_FILE_WRITABLE",
     "unknown",
@@ -5264,13 +5283,41 @@ elif (
     concentration_runway_status = "on_current_non_best_avg_pace"
 else:
     concentration_runway_status = "needs_higher_non_best_pnl"
+approval_marker_overlay_status = "disabled"
+approval_marker_overlay_marker = "none"
+approval_marker_overlay_env_file = "none"
+if paper_approval_marker:
+    approval_marker_overlay_marker = paper_approval_marker
+    approval_marker_overlay_env_file = paper_approval_env_file or "none"
+    if paper_approval_marker != second_strategy_evidence["promotion_approval_marker"]:
+        approval_marker_overlay_status = "marker_mismatch"
+    elif paper_approval_env_file and paper_approval_env_file != proof_status_env_file:
+        approval_marker_overlay_status = "env_file_mismatch"
+    else:
+        approval_marker_overlay_status = "enabled"
+approval_marker_overlay_ready = (
+    approval_marker_overlay_status == "enabled"
+    and promotion_approval_marker_writable == "true"
+    and promotion_approval_marker_dir_writable == "true"
+)
 promotion_action_status = str(second_strategy_evidence["promotion_action_status"])
-if promotion_action_status == "ready" and promotion_write_access_status != "ok":
-    promotion_action_status = "ready_needs_write_access"
+if promotion_action_status == "ready":
+    if approval_marker_overlay_ready:
+        promotion_action_status = "ready_needs_approval_marker"
+    elif approval_marker_overlay_status == "enabled":
+        promotion_action_status = "ready_needs_marker_write_access"
+    elif promotion_write_access_status != "ok":
+        promotion_action_status = "ready_needs_write_access"
 promotion_handoff_status = "none"
 promotion_handoff_step = "none"
 if second_strategy_evidence["promotion_action_status"] == "ready":
-    if promotion_write_access_status in {
+    if approval_marker_overlay_ready:
+        promotion_handoff_status = "ready_needs_approval_marker"
+        promotion_handoff_step = "approval_marker_write"
+    elif approval_marker_overlay_status == "enabled":
+        promotion_handoff_status = "ready_needs_marker_write_access"
+        promotion_handoff_step = "approval_marker_write"
+    elif promotion_write_access_status in {
         "env_file_not_writable",
         "env_dir_not_writable",
     }:
@@ -6638,6 +6685,9 @@ print(
     f"approval_marker_command_approval_only_value=true "
     f"approval_marker_command_evidence_root={safe_status_value(second_strategy_evidence['root'])} "
     f"approval_marker_command_deploy_script=./scripts/deploy.sh "
+    f"approval_marker_overlay_status={approval_marker_overlay_status} "
+    f"approval_marker_overlay_marker={safe_status_value(approval_marker_overlay_marker)} "
+    f"approval_marker_overlay_env_file={safe_status_value(approval_marker_overlay_env_file)} "
     f"broker_flat_status={promotion_broker_flat_status} "
     f"env_file={safe_status_value(proof_status_env_file)} "
     f"write_access_status={safe_status_value(promotion_write_access_status)} "

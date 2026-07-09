@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
+import hashlib
+import json
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +20,56 @@ def _base_env(**overrides: str) -> dict[str, str]:
     }
     base.update(overrides)
     return base
+
+
+def _write_promotion_marker(
+    tmp_path: Path,
+    *,
+    strategy: str = "ema_pullback",
+    strategy_version: str = "v1",
+    env_file: str = "/etc/alpaca_bot/alpaca-bot.env",
+    validation_sha256: str | None = None,
+) -> Path:
+    validation_dir = tmp_path / "latest_validation"
+    validation_dir.mkdir()
+    validation_summary = validation_dir / "summary.json"
+    row = {
+        "candidate": strategy,
+        "status": "passed",
+        "verdict": "positive-edge",
+        "candidate_verdict": "positive-edge",
+        "candidate_contribution_status": "positive_pnl",
+        "candidate_scale": "0.10",
+        "candidate_trades": 292,
+        "candidate_total_pnl": 150.76,
+        "candidate_ci_low": 0.0707,
+        "candidate_p_mean_le_zero": 0.009,
+    }
+    validation_summary.write_text(json.dumps({"rows": [row]}), encoding="utf-8")
+    summary_sha256 = hashlib.sha256(validation_summary.read_bytes()).hexdigest()
+    marker_sha256 = validation_sha256 or summary_sha256
+    marker = tmp_path / "promotion_approval.json"
+    marker.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "approved_at": datetime.now(timezone.utc).isoformat(),
+                "strategy": strategy,
+                "confirmation": f"approve-{strategy}-paper-promotion-sha256-{marker_sha256}",
+                "validation_summary": str(validation_summary),
+                "validation_summary_sha256": marker_sha256,
+                "strategy_version": strategy_version,
+                "env_file": env_file,
+                "candidate_scale": row["candidate_scale"],
+                "candidate_trades": row["candidate_trades"],
+                "candidate_total_pnl": row["candidate_total_pnl"],
+                "candidate_ci_low": row["candidate_ci_low"],
+                "candidate_p_mean_le_zero": row["candidate_p_mean_le_zero"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return marker
 
 
 def test_market_context_filter_defaults():
@@ -283,6 +336,40 @@ def test_paper_approved_strategies_strips_whitespace_and_rejects_empty():
 def test_paper_approved_strategies_rejects_unsupported_characters():
     with pytest.raises(ValueError, match="PAPER_APPROVED_STRATEGIES"):
         Settings.from_env(_base_env(PAPER_APPROVED_STRATEGIES="bull flag"))
+
+
+def test_paper_approved_strategies_appends_valid_approval_marker(tmp_path: Path):
+    env_file = "/etc/alpaca_bot/alpaca-bot.env"
+    marker = _write_promotion_marker(tmp_path, env_file=env_file)
+
+    settings = Settings.from_env(
+        _base_env(
+            PAPER_APPROVED_STRATEGIES="bull_flag",
+            PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER=str(marker),
+            PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE=env_file,
+        )
+    )
+
+    assert settings.paper_approved_strategies == ("bull_flag", "ema_pullback")
+
+
+def test_paper_approved_strategies_ignores_tampered_approval_marker(tmp_path: Path):
+    env_file = "/etc/alpaca_bot/alpaca-bot.env"
+    marker = _write_promotion_marker(
+        tmp_path,
+        env_file=env_file,
+        validation_sha256="0" * 64,
+    )
+
+    settings = Settings.from_env(
+        _base_env(
+            PAPER_APPROVED_STRATEGIES="bull_flag",
+            PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER=str(marker),
+            PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE=env_file,
+        )
+    )
+
+    assert settings.paper_approved_strategies == ("bull_flag",)
 
 
 def test_paper_readiness_max_pass_age_minutes_default_and_validation():

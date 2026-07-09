@@ -2788,7 +2788,9 @@ def test_paper_readiness_auto_resume_is_guarded() -> None:
     assert 'PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_READINESS_DECISION_DRY_RUN_MIN_RECORDS:-900}"' in script
     assert 'PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_READINESS_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}"' in script
     assert 'PAPER_READINESS_DECISION_DRY_RUN_STRATEGY="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
-    assert 'PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY}}"' in script
+    assert "resolve_paper_approved_strategies.sh" in script
+    assert 'PAPER_APPROVED_STRATEGIES_RESOLVED="${PAPER_APPROVED_STRATEGIES:-$PAPER_READINESS_DECISION_DRY_RUN_STRATEGY}"' in script
+    assert 'PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES="${PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES:-$PAPER_APPROVED_STRATEGIES_RESOLVED}"' in script
     assert 'PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES="${PAPER_READINESS_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}"' in script
     assert 'PAPER_READINESS_SCENARIO_DIR="${PAPER_READINESS_SCENARIO_DIR:-/var/lib/alpaca-bot/nightly/scenarios}"' in script
     assert "PAPER_READINESS_REQUIRE_ACTIVE_DATA_COVERAGE must be true or false" in script
@@ -4041,7 +4043,9 @@ def test_paper_activity_check_verifies_mid_session_evaluation() -> None:
     assert "PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT must be true or false" in script
     assert "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE must be true or false" in script
     assert 'PAPER_ACTIVITY_STRATEGY="${PAPER_ACTIVITY_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"' in script
-    assert 'PAPER_ACTIVITY_STRATEGIES="${PAPER_ACTIVITY_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PAPER_ACTIVITY_STRATEGY}}"' in script
+    assert "resolve_paper_approved_strategies.sh" in script
+    assert 'PAPER_APPROVED_STRATEGIES_RESOLVED="${PAPER_APPROVED_STRATEGIES:-$PAPER_ACTIVITY_STRATEGY}"' in script
+    assert 'PAPER_ACTIVITY_STRATEGIES="${PAPER_ACTIVITY_STRATEGIES:-$PAPER_APPROVED_STRATEGIES_RESOLVED}"' in script
     assert "PAPER_ACTIVITY_STRATEGIES contains unsupported strategy" in script
     assert "PAPER_ACTIVITY_STRATEGIES must contain at least one strategy" in script
     assert "build_paper_activity_strategies" in script
@@ -7260,7 +7264,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "dry_run_default=true" in script
     assert "mutation_requires_dry_run_false=true" in script
     assert 'promotion_action_status == "ready"' in script
+    assert 'promotion_action_status = "ready_needs_approval_marker"' in script
     assert 'promotion_action_status = "ready_needs_write_access"' in script
+    assert "approval_marker_overlay_status" in script
+    assert "approval_marker_overlay_ready" in script
     assert 'approval_marker_action_status = "ready"' in script
     assert 'approval_marker_action_status = "ready_needs_marker_write_access"' in script
     assert "promotion_validation_summary_sha256 = safe_status_value(" in script
@@ -7296,7 +7303,15 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "{safe_status_value(second_strategy_evidence['root'])}"
     ) in script
     assert "approval_marker_command_deploy_script=./scripts/deploy.sh" in script
+    assert "approval_marker_overlay_status={approval_marker_overlay_status}" in script
+    assert "approval_marker_overlay_marker={safe_status_value(approval_marker_overlay_marker)}" in script
+    assert (
+        "approval_marker_overlay_env_file="
+        "{safe_status_value(approval_marker_overlay_env_file)}"
+    ) in script
     assert "broker_flat_status={promotion_broker_flat_status}" in script
+    assert "promotion_handoff_status = \"ready_needs_approval_marker\"" in script
+    assert "promotion_handoff_step = \"approval_marker_write\"" in script
     assert "promotion_handoff_status = \"ready_needs_privileged_env_write\"" in script
     assert "promotion_handoff_step = \"env_allowlist_update\"" in script
     assert "promotion_env_keys_csv = \",\".join(promotion_env_keys)" in script
@@ -7676,7 +7691,9 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert session_guard.index('source "$ENV_FILE"') < session_guard.index(
         'SESSION_GUARD_STRATEGY="${SESSION_GUARD_STRATEGY:-${PROFIT_PROBE_STRATEGY:-bull_flag}}"'
     )
-    assert 'SESSION_GUARD_STRATEGIES="${SESSION_GUARD_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$SESSION_GUARD_STRATEGY}}"' in session_guard
+    assert "resolve_paper_approved_strategies.sh" in session_guard
+    assert 'PAPER_APPROVED_STRATEGIES_RESOLVED="${PAPER_APPROVED_STRATEGIES:-$SESSION_GUARD_STRATEGY}"' in session_guard
+    assert 'SESSION_GUARD_STRATEGIES="${SESSION_GUARD_STRATEGIES:-$PAPER_APPROVED_STRATEGIES_RESOLVED}"' in session_guard
     assert "SESSION_GUARD_FAIL_ON_DIAGNOSTICS must be true or false" in session_guard
     assert "SESSION_GUARD_STRATEGY contains unsupported characters" in session_guard
     assert "SESSION_GUARD_STRATEGIES contains unsupported strategy" in session_guard
@@ -7720,7 +7737,9 @@ def test_post_close_checks_fail_on_open_positions() -> None:
     assert profit_probe.index('source "$ENV_FILE"') < profit_probe.index(
         'PROFIT_PROBE_STRATEGY="${PROFIT_PROBE_STRATEGY:-bull_flag}"'
     )
-    assert 'PROFIT_PROBE_STRATEGIES="${PROFIT_PROBE_STRATEGIES:-${PAPER_APPROVED_STRATEGIES:-$PROFIT_PROBE_STRATEGY}}"' in profit_probe
+    assert "resolve_paper_approved_strategies.sh" in profit_probe
+    assert 'PAPER_APPROVED_STRATEGIES_RESOLVED="${PAPER_APPROVED_STRATEGIES:-$PROFIT_PROBE_STRATEGY}"' in profit_probe
+    assert 'PROFIT_PROBE_STRATEGIES="${PROFIT_PROBE_STRATEGIES:-$PAPER_APPROVED_STRATEGIES_RESOLVED}"' in profit_probe
     assert 'PROFIT_PROBE_FAIL_ON_DIAGNOSTICS="${PROFIT_PROBE_FAIL_ON_DIAGNOSTICS:-true}"' in profit_probe
     assert "PROFIT_PROBE_FAIL_ON_DIAGNOSTICS must be true or false" in profit_probe
     assert "PROFIT_PROBE_STRATEGY contains unsupported characters" in profit_probe
