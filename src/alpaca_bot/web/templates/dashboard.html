@@ -477,6 +477,8 @@
             <p class="value mono {{ 'warn' if proof_payload.get('proof_second_strategy_promotion_action_approval_marker_command_status', 'unknown') not in ['ready', 'approved', 'none', 'unknown'] or proof_payload.get('proof_second_strategy_promotion_action_broker_flat_status', 'unknown') not in ['ok', 'none', 'unknown'] else '' }}">
               command={{ proof_payload.get("proof_second_strategy_promotion_action_approval_marker_command_status", "unknown") }}
               broker={{ proof_payload.get("proof_second_strategy_promotion_action_broker_flat_status", "unknown") }}
+              candidate_dry_run={{ proof_payload.get("proof_second_strategy_promotion_action_candidate_decision_dry_run_required", "unknown") }}
+              allow_disabled={{ proof_payload.get("proof_second_strategy_promotion_action_candidate_decision_dry_run_allow_disabled", "unknown") }}
               write={{ proof_payload.get("proof_second_strategy_promotion_action_write_access_status", "unknown") }}
             </p>
           </div>

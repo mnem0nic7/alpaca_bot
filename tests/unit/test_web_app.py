@@ -256,6 +256,15 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_second_strategy_promotion_action_approval_marker_command_deploy_script": (
                 "./scripts/deploy.sh"
             ),
+            "proof_second_strategy_promotion_action_candidate_decision_dry_run_required": (
+                "true"
+            ),
+            "proof_second_strategy_promotion_action_candidate_decision_dry_run_allow_disabled": (
+                "true"
+            ),
+            "proof_second_strategy_promotion_action_candidate_decision_dry_run_script": (
+                "./scripts/paper_decision_dry_run.sh"
+            ),
             "proof_second_strategy_promotion_action_confirmation": (
                 "approve-ema_pullback-paper-promotion-sha256-"
                 "df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9"
@@ -551,6 +560,8 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "Approval Safety" in response.text
     assert "command=ready" in response.text
     assert "broker=ok" in response.text
+    assert "candidate_dry_run=true" in response.text
+    assert "allow_disabled=true" in response.text
     assert "write=env_file_not_writable" in response.text
     assert "approval_command=ready" in response.text
     assert "broker_flat=ok" in response.text

@@ -340,6 +340,15 @@ PROOF_SECOND_STRATEGY_PROMOTION_ACTION_FIELDS = {
     "approval_marker_command_deploy_script": (
         "proof_second_strategy_promotion_action_approval_marker_command_deploy_script"
     ),
+    "candidate_decision_dry_run_required": (
+        "proof_second_strategy_promotion_action_candidate_decision_dry_run_required"
+    ),
+    "candidate_decision_dry_run_allow_disabled": (
+        "proof_second_strategy_promotion_action_candidate_decision_dry_run_allow_disabled"
+    ),
+    "candidate_decision_dry_run_script": (
+        "proof_second_strategy_promotion_action_candidate_decision_dry_run_script"
+    ),
     "approval_marker_overlay_status": (
         "proof_second_strategy_promotion_action_approval_marker_overlay_status"
     ),

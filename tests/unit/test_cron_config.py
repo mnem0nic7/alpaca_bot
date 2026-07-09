@@ -1717,6 +1717,14 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     )
     assert "proof_second_strategy_promotion_action_confirmation" in lock_skip
     assert (
+        "proof_second_strategy_promotion_action_candidate_decision_dry_run_required"
+        in lock_skip
+    )
+    assert (
+        "proof_second_strategy_promotion_action_candidate_decision_dry_run_allow_disabled"
+        in lock_skip
+    )
+    assert (
         "proof_second_strategy_promotion_action_approval_marker_overlay_status"
         in lock_skip
     )
@@ -2688,6 +2696,14 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert (
         '"approval_marker_command_evidence_root": (\n'
         '        "proof_second_strategy_promotion_action_approval_marker_command_evidence_root"'
+    ) in script
+    assert (
+        '"candidate_decision_dry_run_required": (\n'
+        '        "proof_second_strategy_promotion_action_candidate_decision_dry_run_required"'
+    ) in script
+    assert (
+        '"candidate_decision_dry_run_allow_disabled": (\n'
+        '        "proof_second_strategy_promotion_action_candidate_decision_dry_run_allow_disabled"'
     ) in script
     assert (
         '"approval_marker_overlay_status": (\n'
@@ -7433,6 +7449,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
         "{safe_status_value(second_strategy_evidence['root'])}"
     ) in script
     assert "approval_marker_command_deploy_script=./scripts/deploy.sh" in script
+    assert "candidate_decision_dry_run_required=true" in script
+    assert "candidate_decision_dry_run_allow_disabled=true" in script
+    assert "candidate_decision_dry_run_script=./scripts/paper_decision_dry_run.sh" in script
     assert 'approval_marker_quick_command = "unavailable"' in script
     assert "shlex.quote(promotion_confirmation)" in script
     assert "shlex.quote(proof_status_env_file)" in script
