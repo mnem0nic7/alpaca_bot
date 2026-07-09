@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -442,6 +443,60 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "1.0 - float(audit_row" not in script
     assert "PAPER_APPROVED_STRATEGIES" in script
     assert "is not approval to change" in script
+
+
+def test_second_strategy_basket_scan_generates_empty_validation_specs(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text("")
+    scenario_dir = tmp_path / "scenarios"
+    scenario_dir.mkdir()
+    output_dir = tmp_path / "output"
+    validation_dir = tmp_path / "validation"
+    prefilter_summary = tmp_path / "summary.json"
+    prefilter_summary.write_text(
+        json.dumps(
+            {
+                "base_strategy": "bull_flag",
+                "candidate_names": [],
+                "candidate_scales": ["0.10"],
+                "rows": [],
+                "starting_equity": "10000",
+            }
+        )
+    )
+
+    result = subprocess.run(
+        ["scripts/second_strategy_basket_scan.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            **os.environ,
+            "SECOND_STRATEGY_SCENARIO_DIR": str(scenario_dir),
+            "SECOND_STRATEGY_OUTPUT_DIR": str(output_dir),
+            "SECOND_STRATEGY_VALIDATION_OUTPUT_DIR": str(validation_dir),
+            "SECOND_STRATEGY_PREFILTER_SUMMARY_JSON": str(prefilter_summary),
+            "SECOND_STRATEGY_UPDATE_LATEST_LINKS": "false",
+            "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES": "false",
+            "SECOND_STRATEGY_VALIDATE_POSITIVES": "true",
+            "SECOND_STRATEGY_CANDIDATE_SCALES": "0.10",
+            "SECOND_STRATEGY_SCAN_JOBS": "1",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "second strategy basket scan result: status=ok rc=0" in result.stdout
+    assert "second strategy basket validation: output_dir=" in result.stdout
+    assert "candidates=0" in result.stdout
+    assert "positive_edge_validation_rows=0" in result.stdout
+    assert "from proof status" not in result.stdout
+    assert (validation_dir / "candidates.tsv").read_text() == ""
+    validation_summary = json.loads((validation_dir / "summary.json").read_text())
+    assert validation_summary["candidate_names"] == []
+    assert validation_summary["positive_edge_validation_rows"] == 0
+    assert not (tmp_path / "latest").exists()
 
 
 def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
