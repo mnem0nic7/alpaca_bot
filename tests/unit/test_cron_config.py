@@ -7717,6 +7717,12 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "MAX_OPEN_POSITIONS \\" in script
     assert "MAX_PORTFOLIO_EXPOSURE_PCT \\" in script
     assert "MAX_LOSS_PER_TRADE_DOLLARS" in script
+    assert "RELATIVE_VOLUME_THRESHOLD \\" in script
+    assert "ENTRY_MIN_CLOSE_TO_ENTRY_PCT \\" in script
+    assert "ENTRY_MAX_CLOSE_TO_ENTRY_PCT \\" in script
+    assert "BULL_FLAG_MIN_RUN_PCT \\" in script
+    assert "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO \\" in script
+    assert "BULL_FLAG_CONSOLIDATION_RANGE_PCT" in script
     assert 'PAPER_DECISION_DRY_RUN_STRATEGY="${PAPER_DECISION_DRY_RUN_STRATEGY:-bull_flag}"' in script
     assert 'PAPER_DECISION_DRY_RUN_ALLOW_DISABLED="${PAPER_DECISION_DRY_RUN_ALLOW_DISABLED:-false}"' in script
     assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}"' in script
@@ -7738,6 +7744,12 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "add_container_env_override MAX_OPEN_POSITIONS" in script
     assert "add_container_env_override MAX_PORTFOLIO_EXPOSURE_PCT" in script
     assert "add_container_env_override MAX_LOSS_PER_TRADE_DOLLARS" in script
+    assert "add_container_env_override RELATIVE_VOLUME_THRESHOLD" in script
+    assert "add_container_env_override ENTRY_MIN_CLOSE_TO_ENTRY_PCT" in script
+    assert "add_container_env_override ENTRY_MAX_CLOSE_TO_ENTRY_PCT" in script
+    assert "add_container_env_override BULL_FLAG_MIN_RUN_PCT" in script
+    assert "add_container_env_override BULL_FLAG_CONSOLIDATION_VOLUME_RATIO" in script
+    assert "add_container_env_override BULL_FLAG_CONSOLIDATION_RANGE_PCT" in script
     assert '"${container_env_args[@]}"' in script
     assert "list_enabled(settings.trading_mode.value)" in script
     assert "list_ignored(settings.trading_mode.value)" in script
@@ -7779,6 +7791,12 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "max_open_positions={settings.max_open_positions}" in script
     assert "max_portfolio_exposure_pct={settings.max_portfolio_exposure_pct:g}" in script
     assert "max_loss_per_trade_dollars={settings.max_loss_per_trade_dollars:g}" in script
+    assert "relative_volume_threshold={settings.relative_volume_threshold:g}" in script
+    assert "entry_min_close_to_entry_pct={settings.entry_min_close_to_entry_pct:g}" in script
+    assert "entry_max_close_to_entry_pct={settings.entry_max_close_to_entry_pct:g}" in script
+    assert "bull_flag_min_run_pct={settings.bull_flag_min_run_pct:g}" in script
+    assert "bull_flag_consolidation_volume_ratio={settings.bull_flag_consolidation_volume_ratio:g}" in script
+    assert "bull_flag_consolidation_range_pct={settings.bull_flag_consolidation_range_pct:g}" in script
     assert "submit_order" not in script
     assert "bulk_insert" not in script
     assert ".save(" not in script

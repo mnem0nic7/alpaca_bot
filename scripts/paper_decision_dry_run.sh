@@ -39,7 +39,13 @@ capture_env_overrides \
   MAX_POSITION_PCT \
   MAX_OPEN_POSITIONS \
   MAX_PORTFOLIO_EXPOSURE_PCT \
-  MAX_LOSS_PER_TRADE_DOLLARS
+  MAX_LOSS_PER_TRADE_DOLLARS \
+  RELATIVE_VOLUME_THRESHOLD \
+  ENTRY_MIN_CLOSE_TO_ENTRY_PCT \
+  ENTRY_MAX_CLOSE_TO_ENTRY_PCT \
+  BULL_FLAG_MIN_RUN_PCT \
+  BULL_FLAG_CONSOLIDATION_VOLUME_RATIO \
+  BULL_FLAG_CONSOLIDATION_RANGE_PCT
 
 cd "$(dirname "$0")/.."
 
@@ -109,6 +115,12 @@ add_container_env_override MAX_POSITION_PCT
 add_container_env_override MAX_OPEN_POSITIONS
 add_container_env_override MAX_PORTFOLIO_EXPOSURE_PCT
 add_container_env_override MAX_LOSS_PER_TRADE_DOLLARS
+add_container_env_override RELATIVE_VOLUME_THRESHOLD
+add_container_env_override ENTRY_MIN_CLOSE_TO_ENTRY_PCT
+add_container_env_override ENTRY_MAX_CLOSE_TO_ENTRY_PCT
+add_container_env_override BULL_FLAG_MIN_RUN_PCT
+add_container_env_override BULL_FLAG_CONSOLIDATION_VOLUME_RATIO
+add_container_env_override BULL_FLAG_CONSOLIDATION_RANGE_PCT
 
 compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
@@ -527,6 +539,12 @@ print(
     f"max_open_positions={settings.max_open_positions} "
     f"max_portfolio_exposure_pct={settings.max_portfolio_exposure_pct:g} "
     f"max_loss_per_trade_dollars={settings.max_loss_per_trade_dollars:g} "
+    f"relative_volume_threshold={settings.relative_volume_threshold:g} "
+    f"entry_min_close_to_entry_pct={settings.entry_min_close_to_entry_pct:g} "
+    f"entry_max_close_to_entry_pct={settings.entry_max_close_to_entry_pct:g} "
+    f"bull_flag_min_run_pct={settings.bull_flag_min_run_pct:g} "
+    f"bull_flag_consolidation_volume_ratio={settings.bull_flag_consolidation_volume_ratio:g} "
+    f"bull_flag_consolidation_range_pct={settings.bull_flag_consolidation_range_pct:g} "
     f"equity={equity:.2f} "
     f"sample={sample}"
     f"{multi_sample_fields}"
