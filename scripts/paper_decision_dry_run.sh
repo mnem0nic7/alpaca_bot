@@ -26,6 +26,7 @@ restore_env_overrides() {
 
 capture_env_overrides \
   PAPER_DECISION_DRY_RUN_STRATEGY \
+  PAPER_DECISION_DRY_RUN_ALLOW_DISABLED \
   PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED \
   PAPER_DECISION_DRY_RUN_MIN_RECORDS \
   PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS \
@@ -49,6 +50,7 @@ set +a
 restore_env_overrides
 
 PAPER_DECISION_DRY_RUN_STRATEGY="${PAPER_DECISION_DRY_RUN_STRATEGY:-bull_flag}"
+PAPER_DECISION_DRY_RUN_ALLOW_DISABLED="${PAPER_DECISION_DRY_RUN_ALLOW_DISABLED:-false}"
 PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}"
 PAPER_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_DECISION_DRY_RUN_MIN_RECORDS:-900}"
 PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS="${PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS:-5}"
@@ -71,6 +73,14 @@ case "${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED,,}" in
     ;;
 esac
 
+case "${PAPER_DECISION_DRY_RUN_ALLOW_DISABLED,,}" in
+  true|false) ;;
+  *)
+    echo "PAPER_DECISION_DRY_RUN_ALLOW_DISABLED must be true or false" >&2
+    exit 1
+    ;;
+esac
+
 if ! [[ "$PAPER_DECISION_DRY_RUN_MIN_RECORDS" =~ ^[0-9]+$ ]]; then
   echo "PAPER_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" >&2
   exit 1
@@ -85,6 +95,7 @@ compose=(docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml)
 
 "${compose[@]}" run -T --rm \
   -e PAPER_DECISION_DRY_RUN_STRATEGY="$PAPER_DECISION_DRY_RUN_STRATEGY" \
+  -e PAPER_DECISION_DRY_RUN_ALLOW_DISABLED="$PAPER_DECISION_DRY_RUN_ALLOW_DISABLED" \
   -e PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="$PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED" \
   -e PAPER_DECISION_DRY_RUN_MIN_RECORDS="$PAPER_DECISION_DRY_RUN_MIN_RECORDS" \
   -e PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS="$PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS" \
@@ -276,6 +287,7 @@ if strategy_name not in STRATEGY_REGISTRY:
 
 min_records = int(os.environ.get("PAPER_DECISION_DRY_RUN_MIN_RECORDS", "1"))
 lookback_days = int(os.environ.get("PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS", "5"))
+allow_disabled = _parse_bool("PAPER_DECISION_DRY_RUN_ALLOW_DISABLED")
 require_accepted = _parse_bool("PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED")
 equity_env = (os.environ.get("PAPER_DECISION_DRY_RUN_EQUITY") or "").strip()
 equity_override = _parse_equity(equity_env) if equity_env else None
@@ -295,7 +307,8 @@ try:
 finally:
     conn.close()
 
-if strategy_flag is not None and not strategy_flag.enabled:
+strategy_disabled = strategy_flag is not None and not strategy_flag.enabled
+if strategy_disabled and not allow_disabled:
     print(f"paper decision dry run failed: strategy disabled: {strategy_name}", file=sys.stderr)
     raise SystemExit(1)
 
@@ -472,6 +485,8 @@ if len(evaluations) > 1:
 print(
     "paper decision dry run ok: "
     f"strategy={strategy_name} "
+    f"strategy_disabled={str(strategy_disabled).lower()} "
+    f"allow_disabled={str(allow_disabled).lower()} "
     f"as_of={as_of.isoformat()} "
     f"active={len(active_symbols)} "
     f"ignored={len(ignored_symbols)} "

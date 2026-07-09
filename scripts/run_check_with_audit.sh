@@ -577,6 +577,8 @@ PROOF_POST_SUPERVISOR_EXECUTION_FIELDS = {
 }
 DECISION_DRY_RUN_FIELDS = {
     "strategy": "decision_dry_run_strategy",
+    "strategy_disabled": "decision_dry_run_strategy_disabled",
+    "allow_disabled": "decision_dry_run_allow_disabled",
     "as_of": "decision_dry_run_as_of",
     "active": "decision_dry_run_active",
     "ignored": "decision_dry_run_ignored",

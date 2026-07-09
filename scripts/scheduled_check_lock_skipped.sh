@@ -347,6 +347,8 @@ try:
             """
             SELECT
               COALESCE(payload->>'decision_dry_run_strategy', ''),
+              COALESCE(payload->>'decision_dry_run_strategy_disabled', ''),
+              COALESCE(payload->>'decision_dry_run_allow_disabled', ''),
               COALESCE(payload->>'decision_dry_run_as_of', ''),
               COALESCE(payload->>'decision_dry_run_active', ''),
               COALESCE(payload->>'decision_dry_run_ignored', ''),
@@ -395,6 +397,8 @@ finally:
 if dry_run_row and dry_run_row[0]:
     keys = (
         "strategy",
+        "strategy_disabled",
+        "allow_disabled",
         "as_of",
         "active",
         "ignored",

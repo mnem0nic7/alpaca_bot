@@ -1616,6 +1616,8 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "paper_readiness_latest_decision_dry_run_strategies=" in lock_skip
     assert "paper decision dry run ok:" in lock_skip
     assert "paper readiness decision dry run strategies ok:" in lock_skip
+    assert "decision_dry_run_strategy_disabled" in lock_skip
+    assert "decision_dry_run_allow_disabled" in lock_skip
     assert "decision_dry_run_reject_stages" in lock_skip
     assert "decision_dry_run_reject_reasons" in lock_skip
     assert "decision_dry_run_strategies" in lock_skip
@@ -2817,6 +2819,8 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     )
     assert "DECISION_DRY_RUN_FIELDS" in script
     assert "DECISION_DRY_RUN_STRATEGIES_FIELDS" in script
+    assert '"strategy_disabled": "decision_dry_run_strategy_disabled"' in script
+    assert '"allow_disabled": "decision_dry_run_allow_disabled"' in script
     assert '"decision_records": "decision_dry_run_records"' in script
     assert '"accepted": "decision_dry_run_accepted"' in script
     assert '"entry_intents": "decision_dry_run_entry_intents"' in script
@@ -7690,9 +7694,11 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "restore_env_overrides" in script
     assert script.index('source "$ENV_FILE"') < script.index("\nrestore_env_overrides\n")
     assert 'PAPER_DECISION_DRY_RUN_STRATEGY="${PAPER_DECISION_DRY_RUN_STRATEGY:-bull_flag}"' in script
+    assert 'PAPER_DECISION_DRY_RUN_ALLOW_DISABLED="${PAPER_DECISION_DRY_RUN_ALLOW_DISABLED:-false}"' in script
     assert 'PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED="${PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED:-true}"' in script
     assert 'PAPER_DECISION_DRY_RUN_MIN_RECORDS="${PAPER_DECISION_DRY_RUN_MIN_RECORDS:-900}"' in script
     assert 'PAPER_DECISION_DRY_RUN_SAMPLE_TIMES="${PAPER_DECISION_DRY_RUN_SAMPLE_TIMES:-10:30,11:30,12:30,13:30,14:30,15:30}"' in script
+    assert "PAPER_DECISION_DRY_RUN_ALLOW_DISABLED must be true or false" in script
     assert "PAPER_DECISION_DRY_RUN_REQUIRE_ACCEPTED must be true or false" in script
     assert "PAPER_DECISION_DRY_RUN_MIN_RECORDS must be a non-negative integer" in script
     assert "PAPER_DECISION_DRY_RUN_LOOKBACK_DAYS must be a positive integer" in script
@@ -7701,6 +7707,7 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "connect_postgres(settings.database_url)" in script
     assert "WatchlistStore(conn)" in script
     assert "StrategyFlagStore(conn)" in script
+    assert 'PAPER_DECISION_DRY_RUN_ALLOW_DISABLED="$PAPER_DECISION_DRY_RUN_ALLOW_DISABLED"' in script
     assert "list_enabled(settings.trading_mode.value)" in script
     assert "list_ignored(settings.trading_mode.value)" in script
     assert "active_symbols = tuple(symbol for symbol in enabled_symbols if symbol not in ignored_symbols)" in script
@@ -7724,6 +7731,10 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "traded_symbols_today=set()" in script
     assert "session_type=SessionType.REGULAR" in script
     assert "paper decision dry run ok:" in script
+    assert "strategy_disabled = strategy_flag is not None and not strategy_flag.enabled" in script
+    assert "if strategy_disabled and not allow_disabled:" in script
+    assert "strategy_disabled={str(strategy_disabled).lower()}" in script
+    assert "allow_disabled={str(allow_disabled).lower()}" in script
     assert "accepted=0 require_accepted=true" in script
     assert "entry_intents=0 require_accepted=true" in script
     assert "decision_records={len(records)}" in script
