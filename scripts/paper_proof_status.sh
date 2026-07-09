@@ -71,7 +71,8 @@ capture_env_overrides \
   PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT \
   PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS \
   PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE \
-  PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS
+  PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS \
+  PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION
 
 cd "$(dirname "$0")/.."
 
@@ -137,6 +138,7 @@ PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_S
 PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="${PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS:-48}"
 PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE="${PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE:-0.50}"
 PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS="${PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS:-$PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS}"
+PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION="${PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION:-20}"
 PROOF_STATUS_PROMOTION_APPROVAL_MARKER="${PROOF_STATUS_PROMOTION_APPROVAL_MARKER:-$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/promotion_approval.json}"
 PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER="${PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER:-$PROOF_STATUS_PROMOTION_APPROVAL_MARKER}"
 PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE="${PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE:-$ENV_FILE}"
@@ -247,6 +249,11 @@ fi
 if [[ ! "$PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS" =~ ^[0-9]+$ ]] \
   || [[ "$PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS" -lt 1 ]]; then
   echo "PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS must be a positive integer" >&2
+  exit 1
+fi
+if [[ ! "$PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION" =~ ^[0-9]+$ ]] \
+  || [[ "$PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION" -lt 1 ]]; then
+  echo "PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION must be a positive integer" >&2
   exit 1
 fi
 if [[ ! "$PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
@@ -674,6 +681,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" \
   -e PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE="$PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE" \
   -e PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS="$PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS" \
+  -e PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION="$PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION" \
   -e PROOF_STATUS_PROMOTION_WRITE_ACCESS_STATUS="$promotion_write_access_status" \
   -e PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER="$PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER" \
   -e PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE="$PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE" \
@@ -856,9 +864,71 @@ def option_snapshot_contract_count(path: Path) -> int:
     return total_contracts
 
 
+def option_snapshot_session_point_counts(
+    files: list[tuple[Path, object]],
+    *,
+    interval_minutes: int,
+) -> dict[str, int]:
+    if interval_minutes <= 0:
+        return {}
+    interval_microseconds = interval_minutes * 60 * 1_000_000
+    point_counts: dict[str, int] = {}
+    for file_path, _stat in files:
+        session = option_snapshot_file_session(file_path)
+        if session == "unknown":
+            continue
+        expected_date = date.fromisoformat(session)
+        retained: dict[int, tuple[datetime, int]] = {}
+        try:
+            with file_path.open(encoding="utf-8") as snapshot_file:
+                for raw_line in snapshot_file:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        break
+                    cycle_at = datetime.fromisoformat(str(payload["cycle_at"]))
+                    if cycle_at.tzinfo is None:
+                        cycle_at = cycle_at.replace(tzinfo=timezone.utc)
+                    else:
+                        cycle_at = cycle_at.astimezone(timezone.utc)
+                    if cycle_at.date() != expected_date:
+                        return {}
+                    chains_by_symbol = payload.get("chains_by_symbol")
+                    if not isinstance(chains_by_symbol, dict):
+                        return {}
+                    contract_count = sum(
+                        len(contracts)
+                        for contracts in chains_by_symbol.values()
+                        if isinstance(contracts, list)
+                    )
+                    epoch_microseconds = (
+                        int(cycle_at.timestamp()) * 1_000_000
+                        + cycle_at.microsecond
+                    )
+                    boundary = (
+                        epoch_microseconds + interval_microseconds - 1
+                    ) // interval_microseconds
+                    current = retained.get(boundary)
+                    if current is None or cycle_at > current[0]:
+                        retained[boundary] = (cycle_at, contract_count)
+        except (OSError, KeyError, TypeError, ValueError):
+            return {}
+        point_counts[session] = sum(
+            1 for _cycle_at, contract_count in retained.values()
+            if contract_count > 0
+        )
+    return point_counts
+
+
 def option_snapshot_ledger_summary(
     snapshot_dir: str | None,
     target_session: date | None = None,
+    *,
+    interval_minutes: int = 15,
+    min_points_per_session: int = 20,
 ) -> dict[str, object]:
     summary: dict[str, object] = {
         "path": snapshot_dir or "none",
@@ -868,7 +938,11 @@ def option_snapshot_ledger_summary(
         "latest_modified": "none",
         "latest_bytes": 0,
         "latest_contracts": 0,
+        "snapshot_session_count": 0,
         "replay_session_count": 0,
+        "min_points_per_session": min_points_per_session,
+        "session_points": "none",
+        "undercovered_sessions": "none",
         "earliest_session": "none",
     }
     if not snapshot_dir:
@@ -892,13 +966,21 @@ def option_snapshot_ledger_summary(
         return summary
     if not files:
         return summary
-    replay_sessions = sorted(
-        {
-            session
-            for file_path, _stat in files
-            if (session := option_snapshot_file_session(file_path)) != "unknown"
-        }
+    session_point_counts = option_snapshot_session_point_counts(
+        files,
+        interval_minutes=interval_minutes,
     )
+    snapshot_sessions = sorted(session_point_counts)
+    replay_sessions = [
+        session
+        for session in snapshot_sessions
+        if session_point_counts[session] >= min_points_per_session
+    ]
+    undercovered_sessions = [
+        session
+        for session in snapshot_sessions
+        if session_point_counts[session] < min_points_per_session
+    ]
     selected_path, selected_stat = max(files, key=lambda item: item[1].st_mtime)
     if target_session is not None:
         target_snapshot_name = (
@@ -919,8 +1001,14 @@ def option_snapshot_ledger_summary(
             ).isoformat(),
             "latest_bytes": selected_stat.st_size,
             "latest_contracts": option_snapshot_contract_count(selected_path),
+            "snapshot_session_count": len(snapshot_sessions),
             "replay_session_count": len(replay_sessions),
-            "earliest_session": replay_sessions[0] if replay_sessions else "none",
+            "session_points": ",".join(
+                f"{session}:{session_point_counts[session]}"
+                for session in snapshot_sessions
+            ) or "none",
+            "undercovered_sessions": ",".join(undercovered_sessions) or "none",
+            "earliest_session": snapshot_sessions[0] if snapshot_sessions else "none",
         }
     )
     return summary
@@ -2402,6 +2490,9 @@ second_strategy_min_proof_horizon_pass_rate = float(
 option_replay_min_sessions = int(
     os.environ["PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS"]
 )
+option_replay_min_points_per_session = int(
+    os.environ["PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION"]
+)
 execution_min_entry_fill_rate = float(
     os.environ["PROOF_STATUS_EXECUTION_MIN_ENTRY_FILL_RATE"]
 )
@@ -2726,8 +2817,13 @@ try:
         option_snapshot_summary = option_snapshot_ledger_summary(
             settings.option_chain_snapshot_dir,
             option_snapshot_target_session,
+            interval_minutes=settings.entry_timeframe_minutes,
+            min_points_per_session=option_replay_min_points_per_session,
         )
         option_snapshot_file_count = int(option_snapshot_summary["file_count"])
+        option_snapshot_session_count = int(
+            option_snapshot_summary["snapshot_session_count"]
+        )
         option_snapshot_replay_session_count = int(
             option_snapshot_summary["replay_session_count"]
         )
@@ -2760,7 +2856,11 @@ try:
         if option_snapshot_replay_ready:
             option_replay_status = "supported"
         elif option_snapshot_status == "ok":
-            option_replay_status = "insufficient_sessions"
+            option_replay_status = (
+                "insufficient_sessions"
+                if option_snapshot_session_count < option_replay_min_sessions
+                else "insufficient_coverage"
+            )
         else:
             option_replay_status = f"snapshot_{option_snapshot_status}"
         active_replay_supported_strategy_names = [
@@ -6972,8 +7072,12 @@ print(
     f"latest_modified={safe_status_value(option_snapshot_summary['latest_modified'])} "
     f"latest_bytes={option_snapshot_summary['latest_bytes']} "
     f"latest_contracts={option_snapshot_summary['latest_contracts']} "
+    f"snapshot_sessions={option_snapshot_summary['snapshot_session_count']} "
     f"replay_sessions={option_snapshot_summary['replay_session_count']} "
     f"required_replay_sessions={option_replay_min_sessions} "
+    f"min_points_per_session={option_snapshot_summary['min_points_per_session']} "
+    f"session_points={safe_status_value(option_snapshot_summary['session_points'])} "
+    f"undercovered_sessions={safe_status_value(option_snapshot_summary['undercovered_sessions'])} "
     f"earliest_session={safe_status_value(option_snapshot_summary['earliest_session'])} "
     f"symbols={len(settings.option_chain_symbols)}"
 )

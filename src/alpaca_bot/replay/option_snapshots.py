@@ -88,6 +88,7 @@ class FrozenOptionSnapshotSummary:
     contract_count: int
     session_count: int
     snapshot_count: int
+    min_snapshots_per_session: int
 
 
 @dataclass
@@ -249,6 +250,7 @@ def freeze_option_chain_snapshots(
     total_contracts = 0
     total_sessions = 0
     total_snapshots = 0
+    snapshots_per_session: list[int] = []
     for file_path in files:
         file_session = _snapshot_file_session(file_path)
         if file_session is None:
@@ -308,6 +310,7 @@ def freeze_option_chain_snapshots(
         total_contracts += sum(item[2] for item in ordered)
         total_sessions += 1
         total_snapshots += len(ordered)
+        snapshots_per_session.append(len(ordered))
 
     if total_sessions <= 0 or total_contracts <= 0:
         raise ValueError("frozen option-chain snapshots have no replayable contracts")
@@ -316,6 +319,7 @@ def freeze_option_chain_snapshots(
         contract_count=total_contracts,
         session_count=total_sessions,
         snapshot_count=total_snapshots,
+        min_snapshots_per_session=min(snapshots_per_session),
     )
 
 
@@ -447,7 +451,8 @@ def main(argv: list[str] | None = None) -> int:
             parser.error(str(exc))
         print(
             f"{summary.path}\t{summary.contract_count}\t"
-            f"{summary.session_count}\t{summary.snapshot_count}"
+            f"{summary.session_count}\t{summary.snapshot_count}\t"
+            f"{summary.min_snapshots_per_session}"
         )
         return 0
     parser.error(f"unsupported command: {args.command}")

@@ -156,6 +156,7 @@ INCLUDE_OPTION_CANDIDATES="${SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES:-auto}"
 HOST_OPTION_CHAIN_SNAPSHOT_DIR="${SECOND_STRATEGY_HOST_OPTION_CHAIN_SNAPSHOT_DIR:-/var/lib/alpaca-bot/option-chain-snapshots}"
 OPTION_CHAIN_SNAPSHOTS="${SECOND_STRATEGY_OPTION_CHAIN_SNAPSHOTS:-}"
 OPTION_REPLAY_MIN_SESSIONS="${SECOND_STRATEGY_OPTION_REPLAY_MIN_SESSIONS:-${PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS:-${PAPER_SCALE_MIN_ACTIVE_DAYS:-5}}}"
+OPTION_REPLAY_MIN_POINTS_PER_SESSION="${SECOND_STRATEGY_OPTION_REPLAY_MIN_POINTS_PER_SESSION:-${PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION:-20}}"
 if [[ -z "$OPTION_CHAIN_SNAPSHOTS" ]]; then
   OPTION_CHAIN_SNAPSHOTS="${OPTION_CHAIN_SNAPSHOT_DIR:-}"
   if [[ "$OPTION_CHAIN_SNAPSHOTS" == "/data/option-chain-snapshots" && -d "$HOST_OPTION_CHAIN_SNAPSHOT_DIR" ]]; then
@@ -250,6 +251,8 @@ esac
   || fail "SECOND_STRATEGY_PROOF_HORIZON_MIN_PASS_RATE must be between 0 and 1"
 [[ "$OPTION_REPLAY_MIN_SESSIONS" =~ ^[0-9]+$ && "$OPTION_REPLAY_MIN_SESSIONS" -gt 0 ]] \
   || fail "SECOND_STRATEGY_OPTION_REPLAY_MIN_SESSIONS must be a positive integer"
+[[ "$OPTION_REPLAY_MIN_POINTS_PER_SESSION" =~ ^[0-9]+$ && "$OPTION_REPLAY_MIN_POINTS_PER_SESSION" -gt 0 ]] \
+  || fail "SECOND_STRATEGY_OPTION_REPLAY_MIN_POINTS_PER_SESSION must be a positive integer"
 
 [[ -d "$SCENARIO_DIR" ]] || fail "missing scenario dir: $SCENARIO_DIR"
 if [[ -n "$PREFILTER_SUMMARY_JSON" && ! -f "$PREFILTER_SUMMARY_JSON" ]]; then
@@ -401,6 +404,7 @@ freeze_option_snapshot_input() {
 OPTION_SNAPSHOT_CONTRACTS=0
 OPTION_SNAPSHOT_SESSIONS=0
 OPTION_SNAPSHOT_POINTS=0
+OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION=0
 if [[ -n "$OPTION_CHAIN_SNAPSHOTS" ]] && option_snapshot_path_has_files "$OPTION_CHAIN_SNAPSHOTS"; then
   OPTION_SNAPSHOT_CONTRACTS="$(option_snapshot_contract_count "$OPTION_CHAIN_SNAPSHOTS")"
   OPTION_SNAPSHOT_SESSIONS="$(option_snapshot_session_count "$OPTION_CHAIN_SNAPSHOTS")"
@@ -496,12 +500,16 @@ if [[ "$INCLUDE_OPTION_CANDIDATES" == "true" ]]; then
   [[ "$OPTION_SNAPSHOT_SESSIONS" =~ ^[0-9]+$ && "$OPTION_SNAPSHOT_SESSIONS" -ge "$OPTION_REPLAY_MIN_SESSIONS" ]] || fail "option-chain snapshots require at least $OPTION_REPLAY_MIN_SESSIONS replay sessions; found $OPTION_SNAPSHOT_SESSIONS"
   frozen_option_snapshot="$(freeze_option_snapshot_input "$OPTION_CHAIN_SNAPSHOTS" "$OUTPUT_DIR")"
   IFS=$'\t' read -r OPTION_CHAIN_SNAPSHOTS OPTION_SNAPSHOT_CONTRACTS \
-    OPTION_SNAPSHOT_SESSIONS OPTION_SNAPSHOT_POINTS <<< "$frozen_option_snapshot"
+    OPTION_SNAPSHOT_SESSIONS OPTION_SNAPSHOT_POINTS \
+    OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION <<< "$frozen_option_snapshot"
   [[ -d "$OPTION_CHAIN_SNAPSHOTS" ]] || fail "could not freeze option-chain snapshots: $OPTION_CHAIN_SNAPSHOTS"
   [[ "$OPTION_SNAPSHOT_CONTRACTS" =~ ^[0-9]+$ && "$OPTION_SNAPSHOT_CONTRACTS" -gt 0 ]] || fail "frozen option-chain snapshot has no replayable contracts: $OPTION_CHAIN_SNAPSHOTS"
   [[ "$OPTION_SNAPSHOT_SESSIONS" =~ ^[0-9]+$ && "$OPTION_SNAPSHOT_SESSIONS" -gt 0 ]] || fail "frozen option-chain snapshots have no replayable sessions: $OPTION_CHAIN_SNAPSHOTS"
   [[ "$OPTION_SNAPSHOT_SESSIONS" -ge "$OPTION_REPLAY_MIN_SESSIONS" ]] || fail "frozen option-chain snapshots require at least $OPTION_REPLAY_MIN_SESSIONS replay sessions; found $OPTION_SNAPSHOT_SESSIONS"
   [[ "$OPTION_SNAPSHOT_POINTS" =~ ^[0-9]+$ && "$OPTION_SNAPSHOT_POINTS" -gt 0 ]] || fail "frozen option-chain snapshots have no replayable points: $OPTION_CHAIN_SNAPSHOTS"
+  [[ "$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION" =~ ^[0-9]+$ \
+    && "$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION" -ge "$OPTION_REPLAY_MIN_POINTS_PER_SESSION" ]] \
+    || fail "frozen option-chain snapshots require at least $OPTION_REPLAY_MIN_POINTS_PER_SESSION replay points per session; found minimum $OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION"
 fi
 
 mapfile -t excluded_candidates < <(read_name_list "$EXCLUDE_CANDIDATES")
@@ -608,7 +616,7 @@ status_parts_dir="$OUTPUT_DIR/status_parts"
 mkdir -p "$status_parts_dir"
 
 echo "second strategy basket scan: output_dir=$OUTPUT_DIR"
-echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} starting_equity_source=$starting_equity_source excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS option_snapshot_sessions=$OPTION_SNAPSHOT_SESSIONS option_snapshot_points=$OPTION_SNAPSHOT_POINTS option_replay_min_sessions=$OPTION_REPLAY_MIN_SESSIONS option_replay_status=$OPTION_REPLAY_STATUS prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
+echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} starting_equity_source=$starting_equity_source excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS option_snapshot_sessions=$OPTION_SNAPSHOT_SESSIONS option_snapshot_points=$OPTION_SNAPSHOT_POINTS option_snapshot_min_points_per_session=$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION option_replay_min_sessions=$OPTION_REPLAY_MIN_SESSIONS option_replay_min_points_per_session=$OPTION_REPLAY_MIN_POINTS_PER_SESSION option_replay_status=$OPTION_REPLAY_STATUS prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
 
 completed_status_part_is_reusable() {
   local status_part="$1"
@@ -671,7 +679,7 @@ run_prefilter_job() {
   tmp_stderr_path="$stderr_path.tmp.$BASHPID"
   status_part="$status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
   require_fingerprint=true
-  job_fingerprint="prefilter|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$SAMPLE_SIZE|seed=$SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_sessions=$OPTION_SNAPSHOT_SESSIONS|option_points=$OPTION_SNAPSHOT_POINTS|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v2"
+  job_fingerprint="prefilter|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$SAMPLE_SIZE|seed=$SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_sessions=$OPTION_SNAPSHOT_SESSIONS|option_points=$OPTION_SNAPSHOT_POINTS|option_min_points=$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v2"
   if completed_status_part_is_reusable "$status_part" "$candidate" "$candidate_scale" "$require_fingerprint" "$job_fingerprint"; then
     echo "second strategy basket scan: reusing completed candidate=$candidate scale=$candidate_scale"
     return 0
@@ -1139,7 +1147,7 @@ PY
     tmp_stderr_path="$stderr_path.tmp.$BASHPID"
     status_part="$validation_status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
     require_fingerprint=true
-    job_fingerprint="validation|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$VALIDATION_SAMPLE_SIZE|seed=$VALIDATION_SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_sessions=$OPTION_SNAPSHOT_SESSIONS|option_points=$OPTION_SNAPSHOT_POINTS|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v2"
+    job_fingerprint="validation|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$VALIDATION_SAMPLE_SIZE|seed=$VALIDATION_SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_sessions=$OPTION_SNAPSHOT_SESSIONS|option_points=$OPTION_SNAPSHOT_POINTS|option_min_points=$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v2"
     if completed_status_part_is_reusable "$status_part" "$candidate" "$candidate_scale" "$require_fingerprint" "$job_fingerprint"; then
       echo "second strategy basket validation: reusing completed candidate=$candidate scale=$candidate_scale"
       return 0

@@ -166,6 +166,7 @@ def test_freeze_option_chain_snapshots_keeps_all_sessions_at_replay_boundaries(
 
     assert summary.session_count == 2
     assert summary.snapshot_count == 4
+    assert summary.min_snapshots_per_session == 2
     assert summary.contract_count == 4
     assert len(tuple(summary.path.glob("option-chain-snapshots-*.jsonl"))) == 2
     ledger = load_option_chain_snapshot_ledger(summary.path)

@@ -721,3 +721,12 @@ new mark, the collector removes any unterminated final record left by an
 interrupted write, then appends the serialized record and newline together.
 Later decision-bar marks therefore remain loadable after a partial-tail crash
 instead of being concatenated behind corrupt JSON.
+
+Option replay support now requires intraday coverage, not just dated files.
+Each of the five required replay sessions must retain at least 20 distinct,
+positive-contract decision points after 15-minute compaction. The live ledger
+currently reports `snapshot_sessions=2`, `replay_sessions=1`, and
+`session_points=2026-07-08:26,2026-07-09:1`; 2026-07-09 is explicitly listed as
+undercovered and cannot satisfy the option-strategy replay gate. The basket
+scanner applies the same minimum to its frozen input, including when option
+candidates are requested explicitly.
