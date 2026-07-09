@@ -106,3 +106,40 @@ Current limiting factors remain live sample accumulation, profit concentration,
 and the unapproved second-strategy gate. The correct near-term action is to let
 the current K=1 paper proof continue collecting clean trades while using replay
 to find a quality-preserving throughput lever.
+
+## Direct Edge Prefilter
+
+The K=5 plus relaxed-filter research candidate received a direct edge
+prefilter after the proof-horizon comparison. This was intentionally a
+deterministic sample check before spending a longer full-universe validation.
+
+Command:
+
+```bash
+set -a
+. /etc/alpaca_bot/alpaca-bot.env
+set +a
+alpaca-bot-backtest lever-sweep \
+  --scenario-dir /var/lib/alpaca-bot/nightly/scenarios \
+  --strategy bull_flag \
+  --sample-size 240 \
+  --sample-seed bull-flag-k5-relaxed-close-edge-prefilter-20260709 \
+  --slippage-bps 2 \
+  --portfolio \
+  --max-open-positions 5 \
+  --lever-label 'W_min_close_to_entry:entry_min_close_to_entry_pct=-1.0' \
+  --top-k 2 \
+  --output /tmp/bull_flag_k5_relaxed_close_edge_prefilter_240.md
+```
+
+Result:
+
+| rank | lever | IS ci_low | delta ci_low | IS mean | IS trades | IS verdict | OOS ci_low | OOS verdict |
+|---:|---|---:|---:|---:|---:|---|---:|---|
+| 1 | baseline | -0.7339 | 0.0000 | 0.2952 | 95 | `no-evidence` | -1.7630 | `no-evidence` |
+| 2 | `ENTRY_MIN_CLOSE_TO_ENTRY_PCT=-1.0` | -0.7511 | -0.0172 | 0.6596 | 89 | `no-evidence` | -1.9972 | `no-evidence` |
+
+Conclusion: stop pursuing this combined K=5 relaxed-filter candidate for paper
+promotion. It improved the proof-horizon table, but it did not improve direct
+edge on the 240-scenario prefilter and had a worse OOS lower bound than
+baseline. The next throughput fix needs to come from a different lever.
