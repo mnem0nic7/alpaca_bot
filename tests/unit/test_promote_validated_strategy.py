@@ -102,11 +102,20 @@ def _make_fake_docker(tmp_path: Path) -> Path:
     fake_bin.mkdir()
     docker = fake_bin / "docker"
     broker_not_flat = tmp_path / "broker_not_flat"
+    candidate_dry_run_fail = tmp_path / "candidate_dry_run_fail"
     mutate_summary_after_broker = tmp_path / "mutate_summary_after_broker"
     docker.write_text(
         "#!/usr/bin/env bash\n"
         f"printf '%s\\n' \"$*\" >> {tmp_path / 'docker_calls'}\n"
         "case \"$*\" in\n"
+        "  *'PAPER_DECISION_DRY_RUN_STRATEGY=ema_pullback'*)\n"
+        f"    if [[ -f '{candidate_dry_run_fail}' ]]; then\n"
+        "      printf 'paper decision dry run failed: accepted=0 require_accepted=true evaluations=6\\n' >&2\n"
+        "      exit 1\n"
+        "    fi\n"
+        "    printf 'paper decision dry run ok: strategy=ema_pullback strategy_disabled=true allow_disabled=true decision_records=950 accepted=1 entry_intents=1\\n'\n"
+        "    exit 0\n"
+        "    ;;\n"
         "  *'--entrypoint python admin'*)\n"
         f"    if [[ -f '{broker_not_flat}' ]]; then\n"
         "      printf 'promote validated strategy failed: broker has 1 open stock positions: ARQT\\n' >&2\n"
@@ -260,6 +269,9 @@ def test_promote_validated_strategy_dry_run_reports_gates_without_mutation(
     assert "confirmation_status=missing" in stdout
     assert f"required_confirmation={_confirmation(evidence_root)}" in stdout
     assert "validation_current_status=ok" in stdout
+    assert "candidate_decision_dry_run_status=ok" in stdout
+    assert "strategy=ema_pullback" in stdout
+    assert "allow_disabled=true" in stdout
     assert "write_access_status=ok" in stdout
     assert "promotion_handoff_status=none" in stdout
     assert "promotion_handoff_step=none" in stdout
@@ -404,6 +416,37 @@ def test_promote_validated_strategy_approval_only_writes_marker_without_promotio
     assert approval_marker["validation_summary"] == str(summary_path.resolve())
     docker_calls = (tmp_path / "docker_calls").read_text()
     assert "--entrypoint python admin" in docker_calls
+    assert "enable-strategy" not in docker_calls
+    assert "disable-strategy" not in docker_calls
+    assert not (tmp_path / "deploy_calls").exists()
+
+
+def test_promote_validated_strategy_refuses_marker_when_candidate_dry_run_fails(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    deploy_script = _make_fake_deploy(tmp_path)
+    (tmp_path / "candidate_dry_run_fail").write_text("true\n")
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=deploy_script,
+        tmp_path=tmp_path,
+        confirmation=_confirmation(evidence_root),
+        dry_run=False,
+        approval_only=True,
+    )
+
+    assert result.returncode == 1
+    assert "candidate decision dry run failed for ema_pullback" in result.stderr
+    assert not (evidence_root / "promotion_approval.json").exists()
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
+    docker_calls = (tmp_path / "docker_calls").read_text()
+    assert "PAPER_DECISION_DRY_RUN_STRATEGY=ema_pullback" in docker_calls
     assert "enable-strategy" not in docker_calls
     assert "disable-strategy" not in docker_calls
     assert not (tmp_path / "deploy_calls").exists()

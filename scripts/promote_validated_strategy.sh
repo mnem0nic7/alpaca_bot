@@ -17,6 +17,7 @@ COMPOSE_FILE="${PROMOTE_VALIDATED_STRATEGY_COMPOSE_FILE:-$ROOT_DIR/deploy/compos
 APPROVAL_MARKER="${PROMOTE_VALIDATED_STRATEGY_APPROVAL_MARKER:-$EVIDENCE_ROOT/promotion_approval.json}"
 MAX_P_MEAN_LE_ZERO="${PROMOTE_VALIDATED_STRATEGY_MAX_P_MEAN_LE_ZERO:-0.05}"
 MIN_CANDIDATE_TRADES="${PROMOTE_VALIDATED_STRATEGY_MIN_CANDIDATE_TRADES:-30}"
+REQUIRE_DECISION_DRY_RUN="${PROMOTE_VALIDATED_STRATEGY_REQUIRE_DECISION_DRY_RUN:-true}"
 CONFIRMATION="${PROMOTE_VALIDATED_STRATEGY_CONFIRM:-}"
 DRY_RUN="${PROMOTE_VALIDATED_STRATEGY_DRY_RUN:-true}"
 APPROVAL_ONLY="${PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY:-false}"
@@ -58,6 +59,18 @@ case "${DRY_RUN,,}" in
     ;;
   *)
     echo "$LOG_PREFIX PROMOTE_VALIDATED_STRATEGY_DRY_RUN must be true or false" >&2
+    exit 1
+    ;;
+esac
+case "${REQUIRE_DECISION_DRY_RUN,,}" in
+  true|1|yes|y)
+    REQUIRE_DECISION_DRY_RUN=true
+    ;;
+  false|0|no|n|"")
+    REQUIRE_DECISION_DRY_RUN=false
+    ;;
+  *)
+    echo "$LOG_PREFIX PROMOTE_VALIDATED_STRATEGY_REQUIRE_DECISION_DRY_RUN must be true or false" >&2
     exit 1
     ;;
 esac
@@ -389,6 +402,27 @@ run_broker_flat_check() {
     "$ROOT_DIR/scripts/broker_flat_check.sh" "$ENV_FILE"
 }
 
+run_candidate_decision_dry_run() {
+  PAPER_DECISION_DRY_RUN_STRATEGY="$VALIDATED_STRATEGY" \
+    PAPER_DECISION_DRY_RUN_ALLOW_DISABLED=true \
+    "$ROOT_DIR/scripts/paper_decision_dry_run.sh" "$ENV_FILE"
+}
+
+require_candidate_decision_dry_run() {
+  local detail
+
+  if [[ "$REQUIRE_DECISION_DRY_RUN" != "true" ]]; then
+    echo "$LOG_PREFIX candidate decision dry run skipped: require=false"
+    return 0
+  fi
+  if ! detail="$(run_candidate_decision_dry_run 2>&1)"; then
+    detail="$(compact_dry_run_detail "$detail")"
+    echo "$LOG_PREFIX candidate decision dry run failed for $VALIDATED_STRATEGY: ${detail:-failed}" >&2
+    exit 1
+  fi
+  echo "$LOG_PREFIX candidate decision dry run ok: $(compact_dry_run_detail "$detail")"
+}
+
 compact_dry_run_detail() {
   local value="$1"
   value="${value//$'\r'/ }"
@@ -450,7 +484,16 @@ if [[ "$DRY_RUN" == "true" ]]; then
   fi
   validation_current_detail="$(compact_dry_run_detail "${validation_current_detail:-ok}")"
   broker_flat_detail="$(compact_dry_run_detail "${broker_flat_detail:-ok}")"
-  printf '%s dry_run=true strategy=%s scale=%s trades=%s pnl=%s ci_low=%s p_mean_le_zero=%s validation_summary=%s validation_summary_sha256=%s confirmation_status=%s required_confirmation=%s validation_current_status=%s validation_current_detail=%s write_access_status=%s promotion_handoff_status=%s promotion_handoff_step=%s promotion_env_keys=%s env_file_writable=%s env_dir_writable=%s approval_marker=%s approval_marker_writable=%s approval_marker_dir_writable=%s broker_flat_status=%s broker_flat_detail=%s\n' \
+  candidate_decision_dry_run_status="skipped"
+  candidate_decision_dry_run_detail="require=false"
+  if [[ "$REQUIRE_DECISION_DRY_RUN" == "true" ]]; then
+    candidate_decision_dry_run_status="ok"
+    if ! candidate_decision_dry_run_detail="$(run_candidate_decision_dry_run 2>&1)"; then
+      candidate_decision_dry_run_status="failed"
+    fi
+    candidate_decision_dry_run_detail="$(compact_dry_run_detail "${candidate_decision_dry_run_detail:-ok}")"
+  fi
+  printf '%s dry_run=true strategy=%s scale=%s trades=%s pnl=%s ci_low=%s p_mean_le_zero=%s validation_summary=%s validation_summary_sha256=%s confirmation_status=%s required_confirmation=%s validation_current_status=%s validation_current_detail=%s candidate_decision_dry_run_status=%s candidate_decision_dry_run_detail=%s write_access_status=%s promotion_handoff_status=%s promotion_handoff_step=%s promotion_env_keys=%s env_file_writable=%s env_dir_writable=%s approval_marker=%s approval_marker_writable=%s approval_marker_dir_writable=%s broker_flat_status=%s broker_flat_detail=%s\n' \
     "$LOG_PREFIX" \
     "$VALIDATED_STRATEGY" \
     "$VALIDATED_SCALE" \
@@ -464,6 +507,8 @@ if [[ "$DRY_RUN" == "true" ]]; then
     "$required_confirmation" \
     "$validation_current_status" \
     "${validation_current_detail:-ok}" \
+    "$candidate_decision_dry_run_status" \
+    "${candidate_decision_dry_run_detail:-ok}" \
     "$promotion_write_access_status" \
     "$(promotion_handoff_status)" \
     "$(promotion_handoff_step)" \
@@ -494,7 +539,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
   if [[ "$confirmation_status" == "mismatch" ]]; then
     exit 2
   fi
-  if [[ "$validation_current_status" != "ok" || "$broker_flat_status" != "ok" ]]; then
+  if [[ "$validation_current_status" != "ok" || "$broker_flat_status" != "ok" || "$candidate_decision_dry_run_status" != "ok" ]]; then
     exit 1
   fi
   exit 0
@@ -666,6 +711,7 @@ if [[ "$APPROVAL_ONLY" == "true" ]]; then
     echo "$LOG_PREFIX validation summary changed after broker flat check; aborting approval marker write" >&2
     exit 1
   fi
+  require_candidate_decision_dry_run
   if ! write_approval_marker; then
     echo "$LOG_PREFIX failed to write approval marker" >&2
     exit 1
@@ -686,6 +732,8 @@ if ! verify_validation_summary_current; then
   echo "$LOG_PREFIX validation summary changed after broker flat check; aborting promotion before mutation" >&2
   exit 1
 fi
+
+require_candidate_decision_dry_run
 
 current_approved="$(read_env_value PAPER_APPROVED_STRATEGIES)"
 new_approved="$(append_csv_name "$current_approved" "$VALIDATED_STRATEGY")"
