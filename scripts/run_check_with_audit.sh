@@ -204,6 +204,13 @@ PROOF_CONCENTRATION_FIELDS = {
     "non_best_avg_pnl": "proof_concentration_non_best_avg_pnl",
     "net_pnl_needed": "proof_concentration_net_pnl_needed",
     "non_best_avg_trade_gap": "proof_concentration_non_best_avg_trade_gap",
+    "runway_status": "proof_concentration_runway_status",
+    "remaining_trade_required_avg_pnl": (
+        "proof_concentration_remaining_trade_required_avg_pnl"
+    ),
+    "remaining_active_day_required_pnl": (
+        "proof_concentration_remaining_active_day_required_pnl"
+    ),
     "single_win_pnl_share": "proof_concentration_single_win_pnl_share",
     "max_single_win_pnl_share": "proof_concentration_max_single_win_pnl_share",
 }

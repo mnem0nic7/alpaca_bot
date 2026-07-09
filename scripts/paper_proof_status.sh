@@ -5167,12 +5167,47 @@ concentration_non_best_avg_trade_gap_text = (
     if concentration_non_best_avg_trade_gap is not None
     else "none"
 )
+concentration_remaining_trade_required_avg_pnl = (
+    concentration_net_pnl_needed / sample_trades_remaining
+    if concentration_net_pnl_needed > 0.0 and sample_trades_remaining > 0
+    else None
+)
+concentration_remaining_trade_required_avg_pnl_text = (
+    f"{concentration_remaining_trade_required_avg_pnl:.2f}"
+    if concentration_remaining_trade_required_avg_pnl is not None
+    else "none"
+)
+concentration_remaining_active_day_required_pnl = (
+    concentration_net_pnl_needed / active_days_remaining
+    if concentration_net_pnl_needed > 0.0 and active_days_remaining > 0
+    else None
+)
+concentration_remaining_active_day_required_pnl_text = (
+    f"{concentration_remaining_active_day_required_pnl:.2f}"
+    if concentration_remaining_active_day_required_pnl is not None
+    else "none"
+)
 if single_win_pnl_share is None:
     concentration_status = "not_applicable"
 elif single_win_pnl_share > scale_max_single_win_pnl_share:
     concentration_status = "blocked"
 else:
     concentration_status = "ok"
+if concentration_status == "ok":
+    concentration_runway_status = "met"
+elif concentration_net_pnl_needed <= 0.0:
+    concentration_runway_status = "not_applicable"
+elif sample_trades_remaining <= 0:
+    concentration_runway_status = "no_remaining_sample_trades"
+elif non_best_avg_trade_pnl is None or non_best_avg_trade_pnl <= 0.0:
+    concentration_runway_status = "needs_positive_non_best_pnl"
+elif (
+    concentration_non_best_avg_trade_gap is not None
+    and concentration_non_best_avg_trade_gap <= sample_trades_remaining
+):
+    concentration_runway_status = "on_current_non_best_avg_pace"
+else:
+    concentration_runway_status = "needs_higher_non_best_pnl"
 promotion_action_status = str(second_strategy_evidence["promotion_action_status"])
 if promotion_action_status == "ready" and promotion_write_access_status != "ok":
     promotion_action_status = "ready_needs_write_access"
@@ -6764,6 +6799,9 @@ print(
     f"concentration_net_pnl_needed={concentration_net_pnl_needed:.2f} "
     f"concentration_non_best_avg_pnl={non_best_avg_trade_pnl_text} "
     f"concentration_non_best_avg_trade_gap={concentration_non_best_avg_trade_gap_text} "
+    f"concentration_runway_status={concentration_runway_status} "
+    f"concentration_remaining_trade_required_avg_pnl={concentration_remaining_trade_required_avg_pnl_text} "
+    f"concentration_remaining_active_day_required_pnl={concentration_remaining_active_day_required_pnl_text} "
     f"single_win_pnl_share={single_win_pnl_share_text} "
     f"max_single_win_pnl_share={scale_max_single_win_pnl_share:.2f}"
 )
@@ -6795,6 +6833,9 @@ print(
     f"non_best_avg_pnl={non_best_avg_trade_pnl_text} "
     f"net_pnl_needed={concentration_net_pnl_needed:.2f} "
     f"non_best_avg_trade_gap={concentration_non_best_avg_trade_gap_text} "
+    f"runway_status={concentration_runway_status} "
+    f"remaining_trade_required_avg_pnl={concentration_remaining_trade_required_avg_pnl_text} "
+    f"remaining_active_day_required_pnl={concentration_remaining_active_day_required_pnl_text} "
     f"single_win_pnl_share={single_win_pnl_share_text} "
     f"max_single_win_pnl_share={scale_max_single_win_pnl_share:.2f}"
 )

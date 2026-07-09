@@ -1634,6 +1634,8 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "latest_concentration_line" in lock_skip
     assert "proof_concentration_net_pnl_needed" in lock_skip
     assert "proof_concentration_non_best_avg_trade_gap" in lock_skip
+    assert "proof_concentration_runway_status" in lock_skip
+    assert "proof_concentration_remaining_trade_required_avg_pnl" in lock_skip
     assert "paper proof strategy diversification:" in lock_skip
     assert "latest_strategy_diversification_line" in lock_skip
     assert "proof_strategy_diversification_approval_marker_action_status" in lock_skip
@@ -2431,6 +2433,11 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "PROOF_CONCENTRATION_FIELDS" in script
     assert '"best_winning_trade": "proof_concentration_best_winning_trade"' in script
     assert '"net_pnl_needed": "proof_concentration_net_pnl_needed"' in script
+    assert '"runway_status": "proof_concentration_runway_status"' in script
+    assert (
+        '"remaining_trade_required_avg_pnl": (\n'
+        '        "proof_concentration_remaining_trade_required_avg_pnl"'
+    ) in script
     assert "PROOF_STRATEGY_DIVERSIFICATION_FIELDS" in script
     assert "PROOF_SECOND_STRATEGY_PROMOTION_ACTION_FIELDS" in script
     assert (
@@ -5965,6 +5972,11 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "active_days_remaining={active_days_remaining}" in script
     assert "approved_replay_strategy_gap={strategy_diversification_gap}" in script
     assert "concentration_net_pnl_needed={concentration_net_pnl_needed:.2f}" in script
+    assert "concentration_runway_status={concentration_runway_status}" in script
+    assert (
+        "concentration_remaining_trade_required_avg_pnl="
+        "{concentration_remaining_trade_required_avg_pnl_text}"
+    ) in script
     assert "paper proof active day detail:" in script
     assert "active_days={active_trade_day_count}" in script
     assert "required_active_days={scale_min_active_days}" in script
@@ -5986,11 +5998,21 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "non_best_avg_pnl={non_best_avg_trade_pnl_text}" in script
     assert "net_pnl_needed={concentration_net_pnl_needed:.2f}" in script
     assert "non_best_avg_trade_gap={concentration_non_best_avg_trade_gap_text}" in script
+    assert "runway_status={concentration_runway_status}" in script
+    assert (
+        "remaining_trade_required_avg_pnl="
+        "{concentration_remaining_trade_required_avg_pnl_text}"
+    ) in script
+    assert (
+        "remaining_active_day_required_pnl="
+        "{concentration_remaining_active_day_required_pnl_text}"
+    ) in script
     assert "non_best_trade_pnl_rows = list(trade_pnl_rows)" in script
     assert "non_best_avg_trade_pnl = (" in script
     assert "concentration_non_best_avg_trade_gap = (" in script
     assert "math.ceil(concentration_net_pnl_needed / non_best_avg_trade_pnl)" in script
     assert "concentration_non_best_avg_pnl={non_best_avg_trade_pnl_text}" in script
+    assert 'concentration_runway_status = "needs_higher_non_best_pnl"' in script
     assert (
         "concentration_non_best_avg_trade_gap="
         "{concentration_non_best_avg_trade_gap_text}"
