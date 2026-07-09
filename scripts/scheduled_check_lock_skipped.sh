@@ -1273,6 +1273,19 @@ second_strategy_promotion_action_line = (
     if second_strategy_promotion_action_parts
     else ""
 )
+approval_quick_command_status = payload.get(
+    "proof_second_strategy_promotion_action_approval_marker_quick_command_status"
+)
+approval_quick_command = payload.get(
+    "proof_second_strategy_promotion_action_approval_marker_quick_command"
+)
+second_strategy_approval_quick_command_line = (
+    "paper proof second strategy approval quick command: "
+    f"status={approval_quick_command_status or 'unknown'} "
+    f"command={approval_quick_command or 'unavailable'}"
+    if approval_quick_command_status or approval_quick_command
+    else ""
+)
 nightly_automation_fields = [
     ("status", "proof_nightly_status"),
     ("lock_status", "proof_nightly_lock_status"),
@@ -1301,16 +1314,17 @@ nightly_automation_line = (
     else ""
 )
 print(
-	    "paper_proof_status_latest="
-	    f"{row[0]}|{row[1]}|{row[2]}|{row[3]}|{row[4]}|{row[5]}|"
-	    f"{row[6]}|{row[7]}|{row[8]}|{row[9]}|{row[10]}|{row[11]}|"
-	    f"{row[12]}|{row[13]}|{row[14]}|{row[15]}|{row[16]}|{row[17]}|"
-	    f"{row[18]}|{row[19]}|{row[20]}|{row[21]}|{row[22]}|"
-	    f"{row[23]}|{row[24]}|{row[25]}|{row[26]}|{row[28]}|"
-	    f"{age_minutes}|{post_supervisor_line}|{concentration_line}|{active_day_line}|"
-	    f"{strategy_diversification_line}|{second_strategy_promotion_action_line}|"
-	    f"{blocker_gaps_line}|{execution_quality_line}|{nightly_automation_line}"
-	)
+    "paper_proof_status_latest="
+    f"{row[0]}|{row[1]}|{row[2]}|{row[3]}|{row[4]}|{row[5]}|"
+    f"{row[6]}|{row[7]}|{row[8]}|{row[9]}|{row[10]}|{row[11]}|"
+    f"{row[12]}|{row[13]}|{row[14]}|{row[15]}|{row[16]}|{row[17]}|"
+    f"{row[18]}|{row[19]}|{row[20]}|{row[21]}|{row[22]}|"
+    f"{row[23]}|{row[24]}|{row[25]}|{row[26]}|{row[28]}|"
+    f"{age_minutes}|{post_supervisor_line}|{concentration_line}|{active_day_line}|"
+    f"{strategy_diversification_line}|{second_strategy_promotion_action_line}|"
+    f"{second_strategy_approval_quick_command_line}|{blocker_gaps_line}|"
+    f"{execution_quality_line}|{nightly_automation_line}"
+)
 PY
 )"
 
@@ -1706,10 +1720,11 @@ case "$CHECK_NAME" in
     latest_active_day_line=""
     latest_strategy_diversification_line=""
     latest_second_strategy_promotion_action_line=""
+    latest_second_strategy_approval_quick_command_line=""
     latest_blocker_gaps_line=""
     latest_execution_quality_line=""
     latest_nightly_automation_line=""
-    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_overall_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line latest_concentration_line latest_active_day_line latest_strategy_diversification_line latest_second_strategy_promotion_action_line latest_blocker_gaps_line latest_execution_quality_line latest_nightly_automation_line <<< "$latest_proof_status"
+    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_overall_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line latest_concentration_line latest_active_day_line latest_strategy_diversification_line latest_second_strategy_promotion_action_line latest_second_strategy_approval_quick_command_line latest_blocker_gaps_line latest_execution_quality_line latest_nightly_automation_line <<< "$latest_proof_status"
     proof_lock_is_recent=false
     if [[ "$latest_age_minutes" =~ ^[0-9]+$ ]] \
       && (( 10#$latest_age_minutes <= 10#$PROOF_STATUS_LOCK_MAX_AGE_MINUTES )); then
@@ -1742,6 +1757,9 @@ case "$CHECK_NAME" in
       fi
       if [[ -n "$latest_second_strategy_promotion_action_line" ]]; then
         echo "$latest_second_strategy_promotion_action_line"
+      fi
+      if [[ -n "$latest_second_strategy_approval_quick_command_line" ]]; then
+        echo "$latest_second_strategy_approval_quick_command_line"
       fi
       if [[ -n "$latest_active_day_line" ]]; then
         echo "$latest_active_day_line"

@@ -1703,6 +1703,16 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "proof_strategy_diversification_approval_marker_action_status" in lock_skip
     assert "paper proof second strategy promotion action:" in lock_skip
     assert "latest_second_strategy_promotion_action_line" in lock_skip
+    assert "paper proof second strategy approval quick command:" in lock_skip
+    assert "latest_second_strategy_approval_quick_command_line" in lock_skip
+    assert (
+        "proof_second_strategy_promotion_action_approval_marker_quick_command_status"
+        in lock_skip
+    )
+    assert (
+        "proof_second_strategy_promotion_action_approval_marker_quick_command"
+        in lock_skip
+    )
     assert "proof_second_strategy_promotion_action_confirmation" in lock_skip
     assert (
         "proof_second_strategy_promotion_action_approval_marker_overlay_status"
@@ -2543,6 +2553,10 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
         'AUDIT_PROOF_SECOND_STRATEGY_PROMOTION_ACTION_LINE="'
         '$proof_second_strategy_promotion_action_line"'
     ) in script
+    assert (
+        'AUDIT_PROOF_SECOND_STRATEGY_APPROVAL_QUICK_COMMAND_LINE="'
+        '$proof_second_strategy_approval_quick_command_line"'
+    ) in script
     assert 'AUDIT_PROOF_SCORING_LINE="$proof_scoring_line"' in script
     assert 'AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"' in script
     assert 'AUDIT_PROOF_CURRENT_EXECUTION_LINE="$proof_current_execution_line"' in script
@@ -2566,6 +2580,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "-e AUDIT_PROOF_CONCENTRATION_LINE" in script
     assert "-e AUDIT_PROOF_STRATEGY_DIVERSIFICATION_LINE" in script
     assert "-e AUDIT_PROOF_SECOND_STRATEGY_PROMOTION_ACTION_LINE" in script
+    assert "-e AUDIT_PROOF_SECOND_STRATEGY_APPROVAL_QUICK_COMMAND_LINE" in script
     assert "-e AUDIT_PROOF_SCORING_LINE" in script
     assert "-e AUDIT_PROOF_SCENARIOS_LINE" in script
     assert "-e AUDIT_PROOF_EXECUTION_QUALITY_LINE" in script
@@ -2583,6 +2598,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'proof_concentration_line="$(grep -E' in script
     assert 'proof_strategy_diversification_line="$(grep -E' in script
     assert 'proof_second_strategy_promotion_action_line="$(grep -E' in script
+    assert 'proof_second_strategy_approval_quick_command_line="$(grep -E' in script
     assert 'proof_scoring_line="$(grep -E' in script
     assert 'proof_scenarios_line="$(grep -E' in script
     assert 'proof_execution_quality_line="$(grep -E' in script
@@ -2640,6 +2656,17 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     ) in script
     assert "PROOF_STRATEGY_DIVERSIFICATION_FIELDS" in script
     assert "PROOF_SECOND_STRATEGY_PROMOTION_ACTION_FIELDS" in script
+    assert "PROOF_SECOND_STRATEGY_APPROVAL_QUICK_COMMAND_PREFIX" in script
+    assert "PROOF_COMMAND_VALUE" in script
+    assert "parse_approval_quick_command" in script
+    assert (
+        "proof_second_strategy_promotion_action_approval_marker_quick_command_status"
+        in script
+    )
+    assert (
+        "proof_second_strategy_promotion_action_approval_marker_quick_command"
+        in script
+    )
     assert (
         '"approval_marker_action_status": (\n'
         '        "proof_strategy_diversification_approval_marker_action_status"'

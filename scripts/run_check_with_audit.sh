@@ -70,6 +70,7 @@ proof_active_day_detail_line="$(grep -E '^paper proof active day detail: ' "$out
 proof_concentration_line="$(grep -E '^paper proof concentration: ' "$output_file" | tail -n 1 || true)"
 proof_strategy_diversification_line="$(grep -E '^paper proof strategy diversification: ' "$output_file" | tail -n 1 || true)"
 proof_second_strategy_promotion_action_line="$(grep -E '^paper proof second strategy promotion action: ' "$output_file" | tail -n 1 || true)"
+proof_second_strategy_approval_quick_command_line="$(grep -E '^paper proof second strategy approval quick command: ' "$output_file" | tail -n 1 || true)"
 proof_scoring_line="$(grep -E '^paper proof scoring: ' "$output_file" | tail -n 1 || true)"
 proof_scenarios_line="$(grep -E '^paper proof scenarios: ' "$output_file" | tail -n 1 || true)"
 proof_execution_quality_line="$(grep -E '^paper proof execution quality: ' "$output_file" | tail -n 1 || true)"
@@ -99,6 +100,7 @@ export AUDIT_PROOF_ACTIVE_DAY_DETAIL_LINE="$proof_active_day_detail_line"
 export AUDIT_PROOF_CONCENTRATION_LINE="$proof_concentration_line"
 export AUDIT_PROOF_STRATEGY_DIVERSIFICATION_LINE="$proof_strategy_diversification_line"
 export AUDIT_PROOF_SECOND_STRATEGY_PROMOTION_ACTION_LINE="$proof_second_strategy_promotion_action_line"
+export AUDIT_PROOF_SECOND_STRATEGY_APPROVAL_QUICK_COMMAND_LINE="$proof_second_strategy_approval_quick_command_line"
 export AUDIT_PROOF_SCORING_LINE="$proof_scoring_line"
 export AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"
 export AUDIT_PROOF_EXECUTION_QUALITY_LINE="$proof_execution_quality_line"
@@ -122,6 +124,7 @@ if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_PROOF_CONCENTRATION_LINE \
     -e AUDIT_PROOF_STRATEGY_DIVERSIFICATION_LINE \
     -e AUDIT_PROOF_SECOND_STRATEGY_PROMOTION_ACTION_LINE \
+    -e AUDIT_PROOF_SECOND_STRATEGY_APPROVAL_QUICK_COMMAND_LINE \
     -e AUDIT_PROOF_SCORING_LINE \
     -e AUDIT_PROOF_SCENARIOS_LINE \
     -e AUDIT_PROOF_EXECUTION_QUALITY_LINE \
@@ -156,6 +159,7 @@ CONTEXT_KEYS = {
 }
 CONTEXT_VALUE = re.compile(r"^[A-Za-z0-9_.:,+-]+$")
 PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;=@-]+$")
+PROOF_COMMAND_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;=@ -]+$")
 PROOF_SUMMARY_PREFIX = "paper proof summary: "
 PROOF_NIGHTLY_AUTOMATION_PREFIX = "paper proof nightly automation: "
 PROOF_PROGRESS_PREFIX = "paper proof progress: "
@@ -165,6 +169,9 @@ PROOF_CONCENTRATION_PREFIX = "paper proof concentration: "
 PROOF_STRATEGY_DIVERSIFICATION_PREFIX = "paper proof strategy diversification: "
 PROOF_SECOND_STRATEGY_PROMOTION_ACTION_PREFIX = (
     "paper proof second strategy promotion action: "
+)
+PROOF_SECOND_STRATEGY_APPROVAL_QUICK_COMMAND_PREFIX = (
+    "paper proof second strategy approval quick command: "
 )
 PROOF_SCORING_PREFIX = "paper proof scoring: "
 PROOF_SCENARIOS_PREFIX = "paper proof scenarios: "
@@ -638,6 +645,39 @@ def parse_prefixed_fields(
     return fields
 
 
+def parse_approval_quick_command(line: str) -> dict[str, str]:
+    if not line.startswith(PROOF_SECOND_STRATEGY_APPROVAL_QUICK_COMMAND_PREFIX):
+        return {}
+
+    body = line[len(PROOF_SECOND_STRATEGY_APPROVAL_QUICK_COMMAND_PREFIX):]
+    marker = " command="
+    if marker not in body:
+        return {}
+
+    status_text, command = body.split(marker, 1)
+    try:
+        status_parts = shlex.split(status_text)
+    except ValueError:
+        return {}
+
+    fields: dict[str, str] = {}
+    for part in status_parts:
+        if not part.startswith("status="):
+            continue
+        status = part.split("=", 1)[1]
+        if PROOF_VALUE.fullmatch(status):
+            fields[
+                "proof_second_strategy_promotion_action_approval_marker_quick_command_status"
+            ] = status
+        break
+
+    if command and PROOF_COMMAND_VALUE.fullmatch(command):
+        fields[
+            "proof_second_strategy_promotion_action_approval_marker_quick_command"
+        ] = command
+    return fields
+
+
 settings = Settings.from_env()
 conn = connect_postgres(settings.database_url)
 try:
@@ -704,6 +744,14 @@ try:
             os.environ.get("AUDIT_PROOF_SECOND_STRATEGY_PROMOTION_ACTION_LINE", ""),
             prefix=PROOF_SECOND_STRATEGY_PROMOTION_ACTION_PREFIX,
             field_map=PROOF_SECOND_STRATEGY_PROMOTION_ACTION_FIELDS,
+        )
+    )
+    payload.update(
+        parse_approval_quick_command(
+            os.environ.get(
+                "AUDIT_PROOF_SECOND_STRATEGY_APPROVAL_QUICK_COMMAND_LINE",
+                "",
+            )
         )
     )
     payload.update(
