@@ -87,10 +87,19 @@ def _make_fake_docker(tmp_path: Path) -> Path:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker = fake_bin / "docker"
+    broker_not_flat = tmp_path / "broker_not_flat"
     docker.write_text(
         "#!/usr/bin/env bash\n"
         f"printf '%s\\n' \"$*\" >> {tmp_path / 'docker_calls'}\n"
         "case \"$*\" in\n"
+        "  *'--entrypoint python admin'*)\n"
+        f"    if [[ -f '{broker_not_flat}' ]]; then\n"
+        "      printf 'promote validated strategy failed: broker has 1 open stock positions: ARQT\\n' >&2\n"
+        "      exit 1\n"
+        "    fi\n"
+        "    printf 'promote validated strategy broker exposure ok: open_orders=0 open_positions=0\\n'\n"
+        "    exit 0\n"
+        "    ;;\n"
         "  *'enable-strategy ema_pullback --mode paper --strategy-version v1-breakout'*)\n"
         "    printf 'strategy=ema_pullback mode=paper version=v1-breakout enabled\\n'\n"
         "    exit 0\n"
@@ -160,6 +169,33 @@ def test_promote_validated_strategy_requires_explicit_confirmation(tmp_path: Pat
     assert not (tmp_path / "deploy_calls").exists()
 
 
+def test_promote_validated_strategy_requires_flat_broker_before_mutation(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    deploy_script = _make_fake_deploy(tmp_path)
+    (tmp_path / "broker_not_flat").write_text("true\n")
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=deploy_script,
+        tmp_path=tmp_path,
+        confirmation=_confirmation(evidence_root),
+    )
+
+    assert result.returncode == 1
+    assert "refusing promotion because paper broker is not flat" in result.stderr
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
+    docker_calls = (tmp_path / "docker_calls").read_text()
+    assert "--entrypoint python admin" in docker_calls
+    assert "enable-strategy" not in docker_calls
+    assert not (tmp_path / "deploy_calls").exists()
+
+
 def test_promote_validated_strategy_rejects_legacy_generic_confirmation(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     evidence_root = tmp_path / "evidence"
@@ -221,6 +257,7 @@ def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_pa
 
     assert result.returncode == 0, result.stderr
     assert "PAPER_APPROVED_STRATEGIES=bull_flag,ema_pullback" in env_file.read_text()
+    assert "--entrypoint python admin" in (tmp_path / "docker_calls").read_text()
     assert "enable-strategy ema_pullback --mode paper --strategy-version v1-breakout" in (
         tmp_path / "docker_calls"
     ).read_text()

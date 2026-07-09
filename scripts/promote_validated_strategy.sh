@@ -234,6 +234,12 @@ if ! verify_validation_summary_current; then
   exit 1
 fi
 
+if ! BROKER_FLAT_CONTEXT="promote validated strategy" \
+  "$ROOT_DIR/scripts/broker_flat_check.sh" "$ENV_FILE"; then
+  echo "$LOG_PREFIX refusing promotion because paper broker is not flat" >&2
+  exit 1
+fi
+
 read_env_value() {
   local key="$1"
   awk -v key="$key" '
