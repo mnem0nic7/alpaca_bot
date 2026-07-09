@@ -687,3 +687,10 @@ prefilter summary. Both current broad and setup evidence chains report
 `validation_prefilter_lineage_status=ok`; a missing or cross-generation
 reference now makes the evidence invalid before any promotion action can be
 offered.
+
+Follow-up: observation-only option collection now records one successful chain
+snapshot per 15-minute decision boundary from 10:00 through the configured
+flatten time. Duplicate supervisor cycles in the same bar are suppressed,
+empty captures retry, and both the snapshot payload and replay ledger use the
+decision-boundary timestamp. This replaces the earlier one-snapshot-per-day
+behavior, which could not support point-in-time intraday option replay.

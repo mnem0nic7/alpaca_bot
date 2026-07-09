@@ -4,6 +4,7 @@ import contextlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time as datetime_time, timedelta, timezone
+import json
 import logging
 from pathlib import Path
 import re
@@ -284,6 +285,42 @@ def _option_snapshot_path_session(value: object) -> date | None:
         return date.fromisoformat(name[len(prefix) : -len(suffix)])
     except ValueError:
         return None
+
+
+def _option_snapshot_decision_boundary(
+    value: datetime,
+    *,
+    interval_minutes: int,
+) -> datetime:
+    if interval_minutes <= 0:
+        raise ValueError("option snapshot interval must be positive")
+    normalized = (
+        value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    )
+    normalized = normalized.astimezone(timezone.utc)
+    elapsed_minutes = normalized.hour * 60 + normalized.minute
+    boundary_minutes = elapsed_minutes - (elapsed_minutes % interval_minutes)
+    return normalized.replace(
+        hour=boundary_minutes // 60,
+        minute=boundary_minutes % 60,
+        second=0,
+        microsecond=0,
+    )
+
+
+def _parse_datetime_or_none(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 class RuntimeSupervisor:
@@ -1116,14 +1153,20 @@ class RuntimeSupervisor:
         option_order_store = getattr(self.runtime, "option_order_store", None)
         self._check_option_strategy_circuit_breakers(session_date=session_date, now=timestamp)
         option_chain_observation_enabled = bool(self.settings.option_chain_snapshot_dir)
+        option_chain_snapshot_at = _option_snapshot_decision_boundary(
+            timestamp,
+            interval_minutes=self.settings.entry_timeframe_minutes,
+        )
         option_chain_snapshot_due = (
             option_chain_observation_enabled
-            and not self.settings.enable_options_trading
             and bool(self.settings.option_chain_symbols)
             and timestamp.astimezone(self.settings.market_timezone).time()
             >= OPTION_CHAIN_SNAPSHOT_DUE_TIME
-            and not self._option_chain_snapshot_recorded_for_session(
-                session_date=session_date
+            and timestamp.astimezone(self.settings.market_timezone).time()
+            <= self.settings.flatten_time
+            and not self._option_chain_snapshot_recorded_for_boundary(
+                session_date=session_date,
+                snapshot_at=option_chain_snapshot_at,
             )
         )
         should_fetch_option_chains = (
@@ -1153,11 +1196,12 @@ class RuntimeSupervisor:
                         active_strategies.append(
                             (opt_name, factory(option_chains_by_symbol))
                         )
-            if self.settings.option_chain_snapshot_dir:
+            if option_chain_snapshot_due:
                 self._record_option_chain_snapshot(
                     option_chains_by_symbol=option_chains_by_symbol,
                     session_date=session_date,
                     timestamp=timestamp,
+                    snapshot_at=option_chain_snapshot_at,
                 )
 
         # Add open option position underlying symbols to prevent double-entry.
@@ -1494,7 +1538,7 @@ class RuntimeSupervisor:
             )
         )
 
-        if option_chain_snapshot_due:
+        if option_chain_snapshot_due and not should_fetch_option_chains:
             snapshot_option_chains_by_symbol = (
                 self._fetch_option_chains_for_snapshot_symbols(
                     intraday_bars_by_symbol,
@@ -1505,6 +1549,7 @@ class RuntimeSupervisor:
                 option_chains_by_symbol=snapshot_option_chains_by_symbol,
                 session_date=session_date,
                 timestamp=timestamp,
+                snapshot_at=option_chain_snapshot_at,
             )
 
         return SupervisorCycleReport(
@@ -2929,6 +2974,7 @@ class RuntimeSupervisor:
         option_chains_by_symbol: dict[str, list],
         session_date: date,
         timestamp: datetime,
+        snapshot_at: datetime,
     ) -> None:
         if not self.settings.option_chain_snapshot_dir:
             return
@@ -2943,7 +2989,7 @@ class RuntimeSupervisor:
         try:
             snapshot_path = append_option_chain_snapshot(
                 snapshot_dir=self.settings.option_chain_snapshot_dir,
-                cycle_at=timestamp,
+                cycle_at=snapshot_at,
                 chains_by_symbol=chains_for_snapshot,
             )
             self._append_audit(
@@ -2954,7 +3000,8 @@ class RuntimeSupervisor:
                         "symbols": len(chains_for_snapshot),
                         "contracts": sum(option_chain_counts.values()),
                         "session_date": session_date.isoformat(),
-                        "cycle_at": timestamp.isoformat(),
+                        "cycle_at": snapshot_at.isoformat(),
+                        "recorded_at": timestamp.isoformat(),
                         "trading_mode": self.settings.trading_mode.value,
                         "strategy_version": self.settings.strategy_version,
                     },
@@ -2971,8 +3018,11 @@ class RuntimeSupervisor:
                 )
             )
 
-    def _option_chain_snapshot_recorded_for_session(
-        self, *, session_date: date
+    def _option_chain_snapshot_recorded_for_boundary(
+        self,
+        *,
+        session_date: date,
+        snapshot_at: datetime,
     ) -> bool:
         audit_store = getattr(self.runtime, "audit_event_store", None)
         list_events = getattr(audit_store, "list_by_event_types", None)
@@ -3011,6 +3061,16 @@ class RuntimeSupervisor:
                     path_session = _option_snapshot_path_session(payload.get("path"))
                     if path_session is not None and path_session != session_date:
                         continue
+                    event_snapshot_at = _parse_datetime_or_none(
+                        payload.get("cycle_at")
+                    ) or getattr(event, "created_at", None)
+                    if not isinstance(event_snapshot_at, datetime):
+                        continue
+                    if _option_snapshot_decision_boundary(
+                        event_snapshot_at,
+                        interval_minutes=self.settings.entry_timeframe_minutes,
+                    ) != snapshot_at:
+                        continue
                     try:
                         contracts = int(payload.get("contracts") or 0)
                     except (TypeError, ValueError):
@@ -3027,7 +3087,30 @@ class RuntimeSupervisor:
             / f"option-chain-snapshots-{session_date.isoformat()}.jsonl"
         )
         try:
-            return path.is_file() and path.stat().st_size > 0
+            if not path.is_file() or path.stat().st_size <= 0:
+                return False
+            last_snapshot_at = None
+            with path.open(encoding="utf-8") as snapshot_file:
+                for raw_line in snapshot_file:
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        break
+                    last_snapshot_at = _parse_datetime_or_none(
+                        payload.get("cycle_at")
+                    )
+            if last_snapshot_at is None:
+                return False
+            return (
+                _option_snapshot_decision_boundary(
+                    last_snapshot_at,
+                    interval_minutes=self.settings.entry_timeframe_minutes,
+                )
+                == snapshot_at
+            )
         except OSError:
             return False
 

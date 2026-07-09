@@ -306,8 +306,8 @@ def test_option_chain_snapshot_only_waits_until_due_time(tmp_path):
     ]
 
 
-def test_option_chain_snapshot_only_skips_when_session_snapshot_has_contracts(tmp_path):
-    """A positive-contract daily snapshot is enough for replay support."""
+def test_option_chain_snapshot_only_skips_recorded_decision_boundary(tmp_path):
+    """A positive snapshot suppresses duplicate fetches in the same bar."""
     snapshot_path = tmp_path / "option-chain-snapshots-2026-05-01.jsonl"
     snapshot_path.write_text("{}\n", encoding="utf-8")
     audit_store = RecordingAuditStore(
@@ -319,10 +319,11 @@ def test_option_chain_snapshot_only_skips_when_session_snapshot_has_contracts(tm
                     "symbols": 2,
                     "contracts": 42,
                     "session_date": "2026-05-01",
+                    "cycle_at": _NOW.isoformat(),
                     "trading_mode": "paper",
                     "strategy_version": "v1-breakout",
                 },
-                created_at=datetime(2026, 5, 1, 14, 5, tzinfo=timezone.utc),
+                created_at=_NOW,
             )
         ]
     )
@@ -346,6 +347,51 @@ def test_option_chain_snapshot_only_skips_when_session_snapshot_has_contracts(tm
     ]
 
 
+def test_option_chain_snapshot_records_again_on_next_decision_boundary(tmp_path):
+    snapshot_path = tmp_path / "option-chain-snapshots-2026-05-01.jsonl"
+    snapshot_path.write_text("{}\n", encoding="utf-8")
+    audit_store = RecordingAuditStore(
+        events=[
+            AuditEvent(
+                event_type="option_chain_snapshot_recorded",
+                payload={
+                    "path": str(snapshot_path),
+                    "symbols": 2,
+                    "contracts": 42,
+                    "session_date": "2026-05-01",
+                    "cycle_at": _NOW.isoformat(),
+                    "trading_mode": "paper",
+                    "strategy_version": "v1-breakout",
+                },
+                created_at=_NOW,
+            )
+        ]
+    )
+    adapter = RecordingOptionChainAdapter()
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        audit_store=audit_store,
+        extra_env={
+            "ENABLE_OPTIONS_TRADING": "false",
+            "OPTION_CHAIN_SYMBOLS": "ACHR,METC",
+            "OPTION_CHAIN_SNAPSHOT_DIR": str(tmp_path),
+        },
+    )
+
+    supervisor.run_cycle_once(
+        now=lambda: datetime(2026, 5, 1, 14, 46, tzinfo=timezone.utc)
+    )
+
+    assert set(adapter.fetched) == {"ACHR", "METC"}
+    recorded = [
+        event
+        for event in audit_store.events
+        if event.event_type == "option_chain_snapshot_recorded"
+    ]
+    assert len(recorded) == 2
+    assert recorded[-1].payload["cycle_at"] == "2026-05-01T14:45:00+00:00"
+
+
 def test_option_chain_snapshot_only_retries_empty_session_snapshot(tmp_path):
     """An empty snapshot marker must not suppress the due snapshot retry."""
     snapshot_path = tmp_path / "option-chain-snapshots-2026-05-01.jsonl"
@@ -359,6 +405,7 @@ def test_option_chain_snapshot_only_retries_empty_session_snapshot(tmp_path):
                     "symbols": 2,
                     "contracts": 0,
                     "session_date": "2026-05-01",
+                    "cycle_at": _NOW.isoformat(),
                     "trading_mode": "paper",
                     "strategy_version": "v1-breakout",
                 },
@@ -515,6 +562,8 @@ def test_option_chain_snapshot_records_configured_symbol_chains(tmp_path):
     assert len(snapshot_events) == 1
     assert snapshot_events[0].payload["symbols"] == 2
     assert snapshot_events[0].payload["contracts"] == 1
+    assert snapshot_events[0].payload["cycle_at"] == _NOW.isoformat()
+    assert snapshot_events[0].payload["recorded_at"] == _NOW.isoformat()
 
 
 def test_option_chain_snapshot_skipped_when_unconfigured(tmp_path):
