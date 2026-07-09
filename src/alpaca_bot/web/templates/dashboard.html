@@ -321,6 +321,7 @@
       {% set proof_current_execution_warnings = proof_payload.get("proof_current_execution_warnings", "unknown") %}
       {% set proof_post_supervisor_execution_status = proof_payload.get("proof_post_supervisor_execution_status", "unknown") %}
       {% set proof_post_supervisor_execution_warnings = proof_payload.get("proof_post_supervisor_execution_warnings", "unknown") %}
+      {% set proof_has_gap_fields = proof_payload.get("proof_gap_sample_trades_remaining") or proof_payload.get("proof_gap_active_days_remaining") or proof_payload.get("proof_gap_approved_replay_strategy_gap") or proof_payload.get("proof_gap_concentration_runway_status") %}
       <div class="panel" style="margin-bottom: 1rem;">
         <h2>Paper Proof</h2>
         <div class="status-grid">
@@ -356,6 +357,29 @@
             <p class="eyebrow">Sealed Evidence</p>
             <p class="value mono {{ 'warn' if proof_sealed_evidence_blockers != 'none' else '' }}">{{ proof_sealed_evidence_blockers }}</p>
           </div>
+          {% if proof_has_gap_fields %}
+          <div>
+            <p class="eyebrow">Trades Remaining</p>
+            <p class="value mono {{ 'warn' if proof_payload.get('proof_gap_sample_trades_remaining', '0') != '0' else '' }}">{{ proof_payload.get("proof_gap_sample_trades_remaining", "unknown") }}</p>
+          </div>
+          <div>
+            <p class="eyebrow">Active Days Remaining</p>
+            <p class="value mono {{ 'warn' if proof_payload.get('proof_gap_active_days_remaining', '0') != '0' else '' }}">{{ proof_payload.get("proof_gap_active_days_remaining", "unknown") }}</p>
+          </div>
+          <div>
+            <p class="eyebrow">Strategy Gap</p>
+            <p class="value mono {{ 'warn' if proof_payload.get('proof_gap_approved_replay_strategy_gap', '0') != '0' else '' }}">{{ proof_payload.get("proof_gap_approved_replay_strategy_gap", "unknown") }}</p>
+          </div>
+          <div>
+            <p class="eyebrow">Concentration Runway</p>
+            <p class="value mono {{ 'warn' if proof_payload.get('proof_gap_concentration_runway_status', 'unknown') not in ['met', 'not_applicable', 'unknown'] else '' }}">
+              {{ proof_payload.get("proof_gap_concentration_runway_status", "unknown") }}
+              pnl_needed={{ proof_payload.get("proof_gap_concentration_net_pnl_needed", "unknown") }}
+              trade_avg={{ proof_payload.get("proof_gap_concentration_remaining_trade_required_avg_pnl", "unknown") }}
+              day_avg={{ proof_payload.get("proof_gap_concentration_remaining_active_day_required_pnl", "unknown") }}
+            </p>
+          </div>
+          {% endif %}
           <div>
             <p class="eyebrow">Scenario Evidence</p>
             <p class="value mono {{ 'warn' if proof_payload.get('proof_scenario_status', 'unknown') != 'ok' else '' }}">
@@ -429,6 +453,10 @@
                     {% if event.payload.get("proof_blockers") %} blockers={{ event.payload.get("proof_blockers") }}{% endif %}
                     {% if event.payload.get("proof_closed_trades") %} closed={{ event.payload.get("proof_closed_trades") }}/{{ event.payload.get("proof_required_trades", "?") }}{% endif %}
                     {% if event.payload.get("proof_pnl") %} proof_pnl={{ event.payload.get("proof_pnl") }}{% endif %}
+                    {% if event.payload.get("proof_gap_sample_trades_remaining") %} gap_trades={{ event.payload.get("proof_gap_sample_trades_remaining") }}{% endif %}
+                    {% if event.payload.get("proof_gap_active_days_remaining") %} gap_days={{ event.payload.get("proof_gap_active_days_remaining") }}{% endif %}
+                    {% if event.payload.get("proof_gap_approved_replay_strategy_gap") %} gap_strategies={{ event.payload.get("proof_gap_approved_replay_strategy_gap") }}{% endif %}
+                    {% if event.payload.get("proof_gap_concentration_runway_status") %} concentration_runway={{ event.payload.get("proof_gap_concentration_runway_status") }}{% endif %}
                     {% if event.payload.get("proof_scenario_status") %} scenarios={{ event.payload.get("proof_scenario_status") }}:{{ event.payload.get("proof_scenario_active", "?") }}@{{ event.payload.get("proof_scenario_expected_session", "?") }}{% endif %}
                     {% if event.payload.get("proof_scenario_problems") and event.payload.get("proof_scenario_problems") != "none" %} scenario_problems={{ event.payload.get("proof_scenario_problems") }}{% endif %}
                     {% if event.payload.get("proof_current_execution_status") %} current_exec={{ event.payload.get("proof_current_execution_status") }} warnings={{ event.payload.get("proof_current_execution_warnings", "?") }} fill={{ event.payload.get("proof_current_execution_entry_fill_rate", "?") }} caprej={{ event.payload.get("proof_current_execution_capacity_rejected", "?") }} short={{ event.payload.get("proof_current_execution_short_window", "?") }}{% endif %}

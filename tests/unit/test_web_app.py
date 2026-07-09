@@ -158,6 +158,13 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_required_trades": "10",
             "proof_pnl": "12.34",
             "proof_required_pnl": "0.01",
+            "proof_gap_sample_trades_remaining": "27",
+            "proof_gap_active_days_remaining": "3",
+            "proof_gap_approved_replay_strategy_gap": "1",
+            "proof_gap_concentration_net_pnl_needed": "14.32",
+            "proof_gap_concentration_runway_status": "needs_higher_non_best_pnl",
+            "proof_gap_concentration_remaining_trade_required_avg_pnl": "0.53",
+            "proof_gap_concentration_remaining_active_day_required_pnl": "4.77",
             "proof_scenario_status": "ok",
             "proof_scenario_active": "980",
             "proof_scenario_expected_session": "2026-06-26",
@@ -276,6 +283,15 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "sample_trades,strategy_diversification" in response.text
     assert "Sealed Evidence" in response.text
     assert "eod_loss_share" in response.text
+    assert "Trades Remaining" in response.text
+    assert "27" in response.text
+    assert "Active Days Remaining" in response.text
+    assert "Strategy Gap" in response.text
+    assert "Concentration Runway" in response.text
+    assert "needs_higher_non_best_pnl" in response.text
+    assert "pnl_needed=14.32" in response.text
+    assert "trade_avg=0.53" in response.text
+    assert "day_avg=4.77" in response.text
     assert "Scenario Evidence" in response.text
     assert "Scenario Problems" in response.text
     assert "ok\n              980\n              @ 2026-06-26" in response.text
@@ -299,6 +315,10 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
         "post_supervisor_exec=ok warnings=none since=2026-07-07T19:08:57+00:00"
         in response.text
     )
+    assert "gap_trades=27" in response.text
+    assert "gap_days=3" in response.text
+    assert "gap_strategies=1" in response.text
+    assert "concentration_runway=needs_higher_non_best_pnl" in response.text
     assert "awaiting_min_trades" in response.text
     assert "12.34 / 0.01" in response.text
     assert "trades&gt;=10" in response.text
