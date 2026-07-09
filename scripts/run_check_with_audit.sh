@@ -71,6 +71,7 @@ proof_strategy_diversification_line="$(grep -E '^paper proof strategy diversific
 proof_second_strategy_promotion_action_line="$(grep -E '^paper proof second strategy promotion action: ' "$output_file" | tail -n 1 || true)"
 proof_scoring_line="$(grep -E '^paper proof scoring: ' "$output_file" | tail -n 1 || true)"
 proof_scenarios_line="$(grep -E '^paper proof scenarios: ' "$output_file" | tail -n 1 || true)"
+proof_execution_quality_line="$(grep -E '^paper proof execution quality: ' "$output_file" | tail -n 1 || true)"
 proof_current_execution_line="$(grep -E '^paper proof current-session execution: ' "$output_file" | tail -n 1 || true)"
 proof_post_supervisor_execution_line="$(grep -E '^paper proof post-supervisor execution: ' "$output_file" | tail -n 1 || true)"
 decision_dry_run_line="$(grep -E '^paper decision dry run ok: ' "$output_file" | tail -n 1 || true)"
@@ -98,6 +99,7 @@ export AUDIT_PROOF_STRATEGY_DIVERSIFICATION_LINE="$proof_strategy_diversificatio
 export AUDIT_PROOF_SECOND_STRATEGY_PROMOTION_ACTION_LINE="$proof_second_strategy_promotion_action_line"
 export AUDIT_PROOF_SCORING_LINE="$proof_scoring_line"
 export AUDIT_PROOF_SCENARIOS_LINE="$proof_scenarios_line"
+export AUDIT_PROOF_EXECUTION_QUALITY_LINE="$proof_execution_quality_line"
 export AUDIT_PROOF_CURRENT_EXECUTION_LINE="$proof_current_execution_line"
 export AUDIT_PROOF_POST_SUPERVISOR_EXECUTION_LINE="$proof_post_supervisor_execution_line"
 export AUDIT_DECISION_DRY_RUN_LINE="$decision_dry_run_line"
@@ -119,6 +121,7 @@ if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_PROOF_SECOND_STRATEGY_PROMOTION_ACTION_LINE \
     -e AUDIT_PROOF_SCORING_LINE \
     -e AUDIT_PROOF_SCENARIOS_LINE \
+    -e AUDIT_PROOF_EXECUTION_QUALITY_LINE \
     -e AUDIT_PROOF_CURRENT_EXECUTION_LINE \
     -e AUDIT_PROOF_POST_SUPERVISOR_EXECUTION_LINE \
     -e AUDIT_DECISION_DRY_RUN_LINE \
@@ -161,6 +164,7 @@ PROOF_SECOND_STRATEGY_PROMOTION_ACTION_PREFIX = (
 )
 PROOF_SCORING_PREFIX = "paper proof scoring: "
 PROOF_SCENARIOS_PREFIX = "paper proof scenarios: "
+PROOF_EXECUTION_QUALITY_PREFIX = "paper proof execution quality: "
 PROOF_CURRENT_EXECUTION_PREFIX = "paper proof current-session execution: "
 PROOF_POST_SUPERVISOR_EXECUTION_PREFIX = "paper proof post-supervisor execution: "
 DECISION_DRY_RUN_PREFIX = "paper decision dry run ok: "
@@ -373,6 +377,59 @@ PROOF_SCENARIOS_FIELDS = {
     "active": "proof_scenario_active",
     "expected_session": "proof_scenario_expected_session",
     "problems": "proof_scenario_problems",
+}
+PROOF_EXECUTION_QUALITY_FIELDS = {
+    "status": "proof_execution_quality_status",
+    "warnings": "proof_execution_quality_warnings",
+    "evaluated": "proof_execution_quality_evaluated",
+    "signals": "proof_execution_quality_signals",
+    "accepted": "proof_execution_quality_accepted",
+    "accepted_for_fill": "proof_execution_quality_accepted_for_fill",
+    "capacity_rejected": "proof_execution_quality_capacity_rejected",
+    "capacity_reject_rate": "proof_execution_quality_capacity_reject_rate",
+    "max_capacity_reject_rate": "proof_execution_quality_max_capacity_reject_rate",
+    "entry_quality_rejected": "proof_execution_quality_entry_quality_rejected",
+    "vwap_rejected": "proof_execution_quality_vwap_rejected",
+    "sizing_rejected": "proof_execution_quality_sizing_rejected",
+    "entry_orders": "proof_execution_quality_entry_orders",
+    "filled": "proof_execution_quality_filled",
+    "canceled": "proof_execution_quality_canceled",
+    "expired": "proof_execution_quality_expired",
+    "rejected": "proof_execution_quality_rejected",
+    "active": "proof_execution_quality_active",
+    "maintenance_drained": "proof_execution_quality_maintenance_drained",
+    "short_window_drained": "proof_execution_quality_short_window_drained",
+    "entry_fill_rate_status": "proof_execution_quality_entry_fill_rate_status",
+    "entry_fill_rate": "proof_execution_quality_entry_fill_rate",
+    "min_entry_fill_rate": "proof_execution_quality_min_entry_fill_rate",
+    "current_posture_entry_orders": (
+        "proof_execution_quality_current_posture_entry_orders"
+    ),
+    "current_posture_filled": "proof_execution_quality_current_posture_filled",
+    "current_posture_entry_fill_rate": (
+        "proof_execution_quality_current_posture_entry_fill_rate"
+    ),
+    "current_posture_would_reject": (
+        "proof_execution_quality_current_posture_would_reject"
+    ),
+    "effective_entry_fill_rate": "proof_execution_quality_effective_entry_fill_rate",
+    "effective_entry_fill_rate_source": (
+        "proof_execution_quality_effective_entry_fill_rate_source"
+    ),
+    "accepted_to_fill_rate": "proof_execution_quality_accepted_to_fill_rate",
+    "filled_symbols": "proof_execution_quality_filled_symbols",
+    "expired_symbols": "proof_execution_quality_expired_symbols",
+    "expired_reasons": "proof_execution_quality_expired_reasons",
+    "expired_signal_price_posture": (
+        "proof_execution_quality_expired_signal_price_posture"
+    ),
+    "expired_next_bar_fill_causes": (
+        "proof_execution_quality_expired_next_bar_fill_causes"
+    ),
+    "entry_dispatch_delay": "proof_execution_quality_entry_dispatch_delay",
+    "current_posture_filled_symbols": (
+        "proof_execution_quality_current_posture_filled_symbols"
+    ),
 }
 PROOF_CURRENT_EXECUTION_FIELDS = {
     "session": "proof_current_execution_session",
@@ -620,6 +677,13 @@ try:
             os.environ.get("AUDIT_PROOF_SCENARIOS_LINE", ""),
             prefix=PROOF_SCENARIOS_PREFIX,
             field_map=PROOF_SCENARIOS_FIELDS,
+        )
+    )
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_PROOF_EXECUTION_QUALITY_LINE", ""),
+            prefix=PROOF_EXECUTION_QUALITY_PREFIX,
+            field_map=PROOF_EXECUTION_QUALITY_FIELDS,
         )
     )
     payload.update(

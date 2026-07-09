@@ -209,6 +209,14 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
             "proof_scenario_active": "980",
             "proof_scenario_expected_session": "2026-06-26",
             "proof_scenario_problems": "none",
+            "proof_execution_quality_status": "ok",
+            "proof_execution_quality_warnings": "historical_entry_fill_rate",
+            "proof_execution_quality_entry_fill_rate": "0.21",
+            "proof_execution_quality_effective_entry_fill_rate": "0.33",
+            "proof_execution_quality_capacity_reject_rate": "0.01",
+            "proof_execution_quality_entry_dispatch_delay": (
+                "count:14,late:1,max_s:710.5"
+            ),
             "proof_current_execution_status": "observing",
             "proof_current_execution_warnings": "none",
             "proof_current_execution_entry_fill_rate": "none",
@@ -357,6 +365,11 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     assert "Scenario Problems" in response.text
     assert "ok\n              980\n              @ 2026-06-26" in response.text
     assert "scenarios=ok:980@2026-06-26" in response.text
+    assert "Execution Quality" in response.text
+    assert "ok\n              warnings=historical_entry_fill_rate" in response.text
+    assert "fill=0.21" in response.text
+    assert "effective=0.33" in response.text
+    assert "delay=count:14,late:1,max_s:710.5" in response.text
     assert "Current Execution" in response.text
     assert "Post-Supervisor Execution" in response.text
     assert response.text.count('class="value mono ">\n              observing') == 2
@@ -373,6 +386,11 @@ def test_dashboard_route_renders_runtime_snapshot() -> None:
     )
     assert (
         "post_supervisor_exec=observing warnings=none since=2026-07-07T19:08:57+00:00"
+        in response.text
+    )
+    assert (
+        "exec_quality=ok warnings=historical_entry_fill_rate fill=0.21 "
+        "effective=0.33 delay=count:14,late:1,max_s:710.5"
         in response.text
     )
     assert "gap_trades=27" in response.text

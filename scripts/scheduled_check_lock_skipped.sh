@@ -846,6 +846,79 @@ age_minutes = str(max(0, int(age_seconds // 60)))
 payload = row[28] or {}
 if isinstance(payload, str):
     payload = json.loads(payload)
+execution_quality_fields = [
+    ("status", "proof_execution_quality_status"),
+    ("warnings", "proof_execution_quality_warnings"),
+    ("evaluated", "proof_execution_quality_evaluated"),
+    ("signals", "proof_execution_quality_signals"),
+    ("accepted", "proof_execution_quality_accepted"),
+    ("accepted_for_fill", "proof_execution_quality_accepted_for_fill"),
+    ("capacity_rejected", "proof_execution_quality_capacity_rejected"),
+    ("capacity_reject_rate", "proof_execution_quality_capacity_reject_rate"),
+    ("max_capacity_reject_rate", "proof_execution_quality_max_capacity_reject_rate"),
+    ("entry_quality_rejected", "proof_execution_quality_entry_quality_rejected"),
+    ("vwap_rejected", "proof_execution_quality_vwap_rejected"),
+    ("sizing_rejected", "proof_execution_quality_sizing_rejected"),
+    ("entry_orders", "proof_execution_quality_entry_orders"),
+    ("filled", "proof_execution_quality_filled"),
+    ("canceled", "proof_execution_quality_canceled"),
+    ("expired", "proof_execution_quality_expired"),
+    ("rejected", "proof_execution_quality_rejected"),
+    ("active", "proof_execution_quality_active"),
+    ("maintenance_drained", "proof_execution_quality_maintenance_drained"),
+    ("short_window_drained", "proof_execution_quality_short_window_drained"),
+    ("entry_fill_rate_status", "proof_execution_quality_entry_fill_rate_status"),
+    ("entry_fill_rate", "proof_execution_quality_entry_fill_rate"),
+    ("min_entry_fill_rate", "proof_execution_quality_min_entry_fill_rate"),
+    (
+        "current_posture_entry_orders",
+        "proof_execution_quality_current_posture_entry_orders",
+    ),
+    ("current_posture_filled", "proof_execution_quality_current_posture_filled"),
+    (
+        "current_posture_entry_fill_rate",
+        "proof_execution_quality_current_posture_entry_fill_rate",
+    ),
+    (
+        "current_posture_would_reject",
+        "proof_execution_quality_current_posture_would_reject",
+    ),
+    (
+        "effective_entry_fill_rate",
+        "proof_execution_quality_effective_entry_fill_rate",
+    ),
+    (
+        "effective_entry_fill_rate_source",
+        "proof_execution_quality_effective_entry_fill_rate_source",
+    ),
+    ("accepted_to_fill_rate", "proof_execution_quality_accepted_to_fill_rate"),
+    ("filled_symbols", "proof_execution_quality_filled_symbols"),
+    ("expired_symbols", "proof_execution_quality_expired_symbols"),
+    ("expired_reasons", "proof_execution_quality_expired_reasons"),
+    (
+        "expired_signal_price_posture",
+        "proof_execution_quality_expired_signal_price_posture",
+    ),
+    (
+        "expired_next_bar_fill_causes",
+        "proof_execution_quality_expired_next_bar_fill_causes",
+    ),
+    ("entry_dispatch_delay", "proof_execution_quality_entry_dispatch_delay"),
+    (
+        "current_posture_filled_symbols",
+        "proof_execution_quality_current_posture_filled_symbols",
+    ),
+]
+execution_quality_parts = [
+    f"{name}={payload[key]}"
+    for name, key in execution_quality_fields
+    if payload.get(key) not in {None, ""}
+]
+execution_quality_line = (
+    "paper proof execution quality: " + " ".join(execution_quality_parts)
+    if execution_quality_parts
+    else ""
+)
 post_supervisor_fields = [
     ("session", "proof_post_supervisor_execution_session"),
     ("since", "proof_post_supervisor_execution_since"),
@@ -1176,7 +1249,7 @@ print(
 	    f"{row[23]}|{row[24]}|{row[25]}|{row[27]}|"
 	    f"{age_minutes}|{post_supervisor_line}|{concentration_line}|{active_day_line}|"
 	    f"{strategy_diversification_line}|{second_strategy_promotion_action_line}|"
-	    f"{blocker_gaps_line}"
+	    f"{blocker_gaps_line}|{execution_quality_line}"
 	)
 PY
 )"
@@ -1573,7 +1646,8 @@ case "$CHECK_NAME" in
     latest_strategy_diversification_line=""
     latest_second_strategy_promotion_action_line=""
     latest_blocker_gaps_line=""
-    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line latest_concentration_line latest_active_day_line latest_strategy_diversification_line latest_second_strategy_promotion_action_line latest_blocker_gaps_line <<< "$latest_proof_status"
+    latest_execution_quality_line=""
+    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line latest_concentration_line latest_active_day_line latest_strategy_diversification_line latest_second_strategy_promotion_action_line latest_blocker_gaps_line latest_execution_quality_line <<< "$latest_proof_status"
     proof_lock_is_recent=false
     if [[ "$latest_age_minutes" =~ ^[0-9]+$ ]] \
       && (( 10#$latest_age_minutes <= 10#$PROOF_STATUS_LOCK_MAX_AGE_MINUTES )); then
@@ -1615,6 +1689,9 @@ case "$CHECK_NAME" in
       fi
       if [[ -n "$latest_scenario_status" ]]; then
         echo "paper proof scenarios: status=$latest_scenario_status active=${latest_scenario_active:-unknown} expected_session=${latest_scenario_expected_session:-unknown} problems=${latest_scenario_problems:-unknown}"
+      fi
+      if [[ -n "$latest_execution_quality_line" ]]; then
+        echo "$latest_execution_quality_line"
       fi
       if [[ -n "$latest_post_supervisor_execution_line" ]]; then
         echo "$latest_post_supervisor_execution_line"
