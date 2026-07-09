@@ -202,6 +202,7 @@ PROOF_CURRENT_EXECUTION_FIELDS = {
     "expired_next_bar_fill_causes": (
         "proof_current_execution_expired_next_bar_fill_causes"
     ),
+    "entry_dispatch_delay": "proof_current_execution_entry_dispatch_delay",
     "active_symbols": "proof_current_execution_active_symbols",
     "maintenance_drained_symbols": "proof_current_execution_maintenance_drained_symbols",
     "short_window_drained_symbols": "proof_current_execution_short_window_drained_symbols",
@@ -256,6 +257,9 @@ PROOF_POST_SUPERVISOR_EXECUTION_FIELDS = {
     ),
     "expired_next_bar_fill_causes": (
         "proof_post_supervisor_execution_expired_next_bar_fill_causes"
+    ),
+    "entry_dispatch_delay": (
+        "proof_post_supervisor_execution_entry_dispatch_delay"
     ),
     "active_symbols": "proof_post_supervisor_execution_active_symbols",
     "short_window": "proof_post_supervisor_execution_short_window",

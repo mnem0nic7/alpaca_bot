@@ -1136,6 +1136,129 @@ def load_expired_next_bar_fill_cause_summary(
     return format_expired_next_bar_fill_causes(counts)
 
 
+def format_entry_dispatch_delay_summary(
+    rows: list[tuple[object, object, object]],
+    *,
+    settings: Settings,
+) -> str:
+    delays: list[tuple[str, float]] = []
+    active_bar_offset_seconds = settings.entry_timeframe_minutes * 60
+    late_threshold_seconds = (
+        settings.entry_timeframe_minutes * settings.entry_order_active_bars * 60 * 0.5
+    )
+    for symbol, signal_timestamp, created_at in rows:
+        if not isinstance(signal_timestamp, datetime) or not isinstance(
+            created_at, datetime
+        ):
+            continue
+        active_bar_start = normalize_utc(signal_timestamp) + timedelta(
+            seconds=active_bar_offset_seconds
+        )
+        delay_seconds = (
+            normalize_utc(created_at) - active_bar_start
+        ).total_seconds()
+        delays.append((str(symbol), delay_seconds))
+    if not delays:
+        return "none"
+    values = sorted(delay for _, delay in delays)
+    midpoint = len(values) // 2
+    if len(values) % 2:
+        median = values[midpoint]
+    else:
+        median = (values[midpoint - 1] + values[midpoint]) / 2
+    avg = sum(values) / len(values)
+    late_symbols = sorted(
+        {
+            symbol
+            for symbol, delay in delays
+            if delay > late_threshold_seconds
+        }
+    )
+    late_symbols_text = ",".join(late_symbols) if late_symbols else "none"
+    return (
+        f"count:{len(delays)},"
+        f"late:{len(late_symbols)},"
+        f"max_s:{max(values):.1f},"
+        f"median_s:{median:.1f},"
+        f"avg_s:{avg:.1f},"
+        f"late_symbols:{late_symbols_text}"
+    )
+
+
+def load_entry_dispatch_delay_summary(
+    cur,
+    *,
+    trading_mode: str,
+    strategy_version: str,
+    strategy_names: list[str],
+    market_timezone: str,
+    settings: Settings,
+    proof_start: date | None = None,
+    proof_end: date | None = None,
+    session_date: date | None = None,
+    since: datetime | None = None,
+) -> str:
+    date_predicates: list[str] = []
+    params: list[object] = [trading_mode, strategy_version, strategy_names]
+    if session_date is not None:
+        date_predicates.append(
+            "AND DATE(COALESCE(o.signal_timestamp, o.created_at) AT TIME ZONE %s) = %s"
+        )
+        params.extend([market_timezone, session_date])
+    else:
+        if proof_start is None or proof_end is None:
+            return "none"
+        date_predicates.append(
+            "AND DATE(COALESCE(o.signal_timestamp, o.created_at) AT TIME ZONE %s) >= %s"
+        )
+        params.extend([market_timezone, proof_start])
+        date_predicates.append(
+            "AND DATE(COALESCE(o.signal_timestamp, o.created_at) AT TIME ZONE %s) <= %s"
+        )
+        params.extend([market_timezone, proof_end])
+    if since is not None:
+        date_predicates.append("AND o.created_at >= %s")
+        params.append(since)
+
+    cur.execute(
+        f"""
+        WITH entry_orders AS (
+          SELECT
+            o.symbol,
+            o.signal_timestamp,
+            o.created_at,
+            EXISTS (
+              SELECT 1
+              FROM audit_events a
+              WHERE a.event_type = 'entry_order_expired_next_bar'
+                AND a.payload->>'client_order_id' = o.client_order_id
+                AND COALESCE(a.payload->>'reason', '') LIKE 'deploy maintenance%%'
+            ) AS maintenance_drained,
+            EXISTS (
+              SELECT 1
+              FROM audit_events a
+              WHERE a.event_type = 'entry_order_expired_next_bar'
+                AND a.payload->>'client_order_id' = o.client_order_id
+                AND COALESCE(a.payload->>'reason', '') = 'short active dispatch window'
+            ) AS short_window_drained
+          FROM orders o
+          WHERE o.trading_mode = %s
+            AND o.strategy_version = %s
+            AND o.strategy_name = ANY(%s)
+            AND o.intent_type = 'entry'
+            {' '.join(date_predicates)}
+        )
+        SELECT symbol, signal_timestamp, created_at
+        FROM entry_orders
+        WHERE NOT maintenance_drained
+          AND NOT short_window_drained
+          AND signal_timestamp IS NOT NULL
+        """,
+        tuple(params),
+    )
+    return format_entry_dispatch_delay_summary(cur.fetchall(), settings=settings)
+
+
 def load_json_payload(path: Path) -> tuple[dict | None, str | None, str | None]:
     if not path.exists():
         return None, "missing", None
@@ -2857,6 +2980,7 @@ try:
         entry_order_expired_reasons = "none"
         entry_order_expired_signal_price_posture = "none"
         entry_order_expired_next_bar_fill_causes = "none"
+        entry_order_dispatch_delay_summary = "none"
         posture_entry_order_count = 0
         posture_entry_order_filled_count = 0
         posture_entry_quality_would_reject_count = 0
@@ -2880,6 +3004,7 @@ try:
         current_session_entry_order_expired_reasons = "none"
         current_session_entry_order_expired_signal_price_posture = "none"
         current_session_entry_order_expired_next_bar_fill_causes = "none"
+        current_session_entry_order_dispatch_delay_summary = "none"
         current_session_entry_order_active_symbols = "none"
         current_session_entry_order_maintenance_drained_symbols = "none"
         current_session_entry_order_short_window_drained_symbols = "none"
@@ -2904,6 +3029,7 @@ try:
         post_supervisor_entry_order_expired_reasons = "none"
         post_supervisor_entry_order_expired_signal_price_posture = "none"
         post_supervisor_entry_order_expired_next_bar_fill_causes = "none"
+        post_supervisor_entry_order_dispatch_delay_summary = "none"
         post_supervisor_entry_order_active_symbols = "none"
         post_supervisor_entry_order_short_window_count = 0
         post_supervisor_entry_order_min_remaining_active_minutes = None
@@ -3201,6 +3327,18 @@ try:
                         scenario_dir=scenario_dir,
                         settings=settings,
                         scenario_cache=scenario_bar_cache,
+                    )
+                )
+                entry_order_dispatch_delay_summary = (
+                    load_entry_dispatch_delay_summary(
+                        cur,
+                        trading_mode=trading_mode.value,
+                        strategy_version=strategy_version,
+                        strategy_names=proof_strategy_names,
+                        market_timezone=market_timezone,
+                        proof_start=proof_start,
+                        proof_end=proof_end,
+                        settings=settings,
                     )
                 )
 
@@ -3705,6 +3843,17 @@ try:
                         scenario_cache=scenario_bar_cache,
                     )
                 )
+                current_session_entry_order_dispatch_delay_summary = (
+                    load_entry_dispatch_delay_summary(
+                        cur,
+                        trading_mode=trading_mode.value,
+                        strategy_version=strategy_version,
+                        strategy_names=proof_strategy_names,
+                        market_timezone=market_timezone,
+                        session_date=current_market_date,
+                        settings=settings,
+                    )
+                )
 
             if (
                 latest_supervisor_started_at is not None
@@ -4077,6 +4226,18 @@ try:
                             scenario_dir=scenario_dir,
                             settings=settings,
                             scenario_cache=scenario_bar_cache,
+                        )
+                    )
+                    post_supervisor_entry_order_dispatch_delay_summary = (
+                        load_entry_dispatch_delay_summary(
+                            cur,
+                            trading_mode=trading_mode.value,
+                            strategy_version=strategy_version,
+                            strategy_names=proof_strategy_names,
+                            market_timezone=market_timezone,
+                            session_date=current_market_date,
+                            since=post_supervisor_execution_since,
+                            settings=settings,
                         )
                     )
 
@@ -6518,6 +6679,7 @@ print(
     f"expired_reasons={entry_order_expired_reasons} "
     f"expired_signal_price_posture={entry_order_expired_signal_price_posture} "
     f"expired_next_bar_fill_causes={entry_order_expired_next_bar_fill_causes} "
+    f"entry_dispatch_delay={entry_order_dispatch_delay_summary} "
     f"current_posture_filled_symbols={posture_entry_order_filled_symbols}"
 )
 print(
@@ -6552,6 +6714,7 @@ print(
     f"expired_reasons={current_session_entry_order_expired_reasons} "
     f"expired_signal_price_posture={current_session_entry_order_expired_signal_price_posture} "
     f"expired_next_bar_fill_causes={current_session_entry_order_expired_next_bar_fill_causes} "
+    f"entry_dispatch_delay={current_session_entry_order_dispatch_delay_summary} "
     f"active_symbols={current_session_entry_order_active_symbols} "
     f"maintenance_drained_symbols={current_session_entry_order_maintenance_drained_symbols} "
     f"short_window_drained_symbols={current_session_entry_order_short_window_drained_symbols} "
@@ -6590,6 +6753,7 @@ print(
     f"expired_reasons={post_supervisor_entry_order_expired_reasons} "
     f"expired_signal_price_posture={post_supervisor_entry_order_expired_signal_price_posture} "
     f"expired_next_bar_fill_causes={post_supervisor_entry_order_expired_next_bar_fill_causes} "
+    f"entry_dispatch_delay={post_supervisor_entry_order_dispatch_delay_summary} "
     f"active_symbols={post_supervisor_entry_order_active_symbols} "
     f"short_window={post_supervisor_entry_order_short_window_count} "
     f"min_remaining_active_minutes={post_supervisor_entry_order_min_remaining_active_minutes_text} "

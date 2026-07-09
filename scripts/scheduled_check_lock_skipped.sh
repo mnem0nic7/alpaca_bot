@@ -893,6 +893,10 @@ post_supervisor_fields = [
         "expired_next_bar_fill_causes",
         "proof_post_supervisor_execution_expired_next_bar_fill_causes",
     ),
+    (
+        "entry_dispatch_delay",
+        "proof_post_supervisor_execution_entry_dispatch_delay",
+    ),
     ("active_symbols", "proof_post_supervisor_execution_active_symbols"),
     ("short_window", "proof_post_supervisor_execution_short_window"),
     (
