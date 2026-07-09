@@ -143,3 +143,47 @@ Conclusion: stop pursuing this combined K=5 relaxed-filter candidate for paper
 promotion. It improved the proof-horizon table, but it did not improve direct
 edge on the 240-scenario prefilter and had a worse OOS lower bound than
 baseline. The next throughput fix needs to come from a different lever.
+
+## Current-Giveback Capacity Prefilter
+
+The July 7 capacity reduction was audited before the later paper promotion of
+`ENABLE_GIVEBACK_EXIT=true`. Because the live posture now includes giveback
+exits, capacity was retested under the current settings to check whether K=2 or
+K=3 had become a quality-preserving throughput lever.
+
+Command:
+
+```bash
+set -a
+. /etc/alpaca_bot/alpaca-bot.env
+set +a
+alpaca-bot-backtest portfolio-audit \
+  --scenario-dir /var/lib/alpaca-bot/nightly/scenarios \
+  --strategy bull_flag \
+  --sample-size 160 \
+  --sample-seed bull-flag-current-giveback-capacity-prefilter-20260709 \
+  --slippage-bps 2 \
+  --max-open-positions 1 \
+  --max-open-positions 2 \
+  --max-open-positions 3 \
+  --max-open-positions 4 \
+  --max-open-positions 5 \
+  --output /tmp/bull_flag_current_giveback_capacity_prefilter_160.md \
+  --jsonl /tmp/bull_flag_current_giveback_capacity_prefilter_160.jsonl
+```
+
+Result:
+
+| K | trades | win rate | profit factor | total P&L | mean/trade | ann. Sharpe | 95% CI mean/trade | p(mean<=0) | verdict |
+|---:|---:|---:|---:|---:|---:|---:|---|---:|---|
+| 1 | 81 | 43.2% | 1.71 | `$101.20` | 1.2494 | 2.62 | [-0.3455, 3.2565] | 0.0735 | `no-evidence` |
+| 2 | 90 | 41.1% | 1.36 | `$65.46` | 0.7273 | 1.61 | [-0.8402, 2.5617] | 0.2075 | `no-evidence` |
+| 3 | 90 | 41.1% | 1.47 | `$78.40` | 0.8711 | 1.91 | [-0.6370, 2.5495] | 0.1490 | `no-evidence` |
+| 4 | 88 | 40.9% | 1.45 | `$75.75` | 0.8608 | 1.86 | [-0.6719, 2.6943] | 0.1500 | `no-evidence` |
+| 5 | 87 | 41.4% | 1.47 | `$77.76` | 0.8938 | 1.90 | [-0.6917, 2.6459] | 0.1515 | `no-evidence` |
+
+Conclusion: do not raise `MAX_OPEN_POSITIONS` under the current giveback
+posture. Higher K added at most 9 trades on this sample and weakened profit
+factor, total P&L, mean/trade, Sharpe, and the bootstrap CI lower bound versus
+live K=1. Throughput remains constrained by signal quality and proof time, not
+by a capacity lever that can be safely widened from this evidence.
