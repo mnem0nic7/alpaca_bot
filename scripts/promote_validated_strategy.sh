@@ -255,6 +255,11 @@ read_env_value() {
   ' "$ENV_FILE"
 }
 
+env_key_exists() {
+  local key="$1"
+  grep -Eq "^[[:space:]]*$key[[:space:]]*=" "$ENV_FILE"
+}
+
 csv_contains() {
   local csv="$1"
   local needle="$2"
@@ -311,6 +316,23 @@ update_env_value() {
     return 1
   fi
   mv "$tmp" "$ENV_FILE"
+}
+
+update_strategy_scope_value() {
+  local key="$1"
+  local current
+  local updated
+
+  env_key_exists "$key" || return 0
+  current="$(read_env_value "$key")"
+  updated="$(append_csv_name "$current" "$VALIDATED_STRATEGY")"
+  if [[ "$updated" != "$current" ]]; then
+    restore_env_on_error=true
+    update_env_value "$key" "$updated"
+    echo "$LOG_PREFIX $key: ${current:-none} -> $updated"
+  else
+    echo "$LOG_PREFIX $key already includes $VALIDATED_STRATEGY"
+  fi
 }
 
 write_approval_marker() {
@@ -413,6 +435,18 @@ if [[ "$new_approved" != "$current_approved" ]]; then
 else
   echo "$LOG_PREFIX PAPER_APPROVED_STRATEGIES already includes $VALIDATED_STRATEGY"
 fi
+
+for scoped_strategy_key in \
+  PROFIT_PROBE_STRATEGIES \
+  PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES \
+  PAPER_READINESS_EXPECT_ENABLED_STRATEGIES \
+  PAPER_ACTIVITY_STRATEGIES \
+  SESSION_GUARD_STRATEGIES \
+  PROOF_STATUS_APPROVED_STRATEGIES \
+  DEPLOY_EXPECT_ENABLED_STRATEGIES \
+  DEPLOY_DECISION_DRY_RUN_STRATEGIES; do
+  update_strategy_scope_value "$scoped_strategy_key"
+done
 
 if ! "${compose[@]}" run -T --rm admin \
   enable-strategy "$VALIDATED_STRATEGY" \

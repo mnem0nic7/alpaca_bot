@@ -10,7 +10,12 @@ from pathlib import Path
 SCRIPT = Path(__file__).parent.parent.parent / "scripts" / "promote_validated_strategy.sh"
 
 
-def _write_env(path: Path, approved: str = "bull_flag") -> None:
+def _write_env(
+    path: Path,
+    approved: str = "bull_flag",
+    *,
+    extra_lines: list[str] | None = None,
+) -> None:
     path.write_text(
         "\n".join(
             [
@@ -18,6 +23,7 @@ def _write_env(path: Path, approved: str = "bull_flag") -> None:
                 "STRATEGY_VERSION=v1-breakout",
                 "PAPER_PROOF_FREEZE=true",
                 f"PAPER_APPROVED_STRATEGIES={approved}",
+                *(extra_lines or []),
                 "",
             ]
         )
@@ -243,7 +249,17 @@ def test_promote_validated_strategy_rejects_weak_candidate_evidence(tmp_path: Pa
 def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     evidence_root = tmp_path / "evidence"
-    _write_env(env_file)
+    scoped_strategy_lines = [
+        "PROFIT_PROBE_STRATEGIES=bull_flag",
+        "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES=bull_flag",
+        "PAPER_READINESS_EXPECT_ENABLED_STRATEGIES=bull_flag",
+        "PAPER_ACTIVITY_STRATEGIES=bull_flag",
+        "SESSION_GUARD_STRATEGIES=bull_flag",
+        "PROOF_STATUS_APPROVED_STRATEGIES=bull_flag",
+        "DEPLOY_EXPECT_ENABLED_STRATEGIES=bull_flag",
+        "DEPLOY_DECISION_DRY_RUN_STRATEGIES=bull_flag",
+    ]
+    _write_env(env_file, extra_lines=scoped_strategy_lines)
     _write_summary(evidence_root)
     deploy_script = _make_fake_deploy(tmp_path)
 
@@ -256,7 +272,19 @@ def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_pa
     )
 
     assert result.returncode == 0, result.stderr
-    assert "PAPER_APPROVED_STRATEGIES=bull_flag,ema_pullback" in env_file.read_text()
+    env_text = env_file.read_text()
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag,ema_pullback" in env_text
+    for key in [
+        "PROFIT_PROBE_STRATEGIES",
+        "PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES",
+        "PAPER_READINESS_EXPECT_ENABLED_STRATEGIES",
+        "PAPER_ACTIVITY_STRATEGIES",
+        "SESSION_GUARD_STRATEGIES",
+        "PROOF_STATUS_APPROVED_STRATEGIES",
+        "DEPLOY_EXPECT_ENABLED_STRATEGIES",
+        "DEPLOY_DECISION_DRY_RUN_STRATEGIES",
+    ]:
+        assert f"{key}=bull_flag,ema_pullback" in env_text
     assert "--entrypoint python admin" in (tmp_path / "docker_calls").read_text()
     assert "enable-strategy ema_pullback --mode paper --strategy-version v1-breakout" in (
         tmp_path / "docker_calls"
@@ -327,7 +355,13 @@ def test_promote_validated_strategy_selects_best_passing_row(tmp_path: Path) -> 
 def test_promote_validated_strategy_rolls_back_when_deploy_fails(tmp_path: Path) -> None:
     env_file = tmp_path / "alpaca-bot.env"
     evidence_root = tmp_path / "evidence"
-    _write_env(env_file)
+    _write_env(
+        env_file,
+        extra_lines=[
+            "PROFIT_PROBE_STRATEGIES=bull_flag",
+            "PAPER_ACTIVITY_STRATEGIES=bull_flag",
+        ],
+    )
     _write_summary(evidence_root)
     deploy_script = _make_fake_deploy(tmp_path, exit_code=42)
 
@@ -341,7 +375,10 @@ def test_promote_validated_strategy_rolls_back_when_deploy_fails(tmp_path: Path)
 
     assert result.returncode == 1
     assert "deploy failed; rolling back env allowlist and strategy flag" in result.stderr
-    assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
+    env_text = env_file.read_text()
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_text
+    assert "PROFIT_PROBE_STRATEGIES=bull_flag\n" in env_text
+    assert "PAPER_ACTIVITY_STRATEGIES=bull_flag\n" in env_text
     assert not (evidence_root / "promotion_approval.json").exists()
     docker_calls = (tmp_path / "docker_calls").read_text()
     assert "enable-strategy ema_pullback --mode paper --strategy-version v1-breakout" in docker_calls
