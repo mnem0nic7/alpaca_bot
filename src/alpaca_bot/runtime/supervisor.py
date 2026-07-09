@@ -186,6 +186,9 @@ class SupervisorCycleReport:
     entries_disabled_reasons: tuple[str, ...] = ()
     blocked_strategy_names: tuple[str, ...] = ()
     strategy_entries_disabled_reasons: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    latest_completed_entry_bar_at: datetime | None = None
+    entry_cadence_disabled: bool = False
+    entry_cadence_used: bool = False
 
 
 @dataclass(frozen=True)
@@ -838,6 +841,12 @@ class RuntimeSupervisor:
             completed_intraday_bars_by_symbol
         )
         previous_entry_bar_at = self._last_entry_enabled_bar_at.get(session_date)
+        if previous_entry_bar_at is None:
+            previous_entry_bar_at = self._load_persisted_entry_cadence_bar(
+                session_date=session_date,
+            )
+            if previous_entry_bar_at is not None:
+                self._last_entry_enabled_bar_at[session_date] = previous_entry_bar_at
         entry_cadence_disabled = (
             latest_completed_entry_bar_at is not None
             and previous_entry_bar_at is not None
@@ -1312,6 +1321,9 @@ class RuntimeSupervisor:
                 entries_disabled_reasons=tuple(entries_disabled_reasons),
                 blocked_strategy_names=tuple(sorted(entries_disabled_strategies)),
                 strategy_entries_disabled_reasons=strategy_entries_disabled_reasons,
+                latest_completed_entry_bar_at=latest_completed_entry_bar_at,
+                entry_cadence_disabled=entry_cadence_disabled,
+                entry_cadence_used=entry_cadence_used,
             )
         if entries_disabled:
             dispatch_kwargs["allowed_intent_types"] = {"stop", "exit"}
@@ -1388,6 +1400,9 @@ class RuntimeSupervisor:
             entries_disabled_reasons=tuple(entries_disabled_reasons),
             blocked_strategy_names=tuple(sorted(entries_disabled_strategies)),
             strategy_entries_disabled_reasons=strategy_entries_disabled_reasons,
+            latest_completed_entry_bar_at=latest_completed_entry_bar_at,
+            entry_cadence_disabled=entry_cadence_disabled,
+            entry_cadence_used=entry_cadence_used,
         )
 
     def close(self) -> None:
@@ -1587,12 +1602,18 @@ class RuntimeSupervisor:
                     strategy_disabled_reasons = getattr(
                         cycle_report, "strategy_entries_disabled_reasons", {}
                     )
+                    latest_completed_entry_bar_at = getattr(
+                        cycle_report,
+                        "latest_completed_entry_bar_at",
+                        None,
+                    )
                     self._append_audit(
                         AuditEvent(
                             event_type="supervisor_cycle",
                             payload={
                                 "trading_mode": self.settings.trading_mode.value,
                                 "strategy_version": self.settings.strategy_version,
+                                "session_date": session_date.isoformat(),
                                 "entries_disabled": cycle_report.entries_disabled,
                                 "entries_disabled_reasons": list(entries_disabled_reasons),
                                 "blocked_strategy_names": list(blocked_strategy_names),
@@ -1600,6 +1621,21 @@ class RuntimeSupervisor:
                                     name: list(reasons)
                                     for name, reasons in strategy_disabled_reasons.items()
                                 },
+                                "latest_completed_entry_bar_at": (
+                                    latest_completed_entry_bar_at.isoformat()
+                                    if latest_completed_entry_bar_at is not None
+                                    else None
+                                ),
+                                "entry_cadence_disabled": bool(
+                                    getattr(
+                                        cycle_report,
+                                        "entry_cadence_disabled",
+                                        False,
+                                    )
+                                ),
+                                "entry_cadence_used": bool(
+                                    getattr(cycle_report, "entry_cadence_used", False)
+                                ),
                                 "timestamp": timestamp.isoformat(),
                                 "account_equity": cycle_report.account_equity,
                             },
@@ -2582,6 +2618,99 @@ class RuntimeSupervisor:
         except Exception:
             logger.exception("Notifier failed to send option dispatch failure alert")
 
+    def _load_persisted_entry_cadence_bar(
+        self, *, session_date: date
+    ) -> datetime | None:
+        candidates: list[datetime] = []
+        store_lock = getattr(self.runtime, "store_lock", None)
+
+        order_store = getattr(self.runtime, "order_store", None)
+        latest_entry_loader = getattr(
+            order_store,
+            "latest_entry_signal_timestamp",
+            None,
+        )
+        if callable(latest_entry_loader):
+            try:
+                with store_lock if store_lock is not None else contextlib.nullcontext():
+                    latest_entry_bar = latest_entry_loader(
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                        session_date=session_date,
+                        market_timezone=str(self.settings.market_timezone),
+                    )
+                if isinstance(latest_entry_bar, datetime):
+                    candidates.append(_normalize_utc(latest_entry_bar))
+            except Exception:
+                logger.exception(
+                    "Failed to load persisted entry cadence from orders; "
+                    "falling back to in-memory cadence"
+                )
+
+        audit_store = getattr(self.runtime, "audit_event_store", None)
+        latest_cadence_loader = getattr(
+            audit_store,
+            "load_latest_entry_cadence_marker",
+            None,
+        )
+        if callable(latest_cadence_loader):
+            try:
+                with store_lock if store_lock is not None else contextlib.nullcontext():
+                    event = latest_cadence_loader(
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                        session_date=session_date,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to load persisted entry cadence marker; "
+                    "falling back to order-derived cadence"
+                )
+            else:
+                payload = getattr(event, "payload", {}) if event is not None else {}
+                raw_bar = (payload or {}).get("latest_completed_entry_bar_at")
+                parsed_bar = _parse_datetime(raw_bar)
+                if parsed_bar is not None:
+                    candidates.append(_normalize_utc(parsed_bar))
+
+        list_events = getattr(audit_store, "list_by_event_types", None)
+        if not callable(latest_cadence_loader) and callable(list_events):
+            session_start = datetime.combine(
+                session_date,
+                datetime.min.time(),
+                tzinfo=self.settings.market_timezone,
+            ).astimezone(timezone.utc)
+            try:
+                with store_lock if store_lock is not None else contextlib.nullcontext():
+                    events = list_events(
+                        event_types=["supervisor_cycle"],
+                        limit=200,
+                        since=session_start,
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to load persisted entry cadence from audit events; "
+                    "falling back to order-derived cadence"
+                )
+            else:
+                expected_session = session_date.isoformat()
+                for event in events:
+                    payload = getattr(event, "payload", {}) or {}
+                    if payload.get("session_date") != expected_session:
+                        continue
+                    if payload.get("entry_cadence_used") is not True:
+                        continue
+                    raw_bar = payload.get("latest_completed_entry_bar_at")
+                    parsed_bar = _parse_datetime(raw_bar)
+                    if parsed_bar is not None:
+                        candidates.append(_normalize_utc(parsed_bar))
+
+        if not candidates:
+            return None
+        return max(candidates)
+
     def _effective_trading_status(
         self,
         *,
@@ -3296,6 +3425,23 @@ class RuntimeSupervisor:
 
 
 TraderSupervisor = RuntimeSupervisor
+
+
+def _normalize_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _resolve_now(now: Callable[[], datetime] | None) -> datetime:

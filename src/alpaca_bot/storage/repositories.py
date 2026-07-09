@@ -225,6 +225,44 @@ class AuditEventStore:
             created_at=row[3],
         )
 
+    def load_latest_entry_cadence_marker(
+        self,
+        *,
+        trading_mode: TradingMode | str,
+        strategy_version: str,
+        session_date: date | str,
+    ) -> AuditEvent | None:
+        mode_value = (
+            trading_mode.value if isinstance(trading_mode, TradingMode) else trading_mode
+        )
+        session_value = (
+            session_date.isoformat() if isinstance(session_date, date) else session_date
+        )
+        row = fetch_one(
+            self._connection,
+            """
+            SELECT event_type, symbol, payload, created_at
+            FROM audit_events
+            WHERE event_type = 'supervisor_cycle'
+              AND payload->>'trading_mode' = %s
+              AND payload->>'strategy_version' = %s
+              AND payload->>'session_date' = %s
+              AND payload->>'entry_cadence_used' = 'true'
+              AND payload ? 'latest_completed_entry_bar_at'
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (mode_value, strategy_version, session_value),
+        )
+        if row is None:
+            return None
+        return AuditEvent(
+            event_type=row[0],
+            symbol=row[1],
+            payload=_load_json_payload(row[2]),
+            created_at=row[3],
+        )
+
     def list_by_event_types(
         self,
         *,
@@ -493,6 +531,36 @@ class OrderStore:
             statuses=["pending_submit"],
             strategy_name=strategy_name,
         )
+
+    def latest_entry_signal_timestamp(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        session_date: date,
+        market_timezone: str = "America/New_York",
+    ) -> datetime | None:
+        row = fetch_one(
+            self._connection,
+            """
+            SELECT MAX(signal_timestamp)
+            FROM orders
+            WHERE trading_mode = %s
+              AND strategy_version = %s
+              AND intent_type = 'entry'
+              AND signal_timestamp IS NOT NULL
+              AND DATE(signal_timestamp AT TIME ZONE %s) = %s
+            """,
+            (
+                trading_mode.value,
+                strategy_version,
+                market_timezone,
+                session_date,
+            ),
+        )
+        if row is None or row[0] is None:
+            return None
+        return row[0]
 
     def list_recent(
         self,

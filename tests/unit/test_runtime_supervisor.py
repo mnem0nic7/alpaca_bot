@@ -127,6 +127,7 @@ class RecordingAuditEventStore:
         self.appended: list[object] = []
         self.events = list(events or [])
         self.list_by_event_types_calls: list[dict[str, object]] = []
+        self.latest_entry_cadence_marker_calls: list[dict[str, object]] = []
 
     def append(self, event: object, *, commit: bool = True) -> None:
         self.appended.append(event)
@@ -175,6 +176,39 @@ class RecordingAuditEventStore:
             filtered.append(event)
         filtered.sort(key=lambda event: event.created_at, reverse=True)
         return filtered[offset: offset + limit]
+
+    def load_latest_entry_cadence_marker(
+        self,
+        *,
+        trading_mode: TradingMode | str,
+        strategy_version: str,
+        session_date: date | str,
+    ) -> AuditEvent | None:
+        self.latest_entry_cadence_marker_calls.append(
+            {
+                "trading_mode": trading_mode,
+                "strategy_version": strategy_version,
+                "session_date": session_date,
+            }
+        )
+        mode_value = (
+            trading_mode.value if isinstance(trading_mode, TradingMode) else trading_mode
+        )
+        session_value = (
+            session_date.isoformat() if isinstance(session_date, date) else session_date
+        )
+        matches = [
+            event
+            for event in self.events
+            if event.event_type == "supervisor_cycle"
+            and event.payload.get("trading_mode") == mode_value
+            and event.payload.get("strategy_version") == strategy_version
+            and event.payload.get("session_date") == session_value
+            and event.payload.get("entry_cadence_used") is True
+            and event.payload.get("latest_completed_entry_bar_at")
+        ]
+        matches.sort(key=lambda event: event.created_at, reverse=True)
+        return matches[0] if matches else None
 
 
 class DirectLookupAuditEventStore:
@@ -225,6 +259,9 @@ class DirectLookupAuditEventStore:
         )
         return self.supervisor_started_event
 
+    def load_latest_entry_cadence_marker(self, **_kwargs: object) -> None:
+        return None
+
     def list_by_event_types(self, **_kwargs: object) -> list[AuditEvent]:
         raise AssertionError("supervisor should use direct audit lookups")
 
@@ -263,11 +300,14 @@ class RecordingOrderStore:
         existing_orders: list[OrderRecord] | None = None,
         *,
         daily_pnl: float = 0.0,
+        latest_entry_signal_timestamp: datetime | None = None,
     ) -> None:
         self.existing_orders = list(existing_orders or [])
         self.saved: list[object] = []
         self.list_by_status_calls: list[dict[str, object]] = []
+        self.latest_entry_signal_timestamp_calls: list[dict[str, object]] = []
         self._daily_pnl = daily_pnl
+        self._latest_entry_signal_timestamp = latest_entry_signal_timestamp
 
     def save(self, order: object, *, commit: bool = True) -> None:
         self.saved.append(order)
@@ -306,6 +346,24 @@ class RecordingOrderStore:
             strategy_version=strategy_version,
             statuses=["pending_submit"],
         )
+
+    def latest_entry_signal_timestamp(
+        self,
+        *,
+        trading_mode: TradingMode,
+        strategy_version: str,
+        session_date: date,
+        market_timezone: str = "America/New_York",
+    ) -> datetime | None:
+        self.latest_entry_signal_timestamp_calls.append(
+            {
+                "trading_mode": trading_mode,
+                "strategy_version": strategy_version,
+                "session_date": session_date,
+                "market_timezone": market_timezone,
+            }
+        )
+        return self._latest_entry_signal_timestamp
 
     def daily_realized_pnl(
         self,
@@ -1265,6 +1323,131 @@ def test_runtime_supervisor_only_enables_new_entries_once_per_completed_signal_b
     assert reopened_report.strategy_entries_disabled_reasons == {}
     assert "allowed_intent_types" not in dispatch_calls[1]
     assert dispatch_calls[1]["blocked_strategy_names"] == set()
+
+
+def test_runtime_supervisor_restores_entry_cadence_from_existing_entry_orders(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    latest_completed_bar = now - timedelta(minutes=settings.entry_timeframe_minutes)
+    order_store = RecordingOrderStore(
+        latest_entry_signal_timestamp=latest_completed_bar,
+    )
+    runtime = make_runtime_context(settings, order_store=order_store)
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=21),
+            "MSFT": make_bar_series("MSFT", end=now, count=21),
+            "SPY": make_bar_series("SPY", end=now, count=21),
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=20, days=True),
+            "MSFT": make_bar_series("MSFT", end=now, count=20, days=True),
+            "SPY": make_bar_series("SPY", end=now, count=20, days=True),
+        },
+    )
+    cycle_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: cycle_calls.append(kwargs) or SimpleNamespace(intents=[]),
+    )
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **_: {"submitted_count": 0})
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    assert order_store.latest_entry_signal_timestamp_calls
+    assert cycle_calls
+    assert all(call["entries_disabled"] is True for call in cycle_calls)
+    assert report.entry_cadence_disabled is True
+    assert report.entry_cadence_used is False
+    assert all(
+        module.ENTRY_CADENCE_DISABLED_REASON
+        in report.strategy_entries_disabled_reasons[call["strategy_name"]]
+        for call in cycle_calls
+    )
+
+
+def test_runtime_supervisor_restores_entry_cadence_from_audit_marker(
+    monkeypatch,
+) -> None:
+    module, RuntimeSupervisor, _SupervisorCycleReport = load_supervisor_api()
+    settings = make_settings()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    latest_completed_bar = now - timedelta(minutes=settings.entry_timeframe_minutes)
+    audit_store = RecordingAuditEventStore(
+        events=[
+            AuditEvent(
+                event_type="supervisor_cycle",
+                payload={
+                    "trading_mode": "paper",
+                    "strategy_version": "v1-breakout",
+                    "session_date": "2026-04-24",
+                    "latest_completed_entry_bar_at": latest_completed_bar.isoformat(),
+                    "entry_cadence_used": True,
+                },
+                created_at=now - timedelta(minutes=5),
+            )
+        ]
+    )
+    runtime = make_runtime_context(
+        settings,
+        audit_event_store=audit_store,
+        order_store=RecordingOrderStore(),
+    )
+    broker = FakeBroker()
+    market_data = FakeMarketData(
+        intraday_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=21),
+            "MSFT": make_bar_series("MSFT", end=now, count=21),
+            "SPY": make_bar_series("SPY", end=now, count=21),
+        },
+        daily_bars_by_symbol={
+            "AAPL": make_bar_series("AAPL", end=now, count=20, days=True),
+            "MSFT": make_bar_series("MSFT", end=now, count=20, days=True),
+            "SPY": make_bar_series("SPY", end=now, count=20, days=True),
+        },
+    )
+    cycle_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        module,
+        "run_cycle",
+        lambda **kwargs: cycle_calls.append(kwargs) or SimpleNamespace(intents=[]),
+    )
+    monkeypatch.setattr(module, "dispatch_pending_orders", lambda **_: {"submitted_count": 0})
+
+    supervisor = RuntimeSupervisor(
+        settings=settings,
+        runtime=runtime,
+        broker=broker,
+        market_data=market_data,
+        stream=FakeStream(),
+        close_runtime_fn=lambda _runtime: None,
+        connection_checker=lambda _conn: True,
+    )
+
+    report = supervisor.run_cycle_once(now=lambda: now)
+
+    assert audit_store.latest_entry_cadence_marker_calls
+    assert cycle_calls
+    assert all(call["entries_disabled"] is True for call in cycle_calls)
+    assert report.entry_cadence_disabled is True
+    assert report.entry_cadence_used is False
 
 
 def test_run_cycle_once_continues_when_closed_order_lookup_fails(monkeypatch) -> None:
@@ -2530,6 +2713,7 @@ def test_runtime_supervisor_run_forever_runs_cycle_when_market_is_open_and_audit
     assert runtime.audit_event_store.appended[-2].event_type == "supervisor_cycle"
     assert runtime.audit_event_store.appended[-2].payload["trading_mode"] == "paper"
     assert runtime.audit_event_store.appended[-2].payload["strategy_version"] == "v1-breakout"
+    assert runtime.audit_event_store.appended[-2].payload["session_date"] == "2026-04-24"
     assert runtime.audit_event_store.appended[-2].payload["entries_disabled"] is True
     assert runtime.audit_event_store.appended[-2].payload["entries_disabled_reasons"] == [
         "test_reason"
@@ -2540,6 +2724,12 @@ def test_runtime_supervisor_run_forever_runs_cycle_when_market_is_open_and_audit
     assert runtime.audit_event_store.appended[-2].payload["strategy_entries_disabled_reasons"] == {
         "bull_flag": ["test_reason"]
     }
+    assert (
+        runtime.audit_event_store.appended[-2].payload["latest_completed_entry_bar_at"]
+        is None
+    )
+    assert runtime.audit_event_store.appended[-2].payload["entry_cadence_disabled"] is False
+    assert runtime.audit_event_store.appended[-2].payload["entry_cadence_used"] is False
     assert runtime.audit_event_store.appended[-1].event_type == "supervisor_exited"
 
 
