@@ -333,6 +333,7 @@
       {% set proof_has_active_day_detail_fields = proof_payload.get("proof_active_day_status") or proof_payload.get("proof_active_day_next_possible_session") or proof_payload.get("proof_earliest_active_days_met_session") %}
       {% set proof_has_concentration_detail_fields = proof_payload.get("proof_concentration_status") or proof_payload.get("proof_concentration_best_winning_trade") or proof_payload.get("proof_concentration_single_win_pnl_share") %}
       {% set proof_has_promotion_fields = proof_payload.get("proof_strategy_diversification_candidate_status") or proof_payload.get("proof_second_strategy_promotion_action_status") %}
+      {% set proof_has_nightly_fields = proof_payload.get("proof_nightly_status") or proof_payload.get("proof_second_strategy_scan_status") %}
       <div class="panel" style="margin-bottom: 1rem;">
         <h2>Paper Proof</h2>
         <div class="status-grid">
@@ -372,6 +373,17 @@
             <p class="eyebrow">Sealed Evidence</p>
             <p class="value mono {{ 'warn' if proof_sealed_evidence_blockers != 'none' else '' }}">{{ proof_sealed_evidence_blockers }}</p>
           </div>
+          {% if proof_has_nightly_fields %}
+          <div>
+            <p class="eyebrow">Nightly Automation</p>
+            <p class="value mono {{ 'warn' if proof_payload.get('proof_nightly_status', 'unknown') not in ['idle', 'unknown'] or proof_payload.get('proof_second_strategy_scan_status', 'unknown') not in ['ok', 'unknown'] else '' }}">
+              {{ proof_payload.get("proof_nightly_status", "unknown") }}
+              scan={{ proof_payload.get("proof_second_strategy_scan_status", "unknown") }}
+              log_age={{ proof_payload.get("proof_nightly_log_age_minutes", "unknown") }}/{{ proof_payload.get("proof_nightly_max_age_minutes", "?") }}
+              stage={{ proof_payload.get("proof_nightly_stage", "unknown") }}
+            </p>
+          </div>
+          {% endif %}
           {% if proof_has_gap_fields %}
           <div>
             <p class="eyebrow">Trades Remaining</p>
@@ -560,6 +572,10 @@
                     {% if event.payload.get("proof_status") %} proof_status={{ event.payload.get("proof_status") }}{% endif %}
                     {% if event.payload.get("proof_overall_reason") %} overall_reason={{ event.payload.get("proof_overall_reason") }}{% endif %}
                     {% if event.payload.get("proof_blockers") %} blockers={{ event.payload.get("proof_blockers") }}{% endif %}
+                    {% if event.payload.get("proof_nightly_status") %} nightly={{ event.payload.get("proof_nightly_status") }}{% endif %}
+                    {% if event.payload.get("proof_second_strategy_scan_status") %} second_strategy_scan={{ event.payload.get("proof_second_strategy_scan_status") }}{% endif %}
+                    {% if event.payload.get("proof_nightly_log_age_minutes") %} nightly_log_age={{ event.payload.get("proof_nightly_log_age_minutes") }}{% endif %}
+                    {% if event.payload.get("proof_nightly_stage") %} nightly_stage={{ event.payload.get("proof_nightly_stage") }}{% endif %}
                     {% if event.payload.get("proof_closed_trades") %} closed={{ event.payload.get("proof_closed_trades") }}/{{ event.payload.get("proof_required_trades", "?") }}{% endif %}
                     {% if event.payload.get("proof_pnl") %} proof_pnl={{ event.payload.get("proof_pnl") }}{% endif %}
                     {% if event.payload.get("proof_gap_sample_trades_remaining") %} gap_trades={{ event.payload.get("proof_gap_sample_trades_remaining") }}{% endif %}

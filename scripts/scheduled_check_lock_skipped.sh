@@ -1245,6 +1245,31 @@ second_strategy_promotion_action_line = (
     if second_strategy_promotion_action_parts
     else ""
 )
+nightly_automation_fields = [
+    ("status", "proof_nightly_status"),
+    ("lock_status", "proof_nightly_lock_status"),
+    ("pid", "proof_nightly_pid"),
+    ("source", "proof_nightly_source"),
+    ("age_minutes", "proof_nightly_age_minutes"),
+    ("log_age_minutes", "proof_nightly_log_age_minutes"),
+    ("active_log", "proof_nightly_active_log"),
+    ("max_age_minutes", "proof_nightly_max_age_minutes"),
+    ("stall_minutes", "proof_nightly_stall_minutes"),
+    ("stage", "proof_nightly_stage"),
+    ("second_strategy_scan_status", "proof_second_strategy_scan_status"),
+    ("second_strategy_scan_detail", "proof_second_strategy_scan_detail"),
+    ("detail", "proof_nightly_detail"),
+]
+nightly_automation_parts = [
+    f"{name}={payload[key]}"
+    for name, key in nightly_automation_fields
+    if payload.get(key) not in {None, ""}
+]
+nightly_automation_line = (
+    "paper proof nightly automation: " + " ".join(nightly_automation_parts)
+    if nightly_automation_parts
+    else ""
+)
 print(
 	    "paper_proof_status_latest="
 	    f"{row[0]}|{row[1]}|{row[2]}|{row[3]}|{row[4]}|{row[5]}|"
@@ -1254,7 +1279,7 @@ print(
 	    f"{row[23]}|{row[24]}|{row[25]}|{row[26]}|{row[28]}|"
 	    f"{age_minutes}|{post_supervisor_line}|{concentration_line}|{active_day_line}|"
 	    f"{strategy_diversification_line}|{second_strategy_promotion_action_line}|"
-	    f"{blocker_gaps_line}|{execution_quality_line}"
+	    f"{blocker_gaps_line}|{execution_quality_line}|{nightly_automation_line}"
 	)
 PY
 )"
@@ -1653,7 +1678,8 @@ case "$CHECK_NAME" in
     latest_second_strategy_promotion_action_line=""
     latest_blocker_gaps_line=""
     latest_execution_quality_line=""
-    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_overall_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line latest_concentration_line latest_active_day_line latest_strategy_diversification_line latest_second_strategy_promotion_action_line latest_blocker_gaps_line latest_execution_quality_line <<< "$latest_proof_status"
+    latest_nightly_automation_line=""
+    IFS='|' read -r latest_status latest_exit_code latest_proof latest_readiness latest_blockers latest_evidence_blockers latest_sealed_evidence_blockers latest_overall_blockers latest_clean_window_blockers latest_sealed_clean_window_blockers latest_proof_reason latest_overall_reason latest_warnings latest_progress_status latest_closed_trades latest_required_trades latest_pnl latest_required_pnl latest_first_exit_session latest_latest_exit_session latest_scenario_status latest_scenario_active latest_scenario_expected_session latest_scenario_problems latest_scoreable_closed_trades latest_unpaired_filled_exits latest_unpaired_symbols latest_created_at latest_age_minutes latest_post_supervisor_execution_line latest_concentration_line latest_active_day_line latest_strategy_diversification_line latest_second_strategy_promotion_action_line latest_blocker_gaps_line latest_execution_quality_line latest_nightly_automation_line <<< "$latest_proof_status"
     proof_lock_is_recent=false
     if [[ "$latest_age_minutes" =~ ^[0-9]+$ ]] \
       && (( 10#$latest_age_minutes <= 10#$PROOF_STATUS_LOCK_MAX_AGE_MINUTES )); then
@@ -1674,6 +1700,9 @@ case "$CHECK_NAME" in
     if [[ "$proof_lock_is_recent" == "true" && "$proof_lock_has_current_evidence" == "true" ]]; then
       echo "scheduled check context: session_date=$session_date proof_start=$proof_start strategy=$proof_strategy strategies=$proof_strategy_csv min_trades=$proof_min_trades min_pnl=$proof_min_pnl session_guard_min_trades=$proof_session_guard_min_trades session_guard_min_pnl=$proof_session_guard_min_pnl reason=lock_busy_already_reported"
       echo "paper proof summary: readiness=$latest_readiness proof=$latest_proof reason=${latest_proof_reason:-lock_busy_already_reported} overall_reason=${latest_overall_reason:-${latest_proof_reason:-lock_busy_already_reported}} blockers=$latest_blockers evidence_blockers=${latest_evidence_blockers:-none} sealed_evidence_blockers=${latest_sealed_evidence_blockers:-none} overall_blockers=${latest_overall_blockers:-unknown} clean_window_blockers=${latest_clean_window_blockers:-unknown} sealed_clean_window_blockers=${latest_sealed_clean_window_blockers:-unknown} warnings=${latest_warnings:-none}"
+      if [[ -n "$latest_nightly_automation_line" ]]; then
+        echo "$latest_nightly_automation_line"
+      fi
       echo "paper proof progress: status=${latest_progress_status:-$latest_proof} strategies=$proof_strategy_csv closed_trades=${latest_closed_trades:-unknown} required_trades=${latest_required_trades:-$proof_min_trades} pnl=${latest_pnl:-unknown} required_pnl=${latest_required_pnl:-$proof_min_pnl} window=lock_busy_already_reported first_exit_session=${latest_first_exit_session:-none} latest_exit_session=${latest_latest_exit_session:-none}"
       if [[ -n "$latest_blocker_gaps_line" ]]; then
         echo "$latest_blocker_gaps_line"

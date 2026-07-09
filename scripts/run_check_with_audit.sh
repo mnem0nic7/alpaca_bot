@@ -63,6 +63,7 @@ esac
 output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"
 context_line="$(grep -E '^scheduled check context: ' "$output_file" | tail -n 1 || true)"
 proof_summary_line="$(grep -E '^paper proof summary: ' "$output_file" | tail -n 1 || true)"
+proof_nightly_automation_line="$(grep -E '^paper proof nightly automation: ' "$output_file" | tail -n 1 || true)"
 proof_progress_line="$(grep -E '^paper proof progress: ' "$output_file" | tail -n 1 || true)"
 proof_blocker_gaps_line="$(grep -E '^paper proof blocker gaps: ' "$output_file" | tail -n 1 || true)"
 proof_active_day_detail_line="$(grep -E '^paper proof active day detail: ' "$output_file" | tail -n 1 || true)"
@@ -91,6 +92,7 @@ export AUDIT_EXIT_CODE="$rc"
 export AUDIT_OUTPUT_TAIL="$output_tail"
 export AUDIT_CONTEXT_LINE="$context_line"
 export AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"
+export AUDIT_PROOF_NIGHTLY_AUTOMATION_LINE="$proof_nightly_automation_line"
 export AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"
 export AUDIT_PROOF_BLOCKER_GAPS_LINE="$proof_blocker_gaps_line"
 export AUDIT_PROOF_ACTIVE_DAY_DETAIL_LINE="$proof_active_day_detail_line"
@@ -113,6 +115,7 @@ if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_OUTPUT_TAIL \
     -e AUDIT_CONTEXT_LINE \
     -e AUDIT_PROOF_SUMMARY_LINE \
+    -e AUDIT_PROOF_NIGHTLY_AUTOMATION_LINE \
     -e AUDIT_PROOF_PROGRESS_LINE \
     -e AUDIT_PROOF_BLOCKER_GAPS_LINE \
     -e AUDIT_PROOF_ACTIVE_DAY_DETAIL_LINE \
@@ -152,8 +155,9 @@ CONTEXT_KEYS = {
     "session_guard_min_pnl",
 }
 CONTEXT_VALUE = re.compile(r"^[A-Za-z0-9_.:,+-]+$")
-PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")
+PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;=@-]+$")
 PROOF_SUMMARY_PREFIX = "paper proof summary: "
+PROOF_NIGHTLY_AUTOMATION_PREFIX = "paper proof nightly automation: "
 PROOF_PROGRESS_PREFIX = "paper proof progress: "
 PROOF_BLOCKER_GAPS_PREFIX = "paper proof blocker gaps: "
 PROOF_ACTIVE_DAY_DETAIL_PREFIX = "paper proof active day detail: "
@@ -181,6 +185,21 @@ PROOF_SUMMARY_FIELDS = {
     "clean_window_blockers": "proof_clean_window_blockers",
     "sealed_clean_window_blockers": "proof_sealed_clean_window_blockers",
     "warnings": "proof_warnings",
+}
+PROOF_NIGHTLY_AUTOMATION_FIELDS = {
+    "status": "proof_nightly_status",
+    "lock_status": "proof_nightly_lock_status",
+    "pid": "proof_nightly_pid",
+    "source": "proof_nightly_source",
+    "age_minutes": "proof_nightly_age_minutes",
+    "log_age_minutes": "proof_nightly_log_age_minutes",
+    "active_log": "proof_nightly_active_log",
+    "max_age_minutes": "proof_nightly_max_age_minutes",
+    "stall_minutes": "proof_nightly_stall_minutes",
+    "stage": "proof_nightly_stage",
+    "second_strategy_scan_status": "proof_second_strategy_scan_status",
+    "second_strategy_scan_detail": "proof_second_strategy_scan_detail",
+    "detail": "proof_nightly_detail",
 }
 PROOF_PROGRESS_FIELDS = {
     "status": "proof_progress_status",
@@ -625,6 +644,13 @@ try:
             os.environ.get("AUDIT_PROOF_SUMMARY_LINE", ""),
             prefix=PROOF_SUMMARY_PREFIX,
             field_map=PROOF_SUMMARY_FIELDS,
+        )
+    )
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_PROOF_NIGHTLY_AUTOMATION_LINE", ""),
+            prefix=PROOF_NIGHTLY_AUTOMATION_PREFIX,
+            field_map=PROOF_NIGHTLY_AUTOMATION_FIELDS,
         )
     )
     payload.update(

@@ -1668,6 +1668,11 @@ def test_locked_check_wrapper_audits_lock_skips() -> None:
     assert "paper proof execution quality:" in lock_skip
     assert "proof_execution_quality_entry_dispatch_delay" in lock_skip
     assert "proof_execution_quality_current_posture_entry_dispatch_delay" in lock_skip
+    assert "paper proof nightly automation:" in lock_skip
+    assert "nightly_automation_line" in lock_skip
+    assert "latest_nightly_automation_line" in lock_skip
+    assert "proof_nightly_status" in lock_skip
+    assert "proof_second_strategy_scan_status" in lock_skip
     assert "proof_post_supervisor_execution_status" in lock_skip
     assert "post_supervisor_line" in lock_skip
     assert "paper proof post-supervisor execution:" in lock_skip
@@ -1713,7 +1718,7 @@ def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -
     docker.write_text(
         "#!/usr/bin/env bash\n"
         "cat >/dev/null\n"
-        "echo 'paper_proof_status_latest=pending|0|pending|ready|none|sample_trades|sample_trades,eod_loss_share|sample_trades,profit_factor|sample_trades|sample_trades,eod_loss_share|awaiting_completed_proof_session|awaiting_overall_blockers|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0|paper proof post-supervisor execution: session=2026-07-07 since=2026-07-07T19:08:57.059707+00:00 status=ok warnings=none evaluated=3710 signals=941 accepted=0 accepted_for_fill=0 settled_accepted_for_fill=0 capacity_rejected=0 capacity_reject_rate=0.00 max_capacity_reject_rate=0.05 entry_orders=0 settled=0 settled_filled=0 filled=0 expired=0 active=0 maintenance_drained=0 short_window_drained=0 settled_entry_fill_rate=none entry_fill_rate=none min_entry_fill_rate=0.25 accepted_to_fill_rate=none filled_symbols=none expired_symbols=none active_symbols=none short_window=0 min_remaining_active_minutes=none short_window_symbols=none|paper proof concentration: status=blocked best_winning_trade=DRUG:14.65@2026-07-08 best_winning_trade_pnl=14.65 total_pnl=14.99 non_best_trades=2 non_best_pnl=0.34 non_best_avg_pnl=0.17 net_pnl_needed=14.32 non_best_avg_trade_gap=86 single_win_pnl_share=0.98 max_single_win_pnl_share=0.50|paper proof active day detail: status=blocked active_days=2 required_active_days=5 active_days_remaining=3 sample_trades_remaining=27 remaining_trades_per_required_active_day=9.0 sessions=2026-07-07,2026-07-08 trades_by_session=2026-07-07:2,2026-07-08:1 latest_exit_session=2026-07-08 next_possible_session=2026-07-09 future_sessions=2026-07-09,2026-07-10,2026-07-13 earliest_active_days_met_session=2026-07-13 projection_status=ok projection_warning=none|paper proof strategy diversification: status=blocked active=1 required=2 approved_active=1 approved_replay_active=1 approved_required=2 gap=1 candidate_status=validated_stock_candidate_unapproved promotion_action_status=ready_needs_write_access approval_marker_action_status=ready promotion_write_access_status=env_file_not_writable active_names=bull_flag approved_names=bull_flag approved_replay_names=bull_flag validated_unapproved_stock_candidates=ema_pullback validated_unapproved_option_candidates=none|paper proof second strategy promotion action: status=ready_needs_write_access strategy=ema_pullback confirmation=approve-ema_pullback-paper-promotion-sha256-df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9 approval_marker_action_status=ready approval_marker_command_status=ready approval_marker_command_script=./scripts/approve_validated_strategy_marker.sh approval_marker_command_confirm_env=APPROVE_VALIDATED_STRATEGY_MARKER_CONFIRM approval_marker_command_dry_run_env=APPROVE_VALIDATED_STRATEGY_MARKER_DRY_RUN approval_marker_command_dry_run_value=false approval_marker_command_approval_only_env=PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY approval_marker_command_approval_only_value=true approval_marker_command_evidence_root=/var/lib/alpaca-bot/nightly/second_strategy approval_marker_command_deploy_script=./scripts/deploy.sh broker_flat_status=ok env_file=/etc/alpaca_bot/alpaca-bot.env write_access_status=env_file_not_writable promotion_handoff_status=ready_needs_privileged_env_write promotion_handoff_step=env_allowlist_update promotion_env_keys=PAPER_APPROVED_STRATEGIES,PROFIT_PROBE_STRATEGIES,PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES,PAPER_READINESS_EXPECT_ENABLED_STRATEGIES,PAPER_ACTIVITY_STRATEGIES,SESSION_GUARD_STRATEGIES,PROOF_STATUS_APPROVED_STRATEGIES,DEPLOY_EXPECT_ENABLED_STRATEGIES,DEPLOY_DECISION_DRY_RUN_STRATEGIES env_file_writable=false env_dir_writable=false approval_marker=/var/lib/alpaca-bot/nightly/second_strategy/promotion_approval.json approval_marker_writable=true approval_marker_dir_writable=true approval_marker_status=missing validation_summary=/var/lib/alpaca-bot/nightly/second_strategy/latest_validation/summary.json validation_summary_sha256=df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9 candidate_scale=0.10 candidate_trades=292 candidate_total_pnl=150.76 candidate_ci_low=0.0707 candidate_p_mean_le_zero=0.0090|paper proof blocker gaps: sample_trades_remaining=27 active_days_remaining=3 approved_replay_strategy_gap=1 concentration_net_pnl_needed=14.32 concentration_non_best_avg_pnl=0.17 concentration_non_best_avg_trade_gap=86 concentration_runway_status=needs_higher_non_best_pnl concentration_remaining_trade_required_avg_pnl=0.53 concentration_remaining_active_day_required_pnl=4.77 single_win_pnl_share=0.98 max_single_win_pnl_share=0.50|paper proof execution quality: status=ok warnings=historical_entry_fill_rate entry_fill_rate_status=historical_below_minimum_current_ok entry_fill_rate=0.21 effective_entry_fill_rate=0.33 accepted_to_fill_rate=0.21 entry_dispatch_delay=count:14,late:1,max_s:710.5 current_posture_entry_dispatch_delay=count:8,late:0,max_s:102.2'\n"
+        "echo 'paper_proof_status_latest=pending|0|pending|ready|none|sample_trades|sample_trades,eod_loss_share|sample_trades,profit_factor|sample_trades|sample_trades,eod_loss_share|awaiting_completed_proof_session|awaiting_overall_blockers|none|pending|0|10|0.00|0.01|none|none|ok|980|2026-06-26|none|0|0|none|2026-06-28T06:37:20.499132Z|0|paper proof post-supervisor execution: session=2026-07-07 since=2026-07-07T19:08:57.059707+00:00 status=ok warnings=none evaluated=3710 signals=941 accepted=0 accepted_for_fill=0 settled_accepted_for_fill=0 capacity_rejected=0 capacity_reject_rate=0.00 max_capacity_reject_rate=0.05 entry_orders=0 settled=0 settled_filled=0 filled=0 expired=0 active=0 maintenance_drained=0 short_window_drained=0 settled_entry_fill_rate=none entry_fill_rate=none min_entry_fill_rate=0.25 accepted_to_fill_rate=none filled_symbols=none expired_symbols=none active_symbols=none short_window=0 min_remaining_active_minutes=none short_window_symbols=none|paper proof concentration: status=blocked best_winning_trade=DRUG:14.65@2026-07-08 best_winning_trade_pnl=14.65 total_pnl=14.99 non_best_trades=2 non_best_pnl=0.34 non_best_avg_pnl=0.17 net_pnl_needed=14.32 non_best_avg_trade_gap=86 single_win_pnl_share=0.98 max_single_win_pnl_share=0.50|paper proof active day detail: status=blocked active_days=2 required_active_days=5 active_days_remaining=3 sample_trades_remaining=27 remaining_trades_per_required_active_day=9.0 sessions=2026-07-07,2026-07-08 trades_by_session=2026-07-07:2,2026-07-08:1 latest_exit_session=2026-07-08 next_possible_session=2026-07-09 future_sessions=2026-07-09,2026-07-10,2026-07-13 earliest_active_days_met_session=2026-07-13 projection_status=ok projection_warning=none|paper proof strategy diversification: status=blocked active=1 required=2 approved_active=1 approved_replay_active=1 approved_required=2 gap=1 candidate_status=validated_stock_candidate_unapproved promotion_action_status=ready_needs_write_access approval_marker_action_status=ready promotion_write_access_status=env_file_not_writable active_names=bull_flag approved_names=bull_flag approved_replay_names=bull_flag validated_unapproved_stock_candidates=ema_pullback validated_unapproved_option_candidates=none|paper proof second strategy promotion action: status=ready_needs_write_access strategy=ema_pullback confirmation=approve-ema_pullback-paper-promotion-sha256-df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9 approval_marker_action_status=ready approval_marker_command_status=ready approval_marker_command_script=./scripts/approve_validated_strategy_marker.sh approval_marker_command_confirm_env=APPROVE_VALIDATED_STRATEGY_MARKER_CONFIRM approval_marker_command_dry_run_env=APPROVE_VALIDATED_STRATEGY_MARKER_DRY_RUN approval_marker_command_dry_run_value=false approval_marker_command_approval_only_env=PROMOTE_VALIDATED_STRATEGY_APPROVAL_ONLY approval_marker_command_approval_only_value=true approval_marker_command_evidence_root=/var/lib/alpaca-bot/nightly/second_strategy approval_marker_command_deploy_script=./scripts/deploy.sh broker_flat_status=ok env_file=/etc/alpaca_bot/alpaca-bot.env write_access_status=env_file_not_writable promotion_handoff_status=ready_needs_privileged_env_write promotion_handoff_step=env_allowlist_update promotion_env_keys=PAPER_APPROVED_STRATEGIES,PROFIT_PROBE_STRATEGIES,PAPER_READINESS_DECISION_DRY_RUN_STRATEGIES,PAPER_READINESS_EXPECT_ENABLED_STRATEGIES,PAPER_ACTIVITY_STRATEGIES,SESSION_GUARD_STRATEGIES,PROOF_STATUS_APPROVED_STRATEGIES,DEPLOY_EXPECT_ENABLED_STRATEGIES,DEPLOY_DECISION_DRY_RUN_STRATEGIES env_file_writable=false env_dir_writable=false approval_marker=/var/lib/alpaca-bot/nightly/second_strategy/promotion_approval.json approval_marker_writable=true approval_marker_dir_writable=true approval_marker_status=missing validation_summary=/var/lib/alpaca-bot/nightly/second_strategy/latest_validation/summary.json validation_summary_sha256=df05497c8f595488d5da5f6ef05205c0b3122b73df4cb3fd0b1ed3f98a71aaf9 candidate_scale=0.10 candidate_trades=292 candidate_total_pnl=150.76 candidate_ci_low=0.0707 candidate_p_mean_le_zero=0.0090|paper proof blocker gaps: sample_trades_remaining=27 active_days_remaining=3 approved_replay_strategy_gap=1 concentration_net_pnl_needed=14.32 concentration_non_best_avg_pnl=0.17 concentration_non_best_avg_trade_gap=86 concentration_runway_status=needs_higher_non_best_pnl concentration_remaining_trade_required_avg_pnl=0.53 concentration_remaining_active_day_required_pnl=4.77 single_win_pnl_share=0.98 max_single_win_pnl_share=0.50|paper proof execution quality: status=ok warnings=historical_entry_fill_rate entry_fill_rate_status=historical_below_minimum_current_ok entry_fill_rate=0.21 effective_entry_fill_rate=0.33 accepted_to_fill_rate=0.21 entry_dispatch_delay=count:14,late:1,max_s:710.5 current_posture_entry_dispatch_delay=count:8,late:0,max_s:102.2|paper proof nightly automation: status=idle lock_status=free pid=none source=none age_minutes=none log_age_minutes=411 active_log=/var/log/alpaca-bot-nightly.log max_age_minutes=390 stall_minutes=90 stage=apply_candidate_2026-07-09T00:16:04Z_PAPER_PROOF_FREEZE=true__skipping_candidate_auto-apply. second_strategy_scan_status=ok second_strategy_scan_detail=fresh_second_strategy_evidence detail=none'\n"
     )
     docker.chmod(0o755)
 
@@ -1751,6 +1756,14 @@ def test_proof_status_lock_skip_uses_recent_proof_status_audit(tmp_path: Path) -
         "paper proof progress: status=pending strategies=bull_flag closed_trades=0 required_trades=10 "
         "pnl=0.00 required_pnl=0.01"
     ) in result.stdout
+    assert "paper proof nightly automation: status=idle" in result.stdout
+    assert "log_age_minutes=411" in result.stdout
+    assert "max_age_minutes=390" in result.stdout
+    assert (
+        "stage=apply_candidate_2026-07-09T00:16:04Z_"
+        "PAPER_PROOF_FREEZE=true__skipping_candidate_auto-apply."
+    ) in result.stdout
+    assert "second_strategy_scan_status=ok" in result.stdout
     assert "paper proof blocker gaps: sample_trades_remaining=27" in result.stdout
     assert "active_days_remaining=3 approved_replay_strategy_gap=1" in result.stdout
     assert "concentration_runway_status=needs_higher_non_best_pnl" in result.stdout
@@ -2435,6 +2448,10 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'AUDIT_OUTPUT_TAIL="$output_tail"' in script
     assert 'AUDIT_CONTEXT_LINE="$context_line"' in script
     assert 'AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"' in script
+    assert (
+        'AUDIT_PROOF_NIGHTLY_AUTOMATION_LINE="'
+        '$proof_nightly_automation_line"'
+    ) in script
     assert 'AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"' in script
     assert 'AUDIT_PROOF_BLOCKER_GAPS_LINE="$proof_blocker_gaps_line"' in script
     assert 'AUDIT_PROOF_ACTIVE_DAY_DETAIL_LINE="$proof_active_day_detail_line"' in script
@@ -2463,6 +2480,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "-e AUDIT_OUTPUT_TAIL" in script
     assert "-e AUDIT_CONTEXT_LINE" in script
     assert "-e AUDIT_PROOF_SUMMARY_LINE" in script
+    assert "-e AUDIT_PROOF_NIGHTLY_AUTOMATION_LINE" in script
     assert "-e AUDIT_PROOF_PROGRESS_LINE" in script
     assert "-e AUDIT_PROOF_BLOCKER_GAPS_LINE" in script
     assert "-e AUDIT_PROOF_ACTIVE_DAY_DETAIL_LINE" in script
@@ -2479,6 +2497,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert 'output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"' in script
     assert 'context_line="$(grep -E' in script
     assert 'proof_summary_line="$(grep -E' in script
+    assert 'proof_nightly_automation_line="$(grep -E' in script
     assert 'proof_progress_line="$(grep -E' in script
     assert 'proof_blocker_gaps_line="$(grep -E' in script
     assert 'proof_active_day_detail_line="$(grep -E' in script
@@ -2499,6 +2518,19 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"session_guard_min_pnl"' in script
     assert 'CONTEXT_VALUE = re.compile(r"^[A-Za-z0-9_.:,+-]+$")' in script
     assert "PROOF_SUMMARY_FIELDS" in script
+    assert "PROOF_NIGHTLY_AUTOMATION_FIELDS" in script
+    assert '"status": "proof_nightly_status"' in script
+    assert '"log_age_minutes": "proof_nightly_log_age_minutes"' in script
+    assert '"max_age_minutes": "proof_nightly_max_age_minutes"' in script
+    assert '"stage": "proof_nightly_stage"' in script
+    assert (
+        '"second_strategy_scan_status": "proof_second_strategy_scan_status"'
+        in script
+    )
+    assert (
+        '"second_strategy_scan_detail": "proof_second_strategy_scan_detail"'
+        in script
+    )
     assert "PROOF_BLOCKER_GAPS_FIELDS" in script
     assert '"sample_trades_remaining": "proof_gap_sample_trades_remaining"' in script
     assert '"active_days_remaining": "proof_gap_active_days_remaining"' in script
@@ -2568,7 +2600,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert "PROOF_EXECUTION_QUALITY_FIELDS" in script
     assert "PROOF_CURRENT_EXECUTION_FIELDS" in script
     assert "PROOF_POST_SUPERVISOR_EXECUTION_FIELDS" in script
-    assert 'PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")' in script
+    assert 'PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;=@-]+$")' in script
     assert '"readiness": "proof_readiness"' in script
     assert '"proof": "proof_status"' in script
     assert '"evidence_blockers": "proof_evidence_blockers"' in script
@@ -2685,6 +2717,7 @@ def test_run_check_with_audit_records_scheduled_check_result() -> None:
     assert '"reason"' in script
     assert "payload.update(parse_context" in script
     assert 'os.environ.get("AUDIT_PROOF_SUMMARY_LINE", "")' in script
+    assert 'os.environ.get("AUDIT_PROOF_NIGHTLY_AUTOMATION_LINE", "")' in script
     assert 'os.environ.get("AUDIT_PROOF_PROGRESS_LINE", "")' in script
     assert 'os.environ.get("AUDIT_PROOF_BLOCKER_GAPS_LINE", "")' in script
     assert 'os.environ.get("AUDIT_PROOF_ACTIVE_DAY_DETAIL_LINE", "")' in script
