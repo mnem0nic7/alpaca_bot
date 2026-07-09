@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as datetime_time, timedelta, timezone
 import logging
 from pathlib import Path
 import re
@@ -103,6 +103,7 @@ TERMINAL_ENTRY_ATTEMPT_STATUSES = (
 )
 ENTRY_ATTEMPT_STATUSES = ACTIVE_ENTRY_STATUSES + TERMINAL_ENTRY_ATTEMPT_STATUSES
 ENTRY_CADENCE_DISABLED_REASON = "entry_cadence_waiting_for_new_bar"
+OPTION_CHAIN_SNAPSHOT_DUE_TIME = datetime_time(10, 0)
 
 
 def _completed_intraday_bars_by_symbol(
@@ -203,6 +204,20 @@ _OCC_RE = re.compile(r"^[A-Z]{1,6}\d{6}[CP]\d{8}$")
 
 def _is_occ_symbol(symbol: str) -> bool:
     return bool(_OCC_RE.match(symbol))
+
+
+def _option_snapshot_path_session(value: object) -> date | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    name = Path(value).name
+    prefix = "option-chain-snapshots-"
+    suffix = ".jsonl"
+    if not name.startswith(prefix) or not name.endswith(suffix):
+        return None
+    try:
+        return date.fromisoformat(name[len(prefix) : -len(suffix)])
+    except ValueError:
+        return None
 
 
 class RuntimeSupervisor:
@@ -991,10 +1006,20 @@ class RuntimeSupervisor:
         option_order_store = getattr(self.runtime, "option_order_store", None)
         self._check_option_strategy_circuit_breakers(session_date=session_date, now=timestamp)
         option_chain_observation_enabled = bool(self.settings.option_chain_snapshot_dir)
+        option_chain_snapshot_due = (
+            option_chain_observation_enabled
+            and not self.settings.enable_options_trading
+            and bool(self.settings.option_chain_symbols)
+            and timestamp.astimezone(self.settings.market_timezone).time()
+            >= OPTION_CHAIN_SNAPSHOT_DUE_TIME
+            and not self._option_chain_snapshot_recorded_for_session(
+                session_date=session_date
+            )
+        )
         should_fetch_option_chains = (
             (
                 self.settings.enable_options_trading
-                or option_chain_observation_enabled
+                or option_chain_snapshot_due
             )
             and self._option_chain_adapter is not None
             and bool(self.settings.option_chain_symbols)
@@ -1061,6 +1086,10 @@ class RuntimeSupervisor:
                                 "path": str(snapshot_path),
                                 "symbols": len(chains_for_snapshot),
                                 "contracts": sum(option_chain_counts.values()),
+                                "session_date": session_date.isoformat(),
+                                "cycle_at": timestamp.isoformat(),
+                                "trading_mode": self.settings.trading_mode.value,
+                                "strategy_version": self.settings.strategy_version,
                             },
                             created_at=timestamp,
                         )
@@ -2617,6 +2646,66 @@ class RuntimeSupervisor:
             )
         except Exception:
             logger.exception("Notifier failed to send option dispatch failure alert")
+
+    def _option_chain_snapshot_recorded_for_session(
+        self, *, session_date: date
+    ) -> bool:
+        audit_store = getattr(self.runtime, "audit_event_store", None)
+        list_events = getattr(audit_store, "list_by_event_types", None)
+        if callable(list_events):
+            session_start = datetime.combine(
+                session_date,
+                datetime.min.time(),
+                tzinfo=self.settings.market_timezone,
+            ).astimezone(timezone.utc)
+            session_end = session_start + timedelta(days=1)
+            try:
+                store_lock = getattr(self.runtime, "store_lock", None)
+                with store_lock if store_lock is not None else contextlib.nullcontext():
+                    events = list_events(
+                        event_types=["option_chain_snapshot_recorded"],
+                        limit=20,
+                        since=session_start,
+                        until=session_end,
+                        trading_mode=self.settings.trading_mode,
+                        strategy_version=self.settings.strategy_version,
+                    )
+            except Exception:
+                logger.exception(
+                    "Failed to load option-chain snapshot audit markers; "
+                    "falling back to snapshot file check"
+                )
+            else:
+                expected_session = session_date.isoformat()
+                for event in events:
+                    payload = getattr(event, "payload", {}) or {}
+                    payload_session = str(
+                        payload.get("session_date") or expected_session
+                    )
+                    if payload_session != expected_session:
+                        continue
+                    path_session = _option_snapshot_path_session(payload.get("path"))
+                    if path_session is not None and path_session != session_date:
+                        continue
+                    try:
+                        contracts = int(payload.get("contracts") or 0)
+                    except (TypeError, ValueError):
+                        contracts = 0
+                    if contracts > 0:
+                        return True
+                return False
+
+        snapshot_dir = self.settings.option_chain_snapshot_dir
+        if not snapshot_dir:
+            return False
+        path = (
+            Path(snapshot_dir)
+            / f"option-chain-snapshots-{session_date.isoformat()}.jsonl"
+        )
+        try:
+            return path.is_file() and path.stat().st_size > 0
+        except OSError:
+            return False
 
     def _load_persisted_entry_cadence_bar(
         self, *, session_date: date

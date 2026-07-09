@@ -9,6 +9,7 @@ from tests.unit.helpers import _base_env
 from alpaca_bot.config import Settings
 from alpaca_bot.domain import Bar
 from alpaca_bot.domain.models import OptionContract
+from alpaca_bot.storage import AuditEvent
 
 _NOW = datetime(2026, 5, 1, 14, 30, tzinfo=timezone.utc)
 # Symbols on the watchlist but NOT in settings.symbols ("AAPL,MSFT" from _base_env)
@@ -36,15 +37,44 @@ class RecordingOptionChainAdapter:
 
 
 class RecordingAuditStore:
-    def __init__(self) -> None:
-        self.events: list = []
+    def __init__(self, events=None) -> None:
+        self.events: list = list(events or [])
 
     def append(self, event, **_) -> None:
         self.events.append(event)
 
     def load_latest(self, **_): return None
     def list_recent(self, **_): return []
-    def list_by_event_types(self, **_): return []
+    def list_by_event_types(
+        self,
+        *,
+        event_types,
+        limit=20,
+        since=None,
+        until=None,
+        trading_mode=None,
+        strategy_version=None,
+        **_,
+    ):
+        rows = [event for event in self.events if event.event_type in event_types]
+        if since is not None:
+            rows = [event for event in rows if event.created_at >= since]
+        if until is not None:
+            rows = [event for event in rows if event.created_at < until]
+        if trading_mode is not None:
+            mode_value = getattr(trading_mode, "value", trading_mode)
+            rows = [
+                event
+                for event in rows
+                if event.payload.get("trading_mode") in (None, mode_value)
+            ]
+        if strategy_version is not None:
+            rows = [
+                event
+                for event in rows
+                if event.payload.get("strategy_version") in (None, strategy_version)
+            ]
+        return list(reversed(rows))[:limit]
 
 
 def _make_supervisor(*, adapter, audit_store=None, get_stock_bars=None, extra_env=None):
@@ -203,6 +233,110 @@ def test_option_chain_snapshot_records_when_options_trading_disabled(tmp_path):
         if e.event_type == "option_entry_intent_created"
     ]
     assert sorted(tmp_path.glob("option-chain-snapshots-*.jsonl"))
+
+
+def test_option_chain_snapshot_only_waits_until_due_time(tmp_path):
+    """Snapshot-only observation must not delay stock cycles before proof requires it."""
+    audit_store = RecordingAuditStore()
+    adapter = RecordingOptionChainAdapter()
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        audit_store=audit_store,
+        extra_env={
+            "ENABLE_OPTIONS_TRADING": "false",
+            "OPTION_CHAIN_SYMBOLS": "ACHR,METC",
+            "OPTION_CHAIN_SNAPSHOT_DIR": str(tmp_path),
+        },
+    )
+    before_due = datetime(2026, 5, 1, 13, 30, tzinfo=timezone.utc)
+
+    supervisor.run_cycle_once(now=lambda: before_due)
+
+    assert adapter.fetched == []
+    assert not [
+        e for e in audit_store.events
+        if e.event_type.startswith("option_chain_snapshot")
+    ]
+
+
+def test_option_chain_snapshot_only_skips_when_session_snapshot_has_contracts(tmp_path):
+    """A positive-contract daily snapshot is enough for replay support."""
+    snapshot_path = tmp_path / "option-chain-snapshots-2026-05-01.jsonl"
+    snapshot_path.write_text("{}\n", encoding="utf-8")
+    audit_store = RecordingAuditStore(
+        events=[
+            AuditEvent(
+                event_type="option_chain_snapshot_recorded",
+                payload={
+                    "path": str(snapshot_path),
+                    "symbols": 2,
+                    "contracts": 42,
+                    "session_date": "2026-05-01",
+                    "trading_mode": "paper",
+                    "strategy_version": "v1-breakout",
+                },
+                created_at=datetime(2026, 5, 1, 14, 5, tzinfo=timezone.utc),
+            )
+        ]
+    )
+    adapter = RecordingOptionChainAdapter()
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        audit_store=audit_store,
+        extra_env={
+            "ENABLE_OPTIONS_TRADING": "false",
+            "OPTION_CHAIN_SYMBOLS": "ACHR,METC",
+            "OPTION_CHAIN_SNAPSHOT_DIR": str(tmp_path),
+        },
+    )
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert adapter.fetched == []
+    assert not [
+        e for e in audit_store.events
+        if e.event_type == "option_chains_fetched"
+    ]
+
+
+def test_option_chain_snapshot_only_retries_empty_session_snapshot(tmp_path):
+    """An empty snapshot marker must not suppress the due snapshot retry."""
+    snapshot_path = tmp_path / "option-chain-snapshots-2026-05-01.jsonl"
+    snapshot_path.write_text("{}\n", encoding="utf-8")
+    audit_store = RecordingAuditStore(
+        events=[
+            AuditEvent(
+                event_type="option_chain_snapshot_recorded",
+                payload={
+                    "path": str(snapshot_path),
+                    "symbols": 2,
+                    "contracts": 0,
+                    "session_date": "2026-05-01",
+                    "trading_mode": "paper",
+                    "strategy_version": "v1-breakout",
+                },
+                created_at=datetime(2026, 5, 1, 14, 5, tzinfo=timezone.utc),
+            )
+        ]
+    )
+    adapter = RecordingOptionChainAdapter()
+    supervisor = _make_supervisor(
+        adapter=adapter,
+        audit_store=audit_store,
+        extra_env={
+            "ENABLE_OPTIONS_TRADING": "false",
+            "OPTION_CHAIN_SYMBOLS": "ACHR,METC",
+            "OPTION_CHAIN_SNAPSHOT_DIR": str(tmp_path),
+        },
+    )
+
+    supervisor.run_cycle_once(now=lambda: _NOW)
+
+    assert set(adapter.fetched) == {"ACHR", "METC"}
+    assert [
+        e for e in audit_store.events
+        if e.event_type == "option_chains_fetched"
+    ]
 
 
 def test_option_chain_fetch_symbol_not_in_bars_is_skipped():
