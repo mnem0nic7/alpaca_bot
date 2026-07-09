@@ -64,6 +64,7 @@ output_tail="$(tail -c 4000 "$output_file" 2>/dev/null || true)"
 context_line="$(grep -E '^scheduled check context: ' "$output_file" | tail -n 1 || true)"
 proof_summary_line="$(grep -E '^paper proof summary: ' "$output_file" | tail -n 1 || true)"
 proof_progress_line="$(grep -E '^paper proof progress: ' "$output_file" | tail -n 1 || true)"
+proof_blocker_gaps_line="$(grep -E '^paper proof blocker gaps: ' "$output_file" | tail -n 1 || true)"
 proof_active_day_detail_line="$(grep -E '^paper proof active day detail: ' "$output_file" | tail -n 1 || true)"
 proof_concentration_line="$(grep -E '^paper proof concentration: ' "$output_file" | tail -n 1 || true)"
 proof_strategy_diversification_line="$(grep -E '^paper proof strategy diversification: ' "$output_file" | tail -n 1 || true)"
@@ -90,6 +91,7 @@ export AUDIT_OUTPUT_TAIL="$output_tail"
 export AUDIT_CONTEXT_LINE="$context_line"
 export AUDIT_PROOF_SUMMARY_LINE="$proof_summary_line"
 export AUDIT_PROOF_PROGRESS_LINE="$proof_progress_line"
+export AUDIT_PROOF_BLOCKER_GAPS_LINE="$proof_blocker_gaps_line"
 export AUDIT_PROOF_ACTIVE_DAY_DETAIL_LINE="$proof_active_day_detail_line"
 export AUDIT_PROOF_CONCENTRATION_LINE="$proof_concentration_line"
 export AUDIT_PROOF_STRATEGY_DIVERSIFICATION_LINE="$proof_strategy_diversification_line"
@@ -110,6 +112,7 @@ if ! docker compose --env-file "$ENV_FILE" -f deploy/compose.yaml run -T --rm \
     -e AUDIT_CONTEXT_LINE \
     -e AUDIT_PROOF_SUMMARY_LINE \
     -e AUDIT_PROOF_PROGRESS_LINE \
+    -e AUDIT_PROOF_BLOCKER_GAPS_LINE \
     -e AUDIT_PROOF_ACTIVE_DAY_DETAIL_LINE \
     -e AUDIT_PROOF_CONCENTRATION_LINE \
     -e AUDIT_PROOF_STRATEGY_DIVERSIFICATION_LINE \
@@ -149,6 +152,7 @@ CONTEXT_VALUE = re.compile(r"^[A-Za-z0-9_.:,+-]+$")
 PROOF_VALUE = re.compile(r"^[A-Za-z0-9_.:,+/;@-]+$")
 PROOF_SUMMARY_PREFIX = "paper proof summary: "
 PROOF_PROGRESS_PREFIX = "paper proof progress: "
+PROOF_BLOCKER_GAPS_PREFIX = "paper proof blocker gaps: "
 PROOF_ACTIVE_DAY_DETAIL_PREFIX = "paper proof active day detail: "
 PROOF_CONCENTRATION_PREFIX = "paper proof concentration: "
 PROOF_STRATEGY_DIVERSIFICATION_PREFIX = "paper proof strategy diversification: "
@@ -181,6 +185,25 @@ PROOF_PROGRESS_FIELDS = {
     "required_pnl": "proof_required_pnl",
     "first_exit_session": "proof_first_exit_session",
     "latest_exit_session": "proof_latest_exit_session",
+}
+PROOF_BLOCKER_GAPS_FIELDS = {
+    "sample_trades_remaining": "proof_gap_sample_trades_remaining",
+    "active_days_remaining": "proof_gap_active_days_remaining",
+    "approved_replay_strategy_gap": "proof_gap_approved_replay_strategy_gap",
+    "concentration_net_pnl_needed": "proof_gap_concentration_net_pnl_needed",
+    "concentration_non_best_avg_pnl": "proof_gap_concentration_non_best_avg_pnl",
+    "concentration_non_best_avg_trade_gap": (
+        "proof_gap_concentration_non_best_avg_trade_gap"
+    ),
+    "concentration_runway_status": "proof_gap_concentration_runway_status",
+    "concentration_remaining_trade_required_avg_pnl": (
+        "proof_gap_concentration_remaining_trade_required_avg_pnl"
+    ),
+    "concentration_remaining_active_day_required_pnl": (
+        "proof_gap_concentration_remaining_active_day_required_pnl"
+    ),
+    "single_win_pnl_share": "proof_gap_single_win_pnl_share",
+    "max_single_win_pnl_share": "proof_gap_max_single_win_pnl_share",
 }
 PROOF_ACTIVE_DAY_DETAIL_FIELDS = {
     "status": "proof_active_day_status",
@@ -548,6 +571,13 @@ try:
             os.environ.get("AUDIT_PROOF_PROGRESS_LINE", ""),
             prefix=PROOF_PROGRESS_PREFIX,
             field_map=PROOF_PROGRESS_FIELDS,
+        )
+    )
+    payload.update(
+        parse_prefixed_fields(
+            os.environ.get("AUDIT_PROOF_BLOCKER_GAPS_LINE", ""),
+            prefix=PROOF_BLOCKER_GAPS_PREFIX,
+            field_map=PROOF_BLOCKER_GAPS_FIELDS,
         )
     )
     payload.update(
