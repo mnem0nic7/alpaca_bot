@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -432,6 +433,14 @@ def recover_startup_state(
 
         matched_local_client_ids.add(existing.client_order_id)
         normalized_status = str(broker_order.status).lower()
+        if _closed_fill_matches_local(
+            existing=existing,
+            broker_order=broker_order,
+            normalized_status=normalized_status,
+            fill_price=fill_price,
+            filled_quantity=filled_quantity,
+        ):
+            continue
         mismatches.append(f"broker closed order fill recovered: {existing.client_order_id}")
         recovered_closed_order_fills[existing.client_order_id] = OrderRecord(
             client_order_id=existing.client_order_id,
@@ -1046,6 +1055,32 @@ def _broker_filled_quantity(order: BrokerOrder) -> float | None:
     if str(order.status).lower() == "filled":
         return order.quantity
     return None
+
+
+def _closed_fill_matches_local(
+    *,
+    existing: OrderRecord,
+    broker_order: BrokerOrder,
+    normalized_status: str,
+    fill_price: float,
+    filled_quantity: float,
+) -> bool:
+    quantity = broker_order.quantity if broker_order.quantity > 0 else existing.quantity
+    broker_order_id = broker_order.broker_order_id or existing.broker_order_id
+    return (
+        existing.status.lower() == normalized_status
+        and math.isclose(existing.quantity, quantity, rel_tol=0.0, abs_tol=1e-9)
+        and existing.broker_order_id == broker_order_id
+        and existing.fill_price is not None
+        and math.isclose(existing.fill_price, fill_price, rel_tol=0.0, abs_tol=1e-9)
+        and existing.filled_quantity is not None
+        and math.isclose(
+            existing.filled_quantity,
+            filled_quantity,
+            rel_tol=0.0,
+            abs_tol=1e-9,
+        )
+    )
 
 
 def _infer_strategy_name_from_client_order_id(client_order_id: str) -> str:
