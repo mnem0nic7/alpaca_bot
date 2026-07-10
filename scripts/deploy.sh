@@ -7,6 +7,7 @@ ENV_FILE="${1:-/etc/alpaca_bot/alpaca-bot.env}"
 REQUIRE_CRON_HEALTH="${REQUIRE_CRON_HEALTH:-true}"
 DEPLOY_PROOF_SETTLE_SECONDS="${DEPLOY_PROOF_SETTLE_SECONDS:-15}"
 DEPLOY_REQUIRE_DECISION_DRY_RUN="${DEPLOY_REQUIRE_DECISION_DRY_RUN:-true}"
+DEPLOY_OPS_CHECK_WAIT_SECONDS="${DEPLOY_OPS_CHECK_WAIT_SECONDS:-300}"
 DEPLOY_READINESS_REFRESH_RETRIES="${DEPLOY_READINESS_REFRESH_RETRIES:-10}"
 DEPLOY_READINESS_REFRESH_RETRY_SECONDS="${DEPLOY_READINESS_REFRESH_RETRY_SECONDS:-20}"
 DEPLOY_PREFLIGHT_EXPOSURE_RETRIES="${DEPLOY_PREFLIGHT_EXPOSURE_RETRIES:-1}"
@@ -253,7 +254,7 @@ run_deploy_ops_check() {
   "${compose[@]}" run --rm --entrypoint alpaca-bot-ops-check admin \
     --url http://web:8080/healthz \
     --expect-worker \
-    --wait-seconds 60 \
+    --wait-seconds "$DEPLOY_OPS_CHECK_WAIT_SECONDS" \
     --expect-trading-mode "${TRADING_MODE}" \
     --expect-strategy-version "${STRATEGY_VERSION}" \
     --expect-trading-status "$expected_status" \
@@ -272,7 +273,7 @@ run_deploy_ops_check() {
     "${compose[@]}" run --rm --entrypoint alpaca-bot-ops-check admin \
       --url http://web:8080/healthz \
       --expect-worker \
-      --wait-seconds 60 \
+      --wait-seconds "$DEPLOY_OPS_CHECK_WAIT_SECONDS" \
       --expect-trading-mode "${TRADING_MODE}" \
       --expect-strategy-version "${STRATEGY_VERSION}" \
       --expect-trading-status close_only \
@@ -685,6 +686,10 @@ build_deploy_decision_dry_run_strategies "$DEPLOY_DECISION_DRY_RUN_STRATEGIES"
 
 if [[ ! "$DEPLOY_PROOF_SETTLE_SECONDS" =~ ^[0-9]+$ ]]; then
   echo "DEPLOY_PROOF_SETTLE_SECONDS must be a non-negative integer" >&2
+  exit 1
+fi
+if [[ ! "$DEPLOY_OPS_CHECK_WAIT_SECONDS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "DEPLOY_OPS_CHECK_WAIT_SECONDS must be a positive integer" >&2
   exit 1
 fi
 if [[ ! "$DEPLOY_READINESS_REFRESH_RETRIES" =~ ^[1-9][0-9]*$ ]]; then

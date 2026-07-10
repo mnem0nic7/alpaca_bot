@@ -245,6 +245,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert 'DEPLOY_REQUIRE_DECISION_DRY_RUN="${DEPLOY_REQUIRE_DECISION_DRY_RUN:-true}"' in deploy_text
     assert "DEPLOY_REQUIRE_DECISION_DRY_RUN must be true or false" in deploy_text
     assert 'DEPLOY_READINESS_REFRESH_RETRIES="${DEPLOY_READINESS_REFRESH_RETRIES:-10}"' in deploy_text
+    assert 'DEPLOY_OPS_CHECK_WAIT_SECONDS="${DEPLOY_OPS_CHECK_WAIT_SECONDS:-300}"' in deploy_text
     assert (
         'DEPLOY_READINESS_REFRESH_RETRY_SECONDS="${DEPLOY_READINESS_REFRESH_RETRY_SECONDS:-20}"'
         in deploy_text
@@ -268,6 +269,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
         in deploy_text
     )
     assert "DEPLOY_READINESS_REFRESH_RETRIES must be a positive integer" in deploy_text
+    assert "DEPLOY_OPS_CHECK_WAIT_SECONDS must be a positive integer" in deploy_text
     assert (
         "DEPLOY_READINESS_REFRESH_RETRY_SECONDS must be a non-negative integer"
         in deploy_text
@@ -308,6 +310,7 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "printf 'close_only\\n'" in deploy_text
     assert "printf 'enabled\\n'" in deploy_text
     assert "run_deploy_ops_check()" in deploy_text
+    assert deploy_text.count('--wait-seconds "$DEPLOY_OPS_CHECK_WAIT_SECONDS"') == 2
     assert 'expected_status="$(load_deploy_ops_expected_trading_status)"' in deploy_text
     assert 'retry_expected_status="$(load_deploy_ops_expected_trading_status)"' in deploy_text
     assert "deploy ops check retrying after flat paper profit lock transition" in deploy_text
