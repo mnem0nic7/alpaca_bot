@@ -846,6 +846,12 @@ def _proof_guard_confirmation_regressions(
                 settings=sample_candidate_settings,
                 thresholds=thresholds,
             )
+            print(
+                f"  [{strategy_name}] proof guard {confirmation_label} metrics "
+                f"sample={index}/{len(samples)} scenarios={len(sample)}{stress_label} "
+                f"baseline=({_format_proof_guard_metrics(baseline)}) "
+                f"candidate=({_format_proof_guard_metrics(candidate)})"
+            )
             regressions.extend(
                 f"{regression_prefix} {regression}"
                 for regression in _proof_guard_regressions(

@@ -964,6 +964,11 @@ def test_proof_guard_rejects_candidate_that_regresses_slippage_stress(
     output = capsys.readouterr().out
     assert "proof guard confirmation sample=1/1 scenarios=1 slippage_bps=10" in output
     assert (
+        "proof guard confirmation metrics sample=1/1 scenarios=1 "
+        "slippage_bps=10 baseline=(trades=60 pnl=5.00"
+    ) in output
+    assert "candidate=(trades=60 pnl=1.00" in output
+    assert (
         "confirmation sample=1 slippage_bps=10 total_pnl 1.00 < baseline 5.00"
         in output
     )
@@ -1064,6 +1069,11 @@ def test_proof_guard_rejects_candidate_that_regresses_historical_partition(
     assert selected is None
     output = capsys.readouterr().out
     assert "proof guard historical confirmation sample=1/1 scenarios=1" in output
+    assert (
+        "proof guard historical confirmation metrics sample=1/1 scenarios=1 "
+        "baseline=(trades=60 pnl=10.00"
+    ) in output
+    assert "candidate=(trades=60 pnl=5.00" in output
     assert (
         "historical confirmation sample=1 total_pnl 5.00 < baseline 10.00"
         in output
