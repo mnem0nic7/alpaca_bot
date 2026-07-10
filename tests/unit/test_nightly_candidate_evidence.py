@@ -84,6 +84,16 @@ def test_candidate_evidence_does_not_inherit_positive_basket_verdict() -> None:
     assert evidence_verdict(row, "orb") == "missing-candidate-edge-diagnostics"
 
 
+def test_candidate_evidence_enforces_minimum_trade_sample() -> None:
+    row = _audit_row(candidate_trades=7, candidate_pnl=25.0)
+
+    assert (
+        evidence_verdict(row, "orb", min_trades=30)
+        == "insufficient-candidate-trades"
+    )
+    assert evidence_verdict(row, "orb", min_trades=7) == "positive-edge"
+
+
 def test_candidate_evidence_preserves_non_positive_basket_without_diagnostics() -> None:
     row = {"verdict": "no-evidence"}
 

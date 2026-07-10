@@ -140,6 +140,7 @@ EXCLUDE_CANDIDATES="${SECOND_STRATEGY_SETUP_EXCLUDE_CANDIDATES:-${SECOND_STRATEG
 VARIANT_MODE="${SECOND_STRATEGY_SETUP_VARIANT_MODE:-curated}"
 VARIANT_LABELS="${SECOND_STRATEGY_SETUP_VARIANT_LABELS:-}"
 MAX_VARIANTS="${SECOND_STRATEGY_SETUP_MAX_VARIANTS:-0}"
+MIN_CANDIDATE_TRADES="${SECOND_STRATEGY_SETUP_MIN_CANDIDATE_TRADES:-${PAPER_SCALE_MIN_TRADES:-30}}"
 VALIDATE_POSITIVES="${SECOND_STRATEGY_SETUP_VALIDATE_POSITIVES:-true}"
 MAX_VALIDATION_CANDIDATES="${SECOND_STRATEGY_SETUP_MAX_VALIDATION_CANDIDATES:-0}"
 SCAN_JOBS="${SECOND_STRATEGY_SETUP_SCAN_JOBS:-${SECOND_STRATEGY_SCAN_JOBS:-2}}"
@@ -151,7 +152,8 @@ VALIDATION_LATEST_LINK="${SECOND_STRATEGY_SETUP_VALIDATION_LATEST_LINK:-}"
 [[ -d "$SCENARIO_DIR" ]] || fail "missing scenario dir: $SCENARIO_DIR"
 mkdir -p "$OUTPUT_DIR"
 
-python3 - "$CANDIDATE_SCALE" "$MAX_VALIDATION_CANDIDATES" "$SCAN_JOBS" "$MAX_VARIANTS" <<'PY' || fail "invalid setup scan numeric setting"
+python3 - "$CANDIDATE_SCALE" "$MAX_VALIDATION_CANDIDATES" "$SCAN_JOBS" \
+  "$MAX_VARIANTS" "$MIN_CANDIDATE_TRADES" <<'PY' || fail "invalid setup scan numeric setting"
 from __future__ import annotations
 
 import sys
@@ -180,6 +182,16 @@ except ValueError as exc:
     raise SystemExit(f"max variants must be an integer: {sys.argv[4]}") from exc
 if max_variants < 0:
     raise SystemExit(f"max variants must be non-negative: {sys.argv[4]}")
+try:
+    min_candidate_trades = int(sys.argv[5])
+except ValueError as exc:
+    raise SystemExit(
+        f"minimum candidate trades must be an integer: {sys.argv[5]}"
+    ) from exc
+if min_candidate_trades < 1:
+    raise SystemExit(
+        f"minimum candidate trades must be positive: {sys.argv[5]}"
+    )
 PY
 case "${UPDATE_LATEST_LINKS,,}" in
   true|1|yes|y)
@@ -362,7 +374,7 @@ status_parts_dir="$OUTPUT_DIR/status_parts"
 mkdir -p "$status_parts_dir"
 
 echo "second strategy setup-knob scan: output_dir=$OUTPUT_DIR"
-echo "second strategy setup-knob scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scale=$CANDIDATE_SCALE scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} variant_mode=$VARIANT_MODE variants=$variant_count max_variants=$MAX_VARIANTS excluded_candidates=$EXCLUDE_CANDIDATES labels=${VARIANT_LABELS:-all}"
+echo "second strategy setup-knob scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scale=$CANDIDATE_SCALE min_candidate_trades=$MIN_CANDIDATE_TRADES scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} variant_mode=$VARIANT_MODE variants=$variant_count max_variants=$MAX_VARIANTS excluded_candidates=$EXCLUDE_CANDIDATES labels=${VARIANT_LABELS:-all}"
 
 failed_count=0
 run_prefilter_job() {
@@ -445,7 +457,7 @@ python3 - "$status_file" "$summary_file" "$summary_json_file" \
   "$SCENARIO_DIR" "$BASE_STRATEGY" "$SAMPLE_SIZE" "$SAMPLE_SEED" \
   "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "$CANDIDATE_SCALE" \
   "${starting_equity:-scenario_default}" "$EXCLUDE_CANDIDATES" "$SCAN_JOBS" \
-  "$variant_count" "$VARIANT_MODE" "$MAX_VARIANTS" <<'PY'
+  "$variant_count" "$VARIANT_MODE" "$MAX_VARIANTS" "$MIN_CANDIDATE_TRADES" <<'PY'
 from __future__ import annotations
 
 import json
@@ -475,6 +487,7 @@ scan_jobs = sys.argv[13]
 variant_count = sys.argv[14]
 variant_mode = sys.argv[15]
 max_variants = sys.argv[16]
+min_candidate_trades = int(sys.argv[17])
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -528,7 +541,15 @@ def sort_key(item):
         "no-candidate-trades": 2,
         "non-positive-candidate-pnl": 2,
         "missing-candidate-edge-diagnostics": 2,
-    }.get(evidence_verdict(audit_row, candidate), 2)
+        "insufficient-candidate-trades": 2,
+    }.get(
+        evidence_verdict(
+            audit_row,
+            candidate,
+            min_trades=min_candidate_trades,
+        ),
+        2,
+    )
     ci_low = candidate_contribution(audit_row, candidate).get("ci_low")
     ci_rank = -(float(ci_low) if ci_low is not None else float("-inf"))
     return (verdict_rank, ci_rank, candidate, variant_label)
@@ -546,6 +567,7 @@ lines = [
     f"- slippage_bps: `{slippage_bps}`",
     f"- max_open_positions: `{max_open_positions}`",
     f"- candidate_scale: `{candidate_scale}`",
+    f"- min_candidate_trades: `{min_candidate_trades}`",
     f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
@@ -578,7 +600,11 @@ for candidate, variant_label, env_overrides, scale, status, report, stderr, audi
         )
         continue
     basket_verdict = audit_row["verdict"]
-    verdict = evidence_verdict(audit_row, candidate)
+    verdict = evidence_verdict(
+        audit_row,
+        candidate,
+        min_trades=min_candidate_trades,
+    )
     candidate_stats = candidate_contribution(audit_row, candidate)
     candidate_status = contribution_status(candidate_stats)
     if verdict == "positive-edge":
@@ -660,6 +686,7 @@ write_text_atomic(
             "excluded_candidates": excluded_candidates,
             "variant_mode": variant_mode,
             "max_variants": int(max_variants),
+            "min_candidate_trades": min_candidate_trades,
             "variant_count": int(variant_count),
             "candidate_count": len(candidate_names),
             "candidate_names": candidate_names,
@@ -681,7 +708,8 @@ validation_failed_count=0
 if [[ "${VALIDATE_POSITIVES,,}" == "true" ]]; then
   validation_specs_file="$VALIDATION_OUTPUT_DIR/variants.tsv"
   mkdir -p "$VALIDATION_OUTPUT_DIR"
-  python3 - "$summary_json_file" "$validation_specs_file" "$MAX_VALIDATION_CANDIDATES" <<'PY'
+  python3 - "$summary_json_file" "$validation_specs_file" \
+    "$MAX_VALIDATION_CANDIDATES" "$MIN_CANDIDATE_TRADES" <<'PY'
 from __future__ import annotations
 
 import json
@@ -692,6 +720,7 @@ import sys
 payload = json.loads(Path(sys.argv[1]).read_text())
 output_path = Path(sys.argv[2])
 max_validation_candidates = int(sys.argv[3])
+min_candidate_trades = int(sys.argv[4])
 
 selected = []
 for row in payload.get("rows", []):
@@ -700,6 +729,7 @@ for row in payload.get("rows", []):
         and row.get("verdict") == "positive-edge"
         and row.get("candidate_verdict") == "positive-edge"
         and row.get("candidate_contribution_status") == "positive_pnl"
+        and int(row.get("candidate_trades") or 0) >= min_candidate_trades
     ):
         ci_low = row.get("candidate_ci_low")
         p_mean_le_zero = row.get("candidate_p_mean_le_zero")
@@ -822,7 +852,8 @@ PY
     "$summary_json_file" "$SCENARIO_DIR" "$BASE_STRATEGY" "$VALIDATION_SAMPLE_SIZE" \
     "$VALIDATION_SAMPLE_SEED" "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" \
     "$CANDIDATE_SCALE" "${starting_equity:-scenario_default}" "$EXCLUDE_CANDIDATES" \
-    "$SCAN_JOBS" "$MAX_VALIDATION_CANDIDATES" "$VALIDATION_OUTPUT_DIR" <<'PY'
+    "$SCAN_JOBS" "$MAX_VALIDATION_CANDIDATES" "$VALIDATION_OUTPUT_DIR" \
+    "$MIN_CANDIDATE_TRADES" <<'PY'
 from __future__ import annotations
 
 import json
@@ -852,6 +883,7 @@ excluded_candidates = sys.argv[13]
 scan_jobs = sys.argv[14]
 max_validation_candidates = sys.argv[15]
 validation_output_dir = sys.argv[16]
+min_candidate_trades = int(sys.argv[17])
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -905,7 +937,15 @@ def sort_key(item):
         "no-candidate-trades": 2,
         "non-positive-candidate-pnl": 2,
         "missing-candidate-edge-diagnostics": 2,
-    }.get(evidence_verdict(audit_row, candidate), 2)
+        "insufficient-candidate-trades": 2,
+    }.get(
+        evidence_verdict(
+            audit_row,
+            candidate,
+            min_trades=min_candidate_trades,
+        ),
+        2,
+    )
     ci_low = candidate_contribution(audit_row, candidate).get("ci_low")
     ci_rank = -(float(ci_low) if ci_low is not None else float("-inf"))
     return (verdict_rank, ci_rank, candidate, variant_label)
@@ -925,6 +965,7 @@ lines = [
     f"- slippage_bps: `{slippage_bps}`",
     f"- max_open_positions: `{max_open_positions}`",
     f"- candidate_scale: `{candidate_scale}`",
+    f"- min_candidate_trades: `{min_candidate_trades}`",
     f"- max_validation_candidates: `{max_validation_candidates}`",
     f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
@@ -955,7 +996,11 @@ for candidate, variant_label, env_overrides, scale, status, report, stderr, audi
         )
         continue
     basket_verdict = audit_row["verdict"]
-    verdict = evidence_verdict(audit_row, candidate)
+    verdict = evidence_verdict(
+        audit_row,
+        candidate,
+        min_trades=min_candidate_trades,
+    )
     candidate_stats = candidate_contribution(audit_row, candidate)
     candidate_status = contribution_status(candidate_stats)
     if verdict == "positive-edge":
@@ -1045,6 +1090,7 @@ write_text_atomic(
             "slippage_bps": slippage_bps,
             "max_open_positions": max_open_positions,
             "candidate_scale": candidate_scale,
+            "min_candidate_trades": min_candidate_trades,
             "max_validation_candidates": max_validation_candidates,
             "scan_jobs": scan_jobs,
             "starting_equity": starting_equity,

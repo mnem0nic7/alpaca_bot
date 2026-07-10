@@ -703,6 +703,8 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert "SECOND_STRATEGY_SETUP_VARIANT_MODE" in script
     assert "SECOND_STRATEGY_SETUP_MAX_VARIANTS" in script
     assert "SECOND_STRATEGY_SETUP_VARIANT_LABELS" in script
+    assert "SECOND_STRATEGY_SETUP_MIN_CANDIDATE_TRADES" in script
+    assert "PAPER_SCALE_MIN_TRADES:-30" in script
     assert "SECOND_STRATEGY_SETUP_VALIDATE_POSITIVES" in script
     assert "SECOND_STRATEGY_SETUP_MAX_VALIDATION_CANDIDATES" in script
     assert "second-strategy-setup-knob-independent-validation" in script
@@ -720,6 +722,9 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert script.count('"candidate_contribution_status": candidate_status') == 2
     assert 'row.get("candidate_verdict") == "positive-edge"' in script
     assert 'row.get("candidate_contribution_status") == "positive_pnl"' in script
+    assert 'int(row.get("candidate_trades") or 0) >= min_candidate_trades' in script
+    assert "insufficient-candidate-trades" in script
+    assert script.count('"min_candidate_trades": min_candidate_trades') == 2
     assert 'ci_low = row.get("candidate_ci_low")' in script
     assert 'total_pnl = row.get("candidate_total_pnl")' in script
     assert "SECOND_STRATEGY_SETUP_VARIANT_MODE must be one of: curated, grid" in script

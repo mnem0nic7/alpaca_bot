@@ -37,12 +37,20 @@ def contribution_status(contribution: dict) -> str:
     return "positive_pnl"
 
 
-def evidence_verdict(audit_row: dict, candidate: str) -> str | None:
+def evidence_verdict(
+    audit_row: dict,
+    candidate: str,
+    *,
+    min_trades: int = 0,
+) -> str | None:
     basket_verdict = audit_row.get("verdict")
     contribution = candidate_contribution(audit_row, candidate)
     status = contribution_status(contribution)
     if status == "no_trades":
         return "no-candidate-trades"
+    trades = contribution.get("trades")
+    if trades is not None and trades < min_trades:
+        return "insufficient-candidate-trades"
     if status == "non_positive_pnl":
         return "non-positive-candidate-pnl"
     candidate_verdict = contribution.get("verdict")
