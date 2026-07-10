@@ -271,6 +271,82 @@ def test_vwap_reversion_returns_none_when_volume_below_threshold():
     assert result is None
 
 
+def test_vwap_reversion_specific_volume_threshold_isolated_from_shared_threshold():
+    daily_bars = _make_daily_bars(n=10)
+    intraday_bars, signal_index = _make_scenario(signal_volume=20_000.0)
+
+    rejected = evaluate_vwap_reversion_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=_make_settings(
+            relative_volume_threshold=1.5,
+            vwap_reversion_relative_volume_threshold=2.1,
+        ),
+    )
+    accepted = evaluate_vwap_reversion_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=_make_settings(
+            relative_volume_threshold=2.5,
+            vwap_reversion_relative_volume_threshold=1.8,
+        ),
+    )
+
+    assert rejected is None
+    assert accepted is not None
+
+
+def test_vwap_reversion_specific_atr_multiplier_isolated_from_shared_multiplier():
+    from alpaca_bot.risk.atr import calculate_atr
+
+    settings = _make_settings(
+        atr_period=3,
+        atr_stop_multiplier=1.0,
+        vwap_reversion_atr_stop_multiplier=2.0,
+    )
+    daily_bars = _make_daily_bars(n=10)
+    intraday_bars, signal_index = _make_scenario(signal_low=97.0)
+    atr = calculate_atr(daily_bars, 3)
+    assert atr is not None
+
+    result = evaluate_vwap_reversion_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+
+    assert result is not None
+    assert result.initial_stop_price == round(97.0 - 2.0 * atr, 2)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {"vwap_reversion_relative_volume_threshold": 1.0},
+            "VWAP_REVERSION_RELATIVE_VOLUME_THRESHOLD",
+        ),
+        (
+            {"vwap_reversion_atr_stop_multiplier": 0.0},
+            "VWAP_REVERSION_ATR_STOP_MULTIPLIER",
+        ),
+        (
+            {"vwap_reversion_atr_stop_multiplier": 10.1},
+            "VWAP_REVERSION_ATR_STOP_MULTIPLIER",
+        ),
+    ],
+)
+def test_vwap_reversion_specific_settings_are_validated(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        _make_settings(**overrides)
+
+
 def test_vwap_reversion_returns_none_when_atr_insufficient():
     from alpaca_bot.risk.atr import calculate_atr
 

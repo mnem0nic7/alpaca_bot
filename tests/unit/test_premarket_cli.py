@@ -62,6 +62,50 @@ def test_orb_grid_controls_prefer_explicit_strategy_values() -> None:
     assert _configured_grid_value(base_env, "ORB_ATR_STOP_MULTIPLIER") == "1.5"
 
 
+def test_vwap_reversion_grid_controls_fall_back_to_shared_baseline() -> None:
+    from alpaca_bot.nightly.premarket_cli import _configured_grid_value
+
+    base_env = {
+        "RELATIVE_VOLUME_THRESHOLD": "2.0",
+        "ATR_STOP_MULTIPLIER": "1.25",
+        "VWAP_REVERSION_RELATIVE_VOLUME_THRESHOLD": "",
+        "VWAP_REVERSION_ATR_STOP_MULTIPLIER": "",
+    }
+
+    assert (
+        _configured_grid_value(
+            base_env, "VWAP_REVERSION_RELATIVE_VOLUME_THRESHOLD"
+        )
+        == "2.0"
+    )
+    assert (
+        _configured_grid_value(base_env, "VWAP_REVERSION_ATR_STOP_MULTIPLIER")
+        == "1.25"
+    )
+
+
+def test_vwap_reversion_grid_controls_prefer_explicit_strategy_values() -> None:
+    from alpaca_bot.nightly.premarket_cli import _configured_grid_value
+
+    base_env = {
+        "RELATIVE_VOLUME_THRESHOLD": "2.0",
+        "ATR_STOP_MULTIPLIER": "1.0",
+        "VWAP_REVERSION_RELATIVE_VOLUME_THRESHOLD": "1.8",
+        "VWAP_REVERSION_ATR_STOP_MULTIPLIER": "1.5",
+    }
+
+    assert (
+        _configured_grid_value(
+            base_env, "VWAP_REVERSION_RELATIVE_VOLUME_THRESHOLD"
+        )
+        == "1.8"
+    )
+    assert (
+        _configured_grid_value(base_env, "VWAP_REVERSION_ATR_STOP_MULTIPLIER")
+        == "1.5"
+    )
+
+
 def test_premarket_pass_returns_exit_0(monkeypatch, tmp_path):
     """All strategies pass gates → exit 0."""
     from alpaca_bot.nightly import premarket_cli as module

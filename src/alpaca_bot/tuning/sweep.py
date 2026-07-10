@@ -59,8 +59,8 @@ STRATEGY_GRIDS: dict[str, ParameterGrid] = {
     },
     "vwap_reversion": {
         "VWAP_DIP_THRESHOLD_PCT": ["0.01", "0.015", "0.02", "0.025"],
-        "RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "1.8"],
-        "ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
+        "VWAP_REVERSION_RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "1.8"],
+        "VWAP_REVERSION_ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
     },
     "gap_and_go": {
         "GAP_THRESHOLD_PCT": ["0.01", "0.015", "0.02", "0.025"],

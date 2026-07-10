@@ -59,16 +59,26 @@ def evaluate_vwap_reversion_signal(
     ]
     avg_volume = sum(b.volume for b in prior_bars) / len(prior_bars)
     relative_volume = signal_bar.volume / avg_volume if avg_volume > 0 else 0.0
-    if relative_volume < settings.relative_volume_threshold:
+    relative_volume_threshold = (
+        settings.vwap_reversion_relative_volume_threshold
+        if settings.vwap_reversion_relative_volume_threshold is not None
+        else settings.relative_volume_threshold
+    )
+    if relative_volume < relative_volume_threshold:
         return None
 
     if calculate_atr(daily_bars, settings.atr_period) is None:
         return None
 
+    atr_stop_multiplier = (
+        settings.vwap_reversion_atr_stop_multiplier
+        if settings.vwap_reversion_atr_stop_multiplier is not None
+        else settings.atr_stop_multiplier
+    )
     stop_buffer = atr_stop_buffer(
         daily_bars,
         settings.atr_period,
-        settings.atr_stop_multiplier,
+        atr_stop_multiplier,
         signal_bar.low,
         settings.breakout_stop_buffer_pct,
     )

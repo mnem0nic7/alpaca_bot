@@ -329,6 +329,8 @@ class Settings:
     extended_hours_max_spread_pct: float = 0.01
     extended_hours_signal_max_age_minutes: int = 60
     vwap_dip_threshold_pct: float = 0.015
+    vwap_reversion_relative_volume_threshold: float | None = None
+    vwap_reversion_atr_stop_multiplier: float | None = None
     gap_threshold_pct: float = 0.02
     gap_volume_threshold: float = 2.0
     bull_flag_min_run_pct: float = 0.02
@@ -570,6 +572,12 @@ class Settings:
             ),
             vwap_dip_threshold_pct=float(
                 values.get("VWAP_DIP_THRESHOLD_PCT", "0.015")
+            ),
+            vwap_reversion_relative_volume_threshold=_parse_optional_float(
+                values, "VWAP_REVERSION_RELATIVE_VOLUME_THRESHOLD"
+            ),
+            vwap_reversion_atr_stop_multiplier=_parse_optional_float(
+                values, "VWAP_REVERSION_ATR_STOP_MULTIPLIER"
             ),
             gap_threshold_pct=float(values.get("GAP_THRESHOLD_PCT", "0.02")),
             gap_volume_threshold=float(values.get("GAP_VOLUME_THRESHOLD", "2.0")),
@@ -895,6 +903,26 @@ class Settings:
             raise ValueError("VWAP_DIP_THRESHOLD_PCT must be positive")
         if self.vwap_dip_threshold_pct >= 1.0:
             raise ValueError("VWAP_DIP_THRESHOLD_PCT must be less than 1.0")
+        if (
+            self.vwap_reversion_relative_volume_threshold is not None
+            and self.vwap_reversion_relative_volume_threshold <= 1.0
+        ):
+            raise ValueError(
+                "VWAP_REVERSION_RELATIVE_VOLUME_THRESHOLD must be greater than 1.0"
+            )
+        if (
+            self.vwap_reversion_atr_stop_multiplier is not None
+            and self.vwap_reversion_atr_stop_multiplier <= 0.0
+        ):
+            raise ValueError("VWAP_REVERSION_ATR_STOP_MULTIPLIER must be positive")
+        if (
+            self.vwap_reversion_atr_stop_multiplier is not None
+            and self.vwap_reversion_atr_stop_multiplier > 10.0
+        ):
+            raise ValueError(
+                "VWAP_REVERSION_ATR_STOP_MULTIPLIER must be <= 10.0 "
+                "(got a suspiciously large value)"
+            )
         if self.gap_threshold_pct <= 0:
             raise ValueError("GAP_THRESHOLD_PCT must be positive")
         if self.gap_threshold_pct >= 1.0:

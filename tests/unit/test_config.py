@@ -107,6 +107,21 @@ def test_market_context_filter_env_overrides():
     assert s.enable_vwap_entry_filter is True
 
 
+def test_vwap_reversion_specific_controls_parse_as_optional() -> None:
+    defaults = Settings.from_env(_base_env())
+    configured = Settings.from_env(
+        _base_env(
+            VWAP_REVERSION_RELATIVE_VOLUME_THRESHOLD="1.8",
+            VWAP_REVERSION_ATR_STOP_MULTIPLIER="1.5",
+        )
+    )
+
+    assert defaults.vwap_reversion_relative_volume_threshold is None
+    assert defaults.vwap_reversion_atr_stop_multiplier is None
+    assert configured.vwap_reversion_relative_volume_threshold == 1.8
+    assert configured.vwap_reversion_atr_stop_multiplier == 1.5
+
+
 def test_entry_min_close_to_entry_pct_defaults_on_for_paper_and_parses_env():
     settings = Settings.from_env(_base_env())
     assert settings.entry_min_close_to_entry_pct == -0.01

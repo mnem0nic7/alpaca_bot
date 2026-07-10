@@ -471,6 +471,13 @@ def test_strategy_grids_keys_match_strategy_params() -> None:
     assert "ORB_ATR_STOP_MULTIPLIER" in STRATEGY_GRIDS["orb"]
     assert "RELATIVE_VOLUME_THRESHOLD" not in STRATEGY_GRIDS["orb"]
     assert "ATR_STOP_MULTIPLIER" not in STRATEGY_GRIDS["orb"]
+    assert (
+        "VWAP_REVERSION_RELATIVE_VOLUME_THRESHOLD"
+        in STRATEGY_GRIDS["vwap_reversion"]
+    )
+    assert "VWAP_REVERSION_ATR_STOP_MULTIPLIER" in STRATEGY_GRIDS["vwap_reversion"]
+    assert "RELATIVE_VOLUME_THRESHOLD" not in STRATEGY_GRIDS["vwap_reversion"]
+    assert "ATR_STOP_MULTIPLIER" not in STRATEGY_GRIDS["vwap_reversion"]
 
 
 # ---------------------------------------------------------------------------
