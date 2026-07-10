@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import sys
 from dataclasses import dataclass, replace
@@ -17,7 +18,7 @@ from alpaca_bot.execution.alpaca import (
     AlpacaMarketDataAdapter,
 )
 from alpaca_bot.replay.report import BacktestReport, report_from_records
-from alpaca_bot.replay.runner import ReplayRunner
+from alpaca_bot.replay.runner import ReplayRunner, ReplayScenario
 from alpaca_bot.replay.splitter import split_scenario
 from alpaca_bot.risk.confidence import compute_confidence_scores
 from alpaca_bot.storage.db import connect_postgres
@@ -77,6 +78,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "scenario set"
                         ))
     parser.add_argument(
+        "--proof-guard-confirmation-samples",
+        type=int,
+        default=2,
+        help="Disjoint deterministic samples required after the full proof guard (default: 2)",
+    )
+    parser.add_argument(
+        "--proof-guard-confirmation-sample-size",
+        type=int,
+        default=320,
+        help="OOS scenario count in each proof-guard confirmation sample (default: 320)",
+    )
+    parser.add_argument(
+        "--proof-guard-confirmation-seed",
+        default="nightly-proof-guard-confirmation-v1",
+        help="Stable seed for proof-guard confirmation samples",
+    )
+    parser.add_argument(
+        "--proof-guard-stress-slippage-bps",
+        type=float,
+        default=10.0,
+        help="Confirmation slippage stress in bps per side (default: 10; 0 disables)",
+    )
+    parser.add_argument(
         "--strategies",
         default="enabled",
         help=(
@@ -95,6 +119,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.max_combos < 0:
         print("--max-combos must be non-negative", file=sys.stderr)
+        return 1
+    if args.proof_guard_confirmation_samples < 0:
+        print("--proof-guard-confirmation-samples must be non-negative", file=sys.stderr)
+        return 1
+    if args.proof_guard_confirmation_sample_size < 1:
+        print("--proof-guard-confirmation-sample-size must be positive", file=sys.stderr)
+        return 1
+    if args.proof_guard_stress_slippage_bps < 0.0:
+        print("--proof-guard-stress-slippage-bps must be non-negative", file=sys.stderr)
         return 1
 
     base_env = dict(os.environ)
@@ -330,6 +363,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                             signal_evaluator=signal_evaluator,
                             strategy_name=strat_name,
                             fractionable_symbols=fractionable_symbols,
+                            confirmation_sample_count=args.proof_guard_confirmation_samples,
+                            confirmation_sample_size=args.proof_guard_confirmation_sample_size,
+                            confirmation_seed=args.proof_guard_confirmation_seed,
+                            confirmation_stress_slippage_bps=(
+                                args.proof_guard_stress_slippage_bps or None
+                            ),
+                            confirmation_scenarios=strat_oos_scenarios,
                         )
                     else:
                         guarded = max(
@@ -518,6 +558,11 @@ def _select_proof_guarded_candidate(
     signal_evaluator,
     strategy_name: str,
     fractionable_symbols: frozenset[str] | None = None,
+    confirmation_sample_count: int = 0,
+    confirmation_sample_size: int = 320,
+    confirmation_seed: str = "nightly-proof-guard-confirmation-v1",
+    confirmation_stress_slippage_bps: float | None = None,
+    confirmation_scenarios: Sequence[ReplayScenario] | None = None,
 ) -> tuple[TuningCandidate, float] | None:
     """Return the first held candidate that does not regress proof metrics."""
 
@@ -544,6 +589,14 @@ def _select_proof_guarded_candidate(
         thresholds=thresholds,
     )
     print(f"  [{strategy_name}] proof guard baseline: {_format_proof_guard_metrics(baseline)}")
+    confirmation_samples = _proof_guard_confirmation_samples(
+        scenarios=(
+            scenarios if confirmation_scenarios is None else confirmation_scenarios
+        ),
+        sample_count=confirmation_sample_count,
+        sample_size=confirmation_sample_size,
+        seed=confirmation_seed,
+    )
 
     ranked_pairs = sorted(
         held_pairs,
@@ -594,6 +647,22 @@ def _select_proof_guarded_candidate(
             thresholds=thresholds,
         )
         if not regressions:
+            confirmation_regressions = _proof_guard_confirmation_regressions(
+                samples=confirmation_samples,
+                baseline_settings=base_settings,
+                candidate_settings=candidate_settings,
+                signal_evaluator=signal_evaluator,
+                strategy_name=strategy_name,
+                thresholds=thresholds,
+                stress_slippage_bps=confirmation_stress_slippage_bps,
+            )
+            if confirmation_regressions:
+                rejected += 1
+                print(
+                    f"  [{strategy_name}] proof guard rejected params={candidate.params}: "
+                    + "; ".join(confirmation_regressions)
+                )
+                continue
             print(
                 f"  [{strategy_name}] proof guard accepted params={candidate.params}: "
                 f"{_format_proof_guard_metrics(metrics)}"
@@ -610,6 +679,115 @@ def _select_proof_guarded_candidate(
         f"held candidate(s)"
     )
     return None
+
+
+def _proof_guard_confirmation_samples(
+    *,
+    scenarios: Sequence[ReplayScenario],
+    sample_count: int,
+    sample_size: int,
+    seed: str,
+) -> tuple[tuple[ReplayScenario, ...], ...]:
+    if sample_count < 0:
+        raise ValueError("proof guard confirmation sample count must be non-negative")
+    if sample_count == 0:
+        return ()
+    if sample_size < 1:
+        raise ValueError("proof guard confirmation sample size must be positive")
+
+    available_sample_count = min(sample_count, len(scenarios) // sample_size)
+    if available_sample_count == 0:
+        return ()
+    ranked = sorted(
+        scenarios,
+        key=lambda scenario: (
+            hashlib.sha256(
+                f"{seed}:{getattr(scenario, 'name', '')}".encode("utf-8")
+            ).digest(),
+            getattr(scenario, "name", ""),
+        ),
+    )
+    return tuple(
+        tuple(ranked[index * sample_size : (index + 1) * sample_size])
+        for index in range(available_sample_count)
+    )
+
+
+def _proof_guard_confirmation_regressions(
+    *,
+    samples: Sequence[Sequence[ReplayScenario]],
+    baseline_settings: Settings,
+    candidate_settings: Settings,
+    signal_evaluator,
+    strategy_name: str,
+    thresholds: _ProofGuardThresholds,
+    stress_slippage_bps: float | None,
+) -> list[str]:
+    regressions: list[str] = []
+    for index, sample in enumerate(samples, start=1):
+        settings_pairs: list[tuple[str, Settings, Settings]] = [
+            ("", baseline_settings, candidate_settings)
+        ]
+        if stress_slippage_bps is not None:
+            stress_label = f" slippage_bps={stress_slippage_bps:g}"
+            settings_pairs.append(
+                (
+                    stress_label,
+                    replace(
+                        baseline_settings,
+                        replay_slippage_bps=stress_slippage_bps,
+                    ),
+                    replace(
+                        candidate_settings,
+                        replay_slippage_bps=stress_slippage_bps,
+                    ),
+                )
+            )
+
+        for (
+            stress_label,
+            sample_baseline_settings,
+            sample_candidate_settings,
+        ) in settings_pairs:
+            print(
+                f"  [{strategy_name}] proof guard confirmation "
+                f"sample={index}/{len(samples)} scenarios={len(sample)}{stress_label}"
+            )
+            baseline_report = _pooled_report(
+                scenarios=list(sample),
+                settings=sample_baseline_settings,
+                signal_evaluator=signal_evaluator,
+            )
+            candidate_report = _pooled_report(
+                scenarios=list(sample),
+                settings=sample_candidate_settings,
+                signal_evaluator=signal_evaluator,
+            )
+            regression_prefix = f"confirmation sample={index}{stress_label}"
+            if baseline_report is None or candidate_report is None:
+                regressions.append(f"{regression_prefix} missing replay report")
+                continue
+            baseline = _proof_guard_metrics(
+                scenarios=list(sample),
+                report=baseline_report,
+                settings=sample_baseline_settings,
+                thresholds=thresholds,
+            )
+            candidate = _proof_guard_metrics(
+                scenarios=list(sample),
+                report=candidate_report,
+                settings=sample_candidate_settings,
+                thresholds=thresholds,
+            )
+            regressions.extend(
+                f"{regression_prefix} {regression}"
+                for regression in _proof_guard_regressions(
+                    baseline=baseline,
+                    candidate=candidate,
+                    thresholds=thresholds,
+                )
+            )
+    return regressions
 
 
 def _resolve_proof_guard_thresholds(base_env: dict[str, str]) -> _ProofGuardThresholds:
