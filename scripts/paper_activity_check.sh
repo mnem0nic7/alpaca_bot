@@ -437,7 +437,7 @@ stats="$("${compose[@]}" exec -T postgres psql \
   -v paper_activity_strategy="$PAPER_ACTIVITY_STRATEGY" \
   -v paper_activity_strategies="$paper_activity_strategy_csv" <<SQL
 WITH recent AS (
-  SELECT event_type, payload, created_at
+  SELECT event_type, symbol, payload, created_at
   FROM audit_events
   WHERE created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
     AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = :'trading_mode')
@@ -560,10 +560,24 @@ materialized_entry_symbols AS (
   UNION
   SELECT symbol FROM strategy_positions
 ),
+intentionally_resolved_entry_symbols AS (
+  SELECT DISTINCT symbol
+  FROM recent
+  WHERE event_type = 'entry_intent_skipped'
+    AND symbol IS NOT NULL
+    AND payload->>'intent_type' = 'entry'
+    AND payload->>'reason' = 'short_active_window'
+    AND payload->>'strategy_name' = :'paper_activity_strategy'
+),
+resolved_entry_symbols AS (
+  SELECT symbol FROM materialized_entry_symbols
+  UNION
+  SELECT symbol FROM intentionally_resolved_entry_symbols
+),
 unmaterialized_accepted_symbols AS (
   SELECT symbol FROM accepted_symbols
   EXCEPT
-  SELECT symbol FROM materialized_entry_symbols
+  SELECT symbol FROM resolved_entry_symbols
 )
 SELECT
   COUNT(*) FILTER (WHERE event_type = 'supervisor_cycle')::int,
@@ -1020,7 +1034,7 @@ WITH requested AS (
   WHERE trim(value) <> ''
 ),
 recent AS (
-  SELECT event_type, payload, created_at
+  SELECT event_type, symbol, payload, created_at
   FROM audit_events
   WHERE created_at >= NOW() - (${PAPER_ACTIVITY_WINDOW_MINUTES} * interval '1 minute')
     AND (NOT (payload ? 'trading_mode') OR payload->>'trading_mode' = :'trading_mode')
@@ -1127,12 +1141,26 @@ per_strategy AS (
         WHERE trading_mode = 'paper'
           AND strategy_version = :'strategy_version'
           AND strategy_name IS NOT DISTINCT FROM r.strategy_name
+      ),
+      intentionally_resolved_symbols AS (
+        SELECT DISTINCT events.symbol
+        FROM recent events
+        WHERE events.event_type = 'entry_intent_skipped'
+          AND events.symbol IS NOT NULL
+          AND events.payload->>'intent_type' = 'entry'
+          AND events.payload->>'reason' = 'short_active_window'
+          AND events.payload->>'strategy_name' = r.strategy_name
+      ),
+      resolved_symbols AS (
+        SELECT symbol FROM materialized_symbols
+        UNION
+        SELECT symbol FROM intentionally_resolved_symbols
       )
       SELECT COUNT(*)::int
       FROM (
         SELECT symbol FROM accepted_symbols
         EXCEPT
-        SELECT symbol FROM materialized_symbols
+        SELECT symbol FROM resolved_symbols
       ) unmaterialized
     ), 0) AS unmaterialized_accepted,
     COALESCE((

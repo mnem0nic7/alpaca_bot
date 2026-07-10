@@ -4767,6 +4767,146 @@ def test_paper_activity_fails_when_accepted_decisions_do_not_materialize_orders(
     assert not docker_marker.exists()
 
 
+def test_paper_activity_allows_accepted_decision_resolved_by_short_window_skip(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "query=$(cat)\n"
+        "unmaterialized_count=1\n"
+        "unmaterialized_symbols=MTN\n"
+        "if printf '%s\\n' \"$query\" | grep -Fq 'intentionally_resolved_entry_symbols AS' \\\n"
+        "  && printf '%s\\n' \"$query\" | grep -Fq \"event_type = 'entry_intent_skipped'\" \\\n"
+        "  && printf '%s\\n' \"$query\" | grep -Fq \"payload->>'reason' = 'short_active_window'\" \\\n"
+        "  && printf '%s\\n' \"$query\" | grep -Fq \"payload->>'strategy_name' = :'paper_activity_strategy'\" \\\n"
+        "  && printf '%s\\n' \"$query\" | grep -Fq 'SELECT symbol FROM resolved_entry_symbols'; then\n"
+        "  unmaterialized_count=0\n"
+        "  unmaterialized_symbols=\n"
+        "fi\n"
+        "printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|accepted/none/none:1,skipped_no_signal/none/none:9|1|2026-06-29 16:00:00+00|0||1|MTN|0||%s|%s|0||bull_flag|||0|0|0|0|false\\n' \"$unmaterialized_count\" \"$unmaterialized_symbols\"\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE": "false",
+            "PAPER_ACTIVITY_MIN_DECISION_RECORDS": "0",
+            "PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT": "false",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "bull_flag_accepted_symbols=[MTN]" in result.stdout
+    assert "bull_flag_materialized_entry_symbols=[]" in result.stdout
+    assert "bull_flag_unmaterialized_accepted_symbols=[]" in result.stdout
+
+
+def test_paper_activity_allows_short_window_resolution_for_approved_strategies(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    env_file.write_text(
+        "\n".join(
+            [
+                "TRADING_MODE=paper",
+                "STRATEGY_VERSION=v1-breakout",
+                "PROFIT_PROBE_START_DATE=2026-06-29",
+                "POSTGRES_USER=postgres",
+                "POSTGRES_DB=postgres",
+                "PAPER_ACTIVITY_STRATEGIES=bull_flag,vwap_cross",
+            ]
+        )
+    )
+    fake_runner = tmp_path / "readiness_runner.sh"
+    fake_runner.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'scheduled check context: session_date=2026-06-29 proof_start=2026-06-29 reason=already_passed\\n'\n"
+        "exit 0\n"
+    )
+    fake_runner.chmod(0o755)
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_date = fake_bin / "date"
+    fake_date.write_text("#!/usr/bin/env bash\nprintf '2026-06-29\\n'\n")
+    fake_date.chmod(0o755)
+    psql_count = tmp_path / "psql_count"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        f"count=$(cat {psql_count} 2>/dev/null || printf '0')\n"
+        "count=$((count + 1))\n"
+        f"printf '%s' \"$count\" > {psql_count}\n"
+        "query=$(cat)\n"
+        "if [[ \"$count\" -eq 1 ]]; then\n"
+        "  printf '10|0|10|10|0|2026-06-29 16:00:00+00|false||false||2026-06-29 16:00:00+00|0|10|10|0|10|10|2026-06-29 16:00:00+00|accepted/none/none:1,skipped_no_signal/none/none:9|1|2026-06-29 16:00:00+00|0||1|MTN|0||0||0||bull_flag,vwap_cross|||0|0|0|0|false\\n'\n"
+        "  exit 0\n"
+        "fi\n"
+        "unmaterialized=bull_flag\n"
+        "if printf '%s\\n' \"$query\" | grep -Fq 'intentionally_resolved_symbols AS' \\\n"
+        "  && printf '%s\\n' \"$query\" | grep -Fq \"events.event_type = 'entry_intent_skipped'\" \\\n"
+        "  && printf '%s\\n' \"$query\" | grep -Fq \"events.payload->>'reason' = 'short_active_window'\" \\\n"
+        "  && printf '%s\\n' \"$query\" | grep -Fq \"events.payload->>'strategy_name' = r.strategy_name\" \\\n"
+        "  && printf '%s\\n' \"$query\" | grep -Fq 'SELECT symbol FROM resolved_symbols'; then\n"
+        "  unmaterialized=\n"
+        "fi\n"
+        "printf '2|bull_flag,vwap_cross||||||%s||bull_flag:cycles=10,records=10,log_cycles=10,log_records=10,accepted=1,exposure=false;vwap_cross:cycles=10,records=10,log_cycles=10,log_records=10,accepted=0,exposure=false\\n' \"$unmaterialized\"\n"
+    )
+    fake_docker.chmod(0o755)
+
+    result = subprocess.run(
+        ["scripts/paper_activity_check.sh", str(env_file)],
+        cwd=Path.cwd(),
+        env={
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "PAPER_ACTIVITY_READINESS_RUNNER": str(fake_runner),
+            "PAPER_ACTIVITY_CLOSE_ONLY_ON_FAILURE": "false",
+            "PAPER_ACTIVITY_MIN_DECISION_RECORDS": "0",
+            "PAPER_ACTIVITY_REQUIRE_BROKER_ACCOUNT": "false",
+        },
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "paper activity strategies ok: strategies=bull_flag,vwap_cross count=2"
+        in result.stdout
+    )
+
+
 def test_paper_activity_fails_when_some_accepted_symbols_do_not_materialize(
     tmp_path: Path,
 ) -> None:
