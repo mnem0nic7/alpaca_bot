@@ -44,8 +44,8 @@ STRATEGY_GRIDS: dict[str, ParameterGrid] = {
     },
     "orb": {
         "ORB_OPENING_BARS": ["1", "2", "3", "4"],
-        "RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "1.8"],
-        "ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
+        "ORB_RELATIVE_VOLUME_THRESHOLD": ["1.3", "1.5", "1.8", "2.0"],
+        "ORB_ATR_STOP_MULTIPLIER": ["1.0", "1.5", "2.0"],
     },
     "high_watermark": {
         "HIGH_WATERMARK_LOOKBACK_DAYS": ["63", "126", "252"],

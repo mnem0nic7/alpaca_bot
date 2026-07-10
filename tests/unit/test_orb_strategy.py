@@ -268,6 +268,37 @@ def test_orb_returns_none_when_volume_below_threshold():
     assert result is None
 
 
+def test_orb_specific_volume_threshold_isolated_from_shared_threshold():
+    daily_bars = _make_daily_bars(n=10)
+    intraday_bars, signal_index = _make_intraday_bars_with_orb(
+        signal_volume=100_000.0
+    )
+
+    rejected = evaluate_orb_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=_make_settings(
+            relative_volume_threshold=1.5,
+            orb_relative_volume_threshold=2.1,
+        ),
+    )
+    accepted = evaluate_orb_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=_make_settings(
+            relative_volume_threshold=2.5,
+            orb_relative_volume_threshold=1.8,
+        ),
+    )
+
+    assert rejected is None
+    assert accepted is not None
+
+
 def test_orb_ignores_bars_from_prior_sessions():
     """
     Prior-day bars have a very high price range; if session filtering fails,
@@ -330,6 +361,44 @@ def test_orb_initial_stop_uses_atr_when_enough_daily_bars():
     )
     assert result is not None
     assert result.initial_stop_price == expected_stop
+
+
+def test_orb_specific_atr_multiplier_isolated_from_shared_multiplier():
+    from alpaca_bot.risk.atr import calculate_atr
+
+    settings = _make_settings(
+        atr_period=3,
+        atr_stop_multiplier=1.0,
+        orb_atr_stop_multiplier=2.0,
+    )
+    daily_bars = _make_daily_bars(n=6)
+    intraday_bars, signal_index = _make_intraday_bars_with_orb(orb_low=99.0)
+    atr = calculate_atr(daily_bars, 3)
+    assert atr is not None
+
+    result = evaluate_orb_signal(
+        symbol="AAPL",
+        intraday_bars=intraday_bars,
+        signal_index=signal_index,
+        daily_bars=daily_bars,
+        settings=settings,
+    )
+
+    assert result is not None
+    assert result.initial_stop_price == round(99.0 - 2.0 * atr, 2)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"orb_relative_volume_threshold": 1.0}, "ORB_RELATIVE_VOLUME_THRESHOLD"),
+        ({"orb_atr_stop_multiplier": 0.0}, "ORB_ATR_STOP_MULTIPLIER"),
+        ({"orb_atr_stop_multiplier": 10.1}, "ORB_ATR_STOP_MULTIPLIER"),
+    ],
+)
+def test_orb_specific_settings_are_validated(overrides, message):
+    with pytest.raises(ValueError, match=message):
+        _make_settings(**overrides)
 
 
 def test_orb_returns_none_when_atr_insufficient():

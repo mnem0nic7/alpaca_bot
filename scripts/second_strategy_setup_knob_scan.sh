@@ -101,6 +101,9 @@ validate_override_assignment() {
     ENTRY_ORDER_ACTIVE_BARS|ENTRY_MIN_CLOSE_TO_ENTRY_PCT|STOP_LIMIT_BUFFER_PCT|ENTRY_STOP_PRICE_BUFFER)
       fail "protected paper proof parameter cannot be varied by setup scan: $name"
       ;;
+    RELATIVE_VOLUME_THRESHOLD|ATR_STOP_MULTIPLIER|DAILY_SMA_PERIOD)
+      fail "shared base strategy parameter cannot be varied by setup scan: $name"
+      ;;
   esac
 }
 
@@ -253,7 +256,12 @@ excluded_names = set(parse_names(sys.argv[3]))
 label_filter = set(parse_names(sys.argv[4]))
 variant_mode = sys.argv[5].strip().lower()
 max_variants = int(sys.argv[6])
-protected_env_names = {
+shared_base_env_names = {
+    "ATR_STOP_MULTIPLIER",
+    "DAILY_SMA_PERIOD",
+    "RELATIVE_VOLUME_THRESHOLD",
+}
+protected_env_names = shared_base_env_names | {
     "ENTRY_ORDER_ACTIVE_BARS",
     "ENTRY_MIN_CLOSE_TO_ENTRY_PCT",
     "STOP_LIMIT_BUFFER_PCT",
@@ -284,7 +292,12 @@ def validate_overrides(overrides: str) -> None:
         if not name or not value:
             raise SystemExit(f"invalid setup override assignment: {assignment}")
         if name in protected_env_names:
-            raise SystemExit(f"protected paper proof parameter cannot be varied: {name}")
+            parameter_kind = (
+                "shared base strategy"
+                if name in shared_base_env_names
+                else "protected paper proof"
+            )
+            raise SystemExit(f"{parameter_kind} parameter cannot be varied: {name}")
 
 
 def curated_variants() -> list[tuple[str, str, str]]:

@@ -41,6 +41,22 @@ _PARAM_DEFAULTS: dict[str, str] = {
     "FAILED_BREAKDOWN_RECAPTURE_BUFFER_PCT": "0.001",
 }
 
+_PARAM_FALLBACKS: dict[str, str] = {
+    "ORB_RELATIVE_VOLUME_THRESHOLD": "RELATIVE_VOLUME_THRESHOLD",
+    "ORB_ATR_STOP_MULTIPLIER": "ATR_STOP_MULTIPLIER",
+}
+
+
+def _configured_grid_value(base_env: dict[str, str], key: str) -> str:
+    configured = base_env.get(key, "").strip()
+    if configured:
+        return configured
+    fallback_key = _PARAM_FALLBACKS.get(key, key)
+    fallback = base_env.get(fallback_key, "").strip()
+    if fallback:
+        return fallback
+    return _PARAM_DEFAULTS.get(fallback_key, "")
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="alpaca-bot-premarket")
@@ -96,7 +112,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     for strat_name, strat_grid in STRATEGY_GRIDS.items():
         signal_evaluator = STRATEGY_REGISTRY[strat_name]
         constrained_grid = {
-            k: [base_env.get(k, _PARAM_DEFAULTS.get(k, ""))]
+            k: [_configured_grid_value(base_env, k)]
             for k in strat_grid
         }
 

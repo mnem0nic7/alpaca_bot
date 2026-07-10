@@ -65,16 +65,29 @@ def evaluate_orb_signal(
     # volume baseline uses opening range bars so signals can fire early in the session
     avg_volume = sum(bar.volume for bar in opening_range_bars) / len(opening_range_bars)
     relative_volume = signal_bar.volume / avg_volume if avg_volume > 0 else 0.0
-    if relative_volume < settings.relative_volume_threshold:
+    relative_volume_threshold = (
+        settings.orb_relative_volume_threshold
+        if settings.orb_relative_volume_threshold is not None
+        else settings.relative_volume_threshold
+    )
+    if relative_volume < relative_volume_threshold:
         return None
     if calculate_atr(daily_bars, settings.atr_period) is None:
         return None
 
     stop_price = round(signal_bar.high + settings.entry_stop_price_buffer, 2)
     limit_price = round(stop_price * (1 + settings.stop_limit_buffer_pct), 2)
+    atr_stop_multiplier = (
+        settings.orb_atr_stop_multiplier
+        if settings.orb_atr_stop_multiplier is not None
+        else settings.atr_stop_multiplier
+    )
     stop_buffer = atr_stop_buffer(
-        daily_bars, settings.atr_period, settings.atr_stop_multiplier,
-        opening_range_low, settings.breakout_stop_buffer_pct,
+        daily_bars,
+        settings.atr_period,
+        atr_stop_multiplier,
+        opening_range_low,
+        settings.breakout_stop_buffer_pct,
     )
     initial_stop_price = round(max(0.01, opening_range_low - stop_buffer), 2)
 

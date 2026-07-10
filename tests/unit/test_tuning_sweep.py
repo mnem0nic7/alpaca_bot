@@ -467,6 +467,10 @@ def test_strategy_grids_keys_match_strategy_params() -> None:
     assert "BREAKOUT_LOOKBACK_BARS" not in STRATEGY_GRIDS["ema_pullback"]
     assert "BB_PERIOD" in STRATEGY_GRIDS["bb_squeeze"]
     assert "BREAKOUT_LOOKBACK_BARS" not in STRATEGY_GRIDS["bb_squeeze"]
+    assert "ORB_RELATIVE_VOLUME_THRESHOLD" in STRATEGY_GRIDS["orb"]
+    assert "ORB_ATR_STOP_MULTIPLIER" in STRATEGY_GRIDS["orb"]
+    assert "RELATIVE_VOLUME_THRESHOLD" not in STRATEGY_GRIDS["orb"]
+    assert "ATR_STOP_MULTIPLIER" not in STRATEGY_GRIDS["orb"]
 
 
 # ---------------------------------------------------------------------------

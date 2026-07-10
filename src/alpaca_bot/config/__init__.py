@@ -295,6 +295,8 @@ class Settings:
     floor_auto_raise_max_age_days: int = 7
     prior_day_high_lookback_bars: int = 1
     orb_opening_bars: int = 2
+    orb_relative_volume_threshold: float | None = None
+    orb_atr_stop_multiplier: float | None = None
     high_watermark_lookback_days: int = 252
     ema_period: int = 9
     atr_period: int = 14
@@ -481,6 +483,12 @@ class Settings:
             ),
             prior_day_high_lookback_bars=int(values.get("PRIOR_DAY_HIGH_LOOKBACK_BARS", "1")),
             orb_opening_bars=int(values.get("ORB_OPENING_BARS", "2")),
+            orb_relative_volume_threshold=_parse_optional_float(
+                values, "ORB_RELATIVE_VOLUME_THRESHOLD"
+            ),
+            orb_atr_stop_multiplier=_parse_optional_float(
+                values, "ORB_ATR_STOP_MULTIPLIER"
+            ),
             high_watermark_lookback_days=int(values.get("HIGH_WATERMARK_LOOKBACK_DAYS", "252")),
             ema_period=int(values.get("EMA_PERIOD", "9")),
             atr_period=int(values.get("ATR_PERIOD", "14")),
@@ -802,6 +810,25 @@ class Settings:
             raise ValueError("PRIOR_DAY_HIGH_LOOKBACK_BARS must be at least 1")
         if self.orb_opening_bars < 1:
             raise ValueError("ORB_OPENING_BARS must be at least 1")
+        if (
+            self.orb_relative_volume_threshold is not None
+            and self.orb_relative_volume_threshold <= 1.0
+        ):
+            raise ValueError(
+                "ORB_RELATIVE_VOLUME_THRESHOLD must be greater than 1.0"
+            )
+        if (
+            self.orb_atr_stop_multiplier is not None
+            and self.orb_atr_stop_multiplier <= 0.0
+        ):
+            raise ValueError("ORB_ATR_STOP_MULTIPLIER must be positive")
+        if (
+            self.orb_atr_stop_multiplier is not None
+            and self.orb_atr_stop_multiplier > 10.0
+        ):
+            raise ValueError(
+                "ORB_ATR_STOP_MULTIPLIER must be <= 10.0 (got a suspiciously large value)"
+            )
         if self.high_watermark_lookback_days < 5:
             raise ValueError("HIGH_WATERMARK_LOOKBACK_DAYS must be at least 5")
         if self.ema_period < 2:

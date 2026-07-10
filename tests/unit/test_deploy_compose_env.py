@@ -26,6 +26,8 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "MAX_OPEN_POSITIONS",
         "CONFIDENCE_FLOOR",
         "ATR_STOP_MULTIPLIER",
+        "ORB_RELATIVE_VOLUME_THRESHOLD",
+        "ORB_ATR_STOP_MULTIPLIER",
         "TRAILING_STOP_ATR_MULTIPLIER",
         "OPTION_CHAIN_MIN_TOTAL_VOLUME",
         "OPTION_CHAIN_SNAPSHOT_DIR",

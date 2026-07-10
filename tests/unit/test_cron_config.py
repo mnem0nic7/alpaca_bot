@@ -738,6 +738,10 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert "ENTRY_MIN_CLOSE_TO_ENTRY_PCT" in script
     assert "STOP_LIMIT_BUFFER_PCT" in script
     assert "ENTRY_STOP_PRICE_BUFFER" in script
+    assert "shared base strategy parameter cannot be varied by setup scan" in script
+    assert '"RELATIVE_VOLUME_THRESHOLD"' in script
+    assert '"ATR_STOP_MULTIPLIER"' in script
+    assert '"DAILY_SMA_PERIOD"' in script
     assert "EMA_PERIOD=7" in script
     assert "BREAKOUT_LOOKBACK_BARS=10" in script
     assert "ORB_OPENING_BARS=3" in script

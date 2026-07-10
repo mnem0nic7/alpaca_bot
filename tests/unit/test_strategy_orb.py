@@ -136,6 +136,19 @@ class _SliceGuardedBars(Sequence[Bar]):
         return self._bars[index]
 
 
+def test_orb_specific_settings_parse_and_default_to_shared_controls():
+    defaults = make_settings()
+    configured = make_settings(
+        ORB_RELATIVE_VOLUME_THRESHOLD="1.8",
+        ORB_ATR_STOP_MULTIPLIER="1.5",
+    )
+
+    assert defaults.orb_relative_volume_threshold is None
+    assert defaults.orb_atr_stop_multiplier is None
+    assert configured.orb_relative_volume_threshold == 1.8
+    assert configured.orb_atr_stop_multiplier == 1.5
+
+
 def test_orb_returns_none_for_empty_bars():
     settings = make_settings()
     daily_bars = make_daily_bars()

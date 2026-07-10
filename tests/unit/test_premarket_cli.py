@@ -34,6 +34,34 @@ def _fake_split(scenario, *, in_sample_ratio):
     return is_s, oos_s
 
 
+def test_orb_grid_controls_fall_back_to_shared_baseline() -> None:
+    from alpaca_bot.nightly.premarket_cli import _configured_grid_value
+
+    base_env = {
+        "RELATIVE_VOLUME_THRESHOLD": "2.0",
+        "ATR_STOP_MULTIPLIER": "1.25",
+        "ORB_RELATIVE_VOLUME_THRESHOLD": "",
+        "ORB_ATR_STOP_MULTIPLIER": "",
+    }
+
+    assert _configured_grid_value(base_env, "ORB_RELATIVE_VOLUME_THRESHOLD") == "2.0"
+    assert _configured_grid_value(base_env, "ORB_ATR_STOP_MULTIPLIER") == "1.25"
+
+
+def test_orb_grid_controls_prefer_explicit_strategy_values() -> None:
+    from alpaca_bot.nightly.premarket_cli import _configured_grid_value
+
+    base_env = {
+        "RELATIVE_VOLUME_THRESHOLD": "2.0",
+        "ATR_STOP_MULTIPLIER": "1.0",
+        "ORB_RELATIVE_VOLUME_THRESHOLD": "1.8",
+        "ORB_ATR_STOP_MULTIPLIER": "1.5",
+    }
+
+    assert _configured_grid_value(base_env, "ORB_RELATIVE_VOLUME_THRESHOLD") == "1.8"
+    assert _configured_grid_value(base_env, "ORB_ATR_STOP_MULTIPLIER") == "1.5"
+
+
 def test_premarket_pass_returns_exit_0(monkeypatch, tmp_path):
     """All strategies pass gates → exit 0."""
     from alpaca_bot.nightly import premarket_cli as module
