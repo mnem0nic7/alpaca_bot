@@ -230,6 +230,8 @@ import re
 import sys
 from pathlib import Path
 
+from alpaca_bot.nightly.setup_variants import stratified_variant_cap
+
 output_path = Path(sys.argv[1])
 
 
@@ -318,16 +320,20 @@ else:
         "SECOND_STRATEGY_SETUP_VARIANT_MODE must be one of: curated, grid"
     )
 
-lines: list[str] = []
+filtered_rows: list[tuple[str, str, str]] = []
 for candidate, label, overrides in variant_rows:
     if candidate not in candidate_names or candidate in excluded_names:
         continue
     if label_filter and label not in label_filter:
         continue
     validate_overrides(overrides)
-    lines.append(f"{candidate}\t{label}\t{overrides}")
-    if max_variants and len(lines) >= max_variants:
-        break
+    filtered_rows.append((candidate, label, overrides))
+
+selected_rows = stratified_variant_cap(filtered_rows, max_variants)
+lines = [
+    f"{candidate}\t{label}\t{overrides}"
+    for candidate, label, overrides in selected_rows
+]
 
 output_path.write_text("\n".join(lines) + ("\n" if lines else ""))
 PY
@@ -434,6 +440,12 @@ import os
 from pathlib import Path
 import sys
 
+from alpaca_bot.nightly.candidate_evidence import (
+    candidate_contribution,
+    contribution_status,
+    evidence_verdict,
+)
+
 status_path = Path(sys.argv[1])
 summary_path = Path(sys.argv[2])
 summary_json_path = Path(sys.argv[3])
@@ -479,6 +491,9 @@ for raw in status_path.read_text().splitlines():
         ]
         if payloads and payloads[-1].get("rows"):
             audit_row = payloads[-1]["rows"][0]
+            trade_diagnostics = payloads[-1].get("trade_diagnostics")
+            if trade_diagnostics is not None:
+                audit_row["trade_diagnostics"] = trade_diagnostics
     rows.append((candidate, variant_label, env_overrides, scale, status, report, stderr, audit_row))
 
 
@@ -497,8 +512,11 @@ def sort_key(item):
         "no-evidence": 1,
         "insufficient-data": 2,
         "negative-edge": 2,
-    }.get(audit_row.get("verdict"), 2)
-    ci_low = audit_row.get("ci_low")
+        "no-candidate-trades": 2,
+        "non-positive-candidate-pnl": 2,
+        "missing-candidate-edge-diagnostics": 2,
+    }.get(evidence_verdict(audit_row, candidate), 2)
+    ci_low = candidate_contribution(audit_row, candidate).get("ci_low")
     ci_rank = -(float(ci_low) if ci_low is not None else float("-inf"))
     return (verdict_rank, ci_rank, candidate, variant_label)
 
@@ -523,8 +541,8 @@ lines = [
     f"- variants: `{variant_count}`",
     f"- candidate_names: `{','.join(candidate_names) if candidate_names else 'none'}`",
     "",
-    "| candidate | lever | overrides | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
-    "|---|---|---|---|---:|---:|---:|---:|---|---:|---:|---|---|",
+    "| candidate | lever | overrides | status | trades | candidate trades | candidate P&L | candidate mean/trade | candidate 95% CI mean/trade | candidate p(mean<=0) | basket total P&L | basket 95% CI mean/trade | basket verdict | verdict | report |",
+    "|---|---|---|---|---:|---:|---:|---:|---|---:|---:|---|---|---|---|",
 ]
 
 positive_edges = 0
@@ -543,16 +561,24 @@ for candidate, variant_label, env_overrides, scale, status, report, stderr, audi
             }
         )
         lines.append(
-            f"| `{candidate}` | `{variant_label}` | `{env_overrides}` | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
+            f"| `{candidate}` | `{variant_label}` | `{env_overrides}` | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
         )
         continue
-    verdict = audit_row["verdict"]
+    basket_verdict = audit_row["verdict"]
+    verdict = evidence_verdict(audit_row, candidate)
+    candidate_stats = candidate_contribution(audit_row, candidate)
+    candidate_status = contribution_status(candidate_stats)
     if verdict == "positive-edge":
         positive_edges += 1
     ci = (
         "n/a"
         if audit_row["ci_low"] is None or audit_row["ci_high"] is None
         else f"[{fmt(audit_row['ci_low'], '.4f')}, {fmt(audit_row['ci_high'], '.4f')}]"
+    )
+    candidate_ci = (
+        "n/a"
+        if candidate_stats["ci_low"] is None or candidate_stats["ci_high"] is None
+        else f"[{fmt(candidate_stats['ci_low'], '.4f')}, {fmt(candidate_stats['ci_high'], '.4f')}]"
     )
     p_mean_le_zero = audit_row["p_positive"]
     json_rows.append(
@@ -572,16 +598,28 @@ for candidate, variant_label, env_overrides, scale, status, report, stderr, audi
             "ci_high": audit_row["ci_high"],
             "p_mean_le_zero": p_mean_le_zero,
             "cost_drag": audit_row["cost_drag"],
+            "basket_verdict": basket_verdict,
+            "candidate_trades": candidate_stats["trades"],
+            "candidate_total_pnl": candidate_stats["total_pnl"],
+            "candidate_mean_trade_pnl": candidate_stats["mean_trade_pnl"],
+            "candidate_ci_low": candidate_stats["ci_low"],
+            "candidate_ci_high": candidate_stats["ci_high"],
+            "candidate_p_mean_le_zero": candidate_stats["p_mean_le_zero"],
+            "candidate_verdict": candidate_stats["verdict"],
+            "candidate_contribution_status": candidate_status,
+            "trade_diagnostics": audit_row.get("trade_diagnostics"),
             "verdict": verdict,
         }
     )
     lines.append(
         "| "
         f"`{candidate}` | `{variant_label}` | `{env_overrides}` | `passed` | "
-        f"{audit_row['trades']} | {fmt(audit_row['profit_factor'])} | "
-        f"{fmt(audit_row['total_pnl'])} | {fmt(audit_row['mean_trade_pnl'], '.4f')} | "
-        f"{ci} | {fmt(p_mean_le_zero, '.4f')} | {fmt(audit_row['cost_drag'])} | "
-        f"`{verdict}` | `{report}` |"
+        f"{audit_row['trades']} | {fmt(candidate_stats['trades'], '.0f')} | "
+        f"{fmt(candidate_stats['total_pnl'])} | "
+        f"{fmt(candidate_stats['mean_trade_pnl'], '.4f')} | {candidate_ci} | "
+        f"{fmt(candidate_stats['p_mean_le_zero'], '.4f')} | "
+        f"{fmt(audit_row['total_pnl'])} | {ci} | "
+        f"`{basket_verdict}` | `{verdict}` | `{report}` |"
     )
 
 lines.extend([
@@ -644,10 +682,15 @@ max_validation_candidates = int(sys.argv[3])
 
 selected = []
 for row in payload.get("rows", []):
-    if row.get("status") == "passed" and row.get("verdict") == "positive-edge":
-        ci_low = row.get("ci_low")
-        p_mean_le_zero = row.get("p_mean_le_zero")
-        total_pnl = row.get("total_pnl")
+    if (
+        row.get("status") == "passed"
+        and row.get("verdict") == "positive-edge"
+        and row.get("candidate_verdict") == "positive-edge"
+        and row.get("candidate_contribution_status") == "positive_pnl"
+    ):
+        ci_low = row.get("candidate_ci_low")
+        p_mean_le_zero = row.get("candidate_p_mean_le_zero")
+        total_pnl = row.get("candidate_total_pnl")
         score = (
             float(ci_low) if ci_low is not None else -math.inf,
             -(float(p_mean_le_zero) if p_mean_le_zero is not None else math.inf),
@@ -774,6 +817,12 @@ import os
 from pathlib import Path
 import sys
 
+from alpaca_bot.nightly.candidate_evidence import (
+    candidate_contribution,
+    contribution_status,
+    evidence_verdict,
+)
+
 status_path = Path(sys.argv[1])
 summary_path = Path(sys.argv[2])
 summary_json_path = Path(sys.argv[3])
@@ -819,6 +868,9 @@ for raw in status_path.read_text().splitlines():
         ]
         if payloads and payloads[-1].get("rows"):
             audit_row = payloads[-1]["rows"][0]
+            trade_diagnostics = payloads[-1].get("trade_diagnostics")
+            if trade_diagnostics is not None:
+                audit_row["trade_diagnostics"] = trade_diagnostics
     rows.append((candidate, variant_label, env_overrides, scale, status, report, stderr, audit_row))
 
 
@@ -837,8 +889,11 @@ def sort_key(item):
         "no-evidence": 1,
         "insufficient-data": 2,
         "negative-edge": 2,
-    }.get(audit_row.get("verdict"), 2)
-    ci_low = audit_row.get("ci_low")
+        "no-candidate-trades": 2,
+        "non-positive-candidate-pnl": 2,
+        "missing-candidate-edge-diagnostics": 2,
+    }.get(evidence_verdict(audit_row, candidate), 2)
+    ci_low = candidate_contribution(audit_row, candidate).get("ci_low")
     ci_rank = -(float(ci_low) if ci_low is not None else float("-inf"))
     return (verdict_rank, ci_rank, candidate, variant_label)
 
@@ -863,8 +918,8 @@ lines = [
     f"- excluded_candidates: `{excluded_candidates}`",
     f"- candidate_names: `{','.join(candidate_names) if candidate_names else 'none'}`",
     "",
-    "| candidate | lever | overrides | status | trades | profit factor | total P&L | mean/trade | 95% CI mean/trade | p(mean<=0) | cost drag | verdict | report |",
-    "|---|---|---|---|---:|---:|---:|---:|---|---:|---:|---|---|",
+    "| candidate | lever | overrides | status | trades | candidate trades | candidate P&L | candidate mean/trade | candidate 95% CI mean/trade | candidate p(mean<=0) | basket total P&L | basket 95% CI mean/trade | basket verdict | verdict | report |",
+    "|---|---|---|---|---:|---:|---:|---:|---|---:|---:|---|---|---|---|",
 ]
 
 validation_positive_edges = 0
@@ -883,16 +938,24 @@ for candidate, variant_label, env_overrides, scale, status, report, stderr, audi
             }
         )
         lines.append(
-            f"| `{candidate}` | `{variant_label}` | `{env_overrides}` | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
+            f"| `{candidate}` | `{variant_label}` | `{env_overrides}` | `{status}` | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | n/a | `{stderr}` |"
         )
         continue
-    verdict = audit_row["verdict"]
+    basket_verdict = audit_row["verdict"]
+    verdict = evidence_verdict(audit_row, candidate)
+    candidate_stats = candidate_contribution(audit_row, candidate)
+    candidate_status = contribution_status(candidate_stats)
     if verdict == "positive-edge":
         validation_positive_edges += 1
     ci = (
         "n/a"
         if audit_row["ci_low"] is None or audit_row["ci_high"] is None
         else f"[{fmt(audit_row['ci_low'], '.4f')}, {fmt(audit_row['ci_high'], '.4f')}]"
+    )
+    candidate_ci = (
+        "n/a"
+        if candidate_stats["ci_low"] is None or candidate_stats["ci_high"] is None
+        else f"[{fmt(candidate_stats['ci_low'], '.4f')}, {fmt(candidate_stats['ci_high'], '.4f')}]"
     )
     p_mean_le_zero = audit_row["p_positive"]
     json_rows.append(
@@ -913,16 +976,28 @@ for candidate, variant_label, env_overrides, scale, status, report, stderr, audi
             "p_mean_le_zero": p_mean_le_zero,
             "zero_cost_total_pnl": audit_row.get("zero_cost_total_pnl"),
             "cost_drag": audit_row["cost_drag"],
+            "basket_verdict": basket_verdict,
+            "candidate_trades": candidate_stats["trades"],
+            "candidate_total_pnl": candidate_stats["total_pnl"],
+            "candidate_mean_trade_pnl": candidate_stats["mean_trade_pnl"],
+            "candidate_ci_low": candidate_stats["ci_low"],
+            "candidate_ci_high": candidate_stats["ci_high"],
+            "candidate_p_mean_le_zero": candidate_stats["p_mean_le_zero"],
+            "candidate_verdict": candidate_stats["verdict"],
+            "candidate_contribution_status": candidate_status,
+            "trade_diagnostics": audit_row.get("trade_diagnostics"),
             "verdict": verdict,
         }
     )
     lines.append(
         "| "
         f"`{candidate}` | `{variant_label}` | `{env_overrides}` | `passed` | "
-        f"{audit_row['trades']} | {fmt(audit_row['profit_factor'])} | "
-        f"{fmt(audit_row['total_pnl'])} | {fmt(audit_row['mean_trade_pnl'], '.4f')} | "
-        f"{ci} | {fmt(p_mean_le_zero, '.4f')} | {fmt(audit_row['cost_drag'])} | "
-        f"`{verdict}` | `{report}` |"
+        f"{audit_row['trades']} | {fmt(candidate_stats['trades'], '.0f')} | "
+        f"{fmt(candidate_stats['total_pnl'])} | "
+        f"{fmt(candidate_stats['mean_trade_pnl'], '.4f')} | {candidate_ci} | "
+        f"{fmt(candidate_stats['p_mean_le_zero'], '.4f')} | "
+        f"{fmt(audit_row['total_pnl'])} | {ci} | "
+        f"`{basket_verdict}` | `{verdict}` | `{report}` |"
     )
 
 if validation_positive_edges:

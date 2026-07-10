@@ -713,6 +713,15 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert '"candidate_count": len(candidate_names)' in script
     assert '"candidate_names": candidate_names' in script
     assert "from alpaca_bot.tuning.sweep import STRATEGY_GRIDS" in script
+    assert "from alpaca_bot.nightly.setup_variants import stratified_variant_cap" in script
+    assert "selected_rows = stratified_variant_cap(filtered_rows, max_variants)" in script
+    assert script.count("from alpaca_bot.nightly.candidate_evidence import (") == 2
+    assert script.count('trade_diagnostics = payloads[-1].get("trade_diagnostics")') == 2
+    assert script.count('"candidate_contribution_status": candidate_status') == 2
+    assert 'row.get("candidate_verdict") == "positive-edge"' in script
+    assert 'row.get("candidate_contribution_status") == "positive_pnl"' in script
+    assert 'ci_low = row.get("candidate_ci_low")' in script
+    assert 'total_pnl = row.get("candidate_total_pnl")' in script
     assert "SECOND_STRATEGY_SETUP_VARIANT_MODE must be one of: curated, grid" in script
     assert '"variant_mode": variant_mode' in script
     assert '"max_variants": int(max_variants)' in script
