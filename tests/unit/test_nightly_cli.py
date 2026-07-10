@@ -633,6 +633,9 @@ def test_nightly_proof_guard_blocks_held_candidate(monkeypatch, tmp_path):
         "--proof-guard-confirmation-sample-size", "40",
         "--proof-guard-confirmation-seed", "unit-confirmation",
         "--proof-guard-stress-slippage-bps", "12",
+        "--proof-guard-historical-confirmation-samples", "4",
+        "--proof-guard-historical-confirmation-sample-size", "20",
+        "--proof-guard-historical-confirmation-seed", "unit-history",
     ])
 
     result = module.main()
@@ -647,6 +650,13 @@ def test_nightly_proof_guard_blocks_held_candidate(monkeypatch, tmp_path):
     assert all(
         scenario.name.endswith("_oos")
         for scenario in guard_calls[0]["confirmation_scenarios"]
+    )
+    assert guard_calls[0]["historical_confirmation_sample_count"] == 4
+    assert guard_calls[0]["historical_confirmation_sample_size"] == 20
+    assert guard_calls[0]["historical_confirmation_seed"] == "unit-history"
+    assert all(
+        not scenario.name.endswith("_oos")
+        for scenario in guard_calls[0]["historical_confirmation_scenarios"]
     )
 
 
@@ -983,6 +993,81 @@ def test_proof_guard_confirmation_samples_are_stable_and_disjoint():
     )
     assert forward_names == reversed_names
     assert len({name for sample in forward_names for name in sample}) == 6
+
+
+def test_proof_guard_rejects_candidate_that_regresses_historical_partition(
+    monkeypatch, capsys
+):
+    from alpaca_bot.nightly import cli as module
+    from alpaca_bot.tuning.sweep import TuningCandidate
+
+    _patch_env(monkeypatch)
+    historical_scenarios = [
+        SimpleNamespace(name="AAPL", intraday_bars=[]),
+        SimpleNamespace(name="MSFT", intraday_bars=[]),
+    ]
+    oos_scenarios = [
+        SimpleNamespace(name="AAPL_oos", intraday_bars=[]),
+        SimpleNamespace(name="MSFT_oos", intraday_bars=[]),
+    ]
+    candidate = TuningCandidate(
+        params={"BREAKOUT_LOOKBACK_BARS": "20"},
+        report=None,
+        score=0.5,
+    )
+    monkeypatch.setattr(module, "_pooled_report", lambda **kw: object())
+
+    def metrics(total_pnl: float) -> module._ProofGuardMetrics:
+        return module._ProofGuardMetrics(
+            trades=60,
+            total_pnl=total_pnl,
+            eventual_pass_rate=0.9,
+            first_threshold_pass_rate=0.8,
+            p95_sessions_to_pass=12,
+            slowest_sessions_to_pass=18,
+            active_trade_days=9,
+            profit_factor=2.0,
+            single_win_pnl_share=0.4,
+            eod_loss_share=0.25,
+        )
+
+    confirmation_metrics = iter(
+        [
+            metrics(10.0),
+            metrics(20.0),
+            metrics(10.0),
+            metrics(11.0),
+            metrics(10.0),
+            metrics(5.0),
+        ]
+    )
+    monkeypatch.setattr(
+        module,
+        "_proof_guard_metrics",
+        lambda **kw: next(confirmation_metrics),
+    )
+
+    selected = module._select_proof_guarded_candidate(
+        held_pairs=[(candidate, 0.4)],
+        scenarios=historical_scenarios,
+        base_env=dict(os.environ),
+        signal_evaluator=None,
+        strategy_name="breakout",
+        confirmation_sample_count=1,
+        confirmation_sample_size=1,
+        confirmation_scenarios=oos_scenarios,
+        historical_confirmation_sample_count=1,
+        historical_confirmation_sample_size=1,
+        historical_confirmation_scenarios=historical_scenarios,
+    )
+
+    assert selected is None
+    output = capsys.readouterr().out
+    assert "proof guard historical confirmation sample=1/1 scenarios=1" in output
+    assert (
+        "historical confirmation sample=1 total_pnl 5.00 < baseline 10.00"
+        in output
+    )
 
 
 def test_proof_guard_logs_progress_and_all_rejected_summary(monkeypatch, capsys):
