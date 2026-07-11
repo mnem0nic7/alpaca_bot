@@ -162,6 +162,94 @@ def as_int(row: dict[str, object], key: str) -> int:
         raise ValueError(f"{key} is not an integer") from exc
 
 
+def fractionability_identity(
+    payload: dict[str, object],
+    *,
+    label: str,
+    summary_path: Path,
+) -> tuple[str, str, int, int, int]:
+    snapshot = payload.get("fractionability_snapshot")
+    if not isinstance(snapshot, dict) or snapshot.get("schema_version") != 1:
+        fail(f"{label} fractionability snapshot is missing or invalid")
+    snapshot_sha256 = str(snapshot.get("snapshot_sha256") or "").lower()
+    universe_sha256 = str(snapshot.get("universe_sha256") or "").lower()
+    if len(snapshot_sha256) != 64 or any(
+        char not in "0123456789abcdef" for char in snapshot_sha256
+    ):
+        fail(f"{label} fractionability snapshot SHA256 is invalid")
+    if len(universe_sha256) != 64 or any(
+        char not in "0123456789abcdef" for char in universe_sha256
+    ):
+        fail(f"{label} fractionability universe SHA256 is invalid")
+    try:
+        universe_count = as_int(snapshot, "universe_symbol_count")
+        fractionable_count = as_int(snapshot, "fractionable_symbol_count")
+        non_fractionable_count = as_int(
+            snapshot, "non_fractionable_symbol_count"
+        )
+    except ValueError as exc:
+        fail(f"{label} fractionability snapshot is invalid: {exc}")
+    if (
+        universe_count <= 0
+        or fractionable_count < 0
+        or non_fractionable_count < 0
+        or fractionable_count + non_fractionable_count != universe_count
+    ):
+        fail(f"{label} fractionability symbol counts are invalid")
+    snapshot_file = str(snapshot.get("snapshot_file") or "").strip()
+    if not snapshot_file:
+        fail(f"{label} fractionability snapshot file is missing")
+    snapshot_path = Path(snapshot_file)
+    if not snapshot_path.is_absolute():
+        snapshot_path = summary_path.parent / snapshot_path
+    try:
+        snapshot_bytes = snapshot_path.read_bytes()
+        snapshot_symbols = {
+            line.strip().upper()
+            for line in snapshot_bytes.decode("utf-8").splitlines()
+            if line.strip()
+        }
+    except (OSError, UnicodeDecodeError) as exc:
+        fail(f"{label} fractionability snapshot file is unreadable: {exc}")
+    current_sha256 = hashlib.sha256(snapshot_bytes).hexdigest()
+    if current_sha256 != snapshot_sha256:
+        fail(f"{label} fractionability snapshot file hash does not match")
+    if len(snapshot_symbols) != fractionable_count:
+        fail(f"{label} fractionability snapshot symbol count does not match")
+    universe_symbols_file = str(
+        snapshot.get("universe_symbols_file") or ""
+    ).strip()
+    if not universe_symbols_file:
+        fail(f"{label} scenario universe file is missing")
+    universe_path = Path(universe_symbols_file)
+    if not universe_path.is_absolute():
+        universe_path = summary_path.parent / universe_path
+    try:
+        universe_bytes = universe_path.read_bytes()
+        universe_symbols = {
+            line.strip().upper()
+            for line in universe_bytes.decode("utf-8").splitlines()
+            if line.strip()
+        }
+    except (OSError, UnicodeDecodeError) as exc:
+        fail(f"{label} scenario universe file is unreadable: {exc}")
+    if hashlib.sha256(universe_bytes).hexdigest() != universe_sha256:
+        fail(f"{label} scenario universe file hash does not match")
+    if (
+        len(universe_symbols) != universe_count
+        or not snapshot_symbols.issubset(universe_symbols)
+        or len(universe_symbols - snapshot_symbols) != non_fractionable_count
+    ):
+        fail(f"{label} scenario universe symbols do not match metadata")
+    return (
+        snapshot_sha256,
+        universe_sha256,
+        universe_count,
+        fractionable_count,
+        non_fractionable_count,
+    )
+
+
 root = Path(sys.argv[1])
 requested_strategy = sys.argv[2].strip()
 max_p_mean_le_zero = float(sys.argv[3])
@@ -176,6 +264,35 @@ try:
     payload = json.loads(summary_bytes)
 except json.JSONDecodeError as exc:
     fail(f"validation summary is not valid JSON: {exc}")
+if not isinstance(payload, dict):
+    fail("validation summary must be an object")
+
+prefilter_path = root / "latest" / "summary.json"
+if not prefilter_path.exists():
+    fail(f"prefilter summary missing: {prefilter_path}")
+prefilter_bytes = prefilter_path.read_bytes()
+try:
+    prefilter_payload = json.loads(prefilter_bytes)
+except json.JSONDecodeError as exc:
+    fail(f"prefilter summary is not valid JSON: {exc}")
+if not isinstance(prefilter_payload, dict):
+    fail("prefilter summary must be an object")
+validation_prefilter_reference = str(
+    payload.get("prefilter_summary_json") or ""
+).strip()
+if not validation_prefilter_reference:
+    fail("validation summary prefilter reference is missing")
+validation_prefilter_path = Path(validation_prefilter_reference)
+if not validation_prefilter_path.is_absolute():
+    validation_prefilter_path = summary_path.parent / validation_prefilter_path
+if validation_prefilter_path.resolve() != prefilter_path.resolve():
+    fail("validation summary references a stale prefilter summary")
+expected_prefilter_sha256 = str(
+    payload.get("prefilter_summary_sha256") or ""
+).strip()
+current_prefilter_sha256 = hashlib.sha256(prefilter_bytes).hexdigest()
+if expected_prefilter_sha256 != current_prefilter_sha256:
+    fail("validation summary prefilter hash does not match")
 
 proof_horizon_path = root / "latest_proof_horizon" / "summary.json"
 if not proof_horizon_path.exists():
@@ -189,14 +306,18 @@ if not isinstance(proof_horizon_payload, dict):
     fail("proof horizon summary must be an object")
 
 try:
+    prefilter_mtime = prefilter_path.stat().st_mtime
     validation_mtime = summary_path.stat().st_mtime
     proof_horizon_mtime = proof_horizon_path.stat().st_mtime
 except OSError as exc:
     fail(f"could not inspect evidence timestamps: {exc}")
 if proof_horizon_mtime < validation_mtime:
     fail("proof horizon summary is older than validation summary")
+if validation_mtime < prefilter_mtime:
+    fail("validation summary is older than prefilter summary")
 now = time.time()
 for label, modified_at in (
+    ("prefilter", prefilter_mtime),
     ("validation", validation_mtime),
     ("proof horizon", proof_horizon_mtime),
 ):
@@ -206,6 +327,28 @@ for label, modified_at in (
             f"{label} summary is stale: age_hours={age_hours:.2f} "
             f"max_age_hours={max_evidence_age_hours:g}"
         )
+
+prefilter_fractionability = fractionability_identity(
+    prefilter_payload,
+    label="prefilter",
+    summary_path=prefilter_path,
+)
+validation_fractionability = fractionability_identity(
+    payload,
+    label="validation",
+    summary_path=summary_path,
+)
+proof_fractionability = fractionability_identity(
+    proof_horizon_payload,
+    label="proof horizon",
+    summary_path=proof_horizon_path,
+)
+if not (
+    prefilter_fractionability
+    == validation_fractionability
+    == proof_fractionability
+):
+    fail("fractionability lineage does not match across promotion evidence")
 
 rows = payload.get("rows")
 if not isinstance(rows, list):
@@ -395,6 +538,8 @@ outputs = {
     "VALIDATED_TOTAL_PNL": str(selected["candidate_total_pnl"]),
     "VALIDATED_CI_LOW": str(selected["candidate_ci_low"]),
     "VALIDATED_P_MEAN_LE_ZERO": str(selected["candidate_p_mean_le_zero"]),
+    "PREFILTER_SUMMARY": str(prefilter_path.resolve()),
+    "PREFILTER_SUMMARY_SHA256": current_prefilter_sha256,
     "VALIDATION_SUMMARY": str(summary_path.resolve()),
     "VALIDATION_SUMMARY_SHA256": hashlib.sha256(summary_bytes).hexdigest(),
     "PROOF_HORIZON_SUMMARY": str(proof_horizon_path.resolve()),
@@ -430,6 +575,8 @@ fi
 verify_evidence_current() {
   python3 - \
     "$EVIDENCE_ROOT" \
+    "$PREFILTER_SUMMARY" \
+    "$PREFILTER_SUMMARY_SHA256" \
     "$VALIDATION_SUMMARY" \
     "$VALIDATION_SUMMARY_SHA256" \
     "$PROOF_HORIZON_SUMMARY" \
@@ -447,10 +594,26 @@ def fail(message: str) -> None:
 
 
 root = Path(sys.argv[1])
-expected_path = sys.argv[2]
-expected_sha256 = sys.argv[3]
-expected_proof_path = sys.argv[4]
-expected_proof_sha256 = sys.argv[5]
+expected_prefilter_path = sys.argv[2]
+expected_prefilter_sha256 = sys.argv[3]
+expected_path = sys.argv[4]
+expected_sha256 = sys.argv[5]
+expected_proof_path = sys.argv[6]
+expected_proof_sha256 = sys.argv[7]
+prefilter_path = root / "latest" / "summary.json"
+if not prefilter_path.exists():
+    fail(f"prefilter summary missing: {prefilter_path}")
+current_prefilter_path = str(prefilter_path.resolve())
+if current_prefilter_path != expected_prefilter_path:
+    fail(
+        "prefilter summary changed: "
+        f"{current_prefilter_path} != {expected_prefilter_path}"
+    )
+current_prefilter_sha256 = hashlib.sha256(
+    prefilter_path.read_bytes()
+).hexdigest()
+if current_prefilter_sha256 != expected_prefilter_sha256:
+    fail("prefilter summary hash changed")
 summary_path = root / "latest_validation" / "summary.json"
 if not summary_path.exists():
     fail(f"validation summary missing: {summary_path}")
@@ -471,6 +634,8 @@ if current_proof_sha256 != expected_proof_sha256:
     fail("proof horizon summary hash changed")
 if proof_path.stat().st_mtime < summary_path.stat().st_mtime:
     fail("proof horizon summary is older than validation summary")
+if summary_path.stat().st_mtime < prefilter_path.stat().st_mtime:
+    fail("validation summary is older than prefilter summary")
 PY
 }
 

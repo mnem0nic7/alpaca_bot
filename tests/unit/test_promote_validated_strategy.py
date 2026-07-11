@@ -57,18 +57,52 @@ def _candidate_row(row_overrides: dict[str, object] | None = None) -> dict[str, 
     return row
 
 
+def _fractionability_snapshot(root: Path) -> dict[str, object]:
+    root.mkdir(parents=True, exist_ok=True)
+    snapshot_path = root / "fractionable_symbols.txt"
+    snapshot_path.write_text("AAA\n")
+    snapshot_sha256 = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+    return {
+        "schema_version": 1,
+        "snapshot_file": str(snapshot_path.resolve()),
+        "universe_symbols_file": str(snapshot_path.resolve()),
+        "snapshot_sha256": snapshot_sha256,
+        "universe_sha256": snapshot_sha256,
+        "universe_symbol_count": 1,
+        "fractionable_symbol_count": 1,
+        "non_fractionable_symbol_count": 0,
+    }
+
+
 def _write_summary(
     root: Path,
     row_overrides: dict[str, object] | None = None,
     *,
     rows: list[dict[str, object]] | None = None,
 ) -> None:
+    fractionability_snapshot = _fractionability_snapshot(root)
+    prefilter_dir = root / "latest"
+    prefilter_dir.mkdir(parents=True)
+    prefilter_summary = prefilter_dir / "summary.json"
+    prefilter_summary.write_text(
+        json.dumps(
+            {
+                "fractionability_snapshot": fractionability_snapshot,
+                "rows": rows or [_candidate_row(row_overrides)],
+            }
+        )
+    )
     validation_dir = root / "latest_validation"
     validation_dir.mkdir(parents=True)
     summary_rows = rows if rows is not None else [_candidate_row(row_overrides)]
     (validation_dir / "summary.json").write_text(
         json.dumps(
             {
+                "prefilter_summary_json": str(prefilter_summary.resolve()),
+                "prefilter_summary_sha256": hashlib.sha256(
+                    prefilter_summary.read_bytes()
+                ).hexdigest(),
+                "fractionability_snapshot": fractionability_snapshot,
                 "positive_edge_validation_rows": len(summary_rows),
                 "promotion_approved": False,
                 "rows": summary_rows,
@@ -131,6 +165,7 @@ def _write_proof_horizon(
                 "historical_starts_checked": 278,
                 "eventual_pass_rate": eventual_pass_rate,
                 "min_pnl": 0.01,
+                "fractionability_snapshot": _fractionability_snapshot(root),
                 "candidate_selection": {
                     "schema_version": 1,
                     "selected_candidate": candidate,
@@ -700,6 +735,96 @@ def test_promote_validated_strategy_rejects_failed_proof_horizon(tmp_path: Path)
     assert not (evidence_root / "promotion_approval.json").exists()
     assert not (tmp_path / "docker_calls").exists()
     assert not (tmp_path / "deploy_calls").exists()
+
+
+def test_promote_validated_strategy_rejects_missing_fractionability_lineage(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    validation_path = evidence_root / "latest_validation" / "summary.json"
+    validation_payload = json.loads(validation_path.read_text())
+    validation_payload.pop("fractionability_snapshot")
+    validation_path.write_text(json.dumps(validation_payload))
+    (evidence_root / "latest_proof_horizon" / "summary.json").touch()
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=_make_fake_deploy(tmp_path),
+        tmp_path=tmp_path,
+        confirmation=_confirmation(evidence_root),
+        dry_run=False,
+    )
+
+    assert result.returncode == 1
+    assert "validation fractionability snapshot is missing or invalid" in result.stderr
+    assert not (tmp_path / "docker_calls").exists()
+
+
+def test_promote_validated_strategy_rejects_fractionability_lineage_mismatch(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    proof_path = evidence_root / "latest_proof_horizon" / "summary.json"
+    proof_payload = json.loads(proof_path.read_text())
+    proof_universe = evidence_root / "proof_universe.txt"
+    proof_universe.write_text("AAA\nBBB\n")
+    proof_payload["fractionability_snapshot"].update(
+        {
+            "universe_symbols_file": str(proof_universe),
+            "universe_sha256": hashlib.sha256(
+                proof_universe.read_bytes()
+            ).hexdigest(),
+            "universe_symbol_count": 2,
+            "non_fractionable_symbol_count": 1,
+        }
+    )
+    proof_path.write_text(json.dumps(proof_payload))
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=_make_fake_deploy(tmp_path),
+        tmp_path=tmp_path,
+        confirmation=_confirmation(evidence_root),
+        dry_run=False,
+    )
+
+    assert result.returncode == 1
+    assert "fractionability lineage does not match" in result.stderr
+    assert not (tmp_path / "docker_calls").exists()
+
+
+def test_promote_validated_strategy_rejects_changed_prefilter_summary(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    prefilter_path = evidence_root / "latest" / "summary.json"
+    prefilter_payload = json.loads(prefilter_path.read_text())
+    prefilter_payload["changed"] = True
+    prefilter_path.write_text(json.dumps(prefilter_payload))
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=_make_fake_deploy(tmp_path),
+        tmp_path=tmp_path,
+        confirmation=_confirmation(evidence_root),
+        dry_run=False,
+    )
+
+    assert result.returncode == 1
+    assert "validation summary prefilter hash does not match" in result.stderr
+    assert not (tmp_path / "docker_calls").exists()
 
 
 def test_promote_validated_strategy_rejects_missing_proof_horizon(tmp_path: Path) -> None:

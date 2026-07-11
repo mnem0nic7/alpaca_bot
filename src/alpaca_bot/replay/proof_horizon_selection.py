@@ -200,6 +200,7 @@ def _format_markdown(
     selection: dict[str, Any],
     *,
     selected_report: str,
+    fractionability_snapshot: dict[str, Any] | None = None,
 ) -> str:
     lines = [
         "# Second strategy proof-horizon candidates",
@@ -210,10 +211,23 @@ def _format_markdown(
         f"- candidate_count: `{selection['candidate_count']}`",
         f"- passing_candidate_count: `{selection['passing_candidate_count']}`",
         f"- min_eventual_pass_rate: `{selection['min_eventual_pass_rate']:.4f}`",
-        "",
-        "| candidate | scale | status | detail | trades | total P&L | eventual pass rate |",
-        "|---|---:|---|---|---:|---:|---:|",
     ]
+    if fractionability_snapshot is not None:
+        lines.extend(
+            [
+                f"- fractionability_snapshot_file: `{fractionability_snapshot.get('snapshot_file')}`",
+                f"- scenario_symbols_file: `{fractionability_snapshot.get('universe_symbols_file')}`",
+                f"- fractionability_snapshot_sha256: `{fractionability_snapshot.get('snapshot_sha256')}`",
+                f"- fractionability_universe_sha256: `{fractionability_snapshot.get('universe_sha256')}`",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "| candidate | scale | status | detail | trades | total P&L | eventual pass rate |",
+            "|---|---:|---|---|---:|---:|---:|",
+        ]
+    )
     for row in selection["rows"]:
         pnl = "n/a" if row["total_pnl"] is None else f"{row['total_pnl']:.2f}"
         rate = (
@@ -236,6 +250,7 @@ def publish_selection(
     output_dir: Path,
     min_eventual_pass_rate: float,
     default_min_pnl: float,
+    fractionability_snapshot: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not 0.0 <= min_eventual_pass_rate <= 1.0:
         raise ValueError("min eventual pass rate must be between 0 and 1")
@@ -252,6 +267,8 @@ def publish_selection(
     )
     selected_payload = dict(selected.payload)
     selected_payload["candidate_selection"] = selection
+    if fractionability_snapshot is not None:
+        selected_payload["fractionability_snapshot"] = fractionability_snapshot
     try:
         selected_report = selected.report_path.read_text()
     except OSError as exc:
@@ -268,7 +285,11 @@ def publish_selection(
     )
     _write_text_atomic(
         output_dir / "summary.md",
-        _format_markdown(selection, selected_report=selected_report),
+        _format_markdown(
+            selection,
+            selected_report=selected_report,
+            fractionability_snapshot=fractionability_snapshot,
+        ),
     )
     return selection
 
@@ -281,15 +302,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--min-eventual-pass-rate", type=float, required=True)
     parser.add_argument("--default-min-pnl", type=float, required=True)
+    parser.add_argument("--fractionability-metadata", type=Path)
     args = parser.parse_args(argv)
     try:
+        fractionability_snapshot = None
+        if args.fractionability_metadata is not None:
+            fractionability_snapshot = json.loads(
+                args.fractionability_metadata.read_text()
+            )
+            if not isinstance(fractionability_snapshot, dict):
+                raise ValueError("fractionability metadata must be a JSON object")
         selection = publish_selection(
             results_path=args.results,
             output_dir=args.output_dir,
             min_eventual_pass_rate=args.min_eventual_pass_rate,
             default_min_pnl=args.default_min_pnl,
+            fractionability_snapshot=fractionability_snapshot,
         )
-    except ValueError as exc:
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         parser.error(str(exc))
     print(
         "proof_horizon_selected_candidate="

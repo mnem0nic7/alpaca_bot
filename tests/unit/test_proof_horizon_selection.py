@@ -82,12 +82,20 @@ def test_publish_selection_uses_first_candidate_that_passes_basket_gate(
         ],
     )
     output_dir = tmp_path / "published"
+    fractionability_snapshot = {
+        "snapshot_file": "/evidence/fractionable_symbols.txt",
+        "snapshot_sha256": "a" * 64,
+        "universe_sha256": "b" * 64,
+        "fractionable_symbol_count": 974,
+        "non_fractionable_symbol_count": 2,
+    }
 
     selection = publish_selection(
         results_path=results_path,
         output_dir=output_dir,
         min_eventual_pass_rate=0.50,
         default_min_pnl=0.01,
+        fractionability_snapshot=fractionability_snapshot,
     )
 
     assert selection["selected_candidate"] == "orb"
@@ -100,11 +108,13 @@ def test_publish_selection_uses_first_candidate_that_passes_basket_gate(
     published = json.loads((output_dir / "summary.json").read_text())
     assert published["strategy"] == "bull_flag+orb"
     assert published["candidate_selection"] == selection
+    assert published["fractionability_snapshot"] == fractionability_snapshot
     assert json.loads((output_dir / "candidates.json").read_text()) == selection
     markdown = (output_dir / "summary.md").read_text()
     assert "| `ema_pullback` | 0.10 | `failed`" in markdown
     assert "| `orb` | 0.25 | `ok`" in markdown
     assert "# orb report" in markdown
+    assert "fractionability_snapshot_sha256: `" + "a" * 64 + "`" in markdown
 
 
 def test_publish_selection_keeps_top_ranked_failure_when_none_pass(

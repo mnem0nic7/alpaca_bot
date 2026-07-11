@@ -1,4 +1,5 @@
 # tests/unit/test_portfolio_cli.py
+import hashlib
 import json
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -121,6 +122,93 @@ def test_portfolio_audit_cli_writes_jsonl_per_k(tmp_path, monkeypatch):
     assert all(line["slippage_bps"] == 5 for line in lines)
     assert all(line["scenarios"] == 2 for line in lines)
     assert all(line["rows"][0]["strategy"] == "bull_flag" for line in lines)
+
+
+def test_portfolio_basket_cli_applies_fractionability_snapshot(
+    tmp_path, monkeypatch, capsys
+):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+    _write_scenario(scen / "AAA.json", "AAA")
+    _write_scenario(scen / "DDD.json", "DDD")
+    snapshot = tmp_path / "fractionable.txt"
+    snapshot.write_text("aaa\nBBB, CCC  # current asset snapshot\n")
+    scenario_snapshot = tmp_path / "scenario_symbols.txt"
+    scenario_snapshot.write_text("AAA\n")
+    captured_symbols: list[frozenset[str]] = []
+    captured_scenarios: list[list[str]] = []
+
+    def fake_portfolio_basket_pooled_trades(
+        scenarios,
+        settings,
+        strategy_names,
+        **kwargs,
+    ):
+        del strategy_names, kwargs
+        captured_symbols.append(settings.fractionable_symbols)
+        captured_scenarios.append([scenario.symbol for scenario in scenarios])
+        return []
+
+    monkeypatch.setattr(
+        replay_cli,
+        "portfolio_basket_pooled_trades",
+        fake_portfolio_basket_pooled_trades,
+    )
+
+    rc = main(
+        [
+            "portfolio-basket-audit",
+            "--scenario-dir",
+            str(scen),
+            "--strategy",
+            "bull_flag",
+            "--strategy",
+            "orb",
+            "--fractionable-symbols-file",
+            str(snapshot),
+            "--scenario-symbols-file",
+            str(scenario_snapshot),
+            "--output",
+            str(tmp_path / "report.md"),
+        ]
+    )
+
+    assert rc == 0
+    assert captured_symbols == [frozenset({"AAA", "BBB", "CCC"})]
+    assert captured_scenarios == [["AAA"]]
+    stderr = capsys.readouterr().err
+    assert f"path={snapshot.resolve()}" in stderr
+    assert f"sha256={hashlib.sha256(snapshot.read_bytes()).hexdigest()}" in stderr
+    assert "symbols=3" in stderr
+    assert f"path={scenario_snapshot.resolve()}" in stderr
+    assert "scenario symbol snapshot loaded" in stderr
+
+
+def test_portfolio_basket_cli_rejects_invalid_fractionability_snapshot(
+    tmp_path, monkeypatch, capsys
+):
+    _set_env(monkeypatch)
+    scen = tmp_path / "scen"
+    scen.mkdir()
+    _write_scenario(scen / "AAA.json", "AAA")
+    snapshot = tmp_path / "fractionable.txt"
+    snapshot.write_text("AAA\nnot/a/symbol\n")
+
+    rc = main(
+        [
+            "portfolio-basket-audit",
+            "--scenario-dir",
+            str(scen),
+            "--strategy",
+            "bull_flag",
+            "--fractionable-symbols-file",
+            str(snapshot),
+        ]
+    )
+
+    assert rc == 1
+    assert "invalid symbol" in capsys.readouterr().err
 
 
 def test_option_basket_audit_samples_only_snapshot_covered_symbols(

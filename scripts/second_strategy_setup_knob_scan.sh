@@ -148,9 +148,72 @@ VALIDATION_SAMPLE_SIZE="${SECOND_STRATEGY_SETUP_VALIDATION_SAMPLE_SIZE:-${SECOND
 VALIDATION_SAMPLE_SEED="${SECOND_STRATEGY_SETUP_VALIDATION_SAMPLE_SEED:-second-strategy-setup-knob-independent-validation}"
 VALIDATION_OUTPUT_DIR="${SECOND_STRATEGY_SETUP_VALIDATION_OUTPUT_DIR:-$OUTPUT_DIR/validation}"
 VALIDATION_LATEST_LINK="${SECOND_STRATEGY_SETUP_VALIDATION_LATEST_LINK:-}"
+FRACTIONABLE_SYMBOLS_SOURCE_FILE="${SECOND_STRATEGY_SETUP_FRACTIONABLE_SYMBOLS_FILE:-${SECOND_STRATEGY_FRACTIONABLE_SYMBOLS_FILE:-}}"
+SCENARIO_SYMBOLS_SOURCE_FILE="${SECOND_STRATEGY_SETUP_SCENARIO_SYMBOLS_FILE:-${SECOND_STRATEGY_SCENARIO_SYMBOLS_FILE:-}}"
+COMPOSE_FILE="${SECOND_STRATEGY_SETUP_COMPOSE_FILE:-${SECOND_STRATEGY_COMPOSE_FILE:-$ROOT_DIR/deploy/compose.yaml}}"
 
 [[ -d "$SCENARIO_DIR" ]] || fail "missing scenario dir: $SCENARIO_DIR"
 mkdir -p "$OUTPUT_DIR"
+
+FRACTIONABLE_SYMBOLS_FILE="$OUTPUT_DIR/fractionable_symbols.txt"
+SCENARIO_SYMBOLS_FILE="$OUTPUT_DIR/scenario_symbols.txt"
+FRACTIONABILITY_METADATA_FILE="$OUTPUT_DIR/fractionability_snapshot.json"
+if [[ -z "$SCENARIO_SYMBOLS_SOURCE_FILE" ]]; then
+  SCENARIO_SYMBOLS_SOURCE_FILE="$OUTPUT_DIR/active_watchlist_symbols.source.txt"
+  active_watchlist_tmp="$SCENARIO_SYMBOLS_SOURCE_FILE.tmp.$$"
+  if ! docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" run -T --rm \
+    --entrypoint python nightly -m alpaca_bot.replay.active_watchlist \
+    > "$active_watchlist_tmp"; then
+    rm -f "$active_watchlist_tmp"
+    fail "could not capture active paper watchlist"
+  fi
+  if [[ ! -s "$active_watchlist_tmp" ]]; then
+    rm -f "$active_watchlist_tmp"
+    fail "active paper watchlist snapshot is empty"
+  fi
+  mv -f "$active_watchlist_tmp" "$SCENARIO_SYMBOLS_SOURCE_FILE"
+fi
+fractionability_cmd=(
+  python3 -m alpaca_bot.replay.fractionability_snapshot
+  --scenario-dir "$SCENARIO_DIR"
+  --output "$FRACTIONABLE_SYMBOLS_FILE"
+  --metadata-output "$FRACTIONABILITY_METADATA_FILE"
+  --universe-output "$SCENARIO_SYMBOLS_FILE"
+)
+fractionability_cmd+=(--symbols-file "$SCENARIO_SYMBOLS_SOURCE_FILE")
+if [[ -n "$FRACTIONABLE_SYMBOLS_SOURCE_FILE" ]]; then
+  fractionability_cmd+=(--source-file "$FRACTIONABLE_SYMBOLS_SOURCE_FILE")
+fi
+if ! fractionability_capture="$("${fractionability_cmd[@]}")"; then
+  fail "could not freeze fractionability snapshot"
+fi
+if ! fractionability_fields="$(python3 - "$FRACTIONABILITY_METADATA_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text())
+print(
+    "\t".join(
+        str(payload[key])
+        for key in (
+            "snapshot_sha256",
+            "universe_sha256",
+            "universe_symbol_count",
+            "fractionable_symbol_count",
+            "non_fractionable_symbol_count",
+        )
+    )
+)
+PY
+)"; then
+  fail "could not read frozen fractionability metadata"
+fi
+IFS=$'\t' read -r FRACTIONABILITY_SNAPSHOT_SHA256 \
+  FRACTIONABILITY_UNIVERSE_SHA256 FRACTIONABILITY_UNIVERSE_COUNT \
+  FRACTIONABILITY_FRACTIONABLE_COUNT FRACTIONABILITY_NON_FRACTIONABLE_COUNT \
+  <<< "$fractionability_fields"
+echo "second strategy setup-knob scan: scenario_symbols=$SCENARIO_SYMBOLS_FILE fractionability_snapshot=$FRACTIONABLE_SYMBOLS_FILE snapshot_sha256=$FRACTIONABILITY_SNAPSHOT_SHA256 universe_sha256=$FRACTIONABILITY_UNIVERSE_SHA256 universe_symbols=$FRACTIONABILITY_UNIVERSE_COUNT fractionable_symbols=$FRACTIONABILITY_FRACTIONABLE_COUNT non_fractionable_symbols=$FRACTIONABILITY_NON_FRACTIONABLE_COUNT scenario_source=$SCENARIO_SYMBOLS_SOURCE_FILE fractionability_source=${FRACTIONABLE_SYMBOLS_SOURCE_FILE:-alpaca}"
 
 python3 - "$CANDIDATE_SCALE" "$MAX_VALIDATION_CANDIDATES" "$SCAN_JOBS" \
   "$MAX_VARIANTS" "$MIN_CANDIDATE_TRADES" <<'PY' || fail "invalid setup scan numeric setting"
@@ -374,7 +437,7 @@ status_parts_dir="$OUTPUT_DIR/status_parts"
 mkdir -p "$status_parts_dir"
 
 echo "second strategy setup-knob scan: output_dir=$OUTPUT_DIR"
-echo "second strategy setup-knob scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scale=$CANDIDATE_SCALE min_candidate_trades=$MIN_CANDIDATE_TRADES scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} variant_mode=$VARIANT_MODE variants=$variant_count max_variants=$MAX_VARIANTS excluded_candidates=$EXCLUDE_CANDIDATES labels=${VARIANT_LABELS:-all}"
+echo "second strategy setup-knob scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scale=$CANDIDATE_SCALE min_candidate_trades=$MIN_CANDIDATE_TRADES scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} variant_mode=$VARIANT_MODE variants=$variant_count max_variants=$MAX_VARIANTS excluded_candidates=$EXCLUDE_CANDIDATES labels=${VARIANT_LABELS:-all} fractionability_snapshot_sha256=$FRACTIONABILITY_SNAPSHOT_SHA256 fractionability_universe_sha256=$FRACTIONABILITY_UNIVERSE_SHA256"
 
 failed_count=0
 run_prefilter_job() {
@@ -410,6 +473,8 @@ run_prefilter_job() {
     --sample-seed "$SAMPLE_SEED"
     --slippage-bps "$SLIPPAGE_BPS"
     --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
+    --scenario-symbols-file "$SCENARIO_SYMBOLS_FILE"
+    --fractionable-symbols-file "$FRACTIONABLE_SYMBOLS_FILE"
     --confidence-scale "$candidate=$CANDIDATE_SCALE"
     --output "$tmp_report_path"
     --jsonl "$tmp_jsonl_path"
@@ -457,7 +522,8 @@ python3 - "$status_file" "$summary_file" "$summary_json_file" \
   "$SCENARIO_DIR" "$BASE_STRATEGY" "$SAMPLE_SIZE" "$SAMPLE_SEED" \
   "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "$CANDIDATE_SCALE" \
   "${starting_equity:-scenario_default}" "$EXCLUDE_CANDIDATES" "$SCAN_JOBS" \
-  "$variant_count" "$VARIANT_MODE" "$MAX_VARIANTS" "$MIN_CANDIDATE_TRADES" <<'PY'
+  "$variant_count" "$VARIANT_MODE" "$MAX_VARIANTS" "$MIN_CANDIDATE_TRADES" \
+  "$FRACTIONABILITY_METADATA_FILE" <<'PY'
 from __future__ import annotations
 
 import json
@@ -488,6 +554,8 @@ variant_count = sys.argv[14]
 variant_mode = sys.argv[15]
 max_variants = sys.argv[16]
 min_candidate_trades = int(sys.argv[17])
+fractionability_metadata_path = Path(sys.argv[18])
+fractionability_snapshot = json.loads(fractionability_metadata_path.read_text())
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -574,6 +642,12 @@ lines = [
     f"- variant_mode: `{variant_mode}`",
     f"- max_variants: `{max_variants}`",
     f"- variants: `{variant_count}`",
+    f"- fractionability_snapshot_file: `{fractionability_snapshot['snapshot_file']}`",
+    f"- scenario_symbols_file: `{fractionability_snapshot['universe_symbols_file']}`",
+    f"- fractionability_snapshot_sha256: `{fractionability_snapshot['snapshot_sha256']}`",
+    f"- fractionability_universe_sha256: `{fractionability_snapshot['universe_sha256']}`",
+    f"- fractionable_symbols: `{fractionability_snapshot['fractionable_symbol_count']}`",
+    f"- non_fractionable_symbols: `{fractionability_snapshot['non_fractionable_symbol_count']}`",
     f"- candidate_names: `{','.join(candidate_names) if candidate_names else 'none'}`",
     "",
     "| candidate | lever | overrides | status | trades | candidate trades | candidate P&L | candidate mean/trade | candidate 95% CI mean/trade | candidate p(mean<=0) | basket total P&L | basket 95% CI mean/trade | basket verdict | verdict | report |",
@@ -688,6 +762,7 @@ write_text_atomic(
             "max_variants": int(max_variants),
             "min_candidate_trades": min_candidate_trades,
             "variant_count": int(variant_count),
+            "fractionability_snapshot": fractionability_snapshot,
             "candidate_count": len(candidate_names),
             "candidate_names": candidate_names,
             "positive_edge_prefilter_rows": positive_edges,
@@ -805,6 +880,8 @@ PY
       --sample-seed "$VALIDATION_SAMPLE_SEED"
       --slippage-bps "$SLIPPAGE_BPS"
       --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
+      --scenario-symbols-file "$SCENARIO_SYMBOLS_FILE"
+      --fractionable-symbols-file "$FRACTIONABLE_SYMBOLS_FILE"
       --confidence-scale "$candidate=$candidate_scale"
       --output "$tmp_report_path"
       --jsonl "$tmp_jsonl_path"
@@ -853,9 +930,10 @@ PY
     "$VALIDATION_SAMPLE_SEED" "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" \
     "$CANDIDATE_SCALE" "${starting_equity:-scenario_default}" "$EXCLUDE_CANDIDATES" \
     "$SCAN_JOBS" "$MAX_VALIDATION_CANDIDATES" "$VALIDATION_OUTPUT_DIR" \
-    "$MIN_CANDIDATE_TRADES" <<'PY'
+    "$MIN_CANDIDATE_TRADES" "$FRACTIONABILITY_METADATA_FILE" <<'PY'
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -871,6 +949,9 @@ status_path = Path(sys.argv[1])
 summary_path = Path(sys.argv[2])
 summary_json_path = Path(sys.argv[3])
 prefilter_summary_json_path = Path(sys.argv[4])
+prefilter_summary_sha256 = hashlib.sha256(
+    prefilter_summary_json_path.read_bytes()
+).hexdigest()
 scenario_dir = sys.argv[5]
 base_strategy = sys.argv[6]
 sample_size = sys.argv[7]
@@ -884,6 +965,8 @@ scan_jobs = sys.argv[14]
 max_validation_candidates = sys.argv[15]
 validation_output_dir = sys.argv[16]
 min_candidate_trades = int(sys.argv[17])
+fractionability_metadata_path = Path(sys.argv[18])
+fractionability_snapshot = json.loads(fractionability_metadata_path.read_text())
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -957,6 +1040,7 @@ lines = [
     "Run metadata:",
     "",
     f"- prefilter_summary_json: `{prefilter_summary_json_path}`",
+    f"- prefilter_summary_sha256: `{prefilter_summary_sha256}`",
     f"- validation_output_dir: `{validation_output_dir}`",
     f"- scenario_dir: `{scenario_dir}`",
     f"- base_strategy: `{base_strategy}`",
@@ -970,6 +1054,12 @@ lines = [
     f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
+    f"- fractionability_snapshot_file: `{fractionability_snapshot['snapshot_file']}`",
+    f"- scenario_symbols_file: `{fractionability_snapshot['universe_symbols_file']}`",
+    f"- fractionability_snapshot_sha256: `{fractionability_snapshot['snapshot_sha256']}`",
+    f"- fractionability_universe_sha256: `{fractionability_snapshot['universe_sha256']}`",
+    f"- fractionable_symbols: `{fractionability_snapshot['fractionable_symbol_count']}`",
+    f"- non_fractionable_symbols: `{fractionability_snapshot['non_fractionable_symbol_count']}`",
     f"- candidate_names: `{','.join(candidate_names) if candidate_names else 'none'}`",
     "",
     "| candidate | lever | overrides | status | trades | candidate trades | candidate P&L | candidate mean/trade | candidate 95% CI mean/trade | candidate p(mean<=0) | basket total P&L | basket 95% CI mean/trade | basket verdict | verdict | report |",
@@ -1082,6 +1172,7 @@ write_text_atomic(
     json.dumps(
         {
             "prefilter_summary_json": str(prefilter_summary_json_path),
+            "prefilter_summary_sha256": prefilter_summary_sha256,
             "validation_output_dir": validation_output_dir,
             "scenario_dir": scenario_dir,
             "base_strategy": base_strategy,
@@ -1095,6 +1186,7 @@ write_text_atomic(
             "scan_jobs": scan_jobs,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
+            "fractionability_snapshot": fractionability_snapshot,
             "candidate_count": len(candidate_names),
             "candidate_names": candidate_names,
             "positive_edge_validation_rows": validation_positive_edges,

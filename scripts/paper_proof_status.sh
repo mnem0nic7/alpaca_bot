@@ -1547,6 +1547,103 @@ def as_int_or_none(value: object) -> int | None:
         return None
 
 
+def fractionability_snapshot_identity(
+    payload: dict | None,
+    *,
+    summary_path: Path,
+) -> tuple[dict[str, object] | None, str | None]:
+    if payload is None:
+        return None, "summary_missing"
+    snapshot = payload.get("fractionability_snapshot")
+    if not isinstance(snapshot, dict):
+        return None, "metadata_missing"
+    if snapshot.get("schema_version") != 1:
+        return None, "schema_invalid"
+    snapshot_sha256 = str(snapshot.get("snapshot_sha256") or "").lower()
+    universe_sha256 = str(snapshot.get("universe_sha256") or "").lower()
+    if re.fullmatch(r"[0-9a-f]{64}", snapshot_sha256) is None:
+        return None, "snapshot_sha256_invalid"
+    if re.fullmatch(r"[0-9a-f]{64}", universe_sha256) is None:
+        return None, "universe_sha256_invalid"
+    universe_count = as_int_or_none(snapshot.get("universe_symbol_count"))
+    fractionable_count = as_int_or_none(snapshot.get("fractionable_symbol_count"))
+    non_fractionable_count = as_int_or_none(
+        snapshot.get("non_fractionable_symbol_count")
+    )
+    if (
+        universe_count is None
+        or fractionable_count is None
+        or non_fractionable_count is None
+        or universe_count <= 0
+        or fractionable_count < 0
+        or non_fractionable_count < 0
+        or fractionable_count + non_fractionable_count != universe_count
+    ):
+        return None, "symbol_counts_invalid"
+    snapshot_file = str(snapshot.get("snapshot_file") or "").strip()
+    if not snapshot_file:
+        return None, "snapshot_file_missing"
+    snapshot_path = Path(snapshot_file)
+    if not snapshot_path.is_absolute():
+        snapshot_path = summary_path.parent / snapshot_path
+    try:
+        snapshot_bytes = snapshot_path.read_bytes()
+        snapshot_symbols = {
+            line.strip().upper()
+            for line in snapshot_bytes.decode("utf-8").splitlines()
+            if line.strip()
+        }
+    except (OSError, UnicodeDecodeError):
+        return None, "snapshot_file_unreadable"
+    current_sha256 = hashlib.sha256(snapshot_bytes).hexdigest()
+    if current_sha256 != snapshot_sha256:
+        return None, "snapshot_file_sha256_mismatch"
+    if (
+        len(snapshot_symbols) != fractionable_count
+        or any(
+            re.fullmatch(r"[A-Z0-9][A-Z0-9.-]*", symbol) is None
+            for symbol in snapshot_symbols
+        )
+    ):
+        return None, "snapshot_symbols_invalid"
+    universe_symbols_file = str(
+        snapshot.get("universe_symbols_file") or ""
+    ).strip()
+    if not universe_symbols_file:
+        return None, "universe_symbols_file_missing"
+    universe_path = Path(universe_symbols_file)
+    if not universe_path.is_absolute():
+        universe_path = summary_path.parent / universe_path
+    try:
+        universe_bytes = universe_path.read_bytes()
+        universe_symbols = {
+            line.strip().upper()
+            for line in universe_bytes.decode("utf-8").splitlines()
+            if line.strip()
+        }
+    except (OSError, UnicodeDecodeError):
+        return None, "universe_symbols_file_unreadable"
+    if hashlib.sha256(universe_bytes).hexdigest() != universe_sha256:
+        return None, "universe_symbols_file_sha256_mismatch"
+    if (
+        len(universe_symbols) != universe_count
+        or not snapshot_symbols.issubset(universe_symbols)
+        or len(universe_symbols - snapshot_symbols) != non_fractionable_count
+        or any(
+            re.fullmatch(r"[A-Z0-9][A-Z0-9.-]*", symbol) is None
+            for symbol in universe_symbols
+        )
+    ):
+        return None, "universe_symbols_invalid"
+    return {
+        "snapshot_sha256": snapshot_sha256,
+        "universe_sha256": universe_sha256,
+        "universe_symbol_count": universe_count,
+        "fractionable_symbol_count": fractionable_count,
+        "non_fractionable_symbol_count": non_fractionable_count,
+    }, None
+
+
 def nightly_threshold_status(
     status: str,
     value: object,
@@ -1883,7 +1980,27 @@ def load_second_strategy_evidence(
 
     prefilter_rows = prefilter_payload.get("rows", []) if prefilter_payload else []
     validation_rows = validation_payload.get("rows", []) if validation_payload else []
+    prefilter_fractionability, prefilter_fractionability_error = (
+        fractionability_snapshot_identity(
+            prefilter_payload,
+            summary_path=prefilter_summary_path,
+        )
+    )
+    validation_fractionability, validation_fractionability_error = (
+        fractionability_snapshot_identity(
+            validation_payload,
+            summary_path=validation_summary_path,
+        )
+    )
+    proof_horizon_fractionability, proof_horizon_fractionability_error = (
+        fractionability_snapshot_identity(
+            proof_horizon_payload,
+            summary_path=proof_horizon_summary_path,
+        )
+    )
+    fractionability_lineage_status = "not_required"
     validation_prefilter_summary = "none"
+    validation_prefilter_summary_sha256 = "none"
     validation_prefilter_lineage_status = "not_applicable"
     validation_prefilter_lineage_error = False
     if validation_payload is not None and prefilter_payload is not None:
@@ -1906,7 +2023,21 @@ def load_second_strategy_evidence(
                 validation_prefilter_lineage_status = "reference_mismatch"
                 validation_prefilter_lineage_error = True
             else:
-                validation_prefilter_lineage_status = "ok"
+                validation_prefilter_summary_sha256 = str(
+                    validation_payload.get("prefilter_summary_sha256") or ""
+                ).strip() or "none"
+                if validation_prefilter_summary_sha256 == "none":
+                    validation_prefilter_lineage_status = "sha256_missing"
+                    validation_prefilter_lineage_error = True
+                elif (
+                    prefilter_summary_sha256 is None
+                    or validation_prefilter_summary_sha256
+                    != prefilter_summary_sha256
+                ):
+                    validation_prefilter_lineage_status = "sha256_mismatch"
+                    validation_prefilter_lineage_error = True
+                else:
+                    validation_prefilter_lineage_status = "ok"
     prefilter_families = candidate_names_from_rows(prefilter_rows)
     prefilter_positive_families = candidate_names_from_rows(
         prefilter_rows, verdict="positive-edge"
@@ -1956,6 +2087,32 @@ def load_second_strategy_evidence(
     ]
     if validation_prefilter_lineage_error:
         invalid_parts.append("validation_prefilter_lineage")
+    if require_candidate_attribution:
+        if (
+            prefilter_payload is not None
+            and prefilter_fractionability_error is not None
+        ):
+            invalid_parts.append(
+                f"prefilter_fractionability_{prefilter_fractionability_error}"
+            )
+            fractionability_lineage_status = "invalid_prefilter"
+        if (
+            validation_payload is not None
+            and validation_fractionability_error is not None
+        ):
+            invalid_parts.append(
+                f"validation_fractionability_{validation_fractionability_error}"
+            )
+            fractionability_lineage_status = "invalid_validation"
+        if (
+            prefilter_fractionability is not None
+            and validation_fractionability is not None
+        ):
+            if prefilter_fractionability != validation_fractionability:
+                invalid_parts.append("fractionability_lineage_mismatch")
+                fractionability_lineage_status = "mismatch"
+            elif fractionability_lineage_status == "not_required":
+                fractionability_lineage_status = "ok"
     if invalid_parts:
         evidence_status = "invalid"
         detail = ",".join(invalid_parts)
@@ -2136,6 +2293,22 @@ def load_second_strategy_evidence(
                 proof_horizon_status = "invalid"
                 proof_horizon_detail = "candidate_selection_missing"
             elif (
+                require_candidate_attribution
+                and proof_horizon_fractionability_error is not None
+            ):
+                proof_horizon_status = "invalid"
+                proof_horizon_detail = (
+                    "fractionability_"
+                    f"{proof_horizon_fractionability_error}"
+                )
+            elif (
+                require_candidate_attribution
+                and proof_horizon_fractionability
+                != validation_fractionability
+            ):
+                proof_horizon_status = "mismatch"
+                proof_horizon_detail = "fractionability_lineage_mismatch"
+            elif (
                 proof_horizon_candidate_count is None
                 or proof_horizon_passing_candidate_count is None
             ):
@@ -2276,8 +2449,22 @@ def load_second_strategy_evidence(
         "prefilter_summary": str(prefilter_summary_path),
         "validation_summary": str(validation_summary_path),
         "validation_prefilter_summary": validation_prefilter_summary,
+        "validation_prefilter_summary_sha256": (
+            validation_prefilter_summary_sha256
+        ),
         "validation_prefilter_lineage_status": (
             validation_prefilter_lineage_status
+        ),
+        "fractionability_lineage_status": fractionability_lineage_status,
+        "fractionability_snapshot_sha256": (
+            validation_fractionability.get("snapshot_sha256")
+            if validation_fractionability is not None
+            else "none"
+        ),
+        "fractionability_universe_sha256": (
+            validation_fractionability.get("universe_sha256")
+            if validation_fractionability is not None
+            else "none"
         ),
         "proof_horizon_summary": str(proof_horizon_summary_path),
         "prefilter_summary_sha256": prefilter_summary_sha256 or "none",
@@ -7246,7 +7433,11 @@ print(
     f"prefilter_summary={safe_status_value(second_strategy_evidence['prefilter_summary'])} "
     f"validation_summary={safe_status_value(second_strategy_evidence['validation_summary'])} "
     f"validation_prefilter_summary={safe_status_value(second_strategy_evidence['validation_prefilter_summary'])} "
+    f"validation_prefilter_summary_sha256={safe_status_value(second_strategy_evidence['validation_prefilter_summary_sha256'])} "
     f"validation_prefilter_lineage_status={safe_status_value(second_strategy_evidence['validation_prefilter_lineage_status'])} "
+    f"fractionability_lineage_status={safe_status_value(second_strategy_evidence['fractionability_lineage_status'])} "
+    f"fractionability_snapshot_sha256={safe_status_value(second_strategy_evidence['fractionability_snapshot_sha256'])} "
+    f"fractionability_universe_sha256={safe_status_value(second_strategy_evidence['fractionability_universe_sha256'])} "
     f"proof_horizon_summary={safe_status_value(second_strategy_evidence['proof_horizon_summary'])} "
     f"prefilter_summary_sha256={safe_status_value(second_strategy_evidence['prefilter_summary_sha256'])} "
     f"validation_summary_sha256={safe_status_value(second_strategy_evidence['validation_summary_sha256'])} "
@@ -7406,7 +7597,11 @@ print(
     f"prefilter_summary={safe_status_value(second_strategy_setup_evidence['prefilter_summary'])} "
     f"validation_summary={safe_status_value(second_strategy_setup_evidence['validation_summary'])} "
     f"validation_prefilter_summary={safe_status_value(second_strategy_setup_evidence['validation_prefilter_summary'])} "
+    f"validation_prefilter_summary_sha256={safe_status_value(second_strategy_setup_evidence['validation_prefilter_summary_sha256'])} "
     f"validation_prefilter_lineage_status={safe_status_value(second_strategy_setup_evidence['validation_prefilter_lineage_status'])} "
+    f"fractionability_lineage_status={safe_status_value(second_strategy_setup_evidence['fractionability_lineage_status'])} "
+    f"fractionability_snapshot_sha256={safe_status_value(second_strategy_setup_evidence['fractionability_snapshot_sha256'])} "
+    f"fractionability_universe_sha256={safe_status_value(second_strategy_setup_evidence['fractionability_universe_sha256'])} "
     f"prefilter_summary_sha256={safe_status_value(second_strategy_setup_evidence['prefilter_summary_sha256'])} "
     f"validation_summary_sha256={safe_status_value(second_strategy_setup_evidence['validation_summary_sha256'])} "
     f"prefilter_age_hours={format_optional_float(second_strategy_setup_evidence['prefilter_age_hours'])} "

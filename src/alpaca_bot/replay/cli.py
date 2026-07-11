@@ -24,6 +24,7 @@ from alpaca_bot.replay.exit_diagnostics import (
     build_exit_diagnostics_report,
     format_exit_diagnostics_markdown,
 )
+from alpaca_bot.replay.fractionability_snapshot import load_fractionability_snapshot
 from alpaca_bot.replay.lever_sweep import (
     build_coarse_grid,
     build_ofat_grid,
@@ -43,6 +44,30 @@ from alpaca_bot.replay.runner import ReplayRunner
 from alpaca_bot.replay.stats import bootstrap_mean_ci, bootstrap_p_positive
 from alpaca_bot.strategy import OPTION_STRATEGY_FACTORIES, STRATEGY_REGISTRY
 from alpaca_bot.tuning.sweep import DEFAULT_GRID, _parse_grid, run_sweep
+
+
+def _add_fractionability_snapshot_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--fractionable-symbols-file",
+        metavar="FILE",
+        help=(
+            "snapshot containing fractionable symbols separated by lines or commas; "
+            "when omitted, replay preserves the legacy whole-share assumption"
+        ),
+    )
+    parser.add_argument(
+        "--scenario-symbols-file",
+        metavar="FILE",
+        help="snapshot restricting directory replay to the listed scenario symbols",
+    )
+
+
+def _settings_from_args(args: argparse.Namespace) -> Settings:
+    settings = Settings.from_env()
+    symbols = getattr(args, "_fractionable_symbols", None)
+    if symbols is None:
+        return settings
+    return dataclasses.replace(settings, fractionable_symbols=symbols)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -779,7 +804,57 @@ def main(argv: list[str] | None = None) -> int:
     diag_p.add_argument("--output", metavar="FILE", default="-")
     diag_p.add_argument("--json", dest="json_path", metavar="FILE", default=None)
 
+    for command_parser in (
+        run_p,
+        cmp_p,
+        swp_p,
+        aud_p,
+        lev_p,
+        be_p,
+        port_p,
+        basket_p,
+        horizon_p,
+        horizon_basket_p,
+        horizon_sweep_p,
+        diag_p,
+    ):
+        _add_fractionability_snapshot_argument(command_parser)
+
     args = parser.parse_args(argv)
+    args._fractionable_symbols = None
+    args._scenario_symbols = None
+    if args.scenario_symbols_file:
+        try:
+            scenario_snapshot = load_fractionability_snapshot(
+                Path(args.scenario_symbols_file)
+            )
+            if not scenario_snapshot.symbols:
+                raise ValueError("scenario symbol snapshot is empty")
+            args._scenario_symbols = scenario_snapshot.symbols
+            print(
+                "scenario symbol snapshot loaded: "
+                f"path={scenario_snapshot.path} sha256={scenario_snapshot.sha256} "
+                f"symbols={len(scenario_snapshot.symbols)}",
+                file=sys.stderr,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+    if args.fractionable_symbols_file:
+        try:
+            snapshot = load_fractionability_snapshot(
+                Path(args.fractionable_symbols_file)
+            )
+            args._fractionable_symbols = snapshot.symbols
+            print(
+                "fractionability snapshot loaded: "
+                f"path={snapshot.path} sha256={snapshot.sha256} "
+                f"symbols={len(snapshot.symbols)}",
+                file=sys.stderr,
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
 
     if args.subcommand == "run":
         return _cmd_run(args)
@@ -809,7 +884,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    settings = Settings.from_env()
+    settings = _settings_from_args(args)
     strategy_name = args.strategy or "breakout"
     signal_evaluator = STRATEGY_REGISTRY[args.strategy] if args.strategy else None
     runner = ReplayRunner(settings, signal_evaluator=signal_evaluator, strategy_name=strategy_name)
@@ -822,7 +897,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_compare(args: argparse.Namespace) -> int:
-    settings = Settings.from_env()
+    settings = _settings_from_args(args)
 
     if args.strategies:
         names = [s.strip() for s in args.strategies.split(",")]
@@ -854,7 +929,7 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 
 
 def _cmd_sweep(args: argparse.Namespace) -> int:
-    settings = Settings.from_env()
+    settings = _settings_from_args(args)
     signal_evaluator = STRATEGY_REGISTRY[args.strategy]
 
     runner = ReplayRunner(settings, strategy_name=args.strategy)
@@ -890,7 +965,7 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
 
 
 def _cmd_audit(args: argparse.Namespace) -> int:
-    settings = Settings.from_env()
+    settings = _settings_from_args(args)
 
     if args.strategies:
         names = [s.strip() for s in args.strategies.split(",")]
@@ -978,7 +1053,7 @@ def _cmd_audit(args: argparse.Namespace) -> int:
 
 
 def _cmd_lever_sweep(args: argparse.Namespace) -> int:
-    settings = Settings.from_env()
+    settings = _settings_from_args(args)
     if args.max_open_positions is not None and not args.portfolio:
         print("--max-open-positions requires --portfolio", file=sys.stderr)
         return 1
@@ -1115,7 +1190,7 @@ def _cmd_lever_sweep(args: argparse.Namespace) -> int:
 
 
 def _cmd_break_even(args: argparse.Namespace) -> int:
-    settings = Settings.from_env()
+    settings = _settings_from_args(args)
 
     try:
         paths = _select_scenario_paths(args)
@@ -1154,7 +1229,7 @@ def _cmd_break_even(args: argparse.Namespace) -> int:
 
 
 def _cmd_portfolio_audit(args: argparse.Namespace) -> int:
-    settings = Settings.from_env()
+    settings = _settings_from_args(args)
 
     try:
         paths = _select_scenario_paths(args)
@@ -1277,7 +1352,7 @@ def _parse_confidence_scales(
 
 
 def _cmd_portfolio_basket_audit(args: argparse.Namespace) -> int:
-    settings = Settings.from_env()
+    settings = _settings_from_args(args)
     basket_names = tuple(args.strategy or ())
     if len(basket_names) < 2:
         print(
@@ -1504,7 +1579,7 @@ class ProofHorizonSweepRow:
 
 
 def _cmd_proof_horizon(args: argparse.Namespace) -> int:
-    settings = Settings.from_env()
+    settings = _settings_from_args(args)
 
     if args.min_trades <= 0:
         print("--min-trades must be greater than 0", file=sys.stderr)
@@ -1606,7 +1681,7 @@ def _cmd_proof_horizon(args: argparse.Namespace) -> int:
 
 
 def _cmd_proof_horizon_basket(args: argparse.Namespace) -> int:
-    settings = Settings.from_env()
+    settings = _settings_from_args(args)
     basket_names = tuple(args.strategy or ())
     if len(basket_names) < 2:
         print(
@@ -1760,7 +1835,7 @@ def _cmd_proof_horizon_basket(args: argparse.Namespace) -> int:
 
 
 def _cmd_proof_horizon_sweep(args: argparse.Namespace) -> int:
-    settings = Settings.from_env()
+    settings = _settings_from_args(args)
 
     if args.min_trades <= 0:
         print("--min-trades must be greater than 0", file=sys.stderr)
@@ -1947,7 +2022,7 @@ def _cmd_proof_horizon_sweep(args: argparse.Namespace) -> int:
 
 
 def _cmd_exit_diagnostics(args: argparse.Namespace) -> int:
-    settings = Settings.from_env()
+    settings = _settings_from_args(args)
     if args.max_open_positions is not None and not args.portfolio:
         print("--max-open-positions requires --portfolio", file=sys.stderr)
         return 1
@@ -2541,6 +2616,13 @@ def _select_scenario_paths(
     allowed_symbols: set[str] | None = None,
 ) -> list[Path]:
     paths = sorted(Path(args.scenario_dir).glob("*.json"))
+    snapshot_symbols = getattr(args, "_scenario_symbols", None)
+    if snapshot_symbols is not None:
+        allowed_symbols = (
+            set(snapshot_symbols)
+            if allowed_symbols is None
+            else set(allowed_symbols) & set(snapshot_symbols)
+        )
     if allowed_symbols is not None:
         normalized_symbols = {symbol.upper() for symbol in allowed_symbols}
         paths = [

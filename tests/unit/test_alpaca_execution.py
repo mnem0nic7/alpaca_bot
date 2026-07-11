@@ -417,6 +417,22 @@ def test_get_fractionable_symbols_falls_back_to_per_symbol_lookup() -> None:
     assert trading_client.asset_calls == ["AAPL", "MSFT", "MISSING"]
 
 
+def test_get_fractionable_symbols_strictly_rejects_failed_asset_lookup() -> None:
+    class PerSymbolTradingClient(TradingClientStub):
+        get_all_assets = None
+
+    broker = AlpacaExecutionAdapter(PerSymbolTradingClient())
+
+    with pytest.raises(
+        RuntimeError,
+        match="could not resolve fractionability for 1 symbol.*MISSING",
+    ):
+        broker.get_fractionable_symbols(
+            ["AAPL", "MSFT", "MISSING"],
+            strict=True,
+        )
+
+
 # ---------------------------------------------------------------------------
 # _retry_with_backoff tests
 # ---------------------------------------------------------------------------

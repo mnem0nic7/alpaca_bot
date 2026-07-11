@@ -126,6 +126,9 @@ CANDIDATE_SCALES="${SECOND_STRATEGY_CANDIDATE_SCALES:-${SECOND_STRATEGY_CANDIDAT
 OUTPUT_ROOT="${SECOND_STRATEGY_OUTPUT_ROOT:-/var/lib/alpaca-bot/nightly/second_strategy}"
 OUTPUT_DIR="${SECOND_STRATEGY_OUTPUT_DIR:-$OUTPUT_ROOT/$(date -u +%Y%m%dT%H%M%SZ)}"
 PREFILTER_SUMMARY_JSON="${SECOND_STRATEGY_PREFILTER_SUMMARY_JSON:-}"
+FRACTIONABLE_SYMBOLS_SOURCE_FILE="${SECOND_STRATEGY_FRACTIONABLE_SYMBOLS_FILE:-}"
+SCENARIO_SYMBOLS_SOURCE_FILE="${SECOND_STRATEGY_SCENARIO_SYMBOLS_FILE:-}"
+COMPOSE_FILE="${SECOND_STRATEGY_COMPOSE_FILE:-$ROOT_DIR/deploy/compose.yaml}"
 LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"
 UPDATE_LATEST_LINKS="${SECOND_STRATEGY_UPDATE_LATEST_LINKS:-true}"
 EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"
@@ -259,6 +262,128 @@ if [[ -n "$PREFILTER_SUMMARY_JSON" && ! -f "$PREFILTER_SUMMARY_JSON" ]]; then
   fail "missing prefilter summary JSON: $PREFILTER_SUMMARY_JSON"
 fi
 mkdir -p "$OUTPUT_DIR"
+
+FRACTIONABILITY_EXPECTED_SNAPSHOT_SHA256=""
+FRACTIONABILITY_EXPECTED_UNIVERSE_SHA256=""
+if [[ -n "$PREFILTER_SUMMARY_JSON" ]]; then
+  if ! fractionability_lineage="$(python3 - "$PREFILTER_SUMMARY_JSON" <<'PY'
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+summary_path = Path(sys.argv[1])
+try:
+    payload = json.loads(summary_path.read_text())
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"could not read prefilter fractionability lineage: {exc}") from exc
+snapshot = payload.get("fractionability_snapshot")
+if not isinstance(snapshot, dict):
+    raise SystemExit("prefilter summary is missing fractionability_snapshot lineage")
+snapshot_file = snapshot.get("snapshot_file")
+universe_symbols_file = snapshot.get("universe_symbols_file")
+snapshot_sha256 = str(snapshot.get("snapshot_sha256") or "").lower()
+universe_sha256 = str(snapshot.get("universe_sha256") or "").lower()
+if not isinstance(snapshot_file, str) or not snapshot_file.strip():
+    raise SystemExit("prefilter fractionability snapshot_file is missing")
+if not isinstance(universe_symbols_file, str) or not universe_symbols_file.strip():
+    raise SystemExit("prefilter fractionability universe_symbols_file is missing")
+if re.fullmatch(r"[0-9a-f]{64}", snapshot_sha256) is None:
+    raise SystemExit("prefilter fractionability snapshot_sha256 is invalid")
+if re.fullmatch(r"[0-9a-f]{64}", universe_sha256) is None:
+    raise SystemExit("prefilter fractionability universe_sha256 is invalid")
+source_path = Path(snapshot_file)
+if not source_path.is_absolute():
+    source_path = summary_path.parent / source_path
+universe_path = Path(universe_symbols_file)
+if not universe_path.is_absolute():
+    universe_path = summary_path.parent / universe_path
+print(
+    f"{source_path.resolve()}\t{universe_path.resolve()}\t"
+    f"{snapshot_sha256}\t{universe_sha256}"
+)
+PY
+)"; then
+    fail "could not preserve prefilter fractionability lineage"
+  fi
+  IFS=$'\t' read -r prefilter_fractionability_file prefilter_scenario_symbols_file \
+    FRACTIONABILITY_EXPECTED_SNAPSHOT_SHA256 \
+    FRACTIONABILITY_EXPECTED_UNIVERSE_SHA256 <<< "$fractionability_lineage"
+  if [[ -z "$FRACTIONABLE_SYMBOLS_SOURCE_FILE" ]]; then
+    FRACTIONABLE_SYMBOLS_SOURCE_FILE="$prefilter_fractionability_file"
+  fi
+  if [[ -z "$SCENARIO_SYMBOLS_SOURCE_FILE" ]]; then
+    SCENARIO_SYMBOLS_SOURCE_FILE="$prefilter_scenario_symbols_file"
+  fi
+fi
+
+FRACTIONABLE_SYMBOLS_FILE="$OUTPUT_DIR/fractionable_symbols.txt"
+SCENARIO_SYMBOLS_FILE="$OUTPUT_DIR/scenario_symbols.txt"
+FRACTIONABILITY_METADATA_FILE="$OUTPUT_DIR/fractionability_snapshot.json"
+if [[ -z "$SCENARIO_SYMBOLS_SOURCE_FILE" ]]; then
+  SCENARIO_SYMBOLS_SOURCE_FILE="$OUTPUT_DIR/active_watchlist_symbols.source.txt"
+  active_watchlist_tmp="$SCENARIO_SYMBOLS_SOURCE_FILE.tmp.$$"
+  if ! docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" run -T --rm \
+    --entrypoint python nightly -m alpaca_bot.replay.active_watchlist \
+    > "$active_watchlist_tmp"; then
+    rm -f "$active_watchlist_tmp"
+    fail "could not capture active paper watchlist"
+  fi
+  if [[ ! -s "$active_watchlist_tmp" ]]; then
+    rm -f "$active_watchlist_tmp"
+    fail "active paper watchlist snapshot is empty"
+  fi
+  mv -f "$active_watchlist_tmp" "$SCENARIO_SYMBOLS_SOURCE_FILE"
+fi
+fractionability_cmd=(
+  python3 -m alpaca_bot.replay.fractionability_snapshot
+  --scenario-dir "$SCENARIO_DIR"
+  --output "$FRACTIONABLE_SYMBOLS_FILE"
+  --metadata-output "$FRACTIONABILITY_METADATA_FILE"
+  --universe-output "$SCENARIO_SYMBOLS_FILE"
+)
+fractionability_cmd+=(--symbols-file "$SCENARIO_SYMBOLS_SOURCE_FILE")
+if [[ -n "$FRACTIONABLE_SYMBOLS_SOURCE_FILE" ]]; then
+  fractionability_cmd+=(--source-file "$FRACTIONABLE_SYMBOLS_SOURCE_FILE")
+fi
+if [[ -n "$FRACTIONABILITY_EXPECTED_SNAPSHOT_SHA256" ]]; then
+  fractionability_cmd+=(
+    --expected-source-sha256 "$FRACTIONABILITY_EXPECTED_SNAPSHOT_SHA256"
+    --expected-universe-sha256 "$FRACTIONABILITY_EXPECTED_UNIVERSE_SHA256"
+  )
+fi
+if ! fractionability_capture="$("${fractionability_cmd[@]}")"; then
+  fail "could not freeze fractionability snapshot"
+fi
+if ! fractionability_fields="$(python3 - "$FRACTIONABILITY_METADATA_FILE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+payload = json.loads(Path(sys.argv[1]).read_text())
+print(
+    "\t".join(
+        str(payload[key])
+        for key in (
+            "snapshot_sha256",
+            "universe_sha256",
+            "universe_symbol_count",
+            "fractionable_symbol_count",
+            "non_fractionable_symbol_count",
+        )
+    )
+)
+PY
+)"; then
+  fail "could not read frozen fractionability metadata"
+fi
+IFS=$'\t' read -r FRACTIONABILITY_SNAPSHOT_SHA256 \
+  FRACTIONABILITY_UNIVERSE_SHA256 FRACTIONABILITY_UNIVERSE_COUNT \
+  FRACTIONABILITY_FRACTIONABLE_COUNT FRACTIONABILITY_NON_FRACTIONABLE_COUNT \
+  <<< "$fractionability_fields"
+echo "second strategy basket scan: scenario_symbols=$SCENARIO_SYMBOLS_FILE fractionability_snapshot=$FRACTIONABLE_SYMBOLS_FILE snapshot_sha256=$FRACTIONABILITY_SNAPSHOT_SHA256 universe_sha256=$FRACTIONABILITY_UNIVERSE_SHA256 universe_symbols=$FRACTIONABILITY_UNIVERSE_COUNT fractionable_symbols=$FRACTIONABILITY_FRACTIONABLE_COUNT non_fractionable_symbols=$FRACTIONABILITY_NON_FRACTIONABLE_COUNT scenario_source=$SCENARIO_SYMBOLS_SOURCE_FILE fractionability_source=${FRACTIONABLE_SYMBOLS_SOURCE_FILE:-alpaca}"
 
 proof_output="$OUTPUT_DIR/proof_status.txt"
 proof_status_loaded=false
@@ -616,7 +741,7 @@ status_parts_dir="$OUTPUT_DIR/status_parts"
 mkdir -p "$status_parts_dir"
 
 echo "second strategy basket scan: output_dir=$OUTPUT_DIR"
-echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} starting_equity_source=$starting_equity_source excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS option_snapshot_sessions=$OPTION_SNAPSHOT_SESSIONS option_snapshot_points=$OPTION_SNAPSHOT_POINTS option_snapshot_min_points_per_session=$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION option_replay_min_sessions=$OPTION_REPLAY_MIN_SESSIONS option_replay_min_points_per_session=$OPTION_REPLAY_MIN_POINTS_PER_SESSION option_replay_status=$OPTION_REPLAY_STATUS prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
+echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} starting_equity_source=$starting_equity_source excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS option_snapshot_sessions=$OPTION_SNAPSHOT_SESSIONS option_snapshot_points=$OPTION_SNAPSHOT_POINTS option_snapshot_min_points_per_session=$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION option_replay_min_sessions=$OPTION_REPLAY_MIN_SESSIONS option_replay_min_points_per_session=$OPTION_REPLAY_MIN_POINTS_PER_SESSION option_replay_status=$OPTION_REPLAY_STATUS fractionability_snapshot_sha256=$FRACTIONABILITY_SNAPSHOT_SHA256 fractionability_universe_sha256=$FRACTIONABILITY_UNIVERSE_SHA256 prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
 
 completed_status_part_is_reusable() {
   local status_part="$1"
@@ -679,7 +804,7 @@ run_prefilter_job() {
   tmp_stderr_path="$stderr_path.tmp.$BASHPID"
   status_part="$status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
   require_fingerprint=true
-  job_fingerprint="prefilter|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$SAMPLE_SIZE|seed=$SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_sessions=$OPTION_SNAPSHOT_SESSIONS|option_points=$OPTION_SNAPSHOT_POINTS|option_min_points=$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v2"
+  job_fingerprint="prefilter|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$SAMPLE_SIZE|seed=$SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|fractionability=$FRACTIONABILITY_SNAPSHOT_SHA256|universe=$FRACTIONABILITY_UNIVERSE_SHA256|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_sessions=$OPTION_SNAPSHOT_SESSIONS|option_points=$OPTION_SNAPSHOT_POINTS|option_min_points=$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v3"
   if completed_status_part_is_reusable "$status_part" "$candidate" "$candidate_scale" "$require_fingerprint" "$job_fingerprint"; then
     echo "second strategy basket scan: reusing completed candidate=$candidate scale=$candidate_scale"
     return 0
@@ -693,6 +818,8 @@ run_prefilter_job() {
     --sample-seed "$SAMPLE_SEED"
     --slippage-bps "$SLIPPAGE_BPS"
     --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
+    --scenario-symbols-file "$SCENARIO_SYMBOLS_FILE"
+    --fractionable-symbols-file "$FRACTIONABLE_SYMBOLS_FILE"
     --confidence-scale "$candidate=$candidate_scale"
     --output "$tmp_report_path"
     --jsonl "$tmp_jsonl_path"
@@ -751,7 +878,8 @@ else
     "$SCENARIO_DIR" "$BASE_STRATEGY" "$SAMPLE_SIZE" "$SAMPLE_SEED" \
     "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "${candidate_scales[*]}" \
     "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" \
-    "$SCAN_JOBS" "$INCLUDE_OPTION_CANDIDATES" "${OPTION_CHAIN_SNAPSHOTS:-none}" <<'PY'
+    "$SCAN_JOBS" "$INCLUDE_OPTION_CANDIDATES" "${OPTION_CHAIN_SNAPSHOTS:-none}" \
+    "$FRACTIONABILITY_METADATA_FILE" <<'PY'
 from __future__ import annotations
 
 import json
@@ -774,6 +902,8 @@ excluded_candidates = sys.argv[12]
 scan_jobs = sys.argv[13]
 include_option_candidates = sys.argv[14]
 option_chain_snapshots = sys.argv[15]
+fractionability_metadata_path = Path(sys.argv[16])
+fractionability_snapshot = json.loads(fractionability_metadata_path.read_text())
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -901,6 +1031,12 @@ lines = [
     f"- excluded_candidates: `{excluded_candidates}`",
     f"- include_option_candidates: `{include_option_candidates}`",
     f"- option_chain_snapshots: `{option_chain_snapshots}`",
+    f"- fractionability_snapshot_file: `{fractionability_snapshot['snapshot_file']}`",
+    f"- scenario_symbols_file: `{fractionability_snapshot['universe_symbols_file']}`",
+    f"- fractionability_snapshot_sha256: `{fractionability_snapshot['snapshot_sha256']}`",
+    f"- fractionability_universe_sha256: `{fractionability_snapshot['universe_sha256']}`",
+    f"- fractionable_symbols: `{fractionability_snapshot['fractionable_symbol_count']}`",
+    f"- non_fractionable_symbols: `{fractionability_snapshot['non_fractionable_symbol_count']}`",
     f"- candidate_names: `{','.join(candidate_names) if candidate_names else 'none'}`",
     "",
     "| candidate | scale | status | trades | candidate trades | candidate P&L | candidate mean/trade | candidate 95% CI mean/trade | candidate p(mean<=0) | basket total P&L | basket 95% CI mean/trade | basket verdict | verdict | report |",
@@ -1005,6 +1141,7 @@ write_text_atomic(
             "excluded_candidates": excluded_candidates,
             "include_option_candidates": include_option_candidates,
             "option_chain_snapshots": option_chain_snapshots,
+            "fractionability_snapshot": fractionability_snapshot,
             "candidate_count": len(candidate_names),
             "candidate_names": candidate_names,
             "positive_edge_prefilter_rows": positive_edges,
@@ -1147,7 +1284,7 @@ PY
     tmp_stderr_path="$stderr_path.tmp.$BASHPID"
     status_part="$validation_status_parts_dir/${safe_candidate}_scale_${safe_scale}.tsv"
     require_fingerprint=true
-    job_fingerprint="validation|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$VALIDATION_SAMPLE_SIZE|seed=$VALIDATION_SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_sessions=$OPTION_SNAPSHOT_SESSIONS|option_points=$OPTION_SNAPSHOT_POINTS|option_min_points=$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v2"
+    job_fingerprint="validation|scenario=$SCENARIO_DIR|base=$BASE_STRATEGY|sample=$VALIDATION_SAMPLE_SIZE|seed=$VALIDATION_SAMPLE_SEED|slippage=$SLIPPAGE_BPS|max_open=$MAX_OPEN_POSITIONS_VALUE|equity=${starting_equity:-scenario_default}|fractionability=$FRACTIONABILITY_SNAPSHOT_SHA256|universe=$FRACTIONABILITY_UNIVERSE_SHA256|options=$INCLUDE_OPTION_CANDIDATES|option_path=${OPTION_CHAIN_SNAPSHOTS:-none}|option_contracts=$OPTION_SNAPSHOT_CONTRACTS|option_sessions=$OPTION_SNAPSHOT_SESSIONS|option_points=$OPTION_SNAPSHOT_POINTS|option_min_points=$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION|option_replay=$OPTION_REPLAY_STATUS|diagnostics=trade_attribution_v3"
     if completed_status_part_is_reusable "$status_part" "$candidate" "$candidate_scale" "$require_fingerprint" "$job_fingerprint"; then
       echo "second strategy basket validation: reusing completed candidate=$candidate scale=$candidate_scale"
       return 0
@@ -1161,6 +1298,8 @@ PY
       --sample-seed "$VALIDATION_SAMPLE_SEED"
       --slippage-bps "$SLIPPAGE_BPS"
       --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
+      --scenario-symbols-file "$SCENARIO_SYMBOLS_FILE"
+      --fractionable-symbols-file "$FRACTIONABLE_SYMBOLS_FILE"
       --confidence-scale "$candidate=$candidate_scale"
       --output "$tmp_report_path"
       --jsonl "$tmp_jsonl_path"
@@ -1214,9 +1353,11 @@ PY
     "$VALIDATION_SAMPLE_SEED" "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" \
     "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" \
     "$MAX_VALIDATION_CANDIDATES" "$SCAN_JOBS" "$INCLUDE_OPTION_CANDIDATES" \
-    "${OPTION_CHAIN_SNAPSHOTS:-none}" "$VALIDATE_ALL_POSITIVE_ROWS" <<'PY'
+    "${OPTION_CHAIN_SNAPSHOTS:-none}" "$VALIDATE_ALL_POSITIVE_ROWS" \
+    "$FRACTIONABILITY_METADATA_FILE" <<'PY'
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -1226,6 +1367,9 @@ status_path = Path(sys.argv[1])
 summary_path = Path(sys.argv[2])
 summary_json_path = Path(sys.argv[3])
 prefilter_summary_json_path = Path(sys.argv[4])
+prefilter_summary_sha256 = hashlib.sha256(
+    prefilter_summary_json_path.read_bytes()
+).hexdigest()
 validation_output_dir = sys.argv[5]
 scenario_dir = sys.argv[6]
 base_strategy = sys.argv[7]
@@ -1240,6 +1384,8 @@ scan_jobs = sys.argv[15]
 include_option_candidates = sys.argv[16]
 option_chain_snapshots = sys.argv[17]
 validate_all_positive_rows = sys.argv[18]
+fractionability_metadata_path = Path(sys.argv[19])
+fractionability_snapshot = json.loads(fractionability_metadata_path.read_text())
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -1356,6 +1502,7 @@ lines = [
     "Run metadata:",
     "",
     f"- prefilter_summary_json: `{prefilter_summary_json_path}`",
+    f"- prefilter_summary_sha256: `{prefilter_summary_sha256}`",
     f"- validation_output_dir: `{validation_output_dir}`",
     f"- scenario_dir: `{scenario_dir}`",
     f"- base_strategy: `{base_strategy}`",
@@ -1369,6 +1516,12 @@ lines = [
     f"- excluded_candidates: `{excluded_candidates}`",
     f"- include_option_candidates: `{include_option_candidates}`",
     f"- option_chain_snapshots: `{option_chain_snapshots}`",
+    f"- fractionability_snapshot_file: `{fractionability_snapshot['snapshot_file']}`",
+    f"- scenario_symbols_file: `{fractionability_snapshot['universe_symbols_file']}`",
+    f"- fractionability_snapshot_sha256: `{fractionability_snapshot['snapshot_sha256']}`",
+    f"- fractionability_universe_sha256: `{fractionability_snapshot['universe_sha256']}`",
+    f"- fractionable_symbols: `{fractionability_snapshot['fractionable_symbol_count']}`",
+    f"- non_fractionable_symbols: `{fractionability_snapshot['non_fractionable_symbol_count']}`",
     f"- validate_all_positive_rows: `{validate_all_positive_rows}`",
     f"- candidate_names: `{','.join(candidate_names) if candidate_names else 'none'}`",
     "",
@@ -1472,6 +1625,7 @@ write_text_atomic(
     json.dumps(
         {
             "prefilter_summary_json": str(prefilter_summary_json_path),
+            "prefilter_summary_sha256": prefilter_summary_sha256,
             "validation_output_dir": validation_output_dir,
             "scenario_dir": scenario_dir,
             "base_strategy": base_strategy,
@@ -1485,6 +1639,7 @@ write_text_atomic(
             "excluded_candidates": excluded_candidates,
             "include_option_candidates": include_option_candidates,
             "option_chain_snapshots": option_chain_snapshots,
+            "fractionability_snapshot": fractionability_snapshot,
             "validate_all_positive_rows": validate_all_positive_rows,
             "candidate_count": len(candidate_names),
             "candidate_names": candidate_names,
@@ -1623,6 +1778,8 @@ PY
       --sample-seed "$PROOF_HORIZON_SAMPLE_SEED"
       --slippage-bps "$SLIPPAGE_BPS"
       --max-open-positions "$MAX_OPEN_POSITIONS_VALUE"
+      --scenario-symbols-file "$SCENARIO_SYMBOLS_FILE"
+      --fractionable-symbols-file "$FRACTIONABLE_SYMBOLS_FILE"
       --confidence-scale "$candidate=$candidate_scale"
       --min-trades "$PROOF_HORIZON_MIN_TRADES"
       --min-pnl "$PROOF_HORIZON_MIN_PNL"
@@ -1697,7 +1854,8 @@ PY
           --results "$proof_horizon_results_file" \
           --output-dir "$PROOF_HORIZON_OUTPUT_DIR" \
           --min-eventual-pass-rate "$PROOF_HORIZON_MIN_PASS_RATE" \
-          --default-min-pnl "$PROOF_HORIZON_MIN_PNL"
+          --default-min-pnl "$PROOF_HORIZON_MIN_PNL" \
+          --fractionability-metadata "$FRACTIONABILITY_METADATA_FILE"
         echo "proof_horizon_summary=$PROOF_HORIZON_OUTPUT_DIR/summary.md"
         echo "proof_horizon_summary_json=$PROOF_HORIZON_OUTPUT_DIR/summary.json"
         if [[ -z "$PROOF_HORIZON_LATEST_LINK" && "$UPDATE_LATEST_LINKS" == "true" ]]; then

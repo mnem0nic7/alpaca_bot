@@ -549,7 +549,12 @@ class AlpacaExecutionAdapter:
     def list_open_positions(self) -> list[BrokerPosition]:
         return self.list_positions()
 
-    def get_fractionable_symbols(self, symbols: Sequence[str]) -> frozenset[str]:
+    def get_fractionable_symbols(
+        self,
+        symbols: Sequence[str],
+        *,
+        strict: bool = False,
+    ) -> frozenset[str]:
         """Return the subset of symbols that Alpaca supports for fractional trading."""
         requested = tuple(dict.fromkeys(str(symbol).upper() for symbol in symbols))
         bulk_lookup = getattr(self._trading, "get_all_assets", None)
@@ -580,6 +585,7 @@ class AlpacaExecutionAdapter:
                 )
 
         result = set()
+        failures: list[str] = []
         for symbol in requested:
             try:
                 asset = _retry_with_backoff(lambda s=symbol: self._trading.get_asset(s))
@@ -587,6 +593,13 @@ class AlpacaExecutionAdapter:
                     result.add(symbol)
             except Exception as exc:
                 _logger.warning("get_fractionable_symbols: skipping %s: %s", symbol, exc)
+                failures.append(symbol)
+        if strict and failures:
+            preview = ",".join(failures[:20])
+            raise RuntimeError(
+                "could not resolve fractionability for "
+                f"{len(failures)} symbol(s): {preview}"
+            )
         return frozenset(result)
 
     @staticmethod

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -327,6 +328,8 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"' in script
     assert 'CANDIDATE_SCALES="${SECOND_STRATEGY_CANDIDATE_SCALES:-${SECOND_STRATEGY_CANDIDATE_SCALE:-0.10,0.25,0.50}}"' in script
     assert 'PREFILTER_SUMMARY_JSON="${SECOND_STRATEGY_PREFILTER_SUMMARY_JSON:-}"' in script
+    assert 'FRACTIONABLE_SYMBOLS_SOURCE_FILE="${SECOND_STRATEGY_FRACTIONABLE_SYMBOLS_FILE:-}"' in script
+    assert 'SCENARIO_SYMBOLS_SOURCE_FILE="${SECOND_STRATEGY_SCENARIO_SYMBOLS_FILE:-}"' in script
     assert 'VALIDATE_POSITIVES="${SECOND_STRATEGY_VALIDATE_POSITIVES:-true}"' in script
     assert 'VALIDATE_ALL_POSITIVE_ROWS="${SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS:-true}"' in script
     assert 'VALIDATION_CANDIDATES="${SECOND_STRATEGY_VALIDATION_CANDIDATES:-}"' in script
@@ -360,6 +363,16 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert "SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS must be true or false" in script
     assert "missing prefilter summary JSON" in script
     assert "using existing prefilter_summary_json" in script
+    assert "prefilter summary is missing fractionability_snapshot lineage" in script
+    assert "python3 -m alpaca_bot.replay.fractionability_snapshot" in script
+    assert script.count('--fractionable-symbols-file "$FRACTIONABLE_SYMBOLS_FILE"') == 3
+    assert script.count('--scenario-symbols-file "$SCENARIO_SYMBOLS_FILE"') == 3
+    assert "python nightly -m alpaca_bot.replay.active_watchlist" in script
+    assert 'fractionability_cmd+=(--symbols-file "$SCENARIO_SYMBOLS_SOURCE_FILE")' in script
+    assert "fractionability=$FRACTIONABILITY_SNAPSHOT_SHA256" in script
+    assert "universe=$FRACTIONABILITY_UNIVERSE_SHA256" in script
+    assert script.count('"fractionability_snapshot": fractionability_snapshot') == 2
+    assert '--fractionability-metadata "$FRACTIONABILITY_METADATA_FILE"' in script
     assert 'prefilter_skipped=false' in script
     assert 'prefilter_skipped=true' in script
     assert 'option_candidate_csv="${SECOND_STRATEGY_OPTION_CANDIDATES:-}"' in script
@@ -431,7 +444,7 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert ".tmp.$BASHPID" in script
     assert "--output \"$tmp_report_path\"" in script
     assert "--jsonl \"$tmp_jsonl_path\"" in script
-    assert "diagnostics=trade_attribution_v2" in script
+    assert "diagnostics=trade_attribution_v3" in script
     assert 'fingerprint_path="$status_part.fingerprint"' in script
     assert "write_status_part_fingerprint" in script
     assert "option_contracts=$OPTION_SNAPSHOT_CONTRACTS" in script
@@ -489,6 +502,12 @@ def test_second_strategy_basket_scan_generates_empty_validation_specs(
     env_file.write_text("")
     scenario_dir = tmp_path / "scenarios"
     scenario_dir.mkdir()
+    (scenario_dir / "AAA_252d.json").write_text("{}\n")
+    fractionable_symbols = tmp_path / "fractionable_symbols.txt"
+    fractionable_symbols.write_text("AAA\n")
+    fractionability_sha256 = hashlib.sha256(
+        fractionable_symbols.read_bytes()
+    ).hexdigest()
     output_dir = tmp_path / "output"
     validation_dir = tmp_path / "validation"
     prefilter_summary = tmp_path / "summary.json"
@@ -500,6 +519,16 @@ def test_second_strategy_basket_scan_generates_empty_validation_specs(
                 "candidate_scales": ["0.10"],
                 "rows": [],
                 "starting_equity": "10000",
+                "fractionability_snapshot": {
+                    "schema_version": 1,
+                    "snapshot_file": str(fractionable_symbols),
+                    "universe_symbols_file": str(fractionable_symbols),
+                    "snapshot_sha256": fractionability_sha256,
+                    "universe_sha256": fractionability_sha256,
+                    "universe_symbol_count": 1,
+                    "fractionable_symbol_count": 1,
+                    "non_fractionable_symbol_count": 0,
+                },
             }
         )
     )
@@ -539,6 +568,10 @@ def test_second_strategy_basket_scan_generates_empty_validation_specs(
     validation_summary = json.loads((validation_dir / "summary.json").read_text())
     assert validation_summary["candidate_names"] == []
     assert validation_summary["positive_edge_validation_rows"] == 0
+    assert (
+        validation_summary["fractionability_snapshot"]["snapshot_sha256"]
+        == fractionability_sha256
+    )
     assert not (tmp_path / "latest").exists()
     assert not (output_dir / "proof_horizon").exists()
 
@@ -550,6 +583,12 @@ def test_second_strategy_basket_scan_resumes_positive_validation_for_proof_horiz
     env_file.write_text("")
     scenario_dir = tmp_path / "scenarios"
     scenario_dir.mkdir()
+    (scenario_dir / "AAA_252d.json").write_text("{}\n")
+    fractionable_symbols = tmp_path / "fractionable_symbols.txt"
+    fractionable_symbols.write_text("AAA\n")
+    fractionability_sha256 = hashlib.sha256(
+        fractionable_symbols.read_bytes()
+    ).hexdigest()
     output_dir = tmp_path / "output"
     validation_dir = tmp_path / "validation"
     validation_parts_dir = validation_dir / "status_parts"
@@ -574,6 +613,16 @@ def test_second_strategy_basket_scan_resumes_positive_validation_for_proof_horiz
                     }
                 ],
                 "starting_equity": "10000",
+                "fractionability_snapshot": {
+                    "schema_version": 1,
+                    "snapshot_file": str(fractionable_symbols),
+                    "universe_symbols_file": str(fractionable_symbols),
+                    "snapshot_sha256": fractionability_sha256,
+                    "universe_sha256": fractionability_sha256,
+                    "universe_symbol_count": 1,
+                    "fractionable_symbol_count": 1,
+                    "non_fractionable_symbol_count": 0,
+                },
             }
         )
     )
@@ -634,10 +683,11 @@ def test_second_strategy_basket_scan_resumes_positive_validation_for_proof_horiz
     fingerprint = (
         f"validation|scenario={scenario_dir}|base=bull_flag|sample=160|"
         "seed=second-strategy-independent-validation|slippage=2|"
-        "max_open=1|equity=10000|options=false|option_path=none|"
+        f"max_open=1|equity=10000|fractionability={fractionability_sha256}|"
+        f"universe={fractionability_sha256}|options=false|option_path=none|"
         "option_contracts=0|option_sessions=0|option_points=0|option_min_points=0|"
         "option_replay=not_checked|"
-        "diagnostics=trade_attribution_v2"
+        "diagnostics=trade_attribution_v3"
     )
     status_part.with_suffix(status_part.suffix + ".fingerprint").write_text(
         fingerprint + "\n"
@@ -685,6 +735,10 @@ def test_second_strategy_basket_scan_resumes_positive_validation_for_proof_horiz
     assert validation_summary["positive_edge_validation_rows"] == 1
     assert validation_summary["rows"][0]["candidate"] == "ema_pullback"
     assert validation_summary["rows"][0]["verdict"] == "positive-edge"
+    assert (
+        validation_summary["fractionability_snapshot"]["snapshot_sha256"]
+        == fractionability_sha256
+    )
 
 
 def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
@@ -731,6 +785,11 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert '"variant_mode": variant_mode' in script
     assert '"max_variants": int(max_variants)' in script
     assert "python3 -m alpaca_bot.replay.cli portfolio-basket-audit" in script
+    assert "python3 -m alpaca_bot.replay.fractionability_snapshot" in script
+    assert "python nightly -m alpaca_bot.replay.active_watchlist" in script
+    assert script.count('--fractionable-symbols-file "$FRACTIONABLE_SYMBOLS_FILE"') == 2
+    assert script.count('--scenario-symbols-file "$SCENARIO_SYMBOLS_FILE"') == 2
+    assert script.count('"fractionability_snapshot": fractionability_snapshot') == 2
     assert '--confidence-scale "$candidate=$CANDIDATE_SCALE"' in script
     assert 'env "${override_env_args[@]}" "${cmd[@]}"' in script
     assert "SECOND_STRATEGY_SETUP_CANDIDATES" in script
@@ -7759,6 +7818,14 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "raw_bytes = path.read_bytes()" in script
     assert "payload = json.loads(raw_bytes)" in script
     assert "hashlib.sha256(raw_bytes).hexdigest()" in script
+    assert "def fractionability_snapshot_identity(" in script
+    assert 'snapshot = payload.get("fractionability_snapshot")' in script
+    assert 'return None, "snapshot_file_sha256_mismatch"' in script
+    assert 'invalid_parts.append("fractionability_lineage_mismatch")' in script
+    assert 'proof_horizon_detail = "fractionability_lineage_mismatch"' in script
+    assert "fractionability_lineage_status={safe_status_value(second_strategy_evidence['fractionability_lineage_status'])}" in script
+    assert "fractionability_snapshot_sha256={safe_status_value(second_strategy_evidence['fractionability_snapshot_sha256'])}" in script
+    assert "fractionability_universe_sha256={safe_status_value(second_strategy_evidence['fractionability_universe_sha256'])}" in script
     assert "validation_summary_sha256=validation_summary_sha256" in script
     assert "prefilter_payload, prefilter_error, prefilter_summary_sha256" in script
     assert "proof_horizon_summary_path = output_root / \"latest_proof_horizon\" / \"summary.json\"" in script
