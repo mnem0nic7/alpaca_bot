@@ -113,13 +113,13 @@ PROOF_STATUS_DECISION_DRY_RUN_MIN_EVALUATIONS="${PROOF_STATUS_DECISION_DRY_RUN_M
 PROOF_STATUS_NIGHTLY_LOCK_FILE="${PROOF_STATUS_NIGHTLY_LOCK_FILE:-/var/lock/alpaca-bot-nightly.lock}"
 PROOF_STATUS_NIGHTLY_LOG="${PROOF_STATUS_NIGHTLY_LOG:-/var/log/alpaca-bot-nightly.log}"
 PROOF_STATUS_SECOND_STRATEGY_LOG="${PROOF_STATUS_SECOND_STRATEGY_LOG:-/var/log/alpaca-bot-second-strategy.log}"
-nightly_timeout_for_status="${NIGHTLY_TIMEOUT_SECONDS:-14400}"
-second_strategy_timeout_for_status="${SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS:-7200}"
+nightly_timeout_for_status="${NIGHTLY_TIMEOUT_SECONDS:-18000}"
+second_strategy_timeout_for_status="${SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS:-10800}"
 if [[ ! "$nightly_timeout_for_status" =~ ^[0-9]+$ ]] || [[ "$nightly_timeout_for_status" -le 0 ]]; then
-  nightly_timeout_for_status=14400
+  nightly_timeout_for_status=18000
 fi
 if [[ ! "$second_strategy_timeout_for_status" =~ ^[0-9]+$ ]] || [[ "$second_strategy_timeout_for_status" -le 0 ]]; then
-  second_strategy_timeout_for_status=7200
+  second_strategy_timeout_for_status=10800
 fi
 default_nightly_max_age_minutes=$(((nightly_timeout_for_status + second_strategy_timeout_for_status + 1800 + 59) / 60))
 PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES="${PROOF_STATUS_NIGHTLY_MAX_AGE_MINUTES:-$default_nightly_max_age_minutes}"

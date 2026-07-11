@@ -231,8 +231,8 @@ def test_cron_runs_session_guard_profit_probe_then_nightly() -> None:
         'SECOND_STRATEGY_LOG="${SECOND_STRATEGY_LOG:-/var/log/alpaca-bot-second-strategy.log}"'
         in nightly_cycle
     )
-    assert 'NIGHTLY_TIMEOUT_SECONDS="${NIGHTLY_TIMEOUT_SECONDS:-14400}"' in nightly_cycle
-    assert 'SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS="${SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS:-7200}"' in nightly_cycle
+    assert 'NIGHTLY_TIMEOUT_SECONDS="${NIGHTLY_TIMEOUT_SECONDS:-18000}"' in nightly_cycle
+    assert 'SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS="${SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS:-10800}"' in nightly_cycle
     assert "require_positive_integer NIGHTLY_TIMEOUT_SECONDS" in nightly_cycle
     assert "require_positive_integer SECOND_STRATEGY_SCAN_TIMEOUT_SECONDS" in nightly_cycle
     assert "scripts/apply_candidate.sh" in nightly_cycle
