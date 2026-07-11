@@ -132,6 +132,7 @@ COMPOSE_FILE="${SECOND_STRATEGY_COMPOSE_FILE:-$ROOT_DIR/deploy/compose.yaml}"
 LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"
 UPDATE_LATEST_LINKS="${SECOND_STRATEGY_UPDATE_LATEST_LINKS:-true}"
 EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"
+PROMOTION_DENYLIST="${SECOND_STRATEGY_PROMOTION_DENYLIST:-${PAPER_STRATEGY_PROMOTION_DENYLIST:-ema_pullback,vwap_cross}}"
 VALIDATE_POSITIVES="${SECOND_STRATEGY_VALIDATE_POSITIVES:-true}"
 VALIDATE_ALL_POSITIVE_ROWS="${SECOND_STRATEGY_VALIDATE_ALL_POSITIVE_ROWS:-true}"
 VALIDATION_CANDIDATES="${SECOND_STRATEGY_VALIDATION_CANDIDATES:-}"
@@ -741,7 +742,7 @@ status_parts_dir="$OUTPUT_DIR/status_parts"
 mkdir -p "$status_parts_dir"
 
 echo "second strategy basket scan: output_dir=$OUTPUT_DIR"
-echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} starting_equity_source=$starting_equity_source excluded_candidates=${skipped_candidates[*]:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS option_snapshot_sessions=$OPTION_SNAPSHOT_SESSIONS option_snapshot_points=$OPTION_SNAPSHOT_POINTS option_snapshot_min_points_per_session=$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION option_replay_min_sessions=$OPTION_REPLAY_MIN_SESSIONS option_replay_min_points_per_session=$OPTION_REPLAY_MIN_POINTS_PER_SESSION option_replay_status=$OPTION_REPLAY_STATUS fractionability_snapshot_sha256=$FRACTIONABILITY_SNAPSHOT_SHA256 fractionability_universe_sha256=$FRACTIONABILITY_UNIVERSE_SHA256 prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
+echo "second strategy basket scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scales=${candidate_scales[*]} scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} starting_equity_source=$starting_equity_source excluded_candidates=${skipped_candidates[*]:-none} promotion_denylist=${PROMOTION_DENYLIST:-none} include_option_candidates=$INCLUDE_OPTION_CANDIDATES option_chain_snapshots=${OPTION_CHAIN_SNAPSHOTS:-none} option_snapshot_contracts=$OPTION_SNAPSHOT_CONTRACTS option_snapshot_sessions=$OPTION_SNAPSHOT_SESSIONS option_snapshot_points=$OPTION_SNAPSHOT_POINTS option_snapshot_min_points_per_session=$OPTION_SNAPSHOT_MIN_POINTS_PER_SESSION option_replay_min_sessions=$OPTION_REPLAY_MIN_SESSIONS option_replay_min_points_per_session=$OPTION_REPLAY_MIN_POINTS_PER_SESSION option_replay_status=$OPTION_REPLAY_STATUS fractionability_snapshot_sha256=$FRACTIONABILITY_SNAPSHOT_SHA256 fractionability_universe_sha256=$FRACTIONABILITY_UNIVERSE_SHA256 prefilter_summary_json=${PREFILTER_SUMMARY_JSON:-none}"
 
 completed_status_part_is_reusable() {
   local status_part="$1"
@@ -879,7 +880,7 @@ else
     "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "${candidate_scales[*]}" \
     "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" \
     "$SCAN_JOBS" "$INCLUDE_OPTION_CANDIDATES" "${OPTION_CHAIN_SNAPSHOTS:-none}" \
-    "$FRACTIONABILITY_METADATA_FILE" <<'PY'
+    "$FRACTIONABILITY_METADATA_FILE" "$PROMOTION_DENYLIST" <<'PY'
 from __future__ import annotations
 
 import json
@@ -904,6 +905,7 @@ include_option_candidates = sys.argv[14]
 option_chain_snapshots = sys.argv[15]
 fractionability_metadata_path = Path(sys.argv[16])
 fractionability_snapshot = json.loads(fractionability_metadata_path.read_text())
+promotion_denylist = sys.argv[17]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -1029,6 +1031,7 @@ lines = [
     f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
+    f"- promotion_denylist: `{promotion_denylist or 'none'}`",
     f"- include_option_candidates: `{include_option_candidates}`",
     f"- option_chain_snapshots: `{option_chain_snapshots}`",
     f"- fractionability_snapshot_file: `{fractionability_snapshot['snapshot_file']}`",
@@ -1139,6 +1142,7 @@ write_text_atomic(
             "scan_jobs": scan_jobs,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
+            "promotion_denylist": promotion_denylist,
             "include_option_candidates": include_option_candidates,
             "option_chain_snapshots": option_chain_snapshots,
             "fractionability_snapshot": fractionability_snapshot,
@@ -1354,7 +1358,7 @@ PY
     "${starting_equity:-scenario_default}" "${skipped_candidates[*]:-none}" \
     "$MAX_VALIDATION_CANDIDATES" "$SCAN_JOBS" "$INCLUDE_OPTION_CANDIDATES" \
     "${OPTION_CHAIN_SNAPSHOTS:-none}" "$VALIDATE_ALL_POSITIVE_ROWS" \
-    "$FRACTIONABILITY_METADATA_FILE" <<'PY'
+    "$FRACTIONABILITY_METADATA_FILE" "$PROMOTION_DENYLIST" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -1386,6 +1390,7 @@ option_chain_snapshots = sys.argv[17]
 validate_all_positive_rows = sys.argv[18]
 fractionability_metadata_path = Path(sys.argv[19])
 fractionability_snapshot = json.loads(fractionability_metadata_path.read_text())
+promotion_denylist = sys.argv[20]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -1514,6 +1519,7 @@ lines = [
     f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
+    f"- promotion_denylist: `{promotion_denylist or 'none'}`",
     f"- include_option_candidates: `{include_option_candidates}`",
     f"- option_chain_snapshots: `{option_chain_snapshots}`",
     f"- fractionability_snapshot_file: `{fractionability_snapshot['snapshot_file']}`",
@@ -1637,6 +1643,7 @@ write_text_atomic(
             "scan_jobs": scan_jobs,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
+            "promotion_denylist": promotion_denylist,
             "include_option_candidates": include_option_candidates,
             "option_chain_snapshots": option_chain_snapshots,
             "fractionability_snapshot": fractionability_snapshot,
@@ -1660,7 +1667,8 @@ print(f"positive_edge_validation_rows={validation_positive_edges}")
 PY
 
   proof_horizon_candidates_file="$VALIDATION_OUTPUT_DIR/proof_horizon_candidates.tsv"
-  python3 - "$validation_summary_json_file" "$proof_horizon_candidates_file" <<'PY'
+  python3 - "$validation_summary_json_file" "$proof_horizon_candidates_file" \
+    "$PROMOTION_DENYLIST" <<'PY'
 from __future__ import annotations
 
 import json
@@ -1671,6 +1679,11 @@ from alpaca_bot.strategy import OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY
 
 summary_path = Path(sys.argv[1])
 output_path = Path(sys.argv[2])
+promotion_denylist = {
+    name.strip()
+    for name in sys.argv[3].split(",")
+    if name.strip() and name.strip().lower() != "none"
+}
 
 
 def as_float(row: dict[str, object], key: str) -> float | None:
@@ -1698,6 +1711,8 @@ if isinstance(rows, list):
             continue
         name = str(row.get("candidate") or "").strip()
         if name not in stock_strategy_names or name in option_strategy_names:
+            continue
+        if name in promotion_denylist:
             continue
         if row.get("status") != "passed":
             continue

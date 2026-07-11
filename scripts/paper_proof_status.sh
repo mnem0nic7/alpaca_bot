@@ -71,6 +71,7 @@ capture_env_overrides \
   PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT \
   PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS \
   PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE \
+  PROOF_STATUS_SECOND_STRATEGY_PROMOTION_DENYLIST \
   PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS \
   PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION
 
@@ -137,6 +138,7 @@ PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_OUTPUT_
 PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="${PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-${SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/setup_knobs}}"
 PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="${PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS:-48}"
 PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE="${PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE:-0.50}"
+PROOF_STATUS_SECOND_STRATEGY_PROMOTION_DENYLIST="${PROOF_STATUS_SECOND_STRATEGY_PROMOTION_DENYLIST:-${PAPER_STRATEGY_PROMOTION_DENYLIST:-ema_pullback,vwap_cross}}"
 PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS="${PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS:-$PROOF_STATUS_SCALE_MIN_ACTIVE_DAYS}"
 PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION="${PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION:-20}"
 PROOF_STATUS_PROMOTION_APPROVAL_MARKER="${PROOF_STATUS_PROMOTION_APPROVAL_MARKER:-$PROOF_STATUS_SECOND_STRATEGY_OUTPUT_ROOT/promotion_approval.json}"
@@ -680,6 +682,7 @@ echo "paper proof evidence status:"
   -e PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT="$PROOF_STATUS_SECOND_STRATEGY_SETUP_OUTPUT_ROOT" \
   -e PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS="$PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS" \
   -e PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE="$PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE" \
+  -e PROOF_STATUS_SECOND_STRATEGY_PROMOTION_DENYLIST="$PROOF_STATUS_SECOND_STRATEGY_PROMOTION_DENYLIST" \
   -e PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS="$PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS" \
   -e PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION="$PROOF_STATUS_OPTION_REPLAY_MIN_POINTS_PER_SESSION" \
   -e PROOF_STATUS_PROMOTION_WRITE_ACCESS_STATUS="$promotion_write_access_status" \
@@ -1758,6 +1761,7 @@ def approval_marker_status(
     proof_horizon_payload: dict | None,
     validation_rows: object,
     validation_positive_families: list[str],
+    promotion_denied_strategies: set[str],
 ) -> tuple[str, str]:
     if error == "missing":
         return "missing", "none"
@@ -1775,6 +1779,8 @@ def approval_marker_status(
     strategy = str(payload.get("strategy") or "").strip()
     if not re.fullmatch(r"[A-Za-z0-9_:-]+", strategy):
         return "invalid_strategy", "none"
+    if strategy in promotion_denied_strategies:
+        return "strategy_denied", strategy
     if evidence_status != "ok":
         return f"evidence_{evidence_status}", strategy
     if proof_horizon_status != "ok":
@@ -2202,6 +2208,19 @@ def load_second_strategy_evidence(
         preferred_name=preferred_promotion_candidate,
         preferred_scale=preferred_promotion_scale,
     )
+    promotion_candidate_name = (
+        str(promotion_candidate.get("candidate") or "").strip()
+        if promotion_candidate is not None
+        else ""
+    )
+    promotion_candidate_denied = (
+        promotion_candidate_name in promotion_denied_strategy_names
+    )
+    validation_denied_families = [
+        name
+        for name in validation_positive_families
+        if name in promotion_denied_strategy_names
+    ]
     proof_horizon_strategy = "none"
     proof_horizon_status = "not_applicable"
     proof_horizon_detail = "no_promotion_candidate"
@@ -2214,9 +2233,6 @@ def load_second_strategy_evidence(
     proof_horizon_confidence_scales = "none"
     proof_horizon_candidate_scale: float | None = None
     if promotion_candidate is not None:
-        promotion_candidate_name = str(
-            promotion_candidate.get("candidate") or ""
-        ).strip()
         promotion_candidate_scale = as_float_or_none(
             promotion_candidate.get("candidate_scale")
         )
@@ -2391,6 +2407,7 @@ def load_second_strategy_evidence(
         proof_horizon_payload=proof_horizon_payload,
         validation_rows=validation_rows,
         validation_positive_families=validation_positive_families,
+        promotion_denied_strategies=promotion_denied_strategy_names,
     )
     promotion_approved = approval_status == "approved"
     promotion_approved_source = (
@@ -2401,7 +2418,9 @@ def load_second_strategy_evidence(
         else "none"
     )
     promotion_action_status = "none"
-    if promotion_approved and validation_positive_rows > 0:
+    if promotion_candidate_denied:
+        promotion_action_status = "rejected_promotion_denylist"
+    elif promotion_approved and validation_positive_rows > 0:
         promotion_action_status = "approved"
     elif evidence_status == "ok" and promotion_candidate is not None:
         if proof_horizon_status == "ok":
@@ -2419,6 +2438,8 @@ def load_second_strategy_evidence(
         candidate_status = "validation_missing"
     elif prefilter_error == "missing":
         candidate_status = "prefilter_missing"
+    elif promotion_candidate_denied:
+        candidate_status = "promotion_denied"
     elif promotion_approved and validation_positive_rows > 0:
         candidate_status = "approved_candidate_found"
     elif validation_positive_rows > 0:
@@ -2504,6 +2525,9 @@ def load_second_strategy_evidence(
         "validation_rows": len(validation_rows) if isinstance(validation_rows, list) else 0,
         "validation_positive_rows": validation_positive_rows,
         "validation_positive_families": validation_positive_families,
+        "validation_denied_families": validation_denied_families,
+        "promotion_denylist": sorted(promotion_denied_strategy_names),
+        "promotion_candidate_denied": promotion_candidate_denied,
         "promotion_approved": promotion_approved,
         "promotion_approved_source": promotion_approved_source,
         "promotion_approval_marker": str(approval_marker_path),
@@ -2820,6 +2844,17 @@ scale_max_operational_exit_loss_share = float(
 second_strategy_min_proof_horizon_pass_rate = float(
     os.environ["PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE"]
 )
+promotion_denylist_raw = os.environ.get(
+    "PROOF_STATUS_SECOND_STRATEGY_PROMOTION_DENYLIST",
+    "ema_pullback,vwap_cross",
+)
+promotion_denied_strategy_names = set(parse_name_list(promotion_denylist_raw))
+promotion_denied_strategy_names.discard("none")
+if (
+    promotion_denylist_raw.strip().lower() not in {"", "none"}
+    and not promotion_denied_strategy_names
+):
+    raise SystemExit("invalid second-strategy promotion denylist")
 option_replay_min_sessions = int(
     os.environ["PROOF_STATUS_OPTION_REPLAY_MIN_SESSIONS"]
 )
@@ -3239,7 +3274,11 @@ try:
         validated_unapproved_stock_candidate_names = [
             name
             for name in validated_positive_candidate_names
-            if name in stock_strategy_name_set and name not in approved_strategy_name_set
+            if (
+                name in stock_strategy_name_set
+                and name not in approved_strategy_name_set
+                and name not in promotion_denied_strategy_names
+            )
         ]
         validated_unapproved_option_candidate_names = [
             name
@@ -6136,6 +6175,7 @@ elif second_strategy_evidence["promotion_action_status"] == "review_evidence":
 elif second_strategy_evidence["promotion_action_status"] in {
     "blocked_missing_proof_horizon",
     "rejected_proof_horizon",
+    "rejected_promotion_denylist",
     "blocked_unusable_proof_horizon",
 }:
     approval_marker_action_status = str(
@@ -6152,6 +6192,7 @@ elif approved_disabled_stock_candidate_names:
     strategy_diversification_candidate_status = "approved_stock_candidate_disabled"
 elif second_strategy_evidence["candidate_status"] in {
     "validation_candidate_not_promotable",
+    "promotion_denied",
     "proof_horizon_missing",
     "proof_horizon_failed",
     "proof_horizon_unusable",
@@ -7472,6 +7513,9 @@ print(
     f"validation_rows={second_strategy_evidence['validation_rows']} "
     f"validation_positive_rows={second_strategy_evidence['validation_positive_rows']} "
     f"validation_positive_family_names={format_name_list(second_strategy_evidence['validation_positive_families'])} "
+    f"validation_denied_family_names={format_name_list(second_strategy_evidence['validation_denied_families'])} "
+    f"promotion_denylist={format_name_list(second_strategy_evidence['promotion_denylist'])} "
+    f"promotion_candidate_denied={str(second_strategy_evidence['promotion_candidate_denied']).lower()} "
     f"promotion_approved={str(second_strategy_evidence['promotion_approved']).lower()} "
     f"promotion_approved_source={second_strategy_evidence['promotion_approved_source']} "
     f"promotion_approval_marker_status={second_strategy_evidence['promotion_approval_marker_status']} "
@@ -7491,6 +7535,7 @@ promotion_confirmation = (
     f"-proof-sha256-{promotion_proof_horizon_summary_sha256}"
     if (
         promotion_strategy != "none"
+        and not second_strategy_evidence["promotion_candidate_denied"]
         and promotion_validation_summary_sha256 != "none"
         and promotion_proof_horizon_summary_sha256 != "none"
     )
@@ -7529,6 +7574,8 @@ print(
     "paper proof second strategy promotion action: "
     f"status={promotion_action_status} "
     f"strategy={promotion_strategy} "
+    f"strategy_denied={str(second_strategy_evidence['promotion_candidate_denied']).lower()} "
+    f"promotion_denylist={format_name_list(second_strategy_evidence['promotion_denylist'])} "
     f"confirmation={promotion_confirmation} "
     f"script=./scripts/promote_validated_strategy.sh "
     f"dry_run_default=true "

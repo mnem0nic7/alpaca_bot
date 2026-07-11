@@ -83,6 +83,18 @@ def _append_unique_name(names: tuple[str, ...], name: str) -> tuple[str, ...]:
     return (*names, name)
 
 
+def _paper_strategy_promotion_denylist(values: dict[str, str]) -> frozenset[str]:
+    raw_value = values.get(
+        "PAPER_STRATEGY_PROMOTION_DENYLIST",
+        "ema_pullback,vwap_cross",
+    ).strip()
+    if not raw_value or raw_value.lower() == "none":
+        return frozenset()
+    return frozenset(
+        _parse_csv_names("PAPER_STRATEGY_PROMOTION_DENYLIST", raw_value)
+    )
+
+
 def _as_float(value: object) -> float | None:
     try:
         parsed = float(value)  # type: ignore[arg-type]
@@ -118,6 +130,73 @@ def _load_json_object(path: Path) -> dict[str, object] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _replay_asset_snapshot_identity(
+    payload: dict[str, object],
+    *,
+    summary_path: Path,
+) -> tuple[str, str, int, int, int] | None:
+    snapshot = payload.get("fractionability_snapshot")
+    if not isinstance(snapshot, dict) or snapshot.get("schema_version") != 1:
+        return None
+    snapshot_sha256 = str(snapshot.get("snapshot_sha256") or "").lower()
+    universe_sha256 = str(snapshot.get("universe_sha256") or "").lower()
+    if (
+        len(snapshot_sha256) != 64
+        or len(universe_sha256) != 64
+        or any(char not in "0123456789abcdef" for char in snapshot_sha256)
+        or any(char not in "0123456789abcdef" for char in universe_sha256)
+    ):
+        return None
+    universe_count = _as_int(snapshot.get("universe_symbol_count"))
+    fractionable_count = _as_int(snapshot.get("fractionable_symbol_count"))
+    non_fractionable_count = _as_int(
+        snapshot.get("non_fractionable_symbol_count")
+    )
+    if (
+        universe_count is None
+        or fractionable_count is None
+        or non_fractionable_count is None
+        or universe_count <= 0
+        or fractionable_count < 0
+        or non_fractionable_count < 0
+        or fractionable_count + non_fractionable_count != universe_count
+    ):
+        return None
+    snapshot_file = str(snapshot.get("snapshot_file") or "").strip()
+    universe_file = str(snapshot.get("universe_symbols_file") or "").strip()
+    if not snapshot_file or not universe_file:
+        return None
+    snapshot_path = Path(snapshot_file)
+    universe_path = Path(universe_file)
+    if not snapshot_path.is_absolute():
+        snapshot_path = summary_path.parent / snapshot_path
+    if not universe_path.is_absolute():
+        universe_path = summary_path.parent / universe_path
+    try:
+        snapshot_bytes = snapshot_path.read_bytes()
+        universe_bytes = universe_path.read_bytes()
+        fractionable_symbols = set(snapshot_bytes.decode("utf-8").split())
+        universe_symbols = set(universe_bytes.decode("utf-8").split())
+    except (OSError, UnicodeDecodeError):
+        return None
+    if (
+        hashlib.sha256(snapshot_bytes).hexdigest() != snapshot_sha256
+        or hashlib.sha256(universe_bytes).hexdigest() != universe_sha256
+        or len(fractionable_symbols) != fractionable_count
+        or len(universe_symbols) != universe_count
+        or not fractionable_symbols.issubset(universe_symbols)
+        or len(universe_symbols - fractionable_symbols) != non_fractionable_count
+    ):
+        return None
+    return (
+        snapshot_sha256,
+        universe_sha256,
+        universe_count,
+        fractionable_count,
+        non_fractionable_count,
+    )
+
+
 def _marker_approved_strategy(values: dict[str, str]) -> str | None:
     marker_text = values.get("PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER", "").strip()
     if not marker_text:
@@ -129,6 +208,8 @@ def _marker_approved_strategy(values: dict[str, str]) -> str | None:
 
     strategy = str(marker_payload.get("strategy") or "").strip()
     if not strategy or any(not (char.isalnum() or char in "_:-") for char in strategy):
+        return None
+    if strategy in _paper_strategy_promotion_denylist(values):
         return None
     if str(marker_payload.get("strategy_version") or "").strip() != values.get(
         "STRATEGY_VERSION", ""
@@ -174,6 +255,31 @@ def _marker_approved_strategy(values: dict[str, str]) -> str | None:
         != validation_sha256
     ):
         return None
+    prefilter_summary_text = str(
+        validation_payload.get("prefilter_summary_json") or ""
+    ).strip()
+    prefilter_sha256 = str(
+        validation_payload.get("prefilter_summary_sha256") or ""
+    ).strip()
+    latest_prefilter_path = evidence_root / "latest" / "summary.json"
+    if not prefilter_summary_text or not prefilter_sha256:
+        return None
+    prefilter_summary_path = Path(prefilter_summary_text)
+    try:
+        if prefilter_summary_path.resolve() != latest_prefilter_path.resolve():
+            return None
+        prefilter_summary_bytes = prefilter_summary_path.read_bytes()
+        prefilter_modified_at = datetime.fromtimestamp(
+            prefilter_summary_path.stat().st_mtime,
+            timezone.utc,
+        )
+    except OSError:
+        return None
+    if hashlib.sha256(prefilter_summary_bytes).hexdigest() != prefilter_sha256:
+        return None
+    prefilter_payload = _load_json_object(prefilter_summary_path)
+    if prefilter_payload is None or validation_modified_at < prefilter_modified_at:
+        return None
     proof_summary_text = str(
         marker_payload.get("proof_horizon_summary") or ""
     ).strip()
@@ -199,6 +305,24 @@ def _marker_approved_strategy(values: dict[str, str]) -> str | None:
         return None
     if proof_modified_at < validation_modified_at:
         return None
+    prefilter_assets = _replay_asset_snapshot_identity(
+        prefilter_payload,
+        summary_path=prefilter_summary_path,
+    )
+    validation_assets = _replay_asset_snapshot_identity(
+        validation_payload,
+        summary_path=validation_summary_path,
+    )
+    proof_assets = _replay_asset_snapshot_identity(
+        proof_payload,
+        summary_path=proof_summary_path,
+    )
+    if (
+        prefilter_assets is None
+        or prefilter_assets != validation_assets
+        or prefilter_assets != proof_assets
+    ):
+        return None
     proof_sha256 = hashlib.sha256(proof_summary_bytes).hexdigest()
     if (
         str(marker_payload.get("proof_horizon_summary_sha256") or "").strip()
@@ -217,7 +341,8 @@ def _marker_approved_strategy(values: dict[str, str]) -> str | None:
     if (
         approved_at is None
         or approved_at > now + timedelta(minutes=5)
-        or approved_at < max(validation_modified_at, proof_modified_at)
+        or approved_at
+        < max(prefilter_modified_at, validation_modified_at, proof_modified_at)
     ):
         return None
 
@@ -416,6 +541,8 @@ def _paper_approved_strategies(values: dict[str, str]) -> tuple[str, ...]:
         "PAPER_APPROVED_STRATEGIES",
         values.get("PAPER_APPROVED_STRATEGIES", "bull_flag"),
     )
+    denied = _paper_strategy_promotion_denylist(values)
+    approved = tuple(name for name in approved if name not in denied)
     return _append_unique_name(approved, _marker_approved_strategy(values) or "")
 
 

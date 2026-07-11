@@ -326,6 +326,7 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'UPDATE_LATEST_LINKS="${SECOND_STRATEGY_UPDATE_LATEST_LINKS:-true}"' in script
     assert "SECOND_STRATEGY_UPDATE_LATEST_LINKS must be true or false" in script
     assert 'EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"' in script
+    assert 'PROMOTION_DENYLIST="${SECOND_STRATEGY_PROMOTION_DENYLIST:-${PAPER_STRATEGY_PROMOTION_DENYLIST:-ema_pullback,vwap_cross}}"' in script
     assert 'CANDIDATE_SCALES="${SECOND_STRATEGY_CANDIDATE_SCALES:-${SECOND_STRATEGY_CANDIDATE_SCALE:-0.10,0.25,0.50}}"' in script
     assert 'PREFILTER_SUMMARY_JSON="${SECOND_STRATEGY_PREFILTER_SUMMARY_JSON:-}"' in script
     assert 'FRACTIONABLE_SYMBOLS_SOURCE_FILE="${SECOND_STRATEGY_FRACTIONABLE_SYMBOLS_FILE:-}"' in script
@@ -706,6 +707,7 @@ def test_second_strategy_basket_scan_resumes_positive_validation_for_proof_horiz
             "SECOND_STRATEGY_INCLUDE_OPTION_CANDIDATES": "false",
             "SECOND_STRATEGY_VALIDATE_POSITIVES": "true",
             "SECOND_STRATEGY_RUN_PROOF_HORIZON": "false",
+            "SECOND_STRATEGY_PROMOTION_DENYLIST": "none",
             "SECOND_STRATEGY_CANDIDATE_SCALES": "0.10",
             "SECOND_STRATEGY_SCAN_JOBS": "1",
             "SECOND_STRATEGY_SLIPPAGE_BPS": "2",
@@ -6800,6 +6802,8 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS must be a positive integer" in script
     assert "PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE" in script
     assert "PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE:-0.50" in script
+    assert "PROOF_STATUS_SECOND_STRATEGY_PROMOTION_DENYLIST" in script
+    assert "PAPER_STRATEGY_PROMOTION_DENYLIST:-ema_pullback,vwap_cross" in script
     assert (
         "PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE must be "
         "between 0 and 1"
@@ -7832,6 +7836,9 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "proof_horizon_status = \"not_applicable\"" in script
     assert "promotion_action_status = \"blocked_missing_proof_horizon\"" in script
     assert "promotion_action_status = \"rejected_proof_horizon\"" in script
+    assert "promotion_action_status = \"rejected_promotion_denylist\"" in script
+    assert 'candidate_status = "promotion_denied"' in script
+    assert 'return "strategy_denied", strategy' in script
     assert "promotion_action_status = \"blocked_unusable_proof_horizon\"" in script
     assert "candidate_status = \"proof_horizon_failed\"" in script
     assert "proof_horizon_status == \"ok\"" in script

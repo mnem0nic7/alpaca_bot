@@ -23,6 +23,7 @@ def _write_env(
     approved: str = "bull_flag",
     *,
     extra_lines: list[str] | None = None,
+    promotion_denylist: str | None = "none",
 ) -> None:
     path.write_text(
         "\n".join(
@@ -31,6 +32,11 @@ def _write_env(
                 "STRATEGY_VERSION=v1-breakout",
                 "PAPER_PROOF_FREEZE=true",
                 f"PAPER_APPROVED_STRATEGIES={approved}",
+                *(
+                    [f"PAPER_STRATEGY_PROMOTION_DENYLIST={promotion_denylist}"]
+                    if promotion_denylist is not None
+                    else []
+                ),
                 *(extra_lines or []),
                 "",
             ]
@@ -761,6 +767,28 @@ def test_promote_validated_strategy_rejects_missing_fractionability_lineage(
 
     assert result.returncode == 1
     assert "validation fractionability snapshot is missing or invalid" in result.stderr
+    assert not (tmp_path / "docker_calls").exists()
+
+
+def test_promote_validated_strategy_rejects_default_policy_denylist(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file, promotion_denylist=None)
+    _write_summary(evidence_root)
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=_make_fake_deploy(tmp_path),
+        tmp_path=tmp_path,
+        confirmation=_confirmation(evidence_root),
+        dry_run=False,
+    )
+
+    assert result.returncode == 1
+    assert "ema_pullback is denied by paper strategy promotion policy" in result.stderr
     assert not (tmp_path / "docker_calls").exists()
 
 

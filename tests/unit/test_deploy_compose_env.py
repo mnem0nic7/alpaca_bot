@@ -37,6 +37,7 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "OPTION_STRATEGY_ROLLING_LOSS_DAYS",
         "PAPER_PROOF_FREEZE",
         "PAPER_APPROVED_STRATEGIES",
+        "PAPER_STRATEGY_PROMOTION_DENYLIST",
         "PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER",
         "PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE",
         "PAPER_SCALE_MIN_TRADES",
@@ -101,6 +102,10 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
     assert (
         "PAPER_APPROVED_STRATEGIES: "
         "${PAPER_APPROVED_STRATEGIES:-bull_flag}"
+    ) in compose_text
+    assert (
+        "PAPER_STRATEGY_PROMOTION_DENYLIST: "
+        "${PAPER_STRATEGY_PROMOTION_DENYLIST:-ema_pullback,vwap_cross}"
     ) in compose_text
     assert (
         "PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER: "
@@ -670,6 +675,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "PAPER_SCALE_MIN_TRADES=30" in env_text
     assert "PAPER_SCALE_MIN_STRATEGIES=2" in env_text
     assert "PAPER_APPROVED_STRATEGIES=bull_flag" in env_text
+    assert "PAPER_STRATEGY_PROMOTION_DENYLIST=ema_pullback,vwap_cross" in env_text
     assert (
         "PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER="
         "/var/lib/alpaca-bot/nightly/second_strategy/promotion_approval.json"

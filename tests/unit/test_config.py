@@ -31,6 +31,30 @@ def _write_promotion_marker(
     validation_sha256: str | None = None,
     proof_eventual_pass_rate: float = 0.60,
 ) -> Path:
+    fractionable_symbols = tmp_path / "fractionable_symbols.txt"
+    fractionable_symbols.write_text("AAA\n", encoding="utf-8")
+    scenario_symbols = tmp_path / "scenario_symbols.txt"
+    scenario_symbols.write_text("AAA\n", encoding="utf-8")
+    snapshot_sha256 = hashlib.sha256(fractionable_symbols.read_bytes()).hexdigest()
+    universe_sha256 = hashlib.sha256(scenario_symbols.read_bytes()).hexdigest()
+    fractionability_snapshot = {
+        "schema_version": 1,
+        "snapshot_file": str(fractionable_symbols),
+        "snapshot_sha256": snapshot_sha256,
+        "universe_symbols_file": str(scenario_symbols),
+        "universe_sha256": universe_sha256,
+        "universe_symbol_count": 1,
+        "fractionable_symbol_count": 1,
+        "non_fractionable_symbol_count": 0,
+    }
+    prefilter_dir = tmp_path / "latest"
+    prefilter_dir.mkdir()
+    prefilter_summary = prefilter_dir / "summary.json"
+    prefilter_summary.write_text(
+        json.dumps({"rows": [], "fractionability_snapshot": fractionability_snapshot}),
+        encoding="utf-8",
+    )
+    prefilter_sha256 = hashlib.sha256(prefilter_summary.read_bytes()).hexdigest()
     validation_dir = tmp_path / "latest_validation"
     validation_dir.mkdir()
     validation_summary = validation_dir / "summary.json"
@@ -46,7 +70,17 @@ def _write_promotion_marker(
         "candidate_ci_low": 0.0707,
         "candidate_p_mean_le_zero": 0.009,
     }
-    validation_summary.write_text(json.dumps({"rows": [row]}), encoding="utf-8")
+    validation_summary.write_text(
+        json.dumps(
+            {
+                "prefilter_summary_json": str(prefilter_summary),
+                "prefilter_summary_sha256": prefilter_sha256,
+                "fractionability_snapshot": fractionability_snapshot,
+                "rows": [row],
+            }
+        ),
+        encoding="utf-8",
+    )
     summary_sha256 = hashlib.sha256(validation_summary.read_bytes()).hexdigest()
     marker_sha256 = validation_sha256 or summary_sha256
     proof_dir = tmp_path / "latest_proof_horizon"
@@ -63,6 +97,7 @@ def _write_promotion_marker(
                 "historical_starts_checked": 278,
                 "eventual_pass_rate": proof_eventual_pass_rate,
                 "min_pnl": 0.01,
+                "fractionability_snapshot": fractionability_snapshot,
                 "candidate_selection": {
                     "schema_version": 1,
                     "selected_candidate": strategy,
@@ -433,12 +468,49 @@ def test_paper_approved_strategies_appends_valid_approval_marker(tmp_path: Path)
     settings = Settings.from_env(
         _base_env(
             PAPER_APPROVED_STRATEGIES="bull_flag",
+            PAPER_STRATEGY_PROMOTION_DENYLIST="none",
             PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER=str(marker),
             PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE=env_file,
         )
     )
 
     assert settings.paper_approved_strategies == ("bull_flag", "ema_pullback")
+
+
+def test_paper_approved_strategies_excludes_default_promotion_denylist(
+    tmp_path: Path,
+):
+    env_file = "/etc/alpaca_bot/alpaca-bot.env"
+    marker = _write_promotion_marker(tmp_path, env_file=env_file)
+
+    settings = Settings.from_env(
+        _base_env(
+            PAPER_APPROVED_STRATEGIES="bull_flag,ema_pullback,vwap_cross",
+            PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER=str(marker),
+            PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE=env_file,
+        )
+    )
+
+    assert settings.paper_approved_strategies == ("bull_flag",)
+
+
+def test_paper_approved_strategies_accepts_non_denied_valid_marker(tmp_path: Path):
+    env_file = "/etc/alpaca_bot/alpaca-bot.env"
+    marker = _write_promotion_marker(
+        tmp_path,
+        strategy="orb",
+        env_file=env_file,
+    )
+
+    settings = Settings.from_env(
+        _base_env(
+            PAPER_APPROVED_STRATEGIES="bull_flag",
+            PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER=str(marker),
+            PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE=env_file,
+        )
+    )
+
+    assert settings.paper_approved_strategies == ("bull_flag", "orb")
 
 
 def test_paper_approved_strategies_ignores_tampered_approval_marker(tmp_path: Path):

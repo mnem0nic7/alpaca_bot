@@ -94,6 +94,7 @@ set +a
 
 MIN_PROOF_HORIZON_PASS_RATE="${PROMOTE_VALIDATED_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE:-${PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE:-0.50}}"
 MAX_EVIDENCE_AGE_HOURS="${PROMOTE_VALIDATED_STRATEGY_MAX_EVIDENCE_AGE_HOURS:-${PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS:-48}}"
+PROMOTION_DENYLIST="${PROMOTE_VALIDATED_STRATEGY_DENYLIST:-${PAPER_STRATEGY_PROMOTION_DENYLIST:-ema_pullback,vwap_cross}}"
 
 if [[ ! "$MIN_PROOF_HORIZON_PASS_RATE" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]]; then
   echo "$LOG_PREFIX PROMOTE_VALIDATED_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE must be between 0 and 1" >&2
@@ -124,7 +125,8 @@ validation_env="$(
     "$MAX_P_MEAN_LE_ZERO" \
     "$MIN_CANDIDATE_TRADES" \
     "$MIN_PROOF_HORIZON_PASS_RATE" \
-    "$MAX_EVIDENCE_AGE_HOURS" <<'PY'
+    "$MAX_EVIDENCE_AGE_HOURS" \
+    "$PROMOTION_DENYLIST" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -256,6 +258,16 @@ max_p_mean_le_zero = float(sys.argv[3])
 min_candidate_trades = int(sys.argv[4])
 min_proof_horizon_pass_rate = float(sys.argv[5])
 max_evidence_age_hours = float(sys.argv[6])
+promotion_denylist = {
+    name.strip()
+    for name in sys.argv[7].split(",")
+    if name.strip() and name.strip().lower() != "none"
+}
+if any(
+    any(not (char.isalnum() or char in "_:-") for char in name)
+    for name in promotion_denylist
+):
+    fail("promotion denylist contains an invalid strategy name")
 summary_path = root / "latest_validation" / "summary.json"
 if not summary_path.exists():
     fail(f"validation summary missing: {summary_path}")
@@ -361,6 +373,8 @@ if requested_strategy:
         fail(f"{requested_strategy} is an option strategy; stock-only paper proof promotion required")
     if requested_strategy not in stock_strategy_names:
         fail(f"{requested_strategy} is not a known stock strategy")
+    if requested_strategy in promotion_denylist:
+        fail(f"{requested_strategy} is denied by paper strategy promotion policy")
 
 passing_rows: list[dict[str, object]] = []
 errors: list[str] = []
@@ -481,6 +495,8 @@ if len(matching_rows) != 1:
     )
 selected = matching_rows[0]
 strategy_name = selected_candidate
+if strategy_name in promotion_denylist:
+    fail(f"{strategy_name} is denied by paper strategy promotion policy")
 
 proof_strategy_parts = {
     part.strip()
