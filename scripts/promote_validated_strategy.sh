@@ -92,6 +92,18 @@ set -a
 source "$ENV_FILE"
 set +a
 
+MIN_PROOF_HORIZON_PASS_RATE="${PROMOTE_VALIDATED_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE:-${PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE:-0.50}}"
+MAX_EVIDENCE_AGE_HOURS="${PROMOTE_VALIDATED_STRATEGY_MAX_EVIDENCE_AGE_HOURS:-${PROOF_STATUS_SECOND_STRATEGY_MAX_AGE_HOURS:-48}}"
+
+if [[ ! "$MIN_PROOF_HORIZON_PASS_RATE" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]]; then
+  echo "$LOG_PREFIX PROMOTE_VALIDATED_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE must be between 0 and 1" >&2
+  exit 1
+fi
+if [[ ! "$MAX_EVIDENCE_AGE_HOURS" =~ ^([0-9]+)(\.[0-9]+)?$ ]]; then
+  echo "$LOG_PREFIX PROMOTE_VALIDATED_STRATEGY_MAX_EVIDENCE_AGE_HOURS must be a non-negative number" >&2
+  exit 1
+fi
+
 if [[ "${TRADING_MODE:-paper}" != "paper" ]]; then
   echo "$LOG_PREFIX refusing promotion outside paper mode: TRADING_MODE=${TRADING_MODE:-unset}" >&2
   exit 1
@@ -110,13 +122,17 @@ validation_env="$(
     "$EVIDENCE_ROOT" \
     "$REQUESTED_STRATEGY" \
     "$MAX_P_MEAN_LE_ZERO" \
-    "$MIN_CANDIDATE_TRADES" <<'PY'
+    "$MIN_CANDIDATE_TRADES" \
+    "$MIN_PROOF_HORIZON_PASS_RATE" \
+    "$MAX_EVIDENCE_AGE_HOURS" <<'PY'
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import shlex
 import sys
+import time
 from pathlib import Path
 
 from alpaca_bot.strategy import OPTION_STRATEGY_NAMES, STRATEGY_REGISTRY
@@ -130,9 +146,12 @@ def fail(message: str) -> None:
 def as_float(row: dict[str, object], key: str) -> float:
     value = row.get(key)
     try:
-        return float(value)  # type: ignore[arg-type]
+        parsed = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{key} is not numeric") from exc
+    if not math.isfinite(parsed):
+        raise ValueError(f"{key} is not finite")
+    return parsed
 
 
 def as_int(row: dict[str, object], key: str) -> int:
@@ -147,6 +166,8 @@ root = Path(sys.argv[1])
 requested_strategy = sys.argv[2].strip()
 max_p_mean_le_zero = float(sys.argv[3])
 min_candidate_trades = int(sys.argv[4])
+min_proof_horizon_pass_rate = float(sys.argv[5])
+max_evidence_age_hours = float(sys.argv[6])
 summary_path = root / "latest_validation" / "summary.json"
 if not summary_path.exists():
     fail(f"validation summary missing: {summary_path}")
@@ -155,6 +176,36 @@ try:
     payload = json.loads(summary_bytes)
 except json.JSONDecodeError as exc:
     fail(f"validation summary is not valid JSON: {exc}")
+
+proof_horizon_path = root / "latest_proof_horizon" / "summary.json"
+if not proof_horizon_path.exists():
+    fail(f"proof horizon summary missing: {proof_horizon_path}")
+proof_horizon_bytes = proof_horizon_path.read_bytes()
+try:
+    proof_horizon_payload = json.loads(proof_horizon_bytes)
+except json.JSONDecodeError as exc:
+    fail(f"proof horizon summary is not valid JSON: {exc}")
+if not isinstance(proof_horizon_payload, dict):
+    fail("proof horizon summary must be an object")
+
+try:
+    validation_mtime = summary_path.stat().st_mtime
+    proof_horizon_mtime = proof_horizon_path.stat().st_mtime
+except OSError as exc:
+    fail(f"could not inspect evidence timestamps: {exc}")
+if proof_horizon_mtime < validation_mtime:
+    fail("proof horizon summary is older than validation summary")
+now = time.time()
+for label, modified_at in (
+    ("validation", validation_mtime),
+    ("proof horizon", proof_horizon_mtime),
+):
+    age_hours = max(0.0, (now - modified_at) / 3600.0)
+    if age_hours > max_evidence_age_hours:
+        fail(
+            f"{label} summary is stale: age_hours={age_hours:.2f} "
+            f"max_age_hours={max_evidence_age_hours:g}"
+        )
 
 rows = payload.get("rows")
 if not isinstance(rows, list):
@@ -206,27 +257,137 @@ for row in rows:
         continue
     passing_rows.append(row)
 
-if requested_strategy and not passing_rows:
-    detail = "; ".join(errors) if errors else "no matching candidate row"
-    fail(f"no promotable validation row for {requested_strategy}: {detail}")
-if not requested_strategy:
-    unique_candidates = sorted({str(row.get("candidate")) for row in passing_rows})
-    if len(unique_candidates) != 1:
-        fail(
-            "strategy name required because promotable candidates="
-            + (",".join(unique_candidates) if unique_candidates else "none")
-        )
+selection = proof_horizon_payload.get("candidate_selection")
+if not isinstance(selection, dict) or selection.get("schema_version") != 1:
+    fail("proof horizon candidate selection is missing or invalid")
+selected_candidate = str(selection.get("selected_candidate") or "").strip()
+selected_scale = str(selection.get("selected_candidate_scale") or "").strip()
+selection_reason = str(selection.get("selection_reason") or "").strip()
+try:
+    candidate_count = as_int(selection, "candidate_count")
+    passing_candidate_count = as_int(selection, "passing_candidate_count")
+    selection_min_pass_rate = as_float(selection, "min_eventual_pass_rate")
+except ValueError as exc:
+    fail(f"proof horizon candidate selection is invalid: {exc}")
+if candidate_count < 1:
+    fail("proof horizon candidate selection is empty")
+if passing_candidate_count < 1 or selection_reason != "first_passing":
+    fail(
+        "proof horizon failed: "
+        f"selection_reason={selection_reason or 'missing'} "
+        f"passing_candidate_count={passing_candidate_count}"
+    )
+if selection_min_pass_rate < min_proof_horizon_pass_rate:
+    fail(
+        "proof horizon gate is weaker than required: "
+        f"evidence={selection_min_pass_rate:.4f} "
+        f"required={min_proof_horizon_pass_rate:.4f}"
+    )
+if requested_strategy and selected_candidate != requested_strategy:
+    fail(
+        "proof horizon selected a different candidate: "
+        f"selected={selected_candidate or 'none'} requested={requested_strategy}"
+    )
+if not requested_strategy and not selected_candidate:
+    fail("proof horizon did not select a candidate")
 
-selected = sorted(
-    passing_rows,
-    key=lambda row: (
-        as_float(row, "candidate_ci_low"),
-        -as_float(row, "candidate_p_mean_le_zero"),
-        as_int(row, "candidate_trades"),
-    ),
-    reverse=True,
-)[0]
-strategy_name = str(selected["candidate"])
+selection_rows = selection.get("rows")
+if not isinstance(selection_rows, list):
+    fail("proof horizon candidate selection rows must be a list")
+selected_proof_rows = [
+    row
+    for row in selection_rows
+    if isinstance(row, dict)
+    and str(row.get("candidate") or "").strip() == selected_candidate
+    and str(row.get("candidate_scale") or "").strip() == selected_scale
+]
+if len(selected_proof_rows) != 1:
+    fail("proof horizon selected row is missing or ambiguous")
+selected_proof_row = selected_proof_rows[0]
+if selected_proof_row.get("status") != "ok":
+    fail(
+        "proof horizon selected row did not pass: "
+        f"status={selected_proof_row.get('status') or 'missing'} "
+        f"detail={selected_proof_row.get('detail') or 'missing'}"
+    )
+
+try:
+    selected_scale_value = float(selected_scale)
+except ValueError:
+    fail("proof horizon selected candidate scale is not numeric")
+matching_rows = []
+for row in passing_rows:
+    if str(row.get("candidate") or "").strip() != selected_candidate:
+        continue
+    try:
+        row_scale = as_float(row, "candidate_scale")
+    except ValueError:
+        continue
+    if math.isclose(
+        row_scale,
+        selected_scale_value,
+        rel_tol=1e-9,
+        abs_tol=1e-9,
+    ):
+        matching_rows.append(row)
+if len(matching_rows) != 1:
+    detail = "; ".join(errors) if errors else "selected row missing"
+    fail(
+        f"no unique promotable validation row for {selected_candidate} "
+        f"scale={selected_scale}: {detail}"
+    )
+selected = matching_rows[0]
+strategy_name = selected_candidate
+
+proof_strategy_parts = {
+    part.strip()
+    for part in str(proof_horizon_payload.get("strategy") or "").split("+")
+    if part.strip()
+}
+if strategy_name not in proof_strategy_parts:
+    fail("proof horizon selected candidate is missing from strategy label")
+proof_scales = proof_horizon_payload.get("confidence_scales")
+proof_scale = (
+    proof_scales.get(strategy_name) if isinstance(proof_scales, dict) else None
+)
+try:
+    proof_scale_value = float(proof_scale)  # type: ignore[arg-type]
+except (TypeError, ValueError):
+    fail("proof horizon selected candidate scale is missing")
+if not math.isclose(
+    proof_scale_value,
+    selected_scale_value,
+    rel_tol=1e-9,
+    abs_tol=1e-9,
+):
+    fail("proof horizon selected candidate scale does not match summary")
+try:
+    proof_trades = as_int(proof_horizon_payload, "trades")
+    proof_total_pnl = as_float(proof_horizon_payload, "total_pnl")
+    proof_starts_passed = as_int(
+        proof_horizon_payload, "starts_eventually_passed"
+    )
+    proof_historical_starts = as_int(
+        proof_horizon_payload, "historical_starts_checked"
+    )
+    proof_eventual_pass_rate = as_float(
+        proof_horizon_payload, "eventual_pass_rate"
+    )
+    proof_min_pnl = as_float(proof_horizon_payload, "min_pnl")
+except ValueError as exc:
+    fail(f"proof horizon summary is invalid: {exc}")
+if proof_trades < min_candidate_trades:
+    fail("proof horizon trade count is below the promotion minimum")
+if proof_total_pnl < proof_min_pnl:
+    fail("proof horizon total P&L is below its gate")
+if proof_starts_passed <= 0 or proof_historical_starts <= 0:
+    fail("proof horizon has no passing historical starts")
+if proof_eventual_pass_rate < min_proof_horizon_pass_rate:
+    fail(
+        "proof horizon eventual pass rate is below the promotion gate: "
+        f"actual={proof_eventual_pass_rate:.4f} "
+        f"required={min_proof_horizon_pass_rate:.4f}"
+    )
 outputs = {
     "VALIDATED_STRATEGY": strategy_name,
     "VALIDATED_SCALE": str(selected.get("candidate_scale") or ""),
@@ -236,6 +397,18 @@ outputs = {
     "VALIDATED_P_MEAN_LE_ZERO": str(selected["candidate_p_mean_le_zero"]),
     "VALIDATION_SUMMARY": str(summary_path.resolve()),
     "VALIDATION_SUMMARY_SHA256": hashlib.sha256(summary_bytes).hexdigest(),
+    "PROOF_HORIZON_SUMMARY": str(proof_horizon_path.resolve()),
+    "PROOF_HORIZON_SUMMARY_SHA256": hashlib.sha256(
+        proof_horizon_bytes
+    ).hexdigest(),
+    "PROOF_HORIZON_TRADES": str(proof_trades),
+    "PROOF_HORIZON_TOTAL_PNL": str(proof_total_pnl),
+    "PROOF_HORIZON_EVENTUAL_PASS_RATE": str(proof_eventual_pass_rate),
+    "PROOF_HORIZON_STARTS_PASSED": str(proof_starts_passed),
+    "PROOF_HORIZON_HISTORICAL_STARTS": str(proof_historical_starts),
+    "PROOF_HORIZON_SELECTION_REASON": selection_reason,
+    "PROOF_HORIZON_CANDIDATE_COUNT": str(candidate_count),
+    "PROOF_HORIZON_PASSING_CANDIDATE_COUNT": str(passing_candidate_count),
 }
 for key, value in outputs.items():
     print(f"{key}={shlex.quote(value)}")
@@ -244,7 +417,7 @@ PY
 
 eval "$validation_env"
 
-required_confirmation="approve-${VALIDATED_STRATEGY}-paper-promotion-sha256-${VALIDATION_SUMMARY_SHA256}"
+required_confirmation="approve-${VALIDATED_STRATEGY}-paper-promotion-sha256-${VALIDATION_SUMMARY_SHA256}-proof-sha256-${PROOF_HORIZON_SUMMARY_SHA256}"
 confirmation_status="missing"
 if [[ -n "$CONFIRMATION" ]]; then
   if [[ "$CONFIRMATION" == "$required_confirmation" ]]; then
@@ -254,11 +427,13 @@ if [[ -n "$CONFIRMATION" ]]; then
   fi
 fi
 
-verify_validation_summary_current() {
+verify_evidence_current() {
   python3 - \
     "$EVIDENCE_ROOT" \
     "$VALIDATION_SUMMARY" \
-    "$VALIDATION_SUMMARY_SHA256" <<'PY'
+    "$VALIDATION_SUMMARY_SHA256" \
+    "$PROOF_HORIZON_SUMMARY" \
+    "$PROOF_HORIZON_SUMMARY_SHA256" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -274,6 +449,8 @@ def fail(message: str) -> None:
 root = Path(sys.argv[1])
 expected_path = sys.argv[2]
 expected_sha256 = sys.argv[3]
+expected_proof_path = sys.argv[4]
+expected_proof_sha256 = sys.argv[5]
 summary_path = root / "latest_validation" / "summary.json"
 if not summary_path.exists():
     fail(f"validation summary missing: {summary_path}")
@@ -283,11 +460,22 @@ if current_path != expected_path:
 current_sha256 = hashlib.sha256(summary_path.read_bytes()).hexdigest()
 if current_sha256 != expected_sha256:
     fail("validation summary hash changed")
+proof_path = root / "latest_proof_horizon" / "summary.json"
+if not proof_path.exists():
+    fail(f"proof horizon summary missing: {proof_path}")
+current_proof_path = str(proof_path.resolve())
+if current_proof_path != expected_proof_path:
+    fail(f"proof horizon summary changed: {current_proof_path} != {expected_proof_path}")
+current_proof_sha256 = hashlib.sha256(proof_path.read_bytes()).hexdigest()
+if current_proof_sha256 != expected_proof_sha256:
+    fail("proof horizon summary hash changed")
+if proof_path.stat().st_mtime < summary_path.stat().st_mtime:
+    fail("proof horizon summary is older than validation summary")
 PY
 }
 
-if ! verify_validation_summary_current; then
-  echo "$LOG_PREFIX validation summary changed after evidence validation; aborting promotion" >&2
+if ! verify_evidence_current; then
+  echo "$LOG_PREFIX promotion evidence changed after validation; aborting promotion" >&2
   exit 1
 fi
 
@@ -506,7 +694,7 @@ promotion_handoff_step() {
 if [[ "$DRY_RUN" == "true" ]]; then
   validation_current_status="ok"
   validation_current_detail="ok"
-  if ! validation_current_detail="$(verify_validation_summary_current 2>&1)"; then
+  if ! validation_current_detail="$(verify_evidence_current 2>&1)"; then
     validation_current_status="failed"
   fi
   probe_promotion_write_access
@@ -526,7 +714,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
     fi
     candidate_decision_dry_run_detail="$(compact_dry_run_detail "${candidate_decision_dry_run_detail:-ok}")"
   fi
-  printf '%s dry_run=true strategy=%s scale=%s trades=%s pnl=%s ci_low=%s p_mean_le_zero=%s validation_summary=%s validation_summary_sha256=%s confirmation_status=%s required_confirmation=%s validation_current_status=%s validation_current_detail=%s candidate_decision_dry_run_status=%s candidate_decision_dry_run_detail=%s write_access_status=%s promotion_handoff_status=%s promotion_handoff_step=%s promotion_env_keys=%s env_file_writable=%s env_dir_writable=%s approval_marker=%s approval_marker_writable=%s approval_marker_dir_writable=%s broker_flat_status=%s broker_flat_detail=%s\n' \
+  printf '%s dry_run=true strategy=%s scale=%s trades=%s pnl=%s ci_low=%s p_mean_le_zero=%s validation_summary=%s validation_summary_sha256=%s proof_horizon_summary=%s proof_horizon_summary_sha256=%s proof_horizon_eventual_pass_rate=%s proof_horizon_passing_candidate_count=%s confirmation_status=%s required_confirmation=%s evidence_current_status=%s evidence_current_detail=%s candidate_decision_dry_run_status=%s candidate_decision_dry_run_detail=%s write_access_status=%s promotion_handoff_status=%s promotion_handoff_step=%s promotion_env_keys=%s env_file_writable=%s env_dir_writable=%s approval_marker=%s approval_marker_writable=%s approval_marker_dir_writable=%s broker_flat_status=%s broker_flat_detail=%s\n' \
     "$LOG_PREFIX" \
     "$VALIDATED_STRATEGY" \
     "$VALIDATED_SCALE" \
@@ -536,6 +724,10 @@ if [[ "$DRY_RUN" == "true" ]]; then
     "$VALIDATED_P_MEAN_LE_ZERO" \
     "$VALIDATION_SUMMARY" \
     "$VALIDATION_SUMMARY_SHA256" \
+    "$PROOF_HORIZON_SUMMARY" \
+    "$PROOF_HORIZON_SUMMARY_SHA256" \
+    "$PROOF_HORIZON_EVENTUAL_PASS_RATE" \
+    "$PROOF_HORIZON_PASSING_CANDIDATE_COUNT" \
     "$confirmation_status" \
     "$required_confirmation" \
     "$validation_current_status" \
@@ -579,7 +771,7 @@ if [[ "$DRY_RUN" == "true" ]]; then
 fi
 
 if [[ "$confirmation_status" != "ok" ]]; then
-  echo "$LOG_PREFIX evidence validated for $VALIDATED_STRATEGY scale=$VALIDATED_SCALE trades=$VALIDATED_TRADES pnl=$VALIDATED_TOTAL_PNL ci_low=$VALIDATED_CI_LOW p_mean_le_zero=$VALIDATED_P_MEAN_LE_ZERO validation_summary=$VALIDATION_SUMMARY validation_summary_sha256=$VALIDATION_SUMMARY_SHA256" >&2
+  echo "$LOG_PREFIX evidence validated for $VALIDATED_STRATEGY scale=$VALIDATED_SCALE trades=$VALIDATED_TRADES pnl=$VALIDATED_TOTAL_PNL ci_low=$VALIDATED_CI_LOW p_mean_le_zero=$VALIDATED_P_MEAN_LE_ZERO validation_summary=$VALIDATION_SUMMARY validation_summary_sha256=$VALIDATION_SUMMARY_SHA256 proof_horizon_summary=$PROOF_HORIZON_SUMMARY proof_horizon_summary_sha256=$PROOF_HORIZON_SUMMARY_SHA256 proof_horizon_eventual_pass_rate=$PROOF_HORIZON_EVENTUAL_PASS_RATE" >&2
   echo "$LOG_PREFIX refusing to promote without explicit confirmation" >&2
   echo "$LOG_PREFIX rerun with PROMOTE_VALIDATED_STRATEGY_CONFIRM=$required_confirmation" >&2
   exit 2
@@ -694,7 +886,18 @@ write_approval_marker() {
     "$VALIDATED_TRADES" \
     "$VALIDATED_TOTAL_PNL" \
     "$VALIDATED_CI_LOW" \
-    "$VALIDATED_P_MEAN_LE_ZERO" <<'PY'
+    "$VALIDATED_P_MEAN_LE_ZERO" \
+    "$PROOF_HORIZON_SUMMARY" \
+    "$PROOF_HORIZON_SUMMARY_SHA256" \
+    "$PROOF_HORIZON_TRADES" \
+    "$PROOF_HORIZON_TOTAL_PNL" \
+    "$PROOF_HORIZON_EVENTUAL_PASS_RATE" \
+    "$PROOF_HORIZON_STARTS_PASSED" \
+    "$PROOF_HORIZON_HISTORICAL_STARTS" \
+    "$PROOF_HORIZON_SELECTION_REASON" \
+    "$PROOF_HORIZON_CANDIDATE_COUNT" \
+    "$PROOF_HORIZON_PASSING_CANDIDATE_COUNT" \
+    "$EVIDENCE_ROOT" <<'PY'
 from __future__ import annotations
 
 import json
@@ -706,7 +909,7 @@ from pathlib import Path
 
 marker = Path(sys.argv[1])
 payload = {
-    "schema_version": 2,
+    "schema_version": 3,
     "approved_at": datetime.now(timezone.utc).isoformat(),
     "strategy": sys.argv[2],
     "confirmation": sys.argv[3],
@@ -719,6 +922,17 @@ payload = {
     "candidate_total_pnl": float(sys.argv[10]),
     "candidate_ci_low": float(sys.argv[11]),
     "candidate_p_mean_le_zero": float(sys.argv[12]),
+    "proof_horizon_summary": sys.argv[13],
+    "proof_horizon_summary_sha256": sys.argv[14],
+    "proof_horizon_trades": int(sys.argv[15]),
+    "proof_horizon_total_pnl": float(sys.argv[16]),
+    "proof_horizon_eventual_pass_rate": float(sys.argv[17]),
+    "proof_horizon_starts_eventually_passed": int(sys.argv[18]),
+    "proof_horizon_historical_starts": int(sys.argv[19]),
+    "proof_horizon_selection_reason": sys.argv[20],
+    "proof_horizon_candidate_count": int(sys.argv[21]),
+    "proof_horizon_passing_candidate_count": int(sys.argv[22]),
+    "evidence_root": str(Path(sys.argv[23]).resolve()),
 }
 marker.parent.mkdir(parents=True, exist_ok=True)
 with tempfile.NamedTemporaryFile(
@@ -740,8 +954,8 @@ if [[ "$APPROVAL_ONLY" == "true" ]]; then
     echo "$LOG_PREFIX refusing approval marker because paper broker is not flat" >&2
     exit 1
   fi
-  if ! verify_validation_summary_current; then
-    echo "$LOG_PREFIX validation summary changed after broker flat check; aborting approval marker write" >&2
+  if ! verify_evidence_current; then
+    echo "$LOG_PREFIX promotion evidence changed after broker flat check; aborting approval marker write" >&2
     exit 1
   fi
   require_candidate_decision_dry_run
@@ -761,8 +975,8 @@ if ! run_broker_flat_check; then
   exit 1
 fi
 
-if ! verify_validation_summary_current; then
-  echo "$LOG_PREFIX validation summary changed after broker flat check; aborting promotion before mutation" >&2
+if ! verify_evidence_current; then
+  echo "$LOG_PREFIX promotion evidence changed after broker flat check; aborting promotion before mutation" >&2
   exit 1
 fi
 

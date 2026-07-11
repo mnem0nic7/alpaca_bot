@@ -7763,8 +7763,10 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "prefilter_payload, prefilter_error, prefilter_summary_sha256" in script
     assert "proof_horizon_summary_path = output_root / \"latest_proof_horizon\" / \"summary.json\"" in script
     assert "proof_horizon_status = \"not_applicable\"" in script
-    assert "promotion_action_status = \"ready_needs_proof_horizon\"" in script
-    assert "promotion_action_status = \"review_proof_horizon\"" in script
+    assert "promotion_action_status = \"blocked_missing_proof_horizon\"" in script
+    assert "promotion_action_status = \"rejected_proof_horizon\"" in script
+    assert "promotion_action_status = \"blocked_unusable_proof_horizon\"" in script
+    assert "candidate_status = \"proof_horizon_failed\"" in script
     assert "proof_horizon_status == \"ok\"" in script
     assert "proof_horizon_raw_confidence_scales = proof_horizon_payload.get(" in script
     assert '"confidence_scales"' in script
@@ -7822,7 +7824,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     ) in script
     assert "prefilter_summary_sha256={safe_status_value(second_strategy_setup_evidence['prefilter_summary_sha256'])}" in script
     assert "validation_summary_sha256={safe_status_value(second_strategy_setup_evidence['validation_summary_sha256'])}" in script
-    assert "payload.get(\"schema_version\") != 2" in script
+    assert "payload.get(\"schema_version\") != 3" in script
     assert "def parse_marker_approved_at" in script
     assert "parsed = datetime.fromisoformat(raw_value)" in script
     assert "return \"approved_at_missing\", \"none\"" in script
@@ -7842,10 +7844,13 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "validation_summary_sha256_missing" in script
     assert "validation_summary_unreadable" in script
     assert "validation_summary_sha256_mismatch" in script
+    assert "proof_horizon_summary_sha256_mismatch" in script
+    assert "return f\"proof_horizon_{proof_horizon_status}\", strategy" in script
     assert (
         "expected_confirmation = (\n"
         "        f\"approve-{strategy}-paper-promotion-sha256-{validation_summary_sha256}\""
     ) in script
+    assert 'f"-proof-sha256-{proof_horizon_summary_sha256}"' in script
     assert "if confirmation != expected_confirmation:" in script
     assert "strategy_rows = [" in script
     assert "for row in strategy_rows:" in script
@@ -7867,10 +7872,12 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert 'approval_marker_action_status = "ready"' in script
     assert 'approval_marker_action_status = "ready_needs_marker_write_access"' in script
     assert "promotion_validation_summary_sha256 = safe_status_value(" in script
+    assert "promotion_proof_horizon_summary_sha256 = safe_status_value(" in script
     assert (
         "f\"approve-{promotion_strategy}-paper-promotion-sha256-"
         "{promotion_validation_summary_sha256}\""
     ) in script
+    assert 'f"-proof-sha256-{promotion_proof_horizon_summary_sha256}"' in script
     assert "script=./scripts/promote_validated_strategy.sh" in script
     assert "write_access_status={safe_status_value(promotion_write_access_status)}" in script
     assert "approval_marker_only_supported=true" in script

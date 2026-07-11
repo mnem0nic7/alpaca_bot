@@ -29,6 +29,7 @@ def _write_promotion_marker(
     strategy_version: str = "v1",
     env_file: str = "/etc/alpaca_bot/alpaca-bot.env",
     validation_sha256: str | None = None,
+    proof_eventual_pass_rate: float = 0.60,
 ) -> Path:
     validation_dir = tmp_path / "latest_validation"
     validation_dir.mkdir()
@@ -48,14 +49,68 @@ def _write_promotion_marker(
     validation_summary.write_text(json.dumps({"rows": [row]}), encoding="utf-8")
     summary_sha256 = hashlib.sha256(validation_summary.read_bytes()).hexdigest()
     marker_sha256 = validation_sha256 or summary_sha256
+    proof_dir = tmp_path / "latest_proof_horizon"
+    proof_dir.mkdir()
+    proof_summary = proof_dir / "summary.json"
+    proof_summary.write_text(
+        json.dumps(
+            {
+                "strategy": f"bull_flag+{strategy}",
+                "confidence_scales": {strategy: 0.10},
+                "trades": 386,
+                "total_pnl": 50.33,
+                "starts_eventually_passed": int(278 * proof_eventual_pass_rate),
+                "historical_starts_checked": 278,
+                "eventual_pass_rate": proof_eventual_pass_rate,
+                "min_pnl": 0.01,
+                "candidate_selection": {
+                    "schema_version": 1,
+                    "selected_candidate": strategy,
+                    "selected_candidate_scale": "0.10",
+                    "selection_reason": (
+                        "first_passing"
+                        if proof_eventual_pass_rate >= 0.50
+                        else "top_ranked_failure"
+                    ),
+                    "candidate_count": 1,
+                    "passing_candidate_count": int(
+                        proof_eventual_pass_rate >= 0.50
+                    ),
+                    "min_eventual_pass_rate": 0.50,
+                    "rows": [
+                        {
+                            "candidate": strategy,
+                            "candidate_scale": "0.10",
+                            "status": (
+                                "ok"
+                                if proof_eventual_pass_rate >= 0.50
+                                else "failed"
+                            ),
+                            "detail": (
+                                "fresh"
+                                if proof_eventual_pass_rate >= 0.50
+                                else "eventual_pass_rate_below_gate"
+                            ),
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    proof_sha256 = hashlib.sha256(proof_summary.read_bytes()).hexdigest()
     marker = tmp_path / "promotion_approval.json"
     marker.write_text(
         json.dumps(
             {
-                "schema_version": 2,
+                "schema_version": 3,
+                "evidence_root": str(tmp_path.resolve()),
                 "approved_at": datetime.now(timezone.utc).isoformat(),
                 "strategy": strategy,
-                "confirmation": f"approve-{strategy}-paper-promotion-sha256-{marker_sha256}",
+                "confirmation": (
+                    f"approve-{strategy}-paper-promotion-sha256-{marker_sha256}"
+                    f"-proof-sha256-{proof_sha256}"
+                ),
                 "validation_summary": str(validation_summary),
                 "validation_summary_sha256": marker_sha256,
                 "strategy_version": strategy_version,
@@ -65,6 +120,24 @@ def _write_promotion_marker(
                 "candidate_total_pnl": row["candidate_total_pnl"],
                 "candidate_ci_low": row["candidate_ci_low"],
                 "candidate_p_mean_le_zero": row["candidate_p_mean_le_zero"],
+                "proof_horizon_summary": str(proof_summary),
+                "proof_horizon_summary_sha256": proof_sha256,
+                "proof_horizon_trades": 386,
+                "proof_horizon_total_pnl": 50.33,
+                "proof_horizon_eventual_pass_rate": proof_eventual_pass_rate,
+                "proof_horizon_starts_eventually_passed": int(
+                    278 * proof_eventual_pass_rate
+                ),
+                "proof_horizon_historical_starts": 278,
+                "proof_horizon_selection_reason": (
+                    "first_passing"
+                    if proof_eventual_pass_rate >= 0.50
+                    else "top_ranked_failure"
+                ),
+                "proof_horizon_candidate_count": 1,
+                "proof_horizon_passing_candidate_count": int(
+                    proof_eventual_pass_rate >= 0.50
+                ),
             }
         ),
         encoding="utf-8",
@@ -375,6 +448,67 @@ def test_paper_approved_strategies_ignores_tampered_approval_marker(tmp_path: Pa
         env_file=env_file,
         validation_sha256="0" * 64,
     )
+
+    settings = Settings.from_env(
+        _base_env(
+            PAPER_APPROVED_STRATEGIES="bull_flag",
+            PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER=str(marker),
+            PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE=env_file,
+        )
+    )
+
+    assert settings.paper_approved_strategies == ("bull_flag",)
+
+
+def test_paper_approved_strategies_ignores_failed_proof_horizon_marker(
+    tmp_path: Path,
+):
+    env_file = "/etc/alpaca_bot/alpaca-bot.env"
+    marker = _write_promotion_marker(
+        tmp_path,
+        env_file=env_file,
+        proof_eventual_pass_rate=0.3813,
+    )
+
+    settings = Settings.from_env(
+        _base_env(
+            PAPER_APPROVED_STRATEGIES="bull_flag",
+            PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER=str(marker),
+            PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE=env_file,
+        )
+    )
+
+    assert settings.paper_approved_strategies == ("bull_flag",)
+
+
+def test_paper_approved_strategies_ignores_validation_only_legacy_marker(
+    tmp_path: Path,
+):
+    env_file = "/etc/alpaca_bot/alpaca-bot.env"
+    marker = _write_promotion_marker(tmp_path, env_file=env_file)
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    payload["schema_version"] = 2
+    marker.write_text(json.dumps(payload), encoding="utf-8")
+
+    settings = Settings.from_env(
+        _base_env(
+            PAPER_APPROVED_STRATEGIES="bull_flag",
+            PAPER_APPROVED_STRATEGIES_APPROVAL_MARKER=str(marker),
+            PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE=env_file,
+        )
+    )
+
+    assert settings.paper_approved_strategies == ("bull_flag",)
+
+
+def test_paper_approved_strategies_ignores_marker_with_stale_evidence_root(
+    tmp_path: Path,
+):
+    env_file = "/etc/alpaca_bot/alpaca-bot.env"
+    marker = _write_promotion_marker(tmp_path, env_file=env_file)
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    payload["evidence_root"] = str(tmp_path / "older_run")
+    marker.write_text(json.dumps(payload), encoding="utf-8")
 
     settings = Settings.from_env(
         _base_env(

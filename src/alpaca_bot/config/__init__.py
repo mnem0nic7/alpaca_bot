@@ -5,6 +5,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from enum import StrEnum
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -84,9 +85,10 @@ def _append_unique_name(names: tuple[str, ...], name: str) -> tuple[str, ...]:
 
 def _as_float(value: object) -> float | None:
     try:
-        return float(value)  # type: ignore[arg-type]
+        parsed = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def _as_int(value: object) -> int | None:
@@ -122,7 +124,7 @@ def _marker_approved_strategy(values: dict[str, str]) -> str | None:
         return None
     marker_path = Path(marker_text)
     marker_payload = _load_json_object(marker_path)
-    if marker_payload is None or marker_payload.get("schema_version") != 2:
+    if marker_payload is None or marker_payload.get("schema_version") != 3:
         return None
 
     strategy = str(marker_payload.get("strategy") or "").strip()
@@ -132,6 +134,11 @@ def _marker_approved_strategy(values: dict[str, str]) -> str | None:
         "STRATEGY_VERSION", ""
     ).strip():
         return None
+
+    evidence_root_text = str(marker_payload.get("evidence_root") or "").strip()
+    if not evidence_root_text:
+        return None
+    evidence_root = Path(evidence_root_text)
 
     expected_env_file = values.get(
         "PAPER_APPROVED_STRATEGIES_APPROVAL_ENV_FILE", ""
@@ -144,6 +151,12 @@ def _marker_approved_strategy(values: dict[str, str]) -> str | None:
     if not validation_summary_text:
         return None
     validation_summary_path = Path(validation_summary_text)
+    latest_validation_path = evidence_root / "latest_validation" / "summary.json"
+    try:
+        if validation_summary_path.resolve() != latest_validation_path.resolve():
+            return None
+    except OSError:
+        return None
     validation_payload = _load_json_object(validation_summary_path)
     if validation_payload is None:
         return None
@@ -161,8 +174,42 @@ def _marker_approved_strategy(values: dict[str, str]) -> str | None:
         != validation_sha256
     ):
         return None
+    proof_summary_text = str(
+        marker_payload.get("proof_horizon_summary") or ""
+    ).strip()
+    if not proof_summary_text:
+        return None
+    proof_summary_path = Path(proof_summary_text)
+    latest_proof_path = evidence_root / "latest_proof_horizon" / "summary.json"
+    try:
+        if proof_summary_path.resolve() != latest_proof_path.resolve():
+            return None
+    except OSError:
+        return None
+    proof_payload = _load_json_object(proof_summary_path)
+    if proof_payload is None:
+        return None
+    try:
+        proof_summary_bytes = proof_summary_path.read_bytes()
+        proof_modified_at = datetime.fromtimestamp(
+            proof_summary_path.stat().st_mtime,
+            timezone.utc,
+        )
+    except OSError:
+        return None
+    if proof_modified_at < validation_modified_at:
+        return None
+    proof_sha256 = hashlib.sha256(proof_summary_bytes).hexdigest()
+    if (
+        str(marker_payload.get("proof_horizon_summary_sha256") or "").strip()
+        != proof_sha256
+    ):
+        return None
     confirmation = str(marker_payload.get("confirmation") or "").strip()
-    if confirmation != f"approve-{strategy}-paper-promotion-sha256-{validation_sha256}":
+    if confirmation != (
+        f"approve-{strategy}-paper-promotion-sha256-{validation_sha256}"
+        f"-proof-sha256-{proof_sha256}"
+    ):
         return None
 
     approved_at = _parse_marker_datetime(marker_payload.get("approved_at"))
@@ -170,9 +217,135 @@ def _marker_approved_strategy(values: dict[str, str]) -> str | None:
     if (
         approved_at is None
         or approved_at > now + timedelta(minutes=5)
-        or approved_at < validation_modified_at
+        or approved_at < max(validation_modified_at, proof_modified_at)
     ):
         return None
+
+    proof_selection = proof_payload.get("candidate_selection")
+    if not isinstance(proof_selection, dict):
+        return None
+    if proof_selection.get("schema_version") != 1:
+        return None
+    if str(proof_selection.get("selected_candidate") or "").strip() != strategy:
+        return None
+    selected_scale = str(
+        proof_selection.get("selected_candidate_scale") or ""
+    ).strip()
+    if not selected_scale:
+        return None
+    if str(proof_selection.get("selection_reason") or "").strip() != "first_passing":
+        return None
+    passing_candidate_count = _as_int(
+        proof_selection.get("passing_candidate_count")
+    )
+    candidate_count = _as_int(proof_selection.get("candidate_count"))
+    selection_min_pass_rate = _as_float(
+        proof_selection.get("min_eventual_pass_rate")
+    )
+    required_pass_rate = _as_float(
+        values.get(
+            "PROMOTE_VALIDATED_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE",
+            values.get(
+                "PROOF_STATUS_SECOND_STRATEGY_MIN_PROOF_HORIZON_PASS_RATE",
+                "0.50",
+            ),
+        )
+    )
+    required_proof_trades = _as_int(
+        values.get("PROMOTE_VALIDATED_STRATEGY_MIN_CANDIDATE_TRADES", "30")
+    )
+    if (
+        passing_candidate_count is None
+        or passing_candidate_count < 1
+        or candidate_count is None
+        or candidate_count < 1
+        or selection_min_pass_rate is None
+        or required_pass_rate is None
+        or required_proof_trades is None
+        or required_proof_trades < 1
+        or selection_min_pass_rate < required_pass_rate
+    ):
+        return None
+    proof_rows = proof_selection.get("rows")
+    if not isinstance(proof_rows, list):
+        return None
+    matching_proof_rows = [
+        row
+        for row in proof_rows
+        if isinstance(row, dict)
+        and str(row.get("candidate") or "").strip() == strategy
+        and str(row.get("candidate_scale") or "").strip() == selected_scale
+        and row.get("status") == "ok"
+    ]
+    if len(matching_proof_rows) != 1:
+        return None
+    proof_strategy_parts = {
+        part.strip()
+        for part in str(proof_payload.get("strategy") or "").split("+")
+        if part.strip()
+    }
+    proof_scales = proof_payload.get("confidence_scales")
+    proof_scale = (
+        _as_float(proof_scales.get(strategy))
+        if isinstance(proof_scales, dict)
+        else None
+    )
+    selected_scale_value = _as_float(selected_scale)
+    proof_total_pnl = _as_float(proof_payload.get("total_pnl"))
+    proof_min_pnl = _as_float(proof_payload.get("min_pnl"))
+    proof_eventual_pass_rate = _as_float(proof_payload.get("eventual_pass_rate"))
+    proof_starts_passed = _as_int(proof_payload.get("starts_eventually_passed"))
+    proof_historical_starts = _as_int(
+        proof_payload.get("historical_starts_checked")
+    )
+    proof_trades = _as_int(proof_payload.get("trades"))
+    if proof_min_pnl is None:
+        proof_min_pnl = 0.01
+    if (
+        strategy not in proof_strategy_parts
+        or proof_scale is None
+        or selected_scale_value is None
+        or not math.isclose(
+            proof_scale,
+            selected_scale_value,
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        )
+        or proof_total_pnl is None
+        or proof_total_pnl < proof_min_pnl
+        or proof_eventual_pass_rate is None
+        or proof_eventual_pass_rate < required_pass_rate
+        or proof_starts_passed is None
+        or proof_starts_passed < 1
+        or proof_historical_starts is None
+        or proof_historical_starts < 1
+        or proof_trades is None
+        or proof_trades < required_proof_trades
+    ):
+        return None
+    proof_marker_values = {
+        "proof_horizon_trades": proof_trades,
+        "proof_horizon_total_pnl": proof_total_pnl,
+        "proof_horizon_eventual_pass_rate": proof_eventual_pass_rate,
+        "proof_horizon_starts_eventually_passed": proof_starts_passed,
+        "proof_horizon_historical_starts": proof_historical_starts,
+        "proof_horizon_selection_reason": "first_passing",
+        "proof_horizon_candidate_count": candidate_count,
+        "proof_horizon_passing_candidate_count": passing_candidate_count,
+    }
+    for key, expected_value in proof_marker_values.items():
+        marker_value = marker_payload.get(key)
+        if isinstance(expected_value, float):
+            parsed_marker_value = _as_float(marker_value)
+            if parsed_marker_value is None or not math.isclose(
+                parsed_marker_value,
+                expected_value,
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            ):
+                return None
+        elif marker_value != expected_value:
+            return None
 
     rows = validation_payload.get("rows")
     if not isinstance(rows, list):
@@ -187,6 +360,8 @@ def _marker_approved_strategy(values: dict[str, str]) -> str | None:
         ),
     }
     if any(value is None or value == "" for value in marker_values.values()):
+        return None
+    if marker_values["candidate_scale"] != selected_scale:
         return None
     for row in rows:
         if not isinstance(row, dict):

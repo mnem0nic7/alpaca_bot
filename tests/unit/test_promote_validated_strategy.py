@@ -75,6 +75,19 @@ def _write_summary(
             }
         )
     )
+    selected = max(
+        summary_rows,
+        key=lambda row: (
+            float(row.get("candidate_ci_low") or 0.0),
+            -float(row.get("candidate_p_mean_le_zero") or 1.0),
+            int(row.get("candidate_trades") or 0),
+        ),
+    )
+    _write_proof_horizon(
+        root,
+        candidate=str(selected["candidate"]),
+        candidate_scale=str(selected["candidate_scale"]),
+    )
 
 
 def _summary_sha256(root: Path) -> str:
@@ -82,8 +95,69 @@ def _summary_sha256(root: Path) -> str:
     return hashlib.sha256(summary_path.read_bytes()).hexdigest()
 
 
+def _proof_summary_sha256(root: Path) -> str:
+    summary_path = root / "latest_proof_horizon" / "summary.json"
+    return hashlib.sha256(summary_path.read_bytes()).hexdigest()
+
+
 def _confirmation(root: Path, strategy: str = "ema_pullback") -> str:
-    return f"approve-{strategy}-paper-promotion-sha256-{_summary_sha256(root)}"
+    return (
+        f"approve-{strategy}-paper-promotion-sha256-{_summary_sha256(root)}"
+        f"-proof-sha256-{_proof_summary_sha256(root)}"
+    )
+
+
+def _write_proof_horizon(
+    root: Path,
+    *,
+    candidate: str = "ema_pullback",
+    candidate_scale: str = "0.50",
+    eventual_pass_rate: float = 0.60,
+    passing_candidate_count: int = 1,
+) -> None:
+    proof_dir = root / "latest_proof_horizon"
+    proof_dir.mkdir(parents=True, exist_ok=True)
+    status = "ok" if passing_candidate_count > 0 else "failed"
+    detail = "fresh" if status == "ok" else "eventual_pass_rate_below_gate"
+    selection_reason = "first_passing" if status == "ok" else "top_ranked_failure"
+    (proof_dir / "summary.json").write_text(
+        json.dumps(
+            {
+                "strategy": f"bull_flag+{candidate}",
+                "confidence_scales": {candidate: float(candidate_scale)},
+                "trades": 386,
+                "total_pnl": 50.33,
+                "starts_eventually_passed": int(278 * eventual_pass_rate),
+                "historical_starts_checked": 278,
+                "eventual_pass_rate": eventual_pass_rate,
+                "min_pnl": 0.01,
+                "candidate_selection": {
+                    "schema_version": 1,
+                    "selected_candidate": candidate,
+                    "selected_candidate_scale": candidate_scale,
+                    "selection_reason": selection_reason,
+                    "candidate_count": 1,
+                    "passing_candidate_count": passing_candidate_count,
+                    "min_eventual_pass_rate": 0.50,
+                    "rows": [
+                        {
+                            "candidate": candidate,
+                            "candidate_scale": candidate_scale,
+                            "status": status,
+                            "detail": detail,
+                            "trades": 386,
+                            "total_pnl": 50.33,
+                            "eventual_pass_rate": eventual_pass_rate,
+                            "starts_eventually_passed": int(
+                                278 * eventual_pass_rate
+                            ),
+                            "historical_starts_checked": 278,
+                        }
+                    ],
+                },
+            }
+        )
+    )
 
 
 def _make_fake_deploy(tmp_path: Path, *, exit_code: int = 0) -> Path:
@@ -268,7 +342,9 @@ def test_promote_validated_strategy_dry_run_reports_gates_without_mutation(
     assert "strategy=ema_pullback" in stdout
     assert "confirmation_status=missing" in stdout
     assert f"required_confirmation={_confirmation(evidence_root)}" in stdout
-    assert "validation_current_status=ok" in stdout
+    assert "evidence_current_status=ok" in stdout
+    assert "proof_horizon_eventual_pass_rate=0.6" in stdout
+    assert "proof_horizon_passing_candidate_count=1" in stdout
     assert "candidate_decision_dry_run_status=ok" in stdout
     assert "strategy=ema_pullback" in stdout
     assert "allow_disabled=true" in stdout
@@ -506,7 +582,7 @@ def test_promote_validated_strategy_rechecks_evidence_after_broker_check(
     )
 
     assert result.returncode == 1
-    assert "validation summary changed after broker flat check" in result.stderr
+    assert "promotion evidence changed after broker flat check" in result.stderr
     assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
     docker_calls = (tmp_path / "docker_calls").read_text()
     assert "--entrypoint python admin" in docker_calls
@@ -597,6 +673,87 @@ def test_promote_validated_strategy_rejects_weak_candidate_evidence(tmp_path: Pa
     assert not (tmp_path / "deploy_calls").exists()
 
 
+def test_promote_validated_strategy_rejects_failed_proof_horizon(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    _write_proof_horizon(
+        evidence_root,
+        eventual_pass_rate=0.3813,
+        passing_candidate_count=0,
+    )
+    deploy_script = _make_fake_deploy(tmp_path)
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=deploy_script,
+        tmp_path=tmp_path,
+        confirmation=_confirmation(evidence_root),
+        dry_run=False,
+    )
+
+    assert result.returncode == 1
+    assert "proof horizon" in result.stderr
+    assert "PAPER_APPROVED_STRATEGIES=bull_flag\n" in env_file.read_text()
+    assert not (evidence_root / "promotion_approval.json").exists()
+    assert not (tmp_path / "docker_calls").exists()
+    assert not (tmp_path / "deploy_calls").exists()
+
+
+def test_promote_validated_strategy_rejects_missing_proof_horizon(tmp_path: Path) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    confirmation = _confirmation(evidence_root)
+    (evidence_root / "latest_proof_horizon" / "summary.json").unlink()
+    deploy_script = _make_fake_deploy(tmp_path)
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=deploy_script,
+        tmp_path=tmp_path,
+        confirmation=confirmation,
+        dry_run=False,
+    )
+
+    assert result.returncode == 1
+    assert "proof horizon summary missing" in result.stderr
+    assert not (tmp_path / "docker_calls").exists()
+    assert not (tmp_path / "deploy_calls").exists()
+
+
+def test_promote_validated_strategy_rejects_proof_older_than_validation(
+    tmp_path: Path,
+) -> None:
+    env_file = tmp_path / "alpaca-bot.env"
+    evidence_root = tmp_path / "evidence"
+    _write_env(env_file)
+    _write_summary(evidence_root)
+    proof_path = evidence_root / "latest_proof_horizon" / "summary.json"
+    validation_path = evidence_root / "latest_validation" / "summary.json"
+    older = validation_path.stat().st_mtime - 10
+    os.utime(proof_path, (older, older))
+    deploy_script = _make_fake_deploy(tmp_path)
+
+    result = _run_promote(
+        env_file=env_file,
+        evidence_root=evidence_root,
+        deploy_script=deploy_script,
+        tmp_path=tmp_path,
+        confirmation=_confirmation(evidence_root),
+        dry_run=False,
+    )
+
+    assert result.returncode == 1
+    assert "proof horizon summary is older than validation summary" in result.stderr
+    assert not (tmp_path / "docker_calls").exists()
+    assert not (tmp_path / "deploy_calls").exists()
+
+
 def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_path: Path) -> None:
     script_text = SCRIPT.read_text()
     assert 'chmod --reference="$ENV_FILE" "$tmp"' in script_text
@@ -649,7 +806,8 @@ def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_pa
     approval_marker = json.loads((evidence_root / "promotion_approval.json").read_text())
     summary_path = evidence_root / "latest_validation" / "summary.json"
     summary_sha256 = _summary_sha256(evidence_root)
-    assert approval_marker["schema_version"] == 2
+    assert approval_marker["schema_version"] == 3
+    assert approval_marker["evidence_root"] == str(evidence_root.resolve())
     approved_at = datetime.fromisoformat(approval_marker["approved_at"])
     assert approved_at.tzinfo is not None
     assert approved_at.astimezone(timezone.utc) <= datetime.now(timezone.utc)
@@ -659,6 +817,15 @@ def test_promote_validated_strategy_updates_allowlist_enables_and_deploys(tmp_pa
     assert approval_marker["env_file"] == str(env_file)
     assert approval_marker["validation_summary"] == str(summary_path.resolve())
     assert approval_marker["validation_summary_sha256"] == summary_sha256
+    proof_summary_path = evidence_root / "latest_proof_horizon" / "summary.json"
+    assert approval_marker["proof_horizon_summary"] == str(
+        proof_summary_path.resolve()
+    )
+    assert approval_marker["proof_horizon_summary_sha256"] == _proof_summary_sha256(
+        evidence_root
+    )
+    assert approval_marker["proof_horizon_eventual_pass_rate"] == 0.6
+    assert approval_marker["proof_horizon_passing_candidate_count"] == 1
     assert approval_marker["candidate_trades"] == 291
     assert approval_marker["candidate_ci_low"] == 0.0007
 

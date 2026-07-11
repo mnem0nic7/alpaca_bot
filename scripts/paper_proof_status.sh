@@ -1534,9 +1534,10 @@ def rows_missing_candidate_attribution(rows: object) -> bool:
 
 def as_float_or_none(value: object) -> float | None:
     try:
-        return float(value)  # type: ignore[arg-type]
+        parsed = float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def as_int_or_none(value: object) -> int | None:
@@ -1648,11 +1649,16 @@ def approval_marker_status(
     error: str | None,
     *,
     evidence_status: str,
+    evidence_root: Path,
     strategy_version: str,
     env_file: str,
     now_utc: datetime,
     validation_summary_path: Path,
     validation_summary_sha256: str | None,
+    proof_horizon_summary_path: Path,
+    proof_horizon_summary_sha256: str | None,
+    proof_horizon_status: str,
+    proof_horizon_payload: dict | None,
     validation_rows: object,
     validation_positive_families: list[str],
 ) -> tuple[str, str]:
@@ -1660,7 +1666,7 @@ def approval_marker_status(
         return "missing", "none"
     if error is not None or payload is None:
         return "invalid", "none"
-    if payload.get("schema_version") != 2:
+    if payload.get("schema_version") != 3:
         return "invalid_schema", "none"
     if not str(payload.get("approved_at") or "").strip():
         return "approved_at_missing", "none"
@@ -1674,6 +1680,10 @@ def approval_marker_status(
         return "invalid_strategy", "none"
     if evidence_status != "ok":
         return f"evidence_{evidence_status}", strategy
+    if proof_horizon_status != "ok":
+        return f"proof_horizon_{proof_horizon_status}", strategy
+    if str(payload.get("evidence_root") or "") != str(evidence_root.resolve()):
+        return "evidence_root_mismatch", strategy
     marker_strategy_version = str(payload.get("strategy_version") or "").strip()
     if not marker_strategy_version:
         return "strategy_version_missing", strategy
@@ -1703,14 +1713,92 @@ def approval_marker_status(
         return "validation_summary_unreadable", strategy
     if marker_summary_sha256 != validation_summary_sha256:
         return "validation_summary_sha256_mismatch", strategy
+    expected_proof_summary = str(proof_horizon_summary_path.resolve())
+    if str(payload.get("proof_horizon_summary") or "") != expected_proof_summary:
+        return "stale_proof_horizon_summary", strategy
+    try:
+        proof_horizon_summary_modified_at = datetime.fromtimestamp(
+            proof_horizon_summary_path.stat().st_mtime,
+            timezone.utc,
+        )
+    except OSError:
+        return "proof_horizon_summary_unreadable", strategy
+    if approved_at < proof_horizon_summary_modified_at:
+        return "approved_at_before_proof_horizon", strategy
+    marker_proof_summary_sha256 = str(
+        payload.get("proof_horizon_summary_sha256") or ""
+    ).strip()
+    if not marker_proof_summary_sha256:
+        return "proof_horizon_summary_sha256_missing", strategy
+    if proof_horizon_summary_sha256 is None:
+        return "proof_horizon_summary_unreadable", strategy
+    if marker_proof_summary_sha256 != proof_horizon_summary_sha256:
+        return "proof_horizon_summary_sha256_mismatch", strategy
+    if proof_horizon_payload is None:
+        return "proof_horizon_summary_unreadable", strategy
+    proof_horizon_selection = proof_horizon_payload.get("candidate_selection")
+    if not isinstance(proof_horizon_selection, dict):
+        return "proof_horizon_candidate_selection_missing", strategy
+    expected_proof_values: dict[str, object] = {
+        "proof_horizon_trades": as_int_or_none(
+            proof_horizon_payload.get("trades")
+        ),
+        "proof_horizon_total_pnl": as_float_or_none(
+            proof_horizon_payload.get("total_pnl")
+        ),
+        "proof_horizon_eventual_pass_rate": as_float_or_none(
+            proof_horizon_payload.get("eventual_pass_rate")
+        ),
+        "proof_horizon_starts_eventually_passed": as_int_or_none(
+            proof_horizon_payload.get("starts_eventually_passed")
+        ),
+        "proof_horizon_historical_starts": as_int_or_none(
+            proof_horizon_payload.get("historical_starts_checked")
+        ),
+        "proof_horizon_selection_reason": str(
+            proof_horizon_selection.get("selection_reason") or ""
+        ).strip(),
+        "proof_horizon_candidate_count": as_int_or_none(
+            proof_horizon_selection.get("candidate_count")
+        ),
+        "proof_horizon_passing_candidate_count": as_int_or_none(
+            proof_horizon_selection.get("passing_candidate_count")
+        ),
+    }
+    for key, expected_value in expected_proof_values.items():
+        marker_value = payload.get(key)
+        if expected_value is None or expected_value == "":
+            return f"{key}_unreadable", strategy
+        if isinstance(expected_value, float):
+            parsed_marker_value = as_float_or_none(marker_value)
+            if parsed_marker_value is None or not math.isclose(
+                parsed_marker_value,
+                expected_value,
+                rel_tol=1e-9,
+                abs_tol=1e-9,
+            ):
+                return f"{key}_mismatch", strategy
+        elif marker_value != expected_value:
+            return f"{key}_mismatch", strategy
     confirmation = str(payload.get("confirmation") or "").strip()
     expected_confirmation = (
         f"approve-{strategy}-paper-promotion-sha256-{validation_summary_sha256}"
+        f"-proof-sha256-{proof_horizon_summary_sha256}"
     )
     if confirmation != expected_confirmation:
         return "confirmation_mismatch", strategy
     if strategy not in validation_positive_families:
         return "latest_validation_missing_positive_edge", strategy
+    if (
+        str(proof_horizon_selection.get("selected_candidate") or "").strip()
+        != strategy
+    ):
+        return "proof_horizon_candidate_mismatch", strategy
+    proof_selected_scale = str(
+        proof_horizon_selection.get("selected_candidate_scale") or ""
+    ).strip()
+    if str(payload.get("candidate_scale") or "") != proof_selected_scale:
+        return "candidate_scale_mismatch", strategy
     strategy_rows = [
         row
         for row in validation_rows
@@ -1910,6 +1998,7 @@ def load_second_strategy_evidence(
     proof_horizon_selection_reason = "none"
     proof_horizon_candidate_count: int | None = None
     proof_horizon_passing_candidate_count: int | None = None
+    proof_horizon_selected_row_status: str | None = None
     if isinstance(proof_horizon_selection, dict):
         preferred_promotion_candidate = str(
             proof_horizon_selection.get("selected_candidate") or ""
@@ -1926,6 +2015,31 @@ def load_second_strategy_evidence(
         proof_horizon_passing_candidate_count = as_int_or_none(
             proof_horizon_selection.get("passing_candidate_count")
         )
+        proof_horizon_selection_rows = proof_horizon_selection.get("rows")
+        if isinstance(proof_horizon_selection_rows, list):
+            selected_rows = []
+            for row in proof_horizon_selection_rows:
+                if not isinstance(row, dict):
+                    continue
+                if (
+                    str(row.get("candidate") or "").strip()
+                    != preferred_promotion_candidate
+                ):
+                    continue
+                row_scale = as_float_or_none(row.get("candidate_scale"))
+                if row_scale is None or preferred_promotion_scale is None:
+                    continue
+                if math.isclose(
+                    row_scale,
+                    preferred_promotion_scale,
+                    rel_tol=1e-9,
+                    abs_tol=1e-9,
+                ):
+                    selected_rows.append(row)
+            if len(selected_rows) == 1:
+                proof_horizon_selected_row_status = str(
+                    selected_rows[0].get("status") or ""
+                ).strip() or None
     promotion_candidate = best_promotion_candidate_from_rows(
         validation_rows,
         preferred_name=preferred_promotion_candidate,
@@ -2018,6 +2132,22 @@ def load_second_strategy_evidence(
             ):
                 proof_horizon_status = "stale"
                 proof_horizon_detail = "proof_horizon_older_than_validation"
+            elif not isinstance(proof_horizon_selection, dict):
+                proof_horizon_status = "invalid"
+                proof_horizon_detail = "candidate_selection_missing"
+            elif (
+                proof_horizon_candidate_count is None
+                or proof_horizon_passing_candidate_count is None
+            ):
+                proof_horizon_status = "invalid"
+                proof_horizon_detail = "candidate_selection_counts_missing"
+            elif (
+                proof_horizon_passing_candidate_count < 1
+                or proof_horizon_selection_reason != "first_passing"
+                or proof_horizon_selected_row_status != "ok"
+            ):
+                proof_horizon_status = "failed"
+                proof_horizon_detail = "candidate_selection_failed"
             elif promotion_candidate_name not in proof_horizon_strategy_parts:
                 proof_horizon_status = "mismatch"
                 proof_horizon_detail = "candidate_missing_from_strategy_label"
@@ -2076,11 +2206,16 @@ def load_second_strategy_evidence(
         approval_payload,
         approval_error,
         evidence_status=evidence_status,
+        evidence_root=output_root,
         strategy_version=strategy_version,
         env_file=env_file,
         now_utc=now_utc,
         validation_summary_path=validation_summary_path,
         validation_summary_sha256=validation_summary_sha256,
+        proof_horizon_summary_path=proof_horizon_summary_path,
+        proof_horizon_summary_sha256=proof_horizon_summary_sha256,
+        proof_horizon_status=proof_horizon_status,
+        proof_horizon_payload=proof_horizon_payload,
         validation_rows=validation_rows,
         validation_positive_families=validation_positive_families,
     )
@@ -2099,9 +2234,11 @@ def load_second_strategy_evidence(
         if proof_horizon_status == "ok":
             promotion_action_status = "ready"
         elif proof_horizon_status == "missing":
-            promotion_action_status = "ready_needs_proof_horizon"
+            promotion_action_status = "blocked_missing_proof_horizon"
+        elif proof_horizon_status == "failed":
+            promotion_action_status = "rejected_proof_horizon"
         else:
-            promotion_action_status = "review_proof_horizon"
+            promotion_action_status = "blocked_unusable_proof_horizon"
     elif validation_positive_rows > 0:
         promotion_action_status = "review_evidence"
 
@@ -2112,7 +2249,16 @@ def load_second_strategy_evidence(
     elif promotion_approved and validation_positive_rows > 0:
         candidate_status = "approved_candidate_found"
     elif validation_positive_rows > 0:
-        candidate_status = "validated_candidate_unapproved"
+        if promotion_candidate is None:
+            candidate_status = "validation_candidate_not_promotable"
+        elif proof_horizon_status == "ok":
+            candidate_status = "validated_candidate_unapproved"
+        elif proof_horizon_status == "missing":
+            candidate_status = "proof_horizon_missing"
+        elif proof_horizon_status == "failed":
+            candidate_status = "proof_horizon_failed"
+        else:
+            candidate_status = "proof_horizon_unusable"
     elif missing_validation_families:
         candidate_status = "partial_validation"
     elif prefilter_positive_rows > 0 and validation_positive_rows == 0:
@@ -5801,8 +5947,9 @@ elif second_strategy_evidence["promotion_action_status"] == "ready":
 elif second_strategy_evidence["promotion_action_status"] == "review_evidence":
     approval_marker_action_status = "review_evidence"
 elif second_strategy_evidence["promotion_action_status"] in {
-    "ready_needs_proof_horizon",
-    "review_proof_horizon",
+    "blocked_missing_proof_horizon",
+    "rejected_proof_horizon",
+    "blocked_unusable_proof_horizon",
 }:
     approval_marker_action_status = str(
         second_strategy_evidence["promotion_action_status"]
@@ -5816,6 +5963,15 @@ elif active_replay_unsupported_strategy_names:
     strategy_diversification_candidate_status = "replay_unsupported_active_strategy"
 elif approved_disabled_stock_candidate_names:
     strategy_diversification_candidate_status = "approved_stock_candidate_disabled"
+elif second_strategy_evidence["candidate_status"] in {
+    "validation_candidate_not_promotable",
+    "proof_horizon_missing",
+    "proof_horizon_failed",
+    "proof_horizon_unusable",
+}:
+    strategy_diversification_candidate_status = str(
+        second_strategy_evidence["candidate_status"]
+    )
 elif validated_unapproved_stock_candidate_names:
     strategy_diversification_candidate_status = "validated_stock_candidate_unapproved"
 elif approved_disabled_option_candidate_names:
@@ -7136,9 +7292,17 @@ promotion_strategy = safe_status_value(second_strategy_evidence["promotion_candi
 promotion_validation_summary_sha256 = safe_status_value(
     second_strategy_evidence["validation_summary_sha256"]
 )
+promotion_proof_horizon_summary_sha256 = safe_status_value(
+    second_strategy_evidence["proof_horizon_summary_sha256"]
+)
 promotion_confirmation = (
     f"approve-{promotion_strategy}-paper-promotion-sha256-{promotion_validation_summary_sha256}"
-    if promotion_strategy != "none" and promotion_validation_summary_sha256 != "none"
+    f"-proof-sha256-{promotion_proof_horizon_summary_sha256}"
+    if (
+        promotion_strategy != "none"
+        and promotion_validation_summary_sha256 != "none"
+        and promotion_proof_horizon_summary_sha256 != "none"
+    )
     else "none"
 )
 promotion_broker_flat_status = (
