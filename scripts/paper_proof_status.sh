@@ -3064,6 +3064,7 @@ second_strategy_setup_evidence = load_second_strategy_evidence(
     max_age_hours=second_strategy_max_age_hours,
     strategy_version=strategy_version,
     env_file=proof_status_env_file,
+    require_candidate_attribution=True,
 )
 
 if second_strategy_scan_status == "failed" and second_strategy_evidence["status"] == "ok":

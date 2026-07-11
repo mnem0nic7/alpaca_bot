@@ -136,7 +136,8 @@ OUTPUT_ROOT="${SECOND_STRATEGY_SETUP_OUTPUT_ROOT:-${SECOND_STRATEGY_OUTPUT_ROOT:
 OUTPUT_DIR="${SECOND_STRATEGY_SETUP_OUTPUT_DIR:-$OUTPUT_ROOT/$(date -u +%Y%m%dT%H%M%SZ)}"
 LATEST_LINK="${SECOND_STRATEGY_SETUP_LATEST_LINK:-}"
 UPDATE_LATEST_LINKS="${SECOND_STRATEGY_SETUP_UPDATE_LATEST_LINKS:-true}"
-EXCLUDE_CANDIDATES="${SECOND_STRATEGY_SETUP_EXCLUDE_CANDIDATES:-${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}}"
+PROMOTION_DENYLIST="${SECOND_STRATEGY_SETUP_PROMOTION_DENYLIST:-${SECOND_STRATEGY_PROMOTION_DENYLIST:-${PAPER_STRATEGY_PROMOTION_DENYLIST:-ema_pullback,vwap_cross}}}"
+EXCLUDE_CANDIDATES="${SECOND_STRATEGY_SETUP_EXCLUDE_CANDIDATES:-${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-$PROMOTION_DENYLIST}}"
 VARIANT_MODE="${SECOND_STRATEGY_SETUP_VARIANT_MODE:-curated}"
 VARIANT_LABELS="${SECOND_STRATEGY_SETUP_VARIANT_LABELS:-}"
 MAX_VARIANTS="${SECOND_STRATEGY_SETUP_MAX_VARIANTS:-0}"
@@ -300,7 +301,7 @@ if [[ -z "$starting_equity" ]]; then
 fi
 
 variants_file="$OUTPUT_DIR/variants.tsv"
-python3 - "$variants_file" "$candidate_csv" "$EXCLUDE_CANDIDATES" "$VARIANT_LABELS" "$VARIANT_MODE" "$MAX_VARIANTS" <<'PY'
+python3 - "$variants_file" "$candidate_csv" "$EXCLUDE_CANDIDATES" "$VARIANT_LABELS" "$VARIANT_MODE" "$MAX_VARIANTS" "$PROMOTION_DENYLIST" <<'PY'
 from __future__ import annotations
 
 import itertools
@@ -331,6 +332,8 @@ excluded_names = set(parse_names(sys.argv[3]))
 label_filter = set(parse_names(sys.argv[4]))
 variant_mode = sys.argv[5].strip().lower()
 max_variants = int(sys.argv[6])
+promotion_denied_names = set(parse_names(sys.argv[7]))
+excluded_names.update(promotion_denied_names)
 shared_base_env_names = {
     "ATR_STOP_MULTIPLIER",
     "DAILY_SMA_PERIOD",
@@ -437,7 +440,7 @@ status_parts_dir="$OUTPUT_DIR/status_parts"
 mkdir -p "$status_parts_dir"
 
 echo "second strategy setup-knob scan: output_dir=$OUTPUT_DIR"
-echo "second strategy setup-knob scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scale=$CANDIDATE_SCALE min_candidate_trades=$MIN_CANDIDATE_TRADES scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} variant_mode=$VARIANT_MODE variants=$variant_count max_variants=$MAX_VARIANTS excluded_candidates=$EXCLUDE_CANDIDATES labels=${VARIANT_LABELS:-all} fractionability_snapshot_sha256=$FRACTIONABILITY_SNAPSHOT_SHA256 fractionability_universe_sha256=$FRACTIONABILITY_UNIVERSE_SHA256"
+echo "second strategy setup-knob scan: scenario_dir=$SCENARIO_DIR base=$BASE_STRATEGY sample_size=$SAMPLE_SIZE sample_seed=$SAMPLE_SEED slippage_bps=$SLIPPAGE_BPS max_open_positions=$MAX_OPEN_POSITIONS_VALUE candidate_scale=$CANDIDATE_SCALE min_candidate_trades=$MIN_CANDIDATE_TRADES scan_jobs=$SCAN_JOBS starting_equity=${starting_equity:-scenario_default} variant_mode=$VARIANT_MODE variants=$variant_count max_variants=$MAX_VARIANTS excluded_candidates=$EXCLUDE_CANDIDATES promotion_denylist=$PROMOTION_DENYLIST labels=${VARIANT_LABELS:-all} fractionability_snapshot_sha256=$FRACTIONABILITY_SNAPSHOT_SHA256 fractionability_universe_sha256=$FRACTIONABILITY_UNIVERSE_SHA256"
 
 failed_count=0
 run_prefilter_job() {
@@ -523,7 +526,7 @@ python3 - "$status_file" "$summary_file" "$summary_json_file" \
   "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" "$CANDIDATE_SCALE" \
   "${starting_equity:-scenario_default}" "$EXCLUDE_CANDIDATES" "$SCAN_JOBS" \
   "$variant_count" "$VARIANT_MODE" "$MAX_VARIANTS" "$MIN_CANDIDATE_TRADES" \
-  "$FRACTIONABILITY_METADATA_FILE" <<'PY'
+  "$FRACTIONABILITY_METADATA_FILE" "$PROMOTION_DENYLIST" <<'PY'
 from __future__ import annotations
 
 import json
@@ -556,6 +559,7 @@ max_variants = sys.argv[16]
 min_candidate_trades = int(sys.argv[17])
 fractionability_metadata_path = Path(sys.argv[18])
 fractionability_snapshot = json.loads(fractionability_metadata_path.read_text())
+promotion_denylist = sys.argv[19]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -639,6 +643,7 @@ lines = [
     f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
+    f"- promotion_denylist: `{promotion_denylist}`",
     f"- variant_mode: `{variant_mode}`",
     f"- max_variants: `{max_variants}`",
     f"- variants: `{variant_count}`",
@@ -758,6 +763,7 @@ write_text_atomic(
             "scan_jobs": scan_jobs,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
+            "promotion_denylist": promotion_denylist,
             "variant_mode": variant_mode,
             "max_variants": int(max_variants),
             "min_candidate_trades": min_candidate_trades,
@@ -930,7 +936,8 @@ PY
     "$VALIDATION_SAMPLE_SEED" "$SLIPPAGE_BPS" "$MAX_OPEN_POSITIONS_VALUE" \
     "$CANDIDATE_SCALE" "${starting_equity:-scenario_default}" "$EXCLUDE_CANDIDATES" \
     "$SCAN_JOBS" "$MAX_VALIDATION_CANDIDATES" "$VALIDATION_OUTPUT_DIR" \
-    "$MIN_CANDIDATE_TRADES" "$FRACTIONABILITY_METADATA_FILE" <<'PY'
+    "$MIN_CANDIDATE_TRADES" "$FRACTIONABILITY_METADATA_FILE" \
+    "$PROMOTION_DENYLIST" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -967,6 +974,7 @@ validation_output_dir = sys.argv[16]
 min_candidate_trades = int(sys.argv[17])
 fractionability_metadata_path = Path(sys.argv[18])
 fractionability_snapshot = json.loads(fractionability_metadata_path.read_text())
+promotion_denylist = sys.argv[19]
 
 
 def fmt(value, spec: str = ".2f") -> str:
@@ -1054,6 +1062,7 @@ lines = [
     f"- scan_jobs: `{scan_jobs}`",
     f"- starting_equity: `{starting_equity}`",
     f"- excluded_candidates: `{excluded_candidates}`",
+    f"- promotion_denylist: `{promotion_denylist}`",
     f"- fractionability_snapshot_file: `{fractionability_snapshot['snapshot_file']}`",
     f"- scenario_symbols_file: `{fractionability_snapshot['universe_symbols_file']}`",
     f"- fractionability_snapshot_sha256: `{fractionability_snapshot['snapshot_sha256']}`",
@@ -1186,6 +1195,7 @@ write_text_atomic(
             "scan_jobs": scan_jobs,
             "starting_equity": starting_equity,
             "excluded_candidates": excluded_candidates,
+            "promotion_denylist": promotion_denylist,
             "fractionability_snapshot": fractionability_snapshot,
             "candidate_count": len(candidate_names),
             "candidate_names": candidate_names,

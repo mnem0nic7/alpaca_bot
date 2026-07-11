@@ -325,8 +325,9 @@ def test_second_strategy_basket_scan_is_read_only_prefilter_tool() -> None:
     assert 'LATEST_LINK="${SECOND_STRATEGY_LATEST_LINK:-}"' in script
     assert 'UPDATE_LATEST_LINKS="${SECOND_STRATEGY_UPDATE_LATEST_LINKS:-true}"' in script
     assert "SECOND_STRATEGY_UPDATE_LATEST_LINKS must be true or false" in script
-    assert 'EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-vwap_cross}"' in script
     assert 'PROMOTION_DENYLIST="${SECOND_STRATEGY_PROMOTION_DENYLIST:-${PAPER_STRATEGY_PROMOTION_DENYLIST:-ema_pullback,vwap_cross}}"' in script
+    assert 'EXCLUDE_CANDIDATES="${SECOND_STRATEGY_EXCLUDE_CANDIDATES:-$PROMOTION_DENYLIST}"' in script
+    assert 'read_name_list "$EXCLUDE_CANDIDATES,$PROMOTION_DENYLIST"' in script
     assert 'CANDIDATE_SCALES="${SECOND_STRATEGY_CANDIDATE_SCALES:-${SECOND_STRATEGY_CANDIDATE_SCALE:-0.10,0.25,0.50}}"' in script
     assert 'PREFILTER_SUMMARY_JSON="${SECOND_STRATEGY_PREFILTER_SUMMARY_JSON:-}"' in script
     assert 'FRACTIONABLE_SYMBOLS_SOURCE_FILE="${SECOND_STRATEGY_FRACTIONABLE_SYMBOLS_FILE:-}"' in script
@@ -796,6 +797,10 @@ def test_second_strategy_setup_knob_scan_is_read_only_variant_tool() -> None:
     assert 'env "${override_env_args[@]}" "${cmd[@]}"' in script
     assert "SECOND_STRATEGY_SETUP_CANDIDATES" in script
     assert "SECOND_STRATEGY_SETUP_EXCLUDE_CANDIDATES" in script
+    assert "SECOND_STRATEGY_SETUP_PROMOTION_DENYLIST" in script
+    assert "promotion_denied_names = set(parse_names(sys.argv[7]))" in script
+    assert "excluded_names.update(promotion_denied_names)" in script
+    assert script.count('"promotion_denylist": promotion_denylist') == 2
     assert "EXCLUDE_CANDIDATES" in script
     assert "vwap_cross" in script
     assert "PROTECTED" not in script
@@ -7799,6 +7804,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "load_second_strategy_evidence" in script
     assert "paper proof second strategy evidence:" in script
     assert "second_strategy_setup_evidence = load_second_strategy_evidence" in script
+    assert script.count("require_candidate_attribution=True") == 2
     assert "paper proof second strategy setup evidence:" in script
     assert "prefilter_families = candidate_names_from_rows(prefilter_rows)" in script
     assert "prefilter_families={len(second_strategy_evidence['prefilter_families'])}" in script
