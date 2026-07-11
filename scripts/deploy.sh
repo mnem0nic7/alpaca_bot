@@ -473,8 +473,11 @@ finish_deploy_paper_drain() {
     --strategy-version "${STRATEGY_VERSION}" \
     --reason "deploy maintenance complete" \
     >/dev/null
+  # Startup reconciliation records the broker's effective session. Restarting
+  # after resume clears a next-session block created by a weekend/holiday drain.
+  "${compose[@]}" restart supervisor
   deploy_resume_after_drain=false
-  echo "deploy resumed paper trading after maintenance drain" >&2
+  echo "deploy resumed paper trading and reconciled the effective session after maintenance drain" >&2
 }
 
 restore_deploy_paper_drain_on_exit() {

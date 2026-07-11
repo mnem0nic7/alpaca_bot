@@ -375,7 +375,10 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
     assert "verify_deploy_preflight_paper_exposure()" in deploy_text
     assert "deploy ops check accepting paper deploy maintenance drain" in deploy_text
     assert "deploy set paper trading close-only for maintenance drain" in deploy_text
-    assert "deploy resumed paper trading after maintenance drain" in deploy_text
+    assert (
+        "deploy resumed paper trading and reconciled the effective session after maintenance drain"
+        in deploy_text
+    )
     assert "deploy restored paper trading after aborted maintenance drain" in deploy_text
     assert "deploy preflight failed: paper exposure is not flat or protected" in deploy_text
     assert "deploy preflight waiting for paper exposure to become flat/protected" in deploy_text
@@ -425,6 +428,17 @@ def test_deploy_ops_check_enforces_paper_readiness() -> None:
         "finish_deploy_paper_drain\n"
         "    run_deploy_ops_check"
     ) in deploy_text
+    finish_function = deploy_text[
+        deploy_text.index("finish_deploy_paper_drain() {") : deploy_text.index(
+            "restore_deploy_paper_drain_on_exit() {"
+        )
+    ]
+    assert finish_function.index("admin resume") < finish_function.index(
+        '"${compose[@]}" restart supervisor'
+    )
+    assert finish_function.index('"${compose[@]}" restart supervisor') < finish_function.index(
+        "deploy_resume_after_drain=false"
+    )
     assert (
         "start_deploy_paper_drain\n"
         "    verify_deploy_preflight_paper_exposure\n"
