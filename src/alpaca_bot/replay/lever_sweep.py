@@ -362,6 +362,16 @@ _ENTRY_ORDER_ACTIVE_BAR_POINTS: tuple[LeverPoint, ...] = (
         overrides={"entry_order_active_bars": 3},
     ),
 )
+_ENTRY_CANDIDATE_RANK_POINTS: tuple[LeverPoint, ...] = (
+    LeverPoint(
+        label="AS_entry_candidate_rank:relative_volume",
+        overrides={"entry_candidate_rank_mode": "relative_volume"},
+    ),
+    LeverPoint(
+        label="AS_entry_candidate_rank:balanced",
+        overrides={"entry_candidate_rank_mode": "balanced"},
+    ),
+)
 
 
 def scenarios_support_regime_filter(
@@ -563,6 +573,7 @@ def build_ofat_grid(
     points.extend(_GIVEBACK_EXIT_POINTS)
     points.extend(_EARLY_LOSS_EXIT_POINTS)
     points.extend(_ENTRY_ORDER_ACTIVE_BAR_POINTS)
+    points.extend(_ENTRY_CANDIDATE_RANK_POINTS)
     return points
 
 
@@ -616,6 +627,14 @@ def build_coarse_grid(
             },
         ),
         ("AG_entry_order_active_bars:2", {"entry_order_active_bars": 2}),
+        (
+            "AS_entry_candidate_rank:relative_volume",
+            {"entry_candidate_rank_mode": "relative_volume"},
+        ),
+        (
+            "AS_entry_candidate_rank:balanced",
+            {"entry_candidate_rank_mode": "balanced"},
+        ),
         ("N_max_stop:max_stop_pct=0.04", {"max_stop_pct": 0.04}),
         ("O_loss_cap:max_loss_per_trade_dollars=10.0",
          {"max_loss_per_trade_dollars": 10.0}),

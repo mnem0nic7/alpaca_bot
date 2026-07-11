@@ -235,6 +235,7 @@ def test_entry_min_close_to_entry_pct_defaults_on_for_paper_and_parses_env():
     assert settings.entry_min_close_to_entry_pct == -0.01
     assert settings.entry_max_close_to_entry_pct == 1.0
     assert settings.entry_order_active_bars == 1
+    assert settings.entry_candidate_rank_mode == "close_to_entry"
 
     settings = Settings.from_env(_base_env(ENTRY_MIN_CLOSE_TO_ENTRY_PCT="-1.0"))
     assert settings.entry_min_close_to_entry_pct == -1.0
@@ -244,6 +245,11 @@ def test_entry_min_close_to_entry_pct_defaults_on_for_paper_and_parses_env():
 
     settings = Settings.from_env(_base_env(ENTRY_ORDER_ACTIVE_BARS="3"))
     assert settings.entry_order_active_bars == 3
+
+    settings = Settings.from_env(
+        _base_env(ENTRY_CANDIDATE_RANK_MODE="RELATIVE_VOLUME")
+    )
+    assert settings.entry_candidate_rank_mode == "relative_volume"
 
 
 def test_entry_min_close_to_entry_pct_defaults_off_for_live():
@@ -280,6 +286,19 @@ def test_entry_max_close_to_entry_pct_must_not_be_below_min():
 def test_entry_order_active_bars_validates_bounds(value: str):
     with pytest.raises(ValueError, match="ENTRY_ORDER_ACTIVE_BARS"):
         Settings.from_env(_base_env(ENTRY_ORDER_ACTIVE_BARS=value))
+
+
+def test_entry_candidate_rank_mode_validates_known_modes() -> None:
+    for mode in ("close_to_entry", "relative_volume", "balanced"):
+        assert (
+            Settings.from_env(
+                _base_env(ENTRY_CANDIDATE_RANK_MODE=mode)
+            ).entry_candidate_rank_mode
+            == mode
+        )
+
+    with pytest.raises(ValueError, match="ENTRY_CANDIDATE_RANK_MODE"):
+        Settings.from_env(_base_env(ENTRY_CANDIDATE_RANK_MODE="profit_hint"))
 
 
 def test_no_follow_through_exit_defaults_and_env_overrides():

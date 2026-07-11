@@ -118,6 +118,47 @@ class CycleIntent:
     option_type_str: str | None = None
 
 
+EntryCandidate = tuple[int, float, float, CycleIntent]
+
+
+def _rank_entry_candidates(
+    candidates: Sequence[EntryCandidate],
+    mode: str,
+) -> list[EntryCandidate]:
+    """Order fillable candidates while keeping deterministic symbol tie-breaks."""
+    if mode == "relative_volume":
+        return sorted(
+            candidates,
+            key=lambda item: (-item[0], -item[2], -item[1], item[3].symbol),
+        )
+    if mode == "balanced":
+        close_order = sorted(
+            candidates,
+            key=lambda item: (-item[0], -item[1], -item[2], item[3].symbol),
+        )
+        volume_order = sorted(
+            candidates,
+            key=lambda item: (-item[0], -item[2], -item[1], item[3].symbol),
+        )
+        close_rank = {item[3].symbol: rank for rank, item in enumerate(close_order)}
+        volume_rank = {item[3].symbol: rank for rank, item in enumerate(volume_order)}
+        return sorted(
+            candidates,
+            key=lambda item: (
+                -item[0],
+                max(close_rank[item[3].symbol], volume_rank[item[3].symbol]),
+                close_rank[item[3].symbol] + volume_rank[item[3].symbol],
+                close_rank[item[3].symbol],
+                volume_rank[item[3].symbol],
+                item[3].symbol,
+            ),
+        )
+    return sorted(
+        candidates,
+        key=lambda item: (-item[0], -item[1], -item[2], item[3].symbol),
+    )
+
+
 @dataclass(frozen=True)
 class CycleResult:
     as_of: datetime
@@ -832,7 +873,7 @@ def evaluate_cycle(
                 if equity > 0
                 else 0.0
             )
-            entry_candidates: list[tuple[int, float, float, CycleIntent]] = []
+            entry_candidates: list[EntryCandidate] = []
             _candidate_signals: dict[str, tuple] = {}
             _candidate_vwap: dict[str, tuple[float | None, bool | None]] = {}
             for symbol in (symbols or settings.symbols):
@@ -1353,8 +1394,9 @@ def evaluate_cycle(
                         )
                     )
 
-            entry_candidates.sort(
-                key=lambda item: (-item[0], -item[1], -item[2], item[3].symbol),
+            entry_candidates = _rank_entry_candidates(
+                entry_candidates,
+                settings.entry_candidate_rank_mode,
             )
             selected: list[CycleIntent] = []
             for *_rank, candidate in entry_candidates:
@@ -1384,7 +1426,10 @@ def evaluate_cycle(
                     else None
                 )
                 _vwap_info = _candidate_vwap.get(candidate.symbol, (None, None))
-                _filter_results = {"close_to_entry_pct": close_to_entry_pct}
+                _filter_results = {
+                    "close_to_entry_pct": close_to_entry_pct,
+                    "candidate_rank_mode": settings.entry_candidate_rank_mode,
+                }
                 if settings.entry_min_close_to_entry_pct > -1.0:
                     _filter_results["min_close_to_entry_pct"] = (
                         settings.entry_min_close_to_entry_pct

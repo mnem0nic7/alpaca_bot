@@ -307,7 +307,8 @@ def test_ofat_grid_covers_expected_families():
                   "W_min_close_to_entry", "Y_rel_vol_lookback",
                   "Z_breakout_stop_buffer", "P_flatten",
                   "Q_no_follow_through", "V_giveback_exit",
-                  "AF_early_loss_exit", "AG_entry_order_active_bars"]:
+                  "AF_early_loss_exit", "AG_entry_order_active_bars",
+                  "AS_entry_candidate_rank"]:
         assert token in labels
     # Family F (regime) is excluded by default unless the caller confirms the
     # scenario set can supply benchmark bars.
@@ -415,6 +416,8 @@ def test_coarse_grid_includes_exit_filter_levers():
     assert "V_giveback_exit:on@0.0025,max_return=0" in labels
     assert "AF_early_loss_exit:45m@0.005" in labels
     assert "AG_entry_order_active_bars:2" in labels
+    assert "AS_entry_candidate_rank:relative_volume" in labels
+    assert "AS_entry_candidate_rank:balanced" in labels
 
 
 def test_ema_pullback_grid_includes_ema_period_family():

@@ -20,6 +20,7 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
         "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO",
         "BULL_FLAG_CONSOLIDATION_RANGE_PCT",
         "ENTRY_ORDER_ACTIVE_BARS",
+        "ENTRY_CANDIDATE_RANK_MODE",
         "ENTRY_MIN_CLOSE_TO_ENTRY_PCT",
         "ENTRY_MAX_CLOSE_TO_ENTRY_PCT",
         "MAX_LOSS_PER_TRADE_DOLLARS",
@@ -91,6 +92,10 @@ def test_compose_passes_paper_edge_and_risk_env_vars() -> None:
     )
     assert "BULL_FLAG_MIN_RUN_PCT: ${BULL_FLAG_MIN_RUN_PCT:-0.02}" in compose_text
     assert "ENTRY_ORDER_ACTIVE_BARS: ${ENTRY_ORDER_ACTIVE_BARS:-1}" in compose_text
+    assert (
+        "ENTRY_CANDIDATE_RANK_MODE: "
+        "${ENTRY_CANDIDATE_RANK_MODE:-close_to_entry}"
+    ) in compose_text
     assert (
         "ENTRY_MIN_CLOSE_TO_ENTRY_PCT: ${ENTRY_MIN_CLOSE_TO_ENTRY_PCT:--0.01}"
         in compose_text
@@ -721,6 +726,7 @@ def test_paper_env_example_matches_audited_bull_flag_posture() -> None:
     assert "ENABLE_SECTOR_FILTER=false" in env_text
     assert "ENABLE_VWAP_ENTRY_FILTER=false" in env_text
     assert "ENTRY_ORDER_ACTIVE_BARS=1" in env_text
+    assert "ENTRY_CANDIDATE_RANK_MODE=close_to_entry" in env_text
     assert "ENABLE_PROFIT_TRAIL=true" in env_text
     assert "PROFIT_TRAIL_PCT=0.90" in env_text
     assert "ENABLE_PROFIT_TARGET=true" in env_text
@@ -758,6 +764,7 @@ def test_init_server_generates_audited_paper_posture() -> None:
     assert "BULL_FLAG_CONSOLIDATION_VOLUME_RATIO=0.6" in script
     assert "BULL_FLAG_CONSOLIDATION_RANGE_PCT=0.5" in script
     assert "ENTRY_ORDER_ACTIVE_BARS=1" in script
+    assert "ENTRY_CANDIDATE_RANK_MODE=close_to_entry" in script
     assert 'REPLAY_SLIPPAGE_BPS="2.0"' in script
     assert "NIGHTLY_MAX_COMBOS=24" in script
     assert "NIGHTLY_TIMEOUT_SECONDS=18000" in script

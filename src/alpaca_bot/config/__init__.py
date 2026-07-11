@@ -579,6 +579,7 @@ class Settings:
     entry_min_close_to_entry_pct: float = -1.0
     entry_max_close_to_entry_pct: float = 1.0
     entry_order_active_bars: int = 1
+    entry_candidate_rank_mode: str = "close_to_entry"
     max_portfolio_exposure_pct: float = 0.30
     notify_slippage_threshold_pct: float = 0.005
     confidence_floor: float = 0.25
@@ -743,6 +744,9 @@ class Settings:
             relative_volume_threshold=float(values.get("RELATIVE_VOLUME_THRESHOLD", "1.5")),
             entry_timeframe_minutes=int(values.get("ENTRY_TIMEFRAME_MINUTES", "15")),
             entry_order_active_bars=int(values.get("ENTRY_ORDER_ACTIVE_BARS", "1")),
+            entry_candidate_rank_mode=values.get(
+                "ENTRY_CANDIDATE_RANK_MODE", "close_to_entry"
+            ).strip().lower(),
             risk_per_trade_pct=float(values.get("RISK_PER_TRADE_PCT", "0.0025")),
             max_position_pct=float(values.get("MAX_POSITION_PCT", "0.015")),
             max_open_positions=int(values.get("MAX_OPEN_POSITIONS", "20")),
@@ -1151,6 +1155,15 @@ class Settings:
             raise ValueError("ENTRY_ORDER_ACTIVE_BARS must be at least 1")
         if self.entry_order_active_bars > 4:
             raise ValueError("ENTRY_ORDER_ACTIVE_BARS must be at most 4")
+        if self.entry_candidate_rank_mode not in {
+            "close_to_entry",
+            "relative_volume",
+            "balanced",
+        }:
+            raise ValueError(
+                "ENTRY_CANDIDATE_RANK_MODE must be close_to_entry, "
+                "relative_volume, or balanced"
+            )
         if self.atr_stop_multiplier <= 0:
             raise ValueError("ATR_STOP_MULTIPLIER must be positive")
         if self.atr_stop_multiplier > 10.0:

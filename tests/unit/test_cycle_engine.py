@@ -300,6 +300,7 @@ def test_evaluate_cycle_allows_signal_at_maximum_close_to_entry_level() -> None:
     assert len(accepted_records) == 1
     assert accepted_records[0].filter_results == {
         "close_to_entry_pct": 0.005,
+        "candidate_rank_mode": "close_to_entry",
         "min_close_to_entry_pct": -0.01,
         "max_close_to_entry_pct": 0.005,
     }
@@ -436,6 +437,85 @@ def test_evaluate_cycle_rejects_unfillable_entry_candidate_before_capacity() -> 
     assert [record.symbol for record in entry_quality_records] == ["AAPL"]
 
 
+@pytest.mark.parametrize(
+    ("rank_mode", "expected_symbol"),
+    [
+        ("close_to_entry", "AAPL"),
+        ("relative_volume", "MSFT"),
+        ("balanced", "GOOG"),
+    ],
+)
+def test_evaluate_cycle_supports_candidate_rank_modes(
+    rank_mode: str,
+    expected_symbol: str,
+) -> None:
+    CycleIntentType, evaluate_cycle = load_engine_api()
+    now = datetime(2026, 4, 24, 19, 0, tzinfo=timezone.utc)
+    features = {
+        "AAPL": (100.5, 2.0),
+        "GOOG": (100.7, 4.0),
+        "MSFT": (100.9, 6.0),
+    }
+
+    def signal_evaluator(
+        *, symbol, intraday_bars, signal_index, daily_bars, settings
+    ) -> EntrySignal:
+        entry_level, relative_volume = features[symbol]
+        return EntrySignal(
+            symbol=symbol,
+            signal_bar=intraday_bars[signal_index],
+            entry_level=entry_level,
+            relative_volume=relative_volume,
+            stop_price=101.0,
+            limit_price=101.1,
+            initial_stop_price=98.0,
+        )
+
+    bars = {
+        symbol: [
+            Bar(
+                symbol=symbol,
+                timestamp=now,
+                open=99.8,
+                high=100.2,
+                low=99.5,
+                close=100.0,
+                volume=5_000,
+            )
+        ]
+        for symbol in features
+    }
+    result = evaluate_cycle(
+        settings=make_settings(
+            SYMBOLS="AAPL,GOOG,MSFT",
+            MAX_OPEN_POSITIONS="1",
+            ENTRY_CANDIDATE_RANK_MODE=rank_mode,
+        ),
+        now=now,
+        equity=100_000.0,
+        intraday_bars_by_symbol=bars,
+        daily_bars_by_symbol={
+            symbol: make_daily_bars(symbol) for symbol in features
+        },
+        open_positions=[],
+        working_order_symbols=set(),
+        traded_symbols_today=set(),
+        entries_disabled=False,
+        signal_evaluator=signal_evaluator,
+    )
+
+    entries = [
+        intent
+        for intent in result.intents
+        if intent.intent_type is CycleIntentType.ENTRY
+    ]
+    assert [intent.symbol for intent in entries] == [expected_symbol]
+    accepted = [
+        record for record in result.decision_records if record.decision == "accepted"
+    ]
+    assert accepted[0].filter_results["candidate_rank_mode"] == rank_mode
+
+
 def test_evaluate_cycle_allows_entry_when_next_bar_starts_before_flatten() -> None:
     CycleIntentType, evaluate_cycle = load_engine_api()
     signal_bar = Bar(
@@ -478,6 +558,7 @@ def test_evaluate_cycle_allows_entry_when_next_bar_starts_before_flatten() -> No
     assert len(accepted_records) == 1
     assert accepted_records[0].filter_results == {
         "close_to_entry_pct": 0.01,
+        "candidate_rank_mode": "close_to_entry",
         "min_close_to_entry_pct": -0.01,
     }
 

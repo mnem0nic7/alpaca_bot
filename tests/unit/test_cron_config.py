@@ -7563,6 +7563,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "relative_volume_threshold={settings.relative_volume_threshold:g}" in script
     assert "entry_timeframe_minutes={settings.entry_timeframe_minutes}" in script
     assert "entry_order_active_bars={settings.entry_order_active_bars}" in script
+    assert "entry_candidate_rank_mode={settings.entry_candidate_rank_mode}" in script
     assert "risk_per_trade_pct={settings.risk_per_trade_pct:g}" in script
     assert "max_position_pct={settings.max_position_pct:g}" in script
     assert "max_open_positions={settings.max_open_positions}" in script
@@ -7599,6 +7600,7 @@ def test_paper_proof_status_labels_pre_start_window_with_completed_session() -> 
     assert "int(settings.relative_volume_lookback_bars) == 10" in script
     assert "int(settings.entry_timeframe_minutes) == 15" in script
     assert "int(settings.entry_order_active_bars) == 1" in script
+    assert 'settings.entry_candidate_rank_mode == "close_to_entry"' in script
     assert "abs(float(settings.risk_per_trade_pct) - 0.01)" in script
     assert "abs(float(settings.max_position_pct) - 0.05)" in script
     assert "int(settings.max_open_positions) == 1" in script
@@ -8338,6 +8340,7 @@ def test_paper_decision_dry_run_is_read_only_operator_smoke() -> None:
     assert "relative_volume_threshold={settings.relative_volume_threshold:g}" in script
     assert "entry_min_close_to_entry_pct={settings.entry_min_close_to_entry_pct:g}" in script
     assert "entry_max_close_to_entry_pct={settings.entry_max_close_to_entry_pct:g}" in script
+    assert "entry_candidate_rank_mode={settings.entry_candidate_rank_mode}" in script
     assert "bull_flag_min_run_pct={settings.bull_flag_min_run_pct:g}" in script
     assert "bull_flag_consolidation_volume_ratio={settings.bull_flag_consolidation_volume_ratio:g}" in script
     assert "bull_flag_consolidation_range_pct={settings.bull_flag_consolidation_range_pct:g}" in script

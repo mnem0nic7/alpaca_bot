@@ -6906,6 +6906,7 @@ posture_status = (
         and abs(float(settings.relative_volume_threshold) - 2.0) < 1e-9
         and int(settings.entry_timeframe_minutes) == 15
         and int(settings.entry_order_active_bars) == 1
+        and settings.entry_candidate_rank_mode == "close_to_entry"
         and abs(float(settings.risk_per_trade_pct) - 0.01) < 1e-9
         and abs(float(settings.max_position_pct) - 0.05) < 1e-9
         and int(settings.max_open_positions) == 1
@@ -7710,6 +7711,7 @@ print(
     f"relative_volume_threshold={settings.relative_volume_threshold:g} "
     f"entry_timeframe_minutes={settings.entry_timeframe_minutes} "
     f"entry_order_active_bars={settings.entry_order_active_bars} "
+    f"entry_candidate_rank_mode={settings.entry_candidate_rank_mode} "
     f"risk_per_trade_pct={settings.risk_per_trade_pct:g} "
     f"max_position_pct={settings.max_position_pct:g} "
     f"max_open_positions={settings.max_open_positions} "

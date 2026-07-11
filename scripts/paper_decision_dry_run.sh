@@ -542,6 +542,7 @@ print(
     f"relative_volume_threshold={settings.relative_volume_threshold:g} "
     f"entry_min_close_to_entry_pct={settings.entry_min_close_to_entry_pct:g} "
     f"entry_max_close_to_entry_pct={settings.entry_max_close_to_entry_pct:g} "
+    f"entry_candidate_rank_mode={settings.entry_candidate_rank_mode} "
     f"bull_flag_min_run_pct={settings.bull_flag_min_run_pct:g} "
     f"bull_flag_consolidation_volume_ratio={settings.bull_flag_consolidation_volume_ratio:g} "
     f"bull_flag_consolidation_range_pct={settings.bull_flag_consolidation_range_pct:g} "
