@@ -82,3 +82,39 @@ posture or restart proof accumulation. The cross-sectional ordering gap is now
 closed for the existing proximity and relative-volume features; future ranking
 research needs a genuinely new point-in-time signal-quality feature rather
 than another ordering of these two inputs.
+
+## Signal-Quality Follow-Up
+
+A bounded follow-up tested one genuinely new point-in-time feature rather than
+another permutation of close proximity and relative volume. For each accepted
+`bull_flag` signal, the research branch computed the average normalized margin
+above the strategy's three defining setup gates:
+
+```text
+run_quality = 1 - min_run_pct / observed_pole_run_pct
+range_quality = 1 - observed_signal_range / allowed_signal_range
+volume_quality = 1 - observed_signal_volume / allowed_signal_volume
+signal_quality = mean(run_quality, range_quality, volume_quality)
+```
+
+The score was bounded to `[0,1]` and used only information available at the
+signal timestamp. The preregistered candidate ranked by `signal_quality` first,
+then retained close proximity, relative volume, and symbol as deterministic
+tie-breakers. It used the same 976-symbol scenario universe, 974-symbol
+fractionability snapshot, K=1, `$69,004.06` starting equity, 2 bps/side cost,
+and chronological IS/OOS split documented above.
+
+| rank mode | IS mean | IS trades | IS CI low | IS p | OOS trades | OOS CI low |
+|---|---:|---:|---:|---:|---:|---:|
+| `close_to_entry` | 0.6365 | 261 | -0.1923 | 0.0705 | 83 | -0.5751 |
+| `signal_quality` | -0.1523 | 238 | -1.0944 | 0.6105 | 75 | -1.4294 |
+
+The score selected fewer trades, turned mean IS P&L negative, weakened the IS
+lower bound by `0.9021`, and also performed substantially worse OOS. The three
+gate margins are therefore not monotonic trade-quality predictors in this
+portfolio frame.
+
+Decision: reject the score and remove its implementation rather than retain a
+discredited production control. The active and committed code remains exactly
+the deployed `close_to_entry` baseline. A future ranking feature must add
+different information, not reweight these setup margins.
